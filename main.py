@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from streetview import search_panoramas
-from streetview import get_panorama
+from streetlevel import streetview
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -27,6 +26,7 @@ async def root():
 @app.get("/panorama/{lat},{lon}")
 async def panorama(lat: float, lon: float):
 
+    print(f"Received request for panorama at lat: {lat}, lon: {lon}")
     # check if image already exists
     image_path = f"images/panorama_{lat}_{lon}.jpg"
     try:        
@@ -35,12 +35,13 @@ async def panorama(lat: float, lon: float):
     except FileNotFoundError:
         pass
 
-    panos = search_panoramas(lat=lat, lon=lon)
-    first = panos[0]
-    print(f"Found panorama: {first}")
-    image = get_panorama(pano_id=first.pano_id)
+    pano = streetview.find_panorama(lat, lon)
+    if not pano:
+        return {"error": "Panorama not found"}
+    print(f"Found panorama: {pano}")
+    
     # save image to disk and return the path
-    image.save(image_path)
+    streetview.download_panorama(pano, image_path)
     return {"image_path": "/" + image_path}
 
 

@@ -4,6 +4,20 @@
     <style>
       body {
         margin: 0;
+        overflow: hidden;
+      }
+      #startButton {
+        position: absolute;
+        /* bottom: 20px;
+        left: 50%; */
+        padding: 10px 20px;
+        font-size: 16px;
+        z-index: 10;
+        cursor: pointer;
+        border: none;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.8);
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
       }
     </style>
     <script type="importmap">
@@ -17,6 +31,7 @@
     </script>
   </head>
   <body>
+    <!-- <button id="startButton">Enable Look Around</button> -->
     <script type="module" src="./app.js"></script>
   </body>
 </html>

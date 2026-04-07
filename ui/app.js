@@ -5,12 +5,17 @@ async function init() {
   const scene = new SceneManager();
   scene.startRenderLoop();
 
+  // document.getElementById("startButton").addEventListener("click", (e) => {
+  //   scene.enableDeviceOrientation();
+  //   e.target.style.display = "none";
+  // });
+
   try {
     // Example coordinates
-    const data = await fetchPanorama(41.8982208, 12.4764804);
-    console.log("Fetched panorama data:", data);
+    // const data = await fetchPanorama(41.8982208, 12.4764804);
+    // console.log("Fetched panorama data:", data);
     // Use the returned image URL
-    scene.addPanorama(data.image_path);
+    scene.addPanorama("/images/test_better.jpg");
   } catch (error) {
     console.error("Error loading map view:", error);
   }
