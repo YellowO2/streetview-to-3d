@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { SplatMesh, SparkControls } from "@sparkjsdev/spark";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { VRButton } from "three/addons/webxr/VRButton.js";
+import { ARButton } from "three/addons/webxr/ARButton.js";
 
 export class SceneManager {
   constructor() {
@@ -19,7 +19,7 @@ export class SceneManager {
     this.renderer.xr.enabled = true;
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(this.renderer.domElement);
-    document.body.appendChild(VRButton.createButton(this.renderer));
+    document.body.appendChild(ARButton.createButton(this.renderer));
 
     this.controls = new SparkControls({
       canvas: this.renderer.domElement,
