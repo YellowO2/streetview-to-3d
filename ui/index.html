@@ -1,25 +1,21 @@
 <!doctype html>
 <html>
   <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
-      body {
-        margin: 0;
-        overflow: hidden;
+      #status {
+        margin: 6px 2px 2px;
+        font-size: 0.9rem;
+        color: #2f3a4a;
       }
-      #startButton {
-        position: absolute;
-        /* bottom: 20px;
-        left: 50%; */
-        padding: 10px 20px;
-        font-size: 16px;
-        z-index: 10;
-        cursor: pointer;
-        border: none;
-        border-radius: 8px;
-        background: rgba(255, 255, 255, 0.8);
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+
+      canvas {
+        display: block;
       }
     </style>
+
     <script type="importmap">
       {
         "imports": {
@@ -29,9 +25,38 @@
         }
       }
     </script>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
+    />
   </head>
   <body>
-    <!-- <button id="startButton">Enable Look Around</button> -->
+    <header class="container">
+      <hgroup>
+        <h1>Google map to 3D</h1>
+      </hgroup>
+    </header>
+
+    <main class="container">
+      <button type="submit">Subscribe</button>
+      <form id="searchForm">
+        <fieldset role="group">
+          <input
+            id="mapsUrlInput"
+            type="url"
+            placeholder="Paste URL (with /@lat,lon)"
+            required
+          />
+          <button type="submit">Load</button>
+        </fieldset>
+
+        <button type="button" id="exampleButton" class="secondary">
+          Use Example Panorama
+        </button>
+      </form>
+      <small id="status">Paste a Google Maps URL to start.</small>
+    </main>
+
     <script type="module" src="./app.js"></script>
   </body>
 </html>

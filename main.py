@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from streetlevel import streetview
 from fastapi.middleware.cors import CORSMiddleware
+from aiohttp import ClientSession
 
 app = FastAPI()
 
@@ -17,6 +18,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+session: ClientSession = None
+
+@app.on_event("startup")
+async def startup_event():
+    app.state.session = ClientSession()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await app.state.session.close()
 
 @app.get("/")
 async def root():
@@ -35,13 +46,13 @@ async def panorama(lat: float, lon: float):
     except FileNotFoundError:
         pass
 
-    pano = streetview.find_panorama(lat, lon)
+    pano = await streetview.find_panorama_async(lat, lon, session=app.state.session)
     if not pano:
         return {"error": "Panorama not found"}
     print(f"Found panorama: {pano}")
     
     # save image to disk and return the path
-    streetview.download_panorama(pano, image_path)
+    await streetview.download_panorama_async(pano, image_path, session=app.state.session)
     return {"image_path": "/" + image_path}
 
 
