@@ -36,6 +36,14 @@ export class SceneManager {
     this.scene.add(this.sphere);
   }
 
+  addMesh(meshUrl, position = { x: 0, y: 0, z: -3 }) {
+    const mesh = new SplatMesh({ url: meshUrl });
+    mesh.quaternion.set(1, 0, 0, 0);
+    mesh.position.set(position.x, position.y, position.z);
+    this.scene.add(mesh);
+    return mesh;
+  }
+
   startRenderLoop() {
     // Seen as the main loop of the scene
     this.renderer.setAnimationLoop(() => {

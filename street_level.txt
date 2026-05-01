@@ -1,0 +1,699 @@
+treetlevel.streetview: Google Street View
+Finding panoramas
+find_panorama(lat, lon, radius=50, locale='en', search_third_party=False, session=None)
+Searches for a panorama within a radius around a point.
+
+Parameters:
+lat (float) – Latitude of the center point.
+
+lon (float) – Longitude of the center point.
+
+radius (int) – (optional) Search radius in meters. Defaults to 50.
+
+locale (str) – (optional) Desired language of the location’s address as IETF code. Defaults to en.
+
+search_third_party (bool) – (optional) Whether to search for third-party panoramas rather than official ones. Defaults to false.
+
+session (Session | None) – (optional) A requests session.
+
+Returns:
+A StreetViewPanorama object if a panorama was found, or None.
+
+Return type:
+StreetViewPanorama | None
+
+Usage sample:
+
+from streetlevel import streetview
+
+pano = streetview.find_panorama(45.59395, 24.631609)
+print(pano.id)
+print(pano.lat, pano.lon)
+print(pano.date)
+async find_panorama_async(lat, lon, session, radius=50, locale='en', search_third_party=False)
+Parameters:
+lat (float)
+
+lon (float)
+
+session (ClientSession)
+
+radius (int)
+
+locale (str)
+
+search_third_party (bool)
+
+Return type:
+StreetViewPanorama | None
+
+Usage sample:
+
+from streetlevel import streetview
+from aiohttp import ClientSession
+
+async with ClientSession() as session:
+    pano = await streetview.find_panorama_async(45.59395, 24.631609, session)
+    print(pano.id)
+    print(pano.lat, pano.lon)
+    print(pano.date)
+find_panorama_by_id(panoid, download_depth=False, locale='en', session=None)
+Fetches metadata of a specific panorama.
+
+Unfortunately, as mentioned on this page, pano IDs are not stable, so a request that works today may return nothing a few months into the future.
+
+Parameters:
+panoid (str) – The pano ID.
+
+download_depth (bool) – Whether to download and parse the depth map.
+
+locale (str) – Desired language of the location’s address as IETF code.
+
+session (Session | None) – (optional) A requests session.
+
+Returns:
+A StreetViewPanorama object if a panorama with this ID exists, or None.
+
+Return type:
+StreetViewPanorama | None
+
+Usage sample:
+
+from streetlevel import streetview
+
+pano = await streetview.find_panorama_by_id("Py5vaKsLWJG16XyZosdYBQ")
+print(pano.id)
+print(pano.lat, pano.lon)
+print(pano.date)
+async find_panorama_by_id_async(panoid, session, download_depth=False, locale='en')
+Parameters:
+panoid (str)
+
+session (ClientSession)
+
+download_depth (bool)
+
+locale (str)
+
+Return type:
+StreetViewPanorama | None
+
+Usage sample:
+
+from streetlevel import streetview
+from aiohttp import ClientSession
+
+async with ClientSession() as session:
+    pano = await streetview.find_panorama_by_id_async("Py5vaKsLWJG16XyZosdYBQ", session)
+    print(pano.id)
+    print(pano.lat, pano.lon)
+    print(pano.date)
+get_coverage_tile(tile_x, tile_y, session=None)
+Fetches Street View coverage on a specific map tile. Coordinates are in Slippy Map aka XYZ format at zoom level 17.
+
+When viewing Google Maps with satellite imagery in globe view and zooming into a spot, it makes this API call. This is useful because 1) it allows for fetching coverage for a whole area, and 2) there are various hidden/removed locations which cannot be found by any other method (unless you access them by pano ID directly).
+
+This function returns ID, position, elevation, orientation, and links within the tile of the most recent coverage. The rest of the metadata, such as historical panoramas or links across tiles, must be fetched manually one by one.
+
+Parameters:
+tile_x (int) – X coordinate of the tile.
+
+tile_y (int) – Y coordinate of the tile.
+
+session (Session | None) – (optional) A requests session.
+
+Returns:
+A list of StreetViewPanoramas. If no coverage was returned by the API, the list is empty.
+
+Return type:
+List[StreetViewPanorama]
+
+async get_coverage_tile_async(tile_x, tile_y, session)
+Parameters:
+tile_x (int)
+
+tile_y (int)
+
+session (ClientSession)
+
+Return type:
+List[StreetViewPanorama]
+
+get_coverage_tile_by_latlon(lat, lon, session=None)
+Same as get_coverage_tile, but for fetching the tile on which a point is located.
+
+Parameters:
+lat (float) – Latitude of the point.
+
+lon (float) – Longitude of the point.
+
+session (Session | None) – (optional) A requests session.
+
+Returns:
+A list of StreetViewPanoramas. If no coverage was returned by the API, the list is empty.
+
+Return type:
+List[StreetViewPanorama]
+
+async get_coverage_tile_by_latlon_async(lat, lon, session)
+Parameters:
+lat (float)
+
+lon (float)
+
+session (ClientSession)
+
+Return type:
+List[StreetViewPanorama]
+
+Downloading panoramas
+get_panorama(pano, zoom=5)
+Downloads a panorama and returns it as PIL image.
+
+Parameters:
+pano (StreetViewPanorama) – The panorama to download.
+
+zoom (int) – (optional) Image size; 0 is lowest, 5 is highest. The dimensions of a zoom level of a specific panorama depend on the camera used. If the requested zoom level does not exist, the highest available level will be downloaded. Defaults to 5.
+
+Returns:
+A PIL image containing the panorama.
+
+Return type:
+Image
+
+async get_panorama_async(pano, session, zoom=5)
+Parameters:
+pano (StreetViewPanorama)
+
+session (ClientSession)
+
+zoom (int)
+
+Return type:
+Image
+
+download_panorama(pano, path, zoom=5, pil_args=None)
+Downloads a panorama to a file. If the chosen format is JPEG, Exif and XMP GPano metadata are included.
+
+Parameters:
+pano (StreetViewPanorama) – The panorama to download.
+
+path (str) – Output path.
+
+zoom (int) – (optional) Image size; 0 is lowest, 5 is highest. The dimensions of a zoom level of a specific panorama depend on the camera used. If the requested zoom level does not exist, the highest available level will be downloaded. Defaults to 5.
+
+pil_args (dict | None) – (optional) Additional arguments for PIL’s Image.save method, e.g. {"quality":100}. Defaults to {}.
+
+Return type:
+None
+
+Usage sample:
+
+from streetlevel import streetview
+
+pano = streetview.find_panorama(46.883958, 12.169002)
+streetview.download_panorama(pano, f"{pano.id}.jpg")
+async download_panorama_async(pano, path, session, zoom=5, pil_args=None)
+Parameters:
+pano (StreetViewPanorama)
+
+path (str)
+
+session (ClientSession)
+
+zoom (int)
+
+pil_args (dict | None)
+
+Return type:
+None
+
+Usage sample:
+
+from streetlevel import streetview
+from aiohttp import ClientSession
+
+async with ClientSession() as session:
+    pano = await streetview.find_panorama_async(46.883958, 12.169002, session)
+    await streetview.download_panorama_async(pano, f"{pano.id}.jpg", session)
+Data classes
+class Artwork(id, title, creator, description, thumbnail, url, attributes, marker_yaw, marker_pitch, marker_icon_url, link)
+An artwork annotation shown on Arts & Culture panoramas.
+
+Parameters:
+id (str | None)
+
+title (LocalizedString)
+
+creator (LocalizedString | None)
+
+description (LocalizedString | None)
+
+thumbnail (str)
+
+url (str | None)
+
+attributes (Dict[str, LocalizedString])
+
+marker_yaw (float)
+
+marker_pitch (float)
+
+marker_icon_url (str | None)
+
+link (ArtworkLink | None)
+
+attributes: Dict[str, LocalizedString]
+Any attributes of the artwork that are available, such as its creator, date, physical dimensions, etc. Not all attributes will be available for all artworks.
+
+Note that the keys of the dictionary are localized according to the locale you specified.
+
+creator: LocalizedString | None
+Creator of the artwork.
+
+description: LocalizedString | None
+Description of the artwork. Descriptions which exceed 1000 characters are cut off.
+
+id: str | None
+The Arts & Culture asset ID of this artwork.
+
+link: ArtworkLink | None
+If set, a panorama this annotation links to.
+
+marker_icon_url: str | None
+The icon which is drawn for the marker of the annotation.
+
+marker_pitch: float
+Pitch of the marker’s position in the panorama in radians, if a marker was returned for this place.
+
+marker_yaw: float
+Yaw of the marker’s position in the panorama in radians, if a marker was returned for this place. This value is relative to the panorama.
+
+thumbnail: str
+Thumbnail of the artwork.
+
+title: LocalizedString
+Title of the artwork.
+
+url: str | None
+URL of the Arts & Culture page of the artwork.
+
+class ArtworkLink(panoid, link_text)
+A clickable link within an annotation popup, leading to another panorama.
+
+Parameters:
+panoid (str)
+
+link_text (LocalizedString)
+
+link_text: LocalizedString
+The link text.
+
+panoid: str
+The pano ID which the annotation links to.
+
+class BusinessStatus(value)
+Status of a place.
+
+NotOpenYet = 1
+Operational = 2
+TemporarilyClosed = 3
+PermanentlyClosed = 4
+class BuildingLevel(level, name, short_name)
+Building level of an indoor tripod Street View panorama.
+
+Parameters:
+level (float)
+
+name (LocalizedString | None)
+
+short_name (LocalizedString | None)
+
+level: float
+The building level, where 0 is the ground floor, positive levels are above ground, and negative levels are below ground.
+
+name: LocalizedString | None
+Name of the level.
+
+short_name: LocalizedString | None
+Short name of the level.
+
+class CaptureDate(year, month, day=None)
+Capture date of a Street View panorama.
+
+Parameters:
+year (int)
+
+month (int)
+
+day (int | None)
+
+year: int
+The year the panorama was taken.
+
+month: int
+The month the panorama was taken.
+
+day: int | None = None
+The day the panorama was taken. Only available for third-party panoramas.
+
+class DepthMap(width, height, data)
+Holds a depth map of a Street View panorama.
+
+Parameters:
+width (int)
+
+height (int)
+
+data (ndarray)
+
+data: ndarray
+The depth map. Values are in meters. -1 is used for the horizon.
+
+height: int
+Height of the depth map.
+
+width: int
+Width of the depth map.
+
+class LocalizedString(value, language)
+A string and a language code for the language the string is in.
+
+Parameters:
+value (str)
+
+language (str)
+
+language: str
+The language code.
+
+value: str
+The string.
+
+class Place(feature_id, cid, marker_yaw, marker_pitch, marker_distance, name, type, status, marker_icon_url)
+A place associated with a Street View panorama.
+
+Parameters:
+feature_id (str)
+
+cid (int | None)
+
+marker_yaw (float | None)
+
+marker_pitch (float | None)
+
+marker_distance (float | None)
+
+name (LocalizedString | None)
+
+type (LocalizedString)
+
+status (BusinessStatus)
+
+marker_icon_url (str | None)
+
+cid: int | None
+An ID for a business used in various Google services.
+
+feature_id: str
+An ID for this place used in various Google services.
+
+marker_distance: float | None
+Presumably the distance of the marker to the camera in meters.
+
+marker_icon_url: str | None
+The icon which is drawn for this place.
+
+marker_pitch: float | None
+Pitch of the marker’s position in the panorama in radians, if a marker was returned for this place.
+
+marker_yaw: float | None
+Yaw of the marker’s position in the panorama in radians, if a marker was returned for this place. This value is relative to the panorama.
+
+name: LocalizedString | None
+Name of this place. This can be None, e.g. if type is “Geocoded address” or “Intersection”.
+
+status: BusinessStatus
+Operational status of the place. This will be Operational for locations that are not a business.
+
+type: LocalizedString
+Type of this place.
+
+class StreetLabel(name, angles)
+A label overlaid on the panorama in official road coverage displaying the name of a street.
+
+Parameters:
+name (LocalizedString)
+
+angles (List[float])
+
+angles: List[float]
+A list of different yaws that this street name appears at, in radians.
+
+name: LocalizedString
+The street name.
+
+class StreetViewPanorama(id, lat, lon, heading=None, pitch=None, roll=None, depth=None, tile_size=None, image_sizes=None, neighbors=<factory>, links=<factory>, historical=<factory>, building_level=None, building_levels=<factory>, date=None, upload_date=None, elevation=None, country_code=None, street_names=None, address=None, places=None, artworks=None, source=None, copyright_message=None, uploader=None, uploader_icon_url=None)
+Metadata of a Street View panorama.
+
+ID, latitude and longitude are always present*. The availability of other metadata depends on which function was called and what was returned by the API.
+
+*) Except for rare edge cases where latitude and longitude of links are not returned by the API and therefore set to None.
+
+Parameters:
+id (str)
+
+lat (float)
+
+lon (float)
+
+heading (float)
+
+pitch (float)
+
+roll (float)
+
+depth (DepthMap)
+
+tile_size (Size)
+
+image_sizes (List[Size])
+
+neighbors (List[StreetViewPanorama])
+
+links (List[Link])
+
+historical (List[StreetViewPanorama])
+
+building_level (BuildingLevel)
+
+building_levels (List[StreetViewPanorama])
+
+date (CaptureDate | datetime | None)
+
+upload_date (UploadDate | None)
+
+elevation (float)
+
+country_code (str)
+
+street_names (List[StreetLabel] | None)
+
+address (List[LocalizedString])
+
+places (List[Place] | None)
+
+artworks (List[Artwork] | None)
+
+source (str)
+
+copyright_message (str)
+
+uploader (str)
+
+uploader_icon_url (str)
+
+address: List[LocalizedString] = None
+The address of the location and the languages of the names, e.g.:
+[LocalizedString(value='3 Theaterpl.', language='de'), LocalizedString(value='Merano, Trentino-South Tyrol', language='en')].
+
+This can be localized using the locale parameter on the find functions (if the string is available in that language). For instance, requesting Italian locale (it) for the same location as above yields:
+[LocalizedString(value='3 Piazza Teatro', language='it'), LocalizedString(value='Merano, Trentino-Alto Adige', language='it')].
+Typically only set for official road coverage.
+
+artworks: List[Artwork] | None = None
+For Arts & Culture coverage, this field contains the artwork annotations, if they exist.
+
+building_level: BuildingLevel = None
+The level on which the panorama was taken (if the panorama is located inside a building which has been covered on multiple floors and this metadata is available).
+
+building_levels: List[StreetViewPanorama]
+One panorama per floor above or below this one (if the panorama is located inside a building which has been covered on multiple floors and this metadata is available).
+
+copyright_message: str = None
+The copyright message of the panorama as displayed on Google Maps. For official coverage, this returns “© (year) Google”.
+
+country_code: str = None
+Two-letter country code for the country in which the panorama is located.
+
+date: CaptureDate | datetime | None = None
+The capture date. For official coverage, only month and year are available. Third-party panoramas can be either year/month/day or a full timestamp depending on what the API returns. This may be unavailable in some rare cases.
+
+depth: DepthMap = None
+The depth map, if it was requested. Values are in meters. -1 is used for the horizon.
+
+elevation: float = None
+Elevation at the capture location in meters.
+
+heading: float = None
+Heading in radians, where 0° is north, 90° is east, 180° is south and 270° is west.
+
+historical: List[StreetViewPanorama]
+A list of panoramas with a different date at the same location.
+
+id: str
+The panorama ID.
+
+Official panoramas have an ID which is 22 characters in length, representing a 16-byte number as URL-encoded Base64.
+
+IDs for third-party panoramas used to have 44 characters starting with AF1Q, but Google is currently transitioning to a different scheme which uses 22 to 28(?) characters staring with CI.
+
+image_sizes: List[Size] = None
+The image sizes in which this panorama can be downloaded, from lowest to highest. Indices correspond to zoom levels.
+
+property is_third_party: bool
+Whether this panorama was uploaded by a third party rather than Google.
+
+lat: float
+Latitude of the panorama’s location.
+
+links: List[Link]
+The panoramas which the white arrows in the client link to.
+
+lon: float
+Longitude of the panorama’s location.
+
+neighbors: List[StreetViewPanorama]
+A list of nearby panoramas.
+
+permalink(heading=0.0, pitch=90.0, fov=75.0, radians=False)
+Creates a permalink to this panorama.
+
+Parameters:
+heading (float) – (optional) Initial heading of the viewport. Defaults to 0°.
+
+pitch (float) – (optional) Initial pitch of the viewport. Defaults to 90°.
+
+fov (float) – (optional) Initial FOV of the viewport. Defaults to 75°.
+
+radians (bool) – (optional) Whether angles are in radians. Defaults to False.
+
+self (StreetViewPanorama)
+
+Returns:
+A Google Maps URL which will open this panorama.
+
+Return type:
+str
+
+pitch: float = None
+Pitch offset for upright correction of the panorama, in radians.
+
+places: List[Place] | None = None
+If source is launch, this includes buildings, businesses etc. that are visible in the panorama, or intersections, addresses, etc. at the panorama’s location.
+
+If source is scout, innerspace or cultural_institute, this (usually) contains a single element, with the building or other location that the coverage is of.
+
+roll: float = None
+Roll offset for upright correction of the panorama, in radians.
+
+source: str = None
+The source program of the imagery.
+
+For official coverage, common values are:
+
+launch: regular car coverage (and sometimes trekker coverage) whose lines are snapped to roads
+
+scout: trekker or tripod coverage (and sometimes car coverage) whose lines are not snapped to roads
+
+innerspace: tripods from Google’s Business View program
+
+cultural_institute: some (but not all) tripods from the Arts & Culture program have this value
+
+For third-party coverage, this returns the app the panorama was uploaded with, such as:
+
+photos:street_view_android, photos:street_view_ios: the now-discontinued Street View app, RIP
+
+photos:street_view_publish_api: the Publish API
+
+photos:legacy_innerspace: see above
+
+street_names: List[StreetLabel] | None = None
+Street name labels overlaid on this panorama in Google Maps, featuring the name of the street(s) the panorama is located on and the angles that the label appears at.
+
+Typically only set for official road coverage.
+
+tile_size: Size = None
+Street View panoramas are broken up into a grid of tiles. This returns the size of one tile.
+
+upload_date: UploadDate | None = None
+The upload date. Only available for third-party panoramas.
+
+uploader: str = None
+The creator of the panorama. For official coverage, this returns “Google”.
+
+uploader_icon_url: str = None
+URL of the icon displayed next to the uploader’s name on Google Maps.
+
+class UploadDate(year, month, day, hour)
+Upload date of a third-party Street View panorama.
+
+Parameters:
+year (int)
+
+month (int)
+
+day (int)
+
+hour (int)
+
+year: int
+month: int
+day: int
+hour: int
+Miscellaneous
+build_permalink(id=None, lat=None, lon=None, heading=0.0, pitch=90.0, fov=75.0, radians=False)
+Creates a permalink to a panorama. All parameters are optional, but either a location, or a pano ID, or both must be passed.
+
+Parameters:
+id (str | None) – (optional) The pano ID.
+
+lat (float | None) – (optional) Latitude of the panorama’s location.
+
+lon (float | None) – (optional) Longitude of the panorama’s location.
+
+heading (float) – (optional) Initial heading of the viewport. Defaults to 0°.
+
+pitch (float) – (optional) Initial pitch of the viewport. Defaults to 90°.
+
+fov (float) – (optional) Initial FOV of the viewport. Defaults to 75°.
+
+radians (bool) – (optional) Whether viewport angles are in radians. Defaults to False.
+
+Returns:
+A Google Maps URL which will open the given panorama.
+
+Return type:
+str
+
+is_third_party_panoid(panoid)
+Returns whether a pano ID points to a third-party panorama rather than an official Google panorama.
+
+Parameters:
+panoid (str) – The pano ID.
+
+Returns:
+Whether the pano ID points to a third-party panorama.
+
+Return type:
+bool

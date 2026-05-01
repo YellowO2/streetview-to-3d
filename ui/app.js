@@ -60,7 +60,14 @@ async function handleSearchSubmit(event) {
 }
 
 function handleExampleClick() {
-  AddPanoramaToScene("/images/panorama_example.jpg");
+  AddPanoramaToScene("/images/panorama_1.323673_103.7555071.jpg");
+  // sceneManager.addMesh("/splats/view_60_0.ply");
+  // // hide and show
+  // const mesh = sceneManager.addMesh("/splats/view_0_0.ply", {
+  //   x: 0,
+  //   y: 0,
+  //   z: -3,
+  // });
   setStatus("Loaded example panorama.");
 }
 
