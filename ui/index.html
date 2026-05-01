@@ -14,6 +14,70 @@
       canvas {
         display: block;
       }
+
+      #treeContainer {
+        margin-top: 1rem;
+        padding: 1rem;
+        background: #f8f9fa;
+        border-radius: 8px;
+        display: none;
+      }
+
+      #panoTree,
+      #panoTree ul {
+        list-style-type: none;
+        padding-left: 1.5rem;
+      }
+
+      .tree-node {
+        margin: 0.5rem 0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .expand-btn {
+        cursor: pointer;
+        background: #e9ecef;
+        border: 1px solid #ced4da;
+        border-radius: 4px;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        color: #495057;
+      }
+
+      .expand-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .pano-id {
+        font-family: monospace;
+        color: #0d6efd;
+      }
+
+      .view-btn {
+        font-size: 0.8rem;
+        padding: 2px 8px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        #treeContainer {
+          background: #1e1e1e;
+        }
+        .expand-btn {
+          background: #2d2d2d;
+          border-color: #404040;
+          color: #e0e0e0;
+        }
+        .pano-id {
+          color: #6ea8fe;
+        }
+      }
     </style>
 
     <script type="importmap">
@@ -29,6 +93,11 @@
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
     />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   </head>
   <body>
     <header class="container">
@@ -38,7 +107,6 @@
     </header>
 
     <main class="container">
-      <button type="submit">Subscribe</button>
       <form id="searchForm">
         <fieldset role="group">
           <input
@@ -55,6 +123,24 @@
         </button>
       </form>
       <small id="status">Paste a Google Maps URL to start.</small>
+
+      <!-- PANORAMA TREE CONTAINER -->
+      <section id="treeContainer">
+        <h3>Discovered Panoramas <span id="panoCount">(0)</span></h3>
+        <div
+          id="map"
+          style="
+            height: 400px;
+            width: 100%;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            border: 1px solid #dee2e6;
+          "
+        ></div>
+        <button id="downloadAllBtn" class="primary" style="margin-bottom: 1rem">
+          Download All Discovered
+        </button>
+      </section>
     </main>
 
     <script type="module" src="./app.js"></script>

@@ -3,3 +3,23 @@ export async function fetchPanorama(lat, lon) {
   if (!response.ok) throw new Error("Failed to fetch panorama");
   return await response.json();
 }
+
+export async function fetchMetadata(lat, lon, panoId = null) {
+  const url = panoId
+    ? `/metadata?pano_id=${panoId}`
+    : `/metadata?lat=${lat}&lon=${lon}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("Failed to fetch metadata");
+  return await response.json();
+}
+
+export async function requestBatchDownload(panoIds) {
+  const response = await fetch("/batch_download", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pano_ids: panoIds }),
+  });
+  if (!response.ok) throw new Error("Failed to batch download");
+  // Assuming it returns a ZIP blob
+  return await response.blob();
+}

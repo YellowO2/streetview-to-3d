@@ -1,7 +1,15 @@
 import asyncio
 import itertools
 import math
-from fastapi import FastAPI
+import os
+import uuid
+import zipfile
+import shutil
+from fastapi import FastAPI, BackgroundTasks
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from typing import List
+
 from fastapi.staticfiles import StaticFiles
 from streetlevel import streetview
 from streetlevel.dataclasses import Tile
@@ -83,6 +91,50 @@ async def debug_tile(panoid: str = "LoA_9MjJTb7FXLEUlzyrpw", zoom: int = 3):
     }
 
 
+@app.get("/metadata")
+async def get_metadata(lat: float = None, lon: float = None, pano_id: str = None):
+    print(f"Received metadata request - lat: {lat}, lon: {lon}, pano_id: {pano_id}")
+    if not pano_id and (lat is None or lon is None):
+        return {"error": "Must provide either pano_id OR lat and lon"}
+
+    try:
+        if pano_id:
+            pano = await streetview.find_panorama_by_id_async(
+                pano_id, session=app.state.session
+            )
+        else:
+            pano = await streetview.find_panorama_async(
+                lat, lon, session=app.state.session
+            )
+
+        if not pano:
+            return {"error": "Panorama not found"}
+
+        links = []
+        if pano.links:
+            for link in pano.links:
+                if link.pano:
+                    links.append(
+                        {
+                            "id": link.pano.id,
+                            "lat": link.pano.lat,
+                            "lon": link.pano.lon,
+                            "direction": link.direction,
+                        }
+                    )
+
+        return {
+            "id": pano.id,
+            "lat": pano.lat,
+            "lon": pano.lon,
+            "date": str(pano.date) if pano.date else None,
+            "links": links,
+        }
+    except Exception as e:
+        print(f"Error fetching metadata: {e}")
+        return {"error": str(e)}
+
+
 @app.get("/panorama/{lat},{lon}")
 async def panorama(lat: float, lon: float):
 
@@ -119,6 +171,59 @@ async def panorama(lat: float, lon: float):
             await asyncio.sleep(wait)
 
     return {"image_path": "/" + image_path}
+
+
+class BatchDownloadRequest(BaseModel):
+    pano_ids: List[str]
+
+
+def cleanup_temp_dir(dir_path: str):
+    if os.path.exists(dir_path):
+        shutil.rmtree(dir_path)
+
+
+@app.post("/batch_download")
+async def batch_download(req: BatchDownloadRequest, background_tasks: BackgroundTasks):
+    out_dir = f"outputs_{uuid.uuid4().hex}"
+    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs("images", exist_ok=True)
+
+    zip_path = os.path.join(out_dir, "panoramas.zip")
+
+    downloaded_files = []
+
+    for pano_id in req.pano_ids:
+        # Try local cache
+        image_path = f"images/pano_{pano_id}.jpg"
+        if not os.path.exists(image_path):
+            # We need to fetch metadata first to download properly
+            try:
+                pano = await streetview.find_panorama_by_id_async(
+                    pano_id, session=app.state.session
+                )
+                if pano:
+                    async with ClientSession(headers=TILE_HEADERS) as dl_session:
+                        await streetview.download_panorama_async(
+                            pano, image_path, session=dl_session, zoom=5
+                        )
+            except Exception as e:
+                print(f"Error fetching/downloading panoid {pano_id}: {e}")
+                continue
+
+        if os.path.exists(image_path):
+            downloaded_files.append(image_path)
+
+    # create zip
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fpath in downloaded_files:
+            zf.write(fpath, os.path.basename(fpath))
+
+    # Clean up output directory after returning the file
+    background_tasks.add_task(cleanup_temp_dir, out_dir)
+
+    return FileResponse(
+        zip_path, media_type="application/x-zip-compressed", filename="panoramas.zip"
+    )
 
 
 app.mount("/ui", StaticFiles(directory="ui", html=True), name="ui")
