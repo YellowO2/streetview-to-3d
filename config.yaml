@@ -1,0 +1,24 @@
+models:
+  # Update these paths to where the models are stored on your deployment machine
+  sharp: ./models/sharp_2572gikvuh.pt
+  da3: ./models/models--depth-anything--DA3NESTED-GIANT-LARGE-1.1/snapshots/b2359bdf726fb44ef62acca04d629dcf158053e7
+  da360: ""
+
+pipeline:
+  depth_mode: da3           # da3 | da360
+  scale_mode: da3_2dgrid_global
+  clean_image: false        # remove people via inpainting before processing
+  slice_count: 6            # number of horizontal SHARP view slices per pano
+  debug: false              # save intermediate view slices and debug PCDs
+
+processor:
+  align_depth: 10.0         # metres — Gaussians within this range used for scale alignment
+  near_depth: 48.0          # metres — dead-zone starts here
+  sky_depth: 50.0           # metres — beyond this is sky (kept but not aligned)
+  num_z_slabs: 500
+  num_fov_slabs: 250
+  smooth_sigma_m: 0.5
+  smooth_sigma_fov: 0.15
+  voronoi_buffer_m: 1.5     # inter-pano Voronoi trim buffer (metres)
+  floor_keep_fraction: 0.6
+  min_depth_coverage: 1.0

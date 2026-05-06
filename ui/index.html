@@ -65,6 +65,35 @@
         padding: 2px 8px;
       }
 
+      #downloadSplatContainer {
+        display: none;
+        margin-top: 0.75rem;
+        padding: 0.75rem;
+        background: #e8f5e9;
+        border-radius: 6px;
+        border: 1px solid #a5d6a7;
+      }
+
+      #downloadSplatContainer h4 {
+        margin: 0 0 0.5rem;
+        font-size: 0.95rem;
+      }
+
+      #plyFileList {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+
+      #plyFileList li {
+        margin: 3px 0;
+      }
+
+      #plyFileList a {
+        font-family: monospace;
+        font-size: 0.85rem;
+      }
+
       @media (prefers-color-scheme: dark) {
         #treeContainer {
           background: #1e1e1e;
@@ -76,6 +105,10 @@
         }
         .pano-id {
           color: #6ea8fe;
+        }
+        #downloadSplatContainer {
+          background: #1b2e1b;
+          border-color: #2e5f2e;
         }
       }
     </style>
@@ -138,12 +171,22 @@
           "
         ></div>
         <label style="display: block; margin-bottom: 1rem">
-          <input type="checkbox" id="depthCheckbox" /> Include Depth Maps (.npy
-          format)
+          <input type="checkbox" id="depthCheckbox" /> Include Depth Maps (.npy format)
         </label>
-        <button id="downloadAllBtn" class="primary" style="margin-bottom: 1rem">
-          Download All Discovered
-        </button>
+        <div style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap;">
+          <button id="downloadAllBtn" class="secondary">
+            Download All Discovered
+          </button>
+          <button id="generateBtn" class="primary">
+            Generate 3DGS
+          </button>
+        </div>
+
+        <!-- PLY download links shown after generation -->
+        <div id="downloadSplatContainer">
+          <h4>3DGS Output Files</h4>
+          <ul id="plyFileList"></ul>
+        </div>
       </section>
     </main>
 

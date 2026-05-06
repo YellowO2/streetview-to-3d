@@ -1,12 +1,16 @@
-import { SceneManager } from "./SceneManager.js"; //spark's scene manager
-import { fetchPanorama, fetchMetadata, requestBatchDownload } from "./api.js";
+import { SceneManager } from "./SceneManager.js";
+import { fetchPanorama, fetchMetadata, requestBatchDownload, generateSplat, getJobStatus } from "./api.js";
 
 let sceneManager = null;
-const discoveredPanos = new Set(); // Keep track of fetched panos to avoid downloading dupes broadly
+const discoveredPanos = new Set();
+const panoMetadataMap = {}; // pano_id -> metadata object
 
 let leafletMap = null;
-let mapMarkers = {}; // Keep track of markers by pano_id
+let mapMarkers = {};
 let polylines = [];
+
+let activeJobId = null;
+let pollInterval = null;
 
 function setStatus(message, isError = false) {
   const status = document.getElementById("status");
@@ -30,18 +34,31 @@ function AddPanoramaToScene(imageUrl) {
   scene.addPanorama(imageUrl);
 }
 
+function loadSplatsIntoScene(plyFiles) {
+  const scene = InitScene();
+  // Clear existing splat meshes
+  if (scene.splatMeshes) {
+    for (const mesh of scene.splatMeshes) {
+      scene.scene.remove(mesh);
+    }
+  }
+  scene.splatMeshes = [];
+
+  for (const url of plyFiles) {
+    const mesh = scene.addMesh(url, { x: 0, y: 0, z: 0 });
+    scene.splatMeshes.push(mesh);
+  }
+}
+
 function extractLatLon(input) {
   const raw = input.trim();
   const atMatch = raw.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
   if (atMatch) return { lat: Number(atMatch[1]), lon: Number(atMatch[2]) };
 
   const directMatch = raw.match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
-  if (directMatch)
-    return { lat: Number(directMatch[1]), lon: Number(directMatch[2]) };
+  if (directMatch) return { lat: Number(directMatch[1]), lon: Number(directMatch[2]) };
 
-  throw new Error(
-    "Use a Google Maps URL with /@lat,lon or input lat,lon directly.",
-  );
+  throw new Error("Use a Google Maps URL with /@lat,lon or input lat,lon directly.");
 }
 
 function updatePanoCount() {
@@ -53,7 +70,7 @@ function initOrResetMap(lat, lon) {
   mapElement.style.display = "block";
   mapMarkers = {};
   polylines = [];
-  window.drawnLines = new Set(); // Reset drawn lines tracker
+  window.drawnLines = new Set();
 
   if (!leafletMap) {
     leafletMap = L.map("map").setView([lat, lon], 18);
@@ -63,7 +80,6 @@ function initOrResetMap(lat, lon) {
     }).addTo(leafletMap);
   } else {
     leafletMap.eachLayer((layer) => {
-      // remove old markers and lines
       if (layer instanceof L.Marker || layer instanceof L.Polyline) {
         leafletMap.removeLayer(layer);
       }
@@ -74,6 +90,8 @@ function initOrResetMap(lat, lon) {
 
 function drawNodeOnMap(metadata, isRoot = false) {
   if (!leafletMap || mapMarkers[metadata.id]) return;
+
+  panoMetadataMap[metadata.id] = metadata;
 
   const marker = L.marker([metadata.lat, metadata.lon]).addTo(leafletMap);
 
@@ -87,7 +105,6 @@ function drawNodeOnMap(metadata, isRoot = false) {
     </div>
   `;
 
-  // Attach view 3D event
   container.querySelector(".view-btn").onclick = async () => {
     setStatus(`Loading panorama ${metadata.id}...`);
     try {
@@ -100,22 +117,17 @@ function drawNodeOnMap(metadata, isRoot = false) {
     }
   };
 
-  // Attach expand neighbors event
   const expandBtn = container.querySelector(".expand-btn");
   expandBtn.onclick = async () => {
     expandBtn.disabled = true;
     expandBtn.textContent = "Expanding...";
     try {
-      const fullMetadata = await fetchMetadata(
-        metadata.lat,
-        metadata.lon,
-        metadata.id,
-      );
+      const fullMetadata = await fetchMetadata(metadata.lat, metadata.lon, metadata.id);
       if (fullMetadata.links) {
         for (const link of fullMetadata.links) {
           if (!discoveredPanos.has(link.id)) {
             discoveredPanos.add(link.id);
-            drawNodeOnMap(link); // map markers wait for interaction
+            drawNodeOnMap(link);
           }
           const lineId = [metadata.id, link.id].sort().join("-");
           if (!window.drawnLines.has(lineId)) {
@@ -137,22 +149,15 @@ function drawNodeOnMap(metadata, isRoot = false) {
   marker.bindPopup(container);
   mapMarkers[metadata.id] = marker;
 
-  if (isRoot) {
-    marker.openPopup();
-  }
+  if (isRoot) marker.openPopup();
 }
 
 function drawMapLinks(parentLat, parentLon, link) {
   if (!leafletMap) return;
-  // draw a line connecting parent to child
-  const polyline = L.polyline(
-    [
-      [parentLat, parentLon],
-      [link.lat, link.lon],
-    ],
+  L.polyline(
+    [[parentLat, parentLon], [link.lat, link.lon]],
     { color: "blue", weight: 2, opacity: 0.6 },
   ).addTo(leafletMap);
-  polylines.push(polyline);
 }
 
 async function handleSearchSubmit(event) {
@@ -163,24 +168,24 @@ async function handleSearchSubmit(event) {
     const { lat, lon } = extractLatLon(input);
     setStatus("Fetching panorama metadata...");
 
-    // Reset state
     discoveredPanos.clear();
+    Object.keys(panoMetadataMap).forEach((k) => delete panoMetadataMap[k]);
+    stopPolling();
+    resetGenerateUI();
+
     const treeContainer = document.getElementById("treeContainer");
     treeContainer.style.display = "block";
 
-    // 1. Get Root Metadata
     const data = await fetchMetadata(lat, lon);
     if (data.error) throw new Error(data.error);
 
     initOrResetMap(data.lat, data.lon);
-
     discoveredPanos.add(data.id);
     drawNodeOnMap(data, true);
     updatePanoCount();
 
-    setStatus("Root panorama fetched. Click map markers to expand the path.");
+    setStatus("Root panorama fetched. Click map markers to explore, then Generate 3DGS.");
 
-    // Automatically load in 3D viewer
     const panoRes = await fetchPanorama(data.lat, data.lon);
     if (!panoRes.error && panoRes.image_path) {
       AddPanoramaToScene(panoRes.image_path);
@@ -209,29 +214,20 @@ async function handleDownloadAllClick() {
       const resp = await fetch("/download_pano", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pano_id: panoId,
-          download_depth: downloadDepth,
-        }),
+        body: JSON.stringify({ pano_id: panoId, download_depth: downloadDepth }),
       });
       if (resp.ok) {
         const meta = await resp.json();
-        if (!meta.error) {
-          metadataList.push(meta);
-        }
+        if (!meta.error) metadataList.push(meta);
       }
     } catch (e) {
       console.error(e);
     }
   }
 
-  btn.textContent = `Zipping files...`;
+  btn.textContent = "Zipping files...";
   try {
-    const blob = await requestBatchDownload(
-      Array.from(discoveredPanos),
-      downloadDepth,
-      metadataList,
-    );
+    const blob = await requestBatchDownload(Array.from(discoveredPanos), downloadDepth, metadataList);
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -249,6 +245,98 @@ async function handleDownloadAllClick() {
   }
 }
 
+async function handleGenerateClick() {
+  if (discoveredPanos.size === 0) return;
+
+  const btn = document.getElementById("generateBtn");
+  btn.disabled = true;
+  btn.textContent = "Starting...";
+  setStatus("Starting 3DGS generation...");
+  resetDownloadSplatUI();
+
+  const panoIds = Array.from(discoveredPanos);
+  const metadata = panoIds.map((id) => panoMetadataMap[id]).filter(Boolean);
+
+  try {
+    const { job_id } = await generateSplat(panoIds, metadata);
+    activeJobId = job_id;
+    btn.textContent = "Generating...";
+    setStatus(`Generating 3DGS (job: ${job_id.slice(0, 8)}…) — this takes a few minutes.`);
+    startPolling(job_id);
+  } catch (e) {
+    console.error(e);
+    setStatus("Failed to start generation: " + e.message, true);
+    btn.disabled = false;
+    btn.textContent = "Generate 3DGS";
+  }
+}
+
+function startPolling(jobId) {
+  stopPolling();
+  pollInterval = setInterval(async () => {
+    try {
+      const { status, ply_files, error } = await getJobStatus(jobId);
+
+      if (status === "done") {
+        stopPolling();
+        setStatus(`3DGS ready — loading ${ply_files.length} PLY file(s) into viewer.`);
+        loadSplatsIntoScene(ply_files);
+        showDownloadSplatUI(ply_files);
+        const btn = document.getElementById("generateBtn");
+        btn.disabled = false;
+        btn.textContent = "Re-generate 3DGS";
+      } else if (status === "error") {
+        stopPolling();
+        setStatus("Generation failed: " + error, true);
+        const btn = document.getElementById("generateBtn");
+        btn.disabled = false;
+        btn.textContent = "Retry Generate 3DGS";
+      }
+    } catch (e) {
+      console.error("Polling error:", e);
+    }
+  }, 5000);
+}
+
+function stopPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+}
+
+function showDownloadSplatUI(plyFiles) {
+  const container = document.getElementById("downloadSplatContainer");
+  container.style.display = "block";
+  const list = document.getElementById("plyFileList");
+  list.innerHTML = "";
+  for (const url of plyFiles) {
+    const name = url.split("/").pop();
+    const li = document.createElement("li");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.textContent = name;
+    li.appendChild(a);
+    list.appendChild(li);
+  }
+}
+
+function resetDownloadSplatUI() {
+  const container = document.getElementById("downloadSplatContainer");
+  container.style.display = "none";
+  document.getElementById("plyFileList").innerHTML = "";
+}
+
+function resetGenerateUI() {
+  const btn = document.getElementById("generateBtn");
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "Generate 3DGS";
+  }
+  resetDownloadSplatUI();
+}
+
 function handleExampleClick() {
   const input = document.getElementById("mapsUrlInput");
   input.value = "1.323673, 103.7555071";
@@ -256,15 +344,10 @@ function handleExampleClick() {
 }
 
 function init() {
-  document
-    .getElementById("searchForm")
-    .addEventListener("submit", handleSearchSubmit);
-  document
-    .getElementById("exampleButton")
-    .addEventListener("click", handleExampleClick);
-  document
-    .getElementById("downloadAllBtn")
-    .addEventListener("click", handleDownloadAllClick);
+  document.getElementById("searchForm").addEventListener("submit", handleSearchSubmit);
+  document.getElementById("exampleButton").addEventListener("click", handleExampleClick);
+  document.getElementById("downloadAllBtn").addEventListener("click", handleDownloadAllClick);
+  document.getElementById("generateBtn").addEventListener("click", handleGenerateClick);
 }
 
 init();
