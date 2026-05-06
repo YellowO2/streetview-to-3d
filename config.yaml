@@ -1,14 +1,14 @@
 models:
-  # Update these paths to where the models are stored on your deployment machine
-  sharp: ./models/sharp_2572gikvuh.pt
-  da3: ./models/models--depth-anything--DA3NESTED-GIANT-LARGE-1.1/snapshots/b2359bdf726fb44ef62acca04d629dcf158053e7
+  # Update these paths to model paths on ur machine
+  sharp: /home/q1intern/panoramic-to-3dgs/models/sharp_2572gikvuh.pt
+  da3: /home/q1intern/panoramic-to-3dgs/models--depth-anything--DA3NESTED-GIANT-LARGE-1.1/snapshots/b2359bdf726fb44ef62acca04d629dcf158053e7
   da360: ""
 
 pipeline:
   depth_mode: da3           # da3 | da360
   scale_mode: da3_2dgrid_global
   clean_image: false        # remove people via inpainting before processing
-  slice_count: 6            # number of horizontal SHARP view slices per pano
+  slice_count: 4         # number of horizontal SHARP view slices per pano
   debug: false              # save intermediate view slices and debug PCDs
 
 processor:

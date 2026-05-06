@@ -1,0 +1,1 @@
+pip install git+https://github.com/YellowO2/panoramic-to-3dgs.git       
