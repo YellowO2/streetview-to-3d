@@ -5,6 +5,8 @@ import os
 import uuid
 import zipfile
 import shutil
+import json
+import numpy as np
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -28,7 +30,10 @@ def _patched_generate_tile_list(pano, zoom):
     img_size = pano.image_sizes[zoom]
     cols = math.ceil(img_size.x / pano.tile_size.x)
     rows = math.ceil(img_size.y / pano.tile_size.y)
-    url = _THIRD_PARTY_TILE_URL if is_third_party_panoid(pano.id) else _NEW_TILE_URL
+
+    # Try using the official tile URL for both first
+    url = _NEW_TILE_URL
+
     return [
         Tile(x, y, url.format(pano.id, x, y, zoom))
         for x, y in itertools.product(range(cols), range(rows))
@@ -52,17 +57,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TILE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Referer": "https://www.google.com/maps/",
-    "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-}
-
 
 @app.on_event("startup")
 async def startup_event():
-    app.state.session = ClientSession(headers=TILE_HEADERS)
+    app.state.session = ClientSession()
 
 
 @app.on_event("shutdown")
@@ -78,7 +76,7 @@ async def root():
 @app.get("/debug/tile")
 async def debug_tile(panoid: str = "LoA_9MjJTb7FXLEUlzyrpw", zoom: int = 3):
     url = f"https://streetviewpixels-pa.googleapis.com/v1/tile?cb_client=maps_sv.tactile&panoid={panoid}&x=0&y=0&zoom={zoom}"
-    async with ClientSession(headers=TILE_HEADERS) as s:
+    async with ClientSession() as s:
         async with s.get(url) as resp:
             data = await resp.read()
     return {
@@ -156,7 +154,7 @@ async def panorama(lat: float, lon: float):
         try:
             # Fresh session per attempt — avoids reusing a session Google has fingerprinted.
             # zoom=2 fetches ~8 tiles instead of ~32 at zoom=3, much less likely to trigger rate limits.
-            async with ClientSession(headers=TILE_HEADERS) as dl_session:
+            async with ClientSession() as dl_session:
                 await streetview.download_panorama_async(
                     pano, image_path, session=dl_session, zoom=5
                 )
@@ -175,11 +173,57 @@ async def panorama(lat: float, lon: float):
 
 class BatchDownloadRequest(BaseModel):
     pano_ids: List[str]
+    download_depth: bool = False
+    metadata: list = []
+
+
+class DownloadPanoRequest(BaseModel):
+    pano_id: str
+    download_depth: bool = False
 
 
 def cleanup_temp_dir(dir_path: str):
     if os.path.exists(dir_path):
         shutil.rmtree(dir_path)
+
+
+@app.post("/download_pano")
+async def download_pano(req: DownloadPanoRequest):
+    try:
+        pano_id = req.pano_id
+        image_path = f"images/pano_{pano_id}.jpg"
+        depth_path = f"images/pano_{pano_id}_depth.npy"
+
+        pano = await streetview.find_panorama_by_id_async(
+            pano_id, session=app.state.session, download_depth=req.download_depth
+        )
+
+        if not pano:
+            return {"error": "not found"}
+
+        os.makedirs("images", exist_ok=True)
+
+        if not os.path.exists(image_path):
+            async with ClientSession() as dl_session:
+                await streetview.download_panorama_async(
+                    pano, image_path, session=dl_session, zoom=5
+                )
+
+        if req.download_depth and pano.depth and not os.path.exists(depth_path):
+            np.save(depth_path, pano.depth.data)
+
+        return {
+            "id": pano.id,
+            "lat": pano.lat,
+            "lon": pano.lon,
+            "date": str(pano.date) if pano.date else None,
+            "heading": pano.heading,
+            "pitch": pano.pitch,
+            "has_depth": bool(pano.depth),
+        }
+    except Exception as e:
+        print(f"Error in download_pano: {e}")
+        return {"error": str(e)}
 
 
 @app.post("/batch_download")
@@ -193,25 +237,24 @@ async def batch_download(req: BatchDownloadRequest, background_tasks: Background
     downloaded_files = []
 
     for pano_id in req.pano_ids:
-        # Try local cache
+        # Pull from local cache
         image_path = f"images/pano_{pano_id}.jpg"
-        if not os.path.exists(image_path):
-            # We need to fetch metadata first to download properly
-            try:
-                pano = await streetview.find_panorama_by_id_async(
-                    pano_id, session=app.state.session
-                )
-                if pano:
-                    async with ClientSession(headers=TILE_HEADERS) as dl_session:
-                        await streetview.download_panorama_async(
-                            pano, image_path, session=dl_session, zoom=5
-                        )
-            except Exception as e:
-                print(f"Error fetching/downloading panoid {pano_id}: {e}")
-                continue
+        depth_path = f"images/pano_{pano_id}_depth.npy"
 
         if os.path.exists(image_path):
             downloaded_files.append(image_path)
+
+        if req.download_depth and os.path.exists(depth_path):
+            downloaded_files.append(depth_path)
+
+    # Dump metadata to json
+    metadata_path = os.path.join(out_dir, "metadata.json")
+
+    output_metadata = {"spatial_order": req.pano_ids, "nodes": req.metadata}
+
+    with open(metadata_path, "w") as f:
+        json.dump(output_metadata, f, indent=2)
+    downloaded_files.append(metadata_path)
 
     # create zip
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:

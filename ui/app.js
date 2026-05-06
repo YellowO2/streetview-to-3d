@@ -80,6 +80,7 @@ function drawNodeOnMap(metadata, isRoot = false) {
   const container = document.createElement("div");
   container.innerHTML = `
     <div style="margin-bottom: 8px;"><b>${isRoot ? "Root " : ""}Pano:</b> <span class="pano-id">${metadata.id}</span></div>
+    <div style="margin-bottom: 8px; font-size: 12px; color: #555;">Lat: ${metadata.lat.toFixed(6)}, Lon: ${metadata.lon.toFixed(6)}</div>
     <div style="display: flex; gap: 8px;">
       <button class="view-btn secondary" style="font-size: 12px; padding: 4px 8px; margin: 0;">View 3D</button>
       <button class="expand-btn" style="font-size: 12px; padding: 4px 8px; margin: 0;">Expand Neighbors (+)</button>
@@ -177,20 +178,6 @@ async function handleSearchSubmit(event) {
     drawNodeOnMap(data, true);
     updatePanoCount();
 
-    // Auto-expand root on load so there are links visible immediately
-    if (data.links) {
-      for (const link of data.links) {
-        if (!discoveredPanos.has(link.id)) {
-          discoveredPanos.add(link.id);
-          drawNodeOnMap(link);
-        }
-        const lineId = [data.id, link.id].sort().join("-");
-        window.drawnLines.add(lineId);
-        drawMapLinks(data.lat, data.lon, link);
-      }
-      updatePanoCount();
-    }
-
     setStatus("Root panorama fetched. Click map markers to expand the path.");
 
     // Automatically load in 3D viewer
@@ -208,9 +195,43 @@ async function handleDownloadAllClick() {
   if (discoveredPanos.size === 0) return;
   const btn = document.getElementById("downloadAllBtn");
   btn.disabled = true;
-  btn.textContent = `Downloading ${discoveredPanos.size} Panoramas...`;
+
+  const depthCheckbox = document.getElementById("depthCheckbox");
+  const downloadDepth = depthCheckbox ? depthCheckbox.checked : false;
+
+  const metadataList = [];
+  let current = 0;
+
+  for (const panoId of discoveredPanos) {
+    current++;
+    btn.textContent = `Downloading ${current}/${discoveredPanos.size} Panoramas...`;
+    try {
+      const resp = await fetch("/download_pano", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pano_id: panoId,
+          download_depth: downloadDepth,
+        }),
+      });
+      if (resp.ok) {
+        const meta = await resp.json();
+        if (!meta.error) {
+          metadataList.push(meta);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  btn.textContent = `Zipping files...`;
   try {
-    const blob = await requestBatchDownload(Array.from(discoveredPanos));
+    const blob = await requestBatchDownload(
+      Array.from(discoveredPanos),
+      downloadDepth,
+      metadataList,
+    );
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

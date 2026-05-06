@@ -111,8 +111,8 @@
         <fieldset role="group">
           <input
             id="mapsUrlInput"
-            type="url"
-            placeholder="Paste URL (with /@lat,lon)"
+            type="text"
+            placeholder="Paste URL or lat,lon (with /@lat,lon or lat,lon directly)"
             required
           />
           <button type="submit">Load</button>
@@ -137,6 +137,10 @@
             border: 1px solid #dee2e6;
           "
         ></div>
+        <label style="display: block; margin-bottom: 1rem">
+          <input type="checkbox" id="depthCheckbox" /> Include Depth Maps (.npy
+          format)
+        </label>
         <button id="downloadAllBtn" class="primary" style="margin-bottom: 1rem">
           Download All Discovered
         </button>
