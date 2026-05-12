@@ -47,8 +47,20 @@ async def _run_pipeline_task(job_id: str, pano_ids: list[str], metadata: list[di
         print(f"Pipeline job {job_id} failed: {e}")
 
 
+_gpu_lock = None
+
+
+def _get_gpu_lock():
+    global _gpu_lock
+    import threading
+    if _gpu_lock is None:
+        _gpu_lock = threading.Lock()
+    return _gpu_lock
+
+
 def _pipeline_sync(job_id: str, pano_ids: list[str], metadata: list[dict]):
     """Blocking pipeline execution — runs in a thread pool."""
+    import torch
     from panoramic_to_3dgs import Pipeline
 
     job = get_job(job_id)
@@ -68,10 +80,15 @@ def _pipeline_sync(job_id: str, pano_ids: list[str], metadata: list[dict]):
             asyncio.run(_download_missing(pano_id, img_path))
         panorama_paths.append(img_path)
 
-    # Run the 3DGS pipeline
-    config = load_pipeline_config()
-    pipeline = Pipeline(config)
-    pipeline.run(panorama_paths=panorama_paths, output_dir=output_dir)
+    # Serialize GPU jobs and free all memory after each run
+    with _get_gpu_lock():
+        config = load_pipeline_config()
+        pipeline = Pipeline(config)
+        try:
+            pipeline.run(panorama_paths=panorama_paths, output_dir=output_dir)
+        finally:
+            del pipeline
+            torch.cuda.empty_cache()
 
     # Collect output PLY URLs (served via static /splats mount)
     ply_files = [
