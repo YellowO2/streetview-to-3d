@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from streetlevel import streetview
 from typing import List
 
-from services.street_view import download_panorama_image
+from services.download_street_panorama import download_panorama_image
 
 router = APIRouter()
 

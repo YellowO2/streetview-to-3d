@@ -9,7 +9,7 @@ from typing import List
 
 from config import load_pipeline_config
 from services.job_store import Job, create_job, get_job, update_job
-from services.street_view import ensure_pano_downloaded
+from services.download_street_panorama import ensure_pano_downloaded
 
 router = APIRouter()
 
