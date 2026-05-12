@@ -5,11 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from services.street_view import patch_tile_url
 from routes.panorama import router as panorama_router
 from routes.splatting import router as splatting_router
-
-patch_tile_url()
 
 app = FastAPI()
 

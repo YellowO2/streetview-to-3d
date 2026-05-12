@@ -261,7 +261,7 @@ async function handleGenerateClick() {
     const { job_id } = await generateSplat(panoIds, metadata);
     activeJobId = job_id;
     btn.textContent = "Generating...";
-    setStatus(`Generating 3DGS (job: ${job_id.slice(0, 8)}…) — this takes a few minutes.`);
+    setStatus(`Generating 3DGS (job: ${job_id.slice(0, 8)}). Takes a few minutes.`);
     startPolling(job_id);
   } catch (e) {
     console.error(e);

@@ -1,7 +1,7 @@
 models:
   # Update these paths to model paths on ur machine
-  sharp: /home/q1intern/panoramic-to-3dgs/models/sharp_2572gikvuh.pt
-  da3: /home/q1intern/panoramic-to-3dgs/models--depth-anything--DA3NESTED-GIANT-LARGE-1.1/snapshots/b2359bdf726fb44ef62acca04d629dcf158053e7
+  sharp: ./models/sharp_2572gikvuh.pt
+  da3: ./models/models--depth-anything--DA3NESTED-GIANT-LARGE-1.1/snapshots/b2359bdf726fb44ef62acca04d629dcf158053e7
   da360: ""
 
 pipeline:

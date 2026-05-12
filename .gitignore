@@ -3,3 +3,5 @@ README.md
 __pycache__
 images
 .DS_Store
+models
+splats
