@@ -7,21 +7,13 @@
 
 ## Setup
 
-**1. Install PyTorch for CUDA 13.0 first**
-
-```bash
-pip install torch==2.11.0 torchvision==0.26.0 triton==3.6.0 xformers==0.0.35 --index-url https://download.pytorch.org/whl/cu130
-```
-
-If your driver doesn't support CUDA 13.0, check [pytorch.org](https://pytorch.org/get-started/locally/) to find the right version for your system.
-
-**2. Install the rest of the dependencies**
+**1. Install dependencies**
 
 ```bash
 pip install -r requirements.txt
 ```
 
-**3. Configure model paths**
+**2. Configure model paths**
 
 Edit `config.yaml` and set the absolute paths to the model files on your machine:
 
@@ -31,7 +23,18 @@ models:
   da3: /absolute/path/to/models--depth-anything--DA3NESTED-GIANT-LARGE-1.1/snapshots/b2359bdf726fb44ef62acca04d629dcf158053e7
 ```
 
-**4. Run**
+To verify:
+```                                                                            
+  python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); 
+  print(torch.version.cuda)"              
+
+  What you want to see:                                                                
+  - 2.11.0 — correct torch version        
+  - True — GPU is accessible                                                           
+  - 13.0 — correct CUDA version     
+```
+
+**3. Run**
 
 ```bash
 uvicorn main:app --reload
