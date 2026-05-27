@@ -48,24 +48,28 @@ async def get_metadata(
 
     session = request.app.state.session
     try:
-        if pano_id:
-            pano = await streetview.find_panorama_by_id_async(pano_id, session=session)
-        else:
+        if lat is not None and lon is not None:
             pano = await streetview.find_panorama_async(lat, lon, session=session)
+        else:
+            pano = await streetview.find_panorama_by_id_async(pano_id, session=session)
 
         if not pano:
             return {"error": "Panorama not found"}
 
         links = []
-        if pano.links:
-            for link in pano.links:
-                if link.pano:
-                    links.append({
-                        "id": link.pano.id,
-                        "lat": link.pano.lat,
-                        "lon": link.pano.lon,
-                        "direction": link.direction,
-                    })
+        candidates = pano.links or pano.neighbors
+        for item in candidates:
+            if hasattr(item, "pano"):
+                neighbor, direction = item.pano, item.direction
+            else:
+                neighbor, direction = item, None
+            if neighbor and neighbor.lat is not None and neighbor.lon is not None:
+                links.append({
+                    "id": neighbor.id,
+                    "lat": neighbor.lat,
+                    "lon": neighbor.lon,
+                    "direction": direction,
+                })
 
         return {
             "id": pano.id,
@@ -105,6 +109,8 @@ async def panorama(lat: float, lon: float, request: Request):
 class DownloadPanoRequest(BaseModel):
     pano_id: str
     download_depth: bool = False
+    lat: float | None = None
+    lon: float | None = None
 
 
 @router.post("/download_pano")
@@ -115,9 +121,10 @@ async def download_pano(req: DownloadPanoRequest, request: Request):
         depth_path = f"images/pano_{pano_id}_depth.npy"
 
         session = request.app.state.session
-        pano = await streetview.find_panorama_by_id_async(
-            pano_id, session=session, download_depth=req.download_depth
-        )
+        if req.lat is not None and req.lon is not None:
+            pano = await streetview.find_panorama_async(req.lat, req.lon, session=session)
+        else:
+            pano = await streetview.find_panorama_by_id_async(pano_id, session=session)
 
         if not pano:
             return {"error": "not found"}

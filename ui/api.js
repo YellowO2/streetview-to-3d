@@ -6,7 +6,7 @@ export async function fetchPanorama(lat, lon) {
 
 export async function fetchMetadata(lat, lon, panoId = null) {
   const url = panoId
-    ? `/metadata?pano_id=${panoId}`
+    ? `/metadata?pano_id=${panoId}&lat=${lat}&lon=${lon}`
     : `/metadata?lat=${lat}&lon=${lon}`;
   const response = await fetch(url);
   if (!response.ok) throw new Error("Failed to fetch metadata");
@@ -27,11 +27,11 @@ export async function requestBatchDownload(panoIds, downloadDepth, metadataList)
   return await response.blob();
 }
 
-export async function generateSplat(panoIds, metadata) {
+export async function generateSplat(panoId, metadata) {
   const response = await fetch("/generate_3dgs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pano_ids: panoIds, metadata }),
+    body: JSON.stringify({ pano_id: panoId, metadata }),
   });
   if (!response.ok) throw new Error("Failed to start 3DGS generation");
   return await response.json(); // { job_id }

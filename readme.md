@@ -3,7 +3,7 @@
 ## Requirements
 
 - NVIDIA GPU with driver version ≥570 (to support CUDA 13.0)
-- Python 3.12
+- Python 3.12.3
 
 ## Setup
 

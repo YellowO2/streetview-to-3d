@@ -9,8 +9,9 @@ from typing import Optional
 class Job:
     job_id: str
     status: str  # pending | running | done | error
-    pano_ids: list[str]
+    target_pano_id: str
     output_dir: str
+    support_pano_ids: list[str] = field(default_factory=list)
     ply_files: list[str] = field(default_factory=list)
     error: Optional[str] = None
     created_at: float = field(default_factory=time.time)
@@ -20,12 +21,12 @@ _jobs: dict[str, Job] = {}
 _lock = threading.Lock()
 
 
-def create_job(pano_ids: list[str]) -> Job:
+def create_job(target_pano_id: str) -> Job:
     job_id = uuid.uuid4().hex
     job = Job(
         job_id=job_id,
         status="pending",
-        pano_ids=pano_ids,
+        target_pano_id=target_pano_id,
         output_dir=f"splats/{job_id}",
     )
     with _lock:

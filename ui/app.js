@@ -4,6 +4,7 @@ import { fetchPanorama, fetchMetadata, requestBatchDownload, generateSplat, getJ
 let sceneManager = null;
 const discoveredPanos = new Set();
 const panoMetadataMap = {}; // pano_id -> metadata object
+let rootPanoId = null;
 
 let leafletMap = null;
 let mapMarkers = {};
@@ -180,11 +181,12 @@ async function handleSearchSubmit(event) {
     if (data.error) throw new Error(data.error);
 
     initOrResetMap(data.lat, data.lon);
+    rootPanoId = data.id;
     discoveredPanos.add(data.id);
     drawNodeOnMap(data, true);
     updatePanoCount();
 
-    setStatus("Root panorama fetched. Click map markers to explore, then Generate 3DGS.");
+    setStatus("Root panorama fetched. Explore neighbors to download a region, or Generate 3DGS for the root pano.");
 
     const panoRes = await fetchPanorama(data.lat, data.lon);
     if (!panoRes.error && panoRes.image_path) {
@@ -211,10 +213,11 @@ async function handleDownloadAllClick() {
     current++;
     btn.textContent = `Downloading ${current}/${discoveredPanos.size} Panoramas...`;
     try {
+      const meta = panoMetadataMap[panoId];
       const resp = await fetch("/download_pano", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pano_id: panoId, download_depth: downloadDepth }),
+        body: JSON.stringify({ pano_id: panoId, download_depth: downloadDepth, lat: meta?.lat, lon: meta?.lon }),
       });
       if (resp.ok) {
         const meta = await resp.json();
@@ -246,7 +249,7 @@ async function handleDownloadAllClick() {
 }
 
 async function handleGenerateClick() {
-  if (discoveredPanos.size === 0) return;
+  if (!rootPanoId) return;
 
   const btn = document.getElementById("generateBtn");
   btn.disabled = true;
@@ -254,14 +257,13 @@ async function handleGenerateClick() {
   setStatus("Starting 3DGS generation...");
   resetDownloadSplatUI();
 
-  const panoIds = Array.from(discoveredPanos);
-  const metadata = panoIds.map((id) => panoMetadataMap[id]).filter(Boolean);
+  const metadata = panoMetadataMap[rootPanoId] || null;
 
   try {
-    const { job_id } = await generateSplat(panoIds, metadata);
+    const { job_id } = await generateSplat(rootPanoId, metadata);
     activeJobId = job_id;
     btn.textContent = "Generating...";
-    setStatus(`Generating 3DGS (job: ${job_id.slice(0, 8)}). Takes a few minutes.`);
+    setStatus(`Generating 3DGS for root pano + auto-selected support neighbors (job: ${job_id.slice(0, 8)}). Takes a few minutes.`);
     startPolling(job_id);
   } catch (e) {
     console.error(e);
