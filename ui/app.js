@@ -28,6 +28,15 @@ function InitScene() {
   return sceneManager;
 }
 
+document.addEventListener("visibilitychange", () => {
+  if (!sceneManager) return;
+  if (document.hidden) {
+    sceneManager.pauseRenderLoop();
+  } else {
+    sceneManager.resumeRenderLoop();
+  }
+});
+
 function AddPanoramaToScene(imageUrl) {
   const scene = InitScene();
   if (scene.sphere) {
@@ -46,6 +55,14 @@ function loadSplatsIntoScene(plyFiles) {
     }
   }
   scene.splatMeshes = [];
+
+  // Remove the panorama sphere — once we have 3DGS, the pano is redundant
+  // and keeping both visible adds GPU cost.
+  if (scene.sphere) {
+    scene.scene.remove(scene.sphere);
+    scene.sphere = null;
+  }
+
   scene.resetCamera();
 
   for (const url of plyFiles) {

@@ -58,9 +58,20 @@ export class SceneManager {
 
   startRenderLoop() {
     // Seen as the main loop of the scene
-    this.renderer.setAnimationLoop(() => {
+    this._renderTick = () => {
       this.controls.update(this.camera);
       this.renderer.render(this.scene, this.camera);
-    });
+    };
+    this.renderer.setAnimationLoop(this._renderTick);
+  }
+
+  pauseRenderLoop() {
+    this.renderer.setAnimationLoop(null);
+  }
+
+  resumeRenderLoop() {
+    if (this._renderTick) {
+      this.renderer.setAnimationLoop(this._renderTick);
+    }
   }
 }

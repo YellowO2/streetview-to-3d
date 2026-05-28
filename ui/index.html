@@ -112,10 +112,13 @@
               id="scaleModeSelect"
               class="select select-bordered select-sm w-auto"
             >
-              <option value="da3_2dgrid_global">Scale: 2D Grid (default)</option>
-              <option value="da3_y_ground">Scale: Ground Plane</option>
+              <option value="da3_y_ground" selected>Alignment: Ground Plane (default)</option>
+              <option value="da3_2dgrid_global">Alignment: 2D Grid</option>
             </select>
           </div>
+          <p class="text-xs opacity-70 mt-1">
+            The 2D Grid alignment method works better when the depth map generation is good (which depends on several factors). Try 2D Grid if Ground Plane does not work well.
+          </p>
 
           <div
             id="downloadSplatContainer"

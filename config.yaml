@@ -15,9 +15,9 @@ pipeline:
   debug: false              # save intermediate view slices and debug PCDs
 
 processor:
-  align_depth: 40         # metres — Gaussians within this range used for scale alignment
-  near_depth: 50          # metres — distance between this and sky depth is removed.
-  sky_depth: 50           # metres — beyond this is sky (kept but not aligned)
+  align_depth: 30         # metres — Gaussians within this range used for scale alignment
+  near_depth: 200          # metres — distance between this and sky depth is removed.
+  sky_depth: 200           # metres — beyond this is sky (kept but not aligned)
   num_z_slabs: 500
   num_fov_slabs: 250
   smooth_sigma_m: 0.5
