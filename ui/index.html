@@ -1,117 +1,9 @@
 <!doctype html>
-<html>
+<html data-theme="light">
   <head>
     <meta charset="utf-8" />
     <meta name="color-scheme" content="light dark" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <style>
-      #status {
-        margin: 6px 2px 2px;
-        font-size: 0.9rem;
-        color: #2f3a4a;
-      }
-
-      canvas {
-        display: block;
-      }
-
-      #treeContainer {
-        margin-top: 1rem;
-        padding: 1rem;
-        background: #f8f9fa;
-        border-radius: 8px;
-        display: none;
-      }
-
-      #panoTree,
-      #panoTree ul {
-        list-style-type: none;
-        padding-left: 1.5rem;
-      }
-
-      .tree-node {
-        margin: 0.5rem 0;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-      }
-
-      .expand-btn {
-        cursor: pointer;
-        background: #e9ecef;
-        border: 1px solid #ced4da;
-        border-radius: 4px;
-        width: 24px;
-        height: 24px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        color: #495057;
-      }
-
-      .expand-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
-      .pano-id {
-        font-family: monospace;
-        color: #0d6efd;
-      }
-
-      .view-btn {
-        font-size: 0.8rem;
-        padding: 2px 8px;
-      }
-
-      #downloadSplatContainer {
-        display: none;
-        margin-top: 0.75rem;
-        padding: 0.75rem;
-        background: #e8f5e9;
-        border-radius: 6px;
-        border: 1px solid #a5d6a7;
-      }
-
-      #downloadSplatContainer h4 {
-        margin: 0 0 0.5rem;
-        font-size: 0.95rem;
-      }
-
-      #plyFileList {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-      }
-
-      #plyFileList li {
-        margin: 3px 0;
-      }
-
-      #plyFileList a {
-        font-family: monospace;
-        font-size: 0.85rem;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        #treeContainer {
-          background: #1e1e1e;
-        }
-        .expand-btn {
-          background: #2d2d2d;
-          border-color: #404040;
-          color: #e0e0e0;
-        }
-        .pano-id {
-          color: #6ea8fe;
-        }
-        #downloadSplatContainer {
-          background: #1b2e1b;
-          border-color: #2e5f2e;
-        }
-      }
-    </style>
 
     <script type="importmap">
       {
@@ -122,74 +14,116 @@
         }
       }
     </script>
+
     <link
+      href="https://cdn.jsdelivr.net/npm/daisyui@5"
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
+      type="text/css"
     />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+      canvas {
+        display: block;
+      }
+      .pano-id {
+        font-family: monospace;
+        color: oklch(var(--p, 0.6 0.2 250));
+      }
+      /* Auto theme based on user preference */
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme="light"]) {
+          color-scheme: dark;
+        }
+      }
+    </style>
   </head>
-  <body>
-    <header class="container">
-      <hgroup>
-        <h1>Google map to 3D</h1>
-      </hgroup>
-    </header>
+  <body class="bg-base-200 min-h-screen">
+    <div class="navbar bg-base-100 shadow-sm">
+      <div class="flex-1">
+        <span class="btn btn-ghost text-xl">Google Map → 3D</span>
+      </div>
+    </div>
 
-    <main class="container">
-      <form id="searchForm">
-        <fieldset role="group">
-          <input
-            id="mapsUrlInput"
-            type="text"
-            placeholder="Paste URL or lat,lon (with /@lat,lon or lat,lon directly)"
-            required
-          />
-          <button type="submit">Load</button>
-        </fieldset>
+    <main class="container mx-auto p-4 max-w-5xl space-y-4">
+      <div class="card bg-base-100 shadow-sm">
+        <div class="card-body">
+          <form id="searchForm" class="space-y-3">
+            <div class="join w-full">
+              <input
+                id="mapsUrlInput"
+                type="text"
+                class="input input-bordered join-item flex-1"
+                placeholder="Paste URL or lat,lon (with /@lat,lon or lat,lon directly)"
+                required
+              />
+              <button type="submit" class="btn btn-primary join-item">
+                Load
+              </button>
+            </div>
 
-        <button type="button" id="exampleButton" class="secondary">
-          Use Example Panorama
-        </button>
-      </form>
-      <small id="status">Paste a Google Maps URL to start.</small>
+            <button
+              type="button"
+              id="exampleButton"
+              class="btn btn-outline btn-sm"
+            >
+              Use Example Panorama
+            </button>
+          </form>
 
-      <!-- PANORAMA TREE CONTAINER -->
-      <section id="treeContainer">
-        <h3>Discovered Panoramas <span id="panoCount">(0)</span></h3>
-        <div
-          id="map"
-          style="
-            height: 400px;
-            width: 100%;
-            border-radius: 8px;
-            margin-bottom: 1rem;
-            border: 1px solid #dee2e6;
-          "
-        ></div>
-        <label style="display: block; margin-bottom: 1rem">
-          <input type="checkbox" id="depthCheckbox" /> Include Depth Maps (.npy format)
-        </label>
-        <div style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center;">
-          <button id="downloadAllBtn" class="secondary">
-            Download All Discovered
-          </button>
-          <button id="generateBtn" class="primary">
-            Generate 3DGS
-          </button>
-          <select id="scaleModeSelect" style="font-size: 0.9rem; margin: 0; width: auto;">
-            <option value="da3_2dgrid_global">Scale: 2D Grid (default)</option>
-            <option value="da3_y_ground">Scale: Ground Plane</option>
-          </select>
+          <div role="alert" class="alert alert-info mt-3 py-2">
+            <span id="status" class="text-sm">Paste a Google Maps URL to start.</span>
+          </div>
         </div>
+      </div>
 
-        <!-- PLY download links shown after generation -->
-        <div id="downloadSplatContainer">
-          <h4>3DGS Output Files</h4>
-          <ul id="plyFileList"></ul>
+      <section id="treeContainer" class="card bg-base-100 shadow-sm hidden">
+        <div class="card-body">
+          <h3 class="card-title">
+            Discovered Panoramas
+            <span id="panoCount" class="badge badge-neutral">(0)</span>
+          </h3>
+
+          <div
+            id="map"
+            class="rounded-box border border-base-300"
+            style="height: 400px; width: 100%;"
+          ></div>
+
+          <label class="label cursor-pointer justify-start gap-2 mt-2">
+            <input type="checkbox" id="depthCheckbox" class="checkbox checkbox-sm" />
+            <span class="label-text">Include Depth Maps (.npy format)</span>
+          </label>
+
+          <div class="flex flex-wrap gap-3 items-center mt-2">
+            <button id="downloadAllBtn" class="btn btn-outline">
+              Download All Discovered
+            </button>
+            <button id="generateBtn" class="btn btn-primary">
+              Generate 3DGS
+            </button>
+            <select
+              id="scaleModeSelect"
+              class="select select-bordered select-sm w-auto"
+            >
+              <option value="da3_2dgrid_global">Scale: 2D Grid (default)</option>
+              <option value="da3_y_ground">Scale: Ground Plane</option>
+            </select>
+          </div>
+
+          <div
+            id="downloadSplatContainer"
+            class="alert alert-success hidden mt-3 flex-col items-start"
+          >
+            <h4 class="font-semibold">3DGS Output Files</h4>
+            <ul id="plyFileList" class="list-none p-0 m-0 font-mono text-sm space-y-1"></ul>
+          </div>
         </div>
       </section>
     </main>

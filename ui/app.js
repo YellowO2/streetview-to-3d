@@ -16,7 +16,9 @@ let pollInterval = null;
 function setStatus(message, isError = false) {
   const status = document.getElementById("status");
   status.textContent = message;
-  status.style.color = isError ? "#b42318" : "#2f3a4a";
+  const alert = status.parentElement;
+  alert.classList.remove("alert-info", "alert-error", "alert-success");
+  alert.classList.add(isError ? "alert-error" : "alert-info");
 }
 
 function InitScene() {
@@ -99,11 +101,11 @@ function drawNodeOnMap(metadata, isRoot = false) {
 
   const container = document.createElement("div");
   container.innerHTML = `
-    <div style="margin-bottom: 8px;"><b>${isRoot ? "Root " : ""}Pano:</b> <span class="pano-id">${metadata.id}</span></div>
-    <div style="margin-bottom: 8px; font-size: 12px; color: #555;">Lat: ${metadata.lat.toFixed(6)}, Lon: ${metadata.lon.toFixed(6)}</div>
-    <div style="display: flex; gap: 8px;">
-      <button class="view-btn secondary" style="font-size: 12px; padding: 4px 8px; margin: 0;">View 3D</button>
-      <button class="expand-btn" style="font-size: 12px; padding: 4px 8px; margin: 0;">Expand Neighbors (+)</button>
+    <div class="mb-2"><b>${isRoot ? "Root " : ""}Pano:</b> <span class="pano-id">${metadata.id}</span></div>
+    <div class="mb-2 text-xs opacity-70">Lat: ${metadata.lat.toFixed(6)}, Lon: ${metadata.lon.toFixed(6)}</div>
+    <div class="flex gap-2">
+      <button class="view-btn btn btn-xs btn-outline">View 3D</button>
+      <button class="expand-btn btn btn-xs btn-primary">Expand Neighbors (+)</button>
     </div>
   `;
 
@@ -187,7 +189,7 @@ async function handleSearchSubmit(event) {
     clearSplatsFromScene();
 
     const treeContainer = document.getElementById("treeContainer");
-    treeContainer.style.display = "block";
+    treeContainer.classList.remove("hidden");
 
     const data = await fetchMetadata(lat, lon);
     if (data.error) throw new Error(data.error);
@@ -323,7 +325,7 @@ function stopPolling() {
 
 function showDownloadSplatUI(plyFiles) {
   const container = document.getElementById("downloadSplatContainer");
-  container.style.display = "block";
+  container.classList.remove("hidden");
   const list = document.getElementById("plyFileList");
   list.innerHTML = "";
   for (const url of plyFiles) {
@@ -333,6 +335,7 @@ function showDownloadSplatUI(plyFiles) {
     a.href = url;
     a.download = name;
     a.textContent = name;
+    a.className = "link link-primary";
     li.appendChild(a);
     list.appendChild(li);
   }
@@ -340,7 +343,7 @@ function showDownloadSplatUI(plyFiles) {
 
 function resetDownloadSplatUI() {
   const container = document.getElementById("downloadSplatContainer");
-  container.style.display = "none";
+  container.classList.add("hidden");
   document.getElementById("plyFileList").innerHTML = "";
 }
 
