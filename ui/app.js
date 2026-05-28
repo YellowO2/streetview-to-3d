@@ -268,11 +268,13 @@ async function handleGenerateClick() {
   btn.textContent = "Starting...";
   setStatus("Starting 3DGS generation...");
   resetDownloadSplatUI();
+  clearSplatsFromScene();
 
   const metadata = panoMetadataMap[rootPanoId] || null;
 
   try {
-    const { job_id } = await generateSplat(rootPanoId, metadata);
+    const scaleMode = document.getElementById("scaleModeSelect").value;
+    const { job_id } = await generateSplat(rootPanoId, metadata, scaleMode);
     activeJobId = job_id;
     btn.textContent = "Generating...";
     setStatus(`Generating 3DGS for root pano + auto-selected support neighbors (job: ${job_id.slice(0, 8)}). Takes a few minutes.`);

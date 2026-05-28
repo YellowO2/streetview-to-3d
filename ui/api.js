@@ -27,11 +27,11 @@ export async function requestBatchDownload(panoIds, downloadDepth, metadataList)
   return await response.blob();
 }
 
-export async function generateSplat(panoId, metadata) {
+export async function generateSplat(panoId, metadata, scaleMode) {
   const response = await fetch("/generate_3dgs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pano_id: panoId, metadata }),
+    body: JSON.stringify({ pano_id: panoId, metadata, scale_mode: scaleMode }),
   });
   if (!response.ok) throw new Error("Failed to start 3DGS generation");
   return await response.json(); // { job_id }

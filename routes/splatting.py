@@ -1,5 +1,4 @@
 import asyncio
-import gc
 import json
 import os
 
@@ -8,7 +7,6 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from streetlevel import streetview
 
-from config import load_pipeline_config
 from services.job_store import create_job, get_job, update_job
 from services.download_street_panorama import ensure_pano_downloaded
 
@@ -17,12 +15,13 @@ router = APIRouter()
 # Depth-only support panoramas added to each job (target's nearest Street View
 # neighbors). More supports give DA3 stronger translation baselines for better
 # depth/pose at the cost of VRAM (18 DA3 slices per pano).
-MAX_SUPPORT_PANOS = 3
+MAX_SUPPORT_PANOS = 2
 
 
 class GenerateRequest(BaseModel):
     pano_id: str
     metadata: dict | None = None
+    scale_mode: str = "da3_2dgrid_global"
 
 
 @router.post("/generate_3dgs")
@@ -30,7 +29,7 @@ async def generate_3dgs(req: GenerateRequest, request: Request):
     job = create_job(req.pano_id)
     session = request.app.state.session
     asyncio.create_task(
-        _run_pipeline_task(job.job_id, req.pano_id, req.metadata, session)
+        _run_pipeline_task(job.job_id, req.pano_id, req.metadata, req.scale_mode, session)
     )
     return {"job_id": job.job_id}
 
@@ -84,6 +83,7 @@ async def _run_pipeline_task(
     job_id: str,
     target_pano_id: str,
     metadata: dict | None,
+    scale_mode: str,
     session: ClientSession,
 ):
     update_job(job_id, status="running")
@@ -113,6 +113,7 @@ async def _run_pipeline_task(
             target_path,
             support_paths,
             metadata,
+            scale_mode,
         )
     except Exception as e:
         update_job(job_id, status="error", error=str(e))
@@ -136,42 +137,37 @@ def _pipeline_sync(
     target_path: str,
     support_paths: list[str],
     metadata: dict | None,
+    scale_mode: str = "da3_2dgrid_global",
 ):
-    """Blocking pipeline execution — runs in a thread pool."""
-    import torch
-    from panoramic_to_3dgs import Pipeline
+    """Runs the pipeline in an isolated subprocess — GPU memory is freed on process exit."""
+    import subprocess
+    import sys
 
     job = get_job(job_id)
-    output_dir = job.output_dir
-    os.makedirs(output_dir, exist_ok=True)
-
-    with open(os.path.join(output_dir, "job_metadata.json"), "w") as f:
-        json.dump(
-            {
-                "target_pano_id": target_pano_id,
-                "support_pano_ids": job.support_pano_ids,
-                "metadata": metadata,
-            },
-            f,
-            indent=2,
-        )
-
-    # Target is index 0; supports follow. Only the target gets SHARP'd.
     panorama_paths = [target_path, *support_paths]
 
+    args_json = json.dumps({
+        "output_dir": job.output_dir,
+        "panorama_paths": panorama_paths,
+        "target_pano_id": target_pano_id,
+        "support_pano_ids": job.support_pano_ids,
+        "metadata": metadata,
+        "scale_mode": scale_mode,
+    })
+
     with _get_gpu_lock():
-        config = load_pipeline_config()
-        pipeline = Pipeline(config)
-        try:
-            pipeline.run(
-                panorama_paths=panorama_paths,
-                output_dir=output_dir,
-                generate_pano_ids=[0],
-            )
-        finally:
-            del pipeline
-            gc.collect()
-            torch.cuda.empty_cache()
+        result = subprocess.run(
+            [sys.executable, "-c",
+             "import json, sys; from services.pipeline_runner import run_pipeline; "
+             "run_pipeline(**json.loads(sys.argv[1]))",
+             args_json],
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    if result.returncode != 0:
+        error_msg = result.stderr.strip().splitlines()
+        raise RuntimeError(error_msg[-1] if error_msg else f"Pipeline failed (exit {result.returncode})")
 
     ply_files = [f"/splats/{job_id}/final_output.ply"]
     update_job(job_id, status="done", ply_files=ply_files)

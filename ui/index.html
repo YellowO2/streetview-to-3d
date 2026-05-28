@@ -173,13 +173,17 @@
         <label style="display: block; margin-bottom: 1rem">
           <input type="checkbox" id="depthCheckbox" /> Include Depth Maps (.npy format)
         </label>
-        <div style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap;">
+        <div style="display: flex; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center;">
           <button id="downloadAllBtn" class="secondary">
             Download All Discovered
           </button>
           <button id="generateBtn" class="primary">
             Generate 3DGS
           </button>
+          <select id="scaleModeSelect" style="font-size: 0.9rem; margin: 0; width: auto;">
+            <option value="da3_2dgrid_global">Scale: 2D Grid (default)</option>
+            <option value="da3_y_ground">Scale: Ground Plane</option>
+          </select>
         </div>
 
         <!-- PLY download links shown after generation -->

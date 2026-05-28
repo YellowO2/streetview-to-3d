@@ -17,13 +17,13 @@ pipeline:
   #   da3_y_ground       — uniform scale based on estimated ground elevation
   clean_image: false        # remove people via inpainting before processing
   slice_count: 4         # number of horizontal SHARP view slices per pano
-  include_sky: true      # include an upward (+90° pitch) SHARP view (horizon + floor + sky)
+  include_sky: true     # include an upward (+90° pitch) SHARP view (horizon + floor + sky)
   debug: false              # save intermediate view slices and debug PCDs
 
 processor:
-  align_depth: 20        # metres — Gaussians within this range used for scale alignment
-  near_depth: 700          # metres — distance between this and sky depth is removed.
-  sky_depth: 700           # metres — beyond this is sky (kept but not aligned)
+  align_depth: 40        # metres — Gaussians within this range used for scale alignment
+  near_depth: 50          # metres — distance between this and sky depth is removed.
+  sky_depth: 50           # metres — beyond this is sky (kept but not aligned)
   num_z_slabs: 500
   num_fov_slabs: 250
   smooth_sigma_m: 0.5
