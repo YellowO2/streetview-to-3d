@@ -44,6 +44,12 @@ export class SceneManager {
     return mesh;
   }
 
+  resetCamera() {
+    this.camera.position.set(0, 0, 0);
+    this.camera.rotation.set(0, 0, 0);
+    this.camera.quaternion.identity();
+  }
+
   startRenderLoop() {
     // Seen as the main loop of the scene
     this.renderer.setAnimationLoop(() => {

@@ -19,9 +19,20 @@ app.add_middleware(
 )
 
 
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://www.google.com/maps/",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
 @app.on_event("startup")
 async def startup_event():
-    app.state.session = ClientSession()
+    app.state.session = ClientSession(headers=_BROWSER_HEADERS)
     os.makedirs("images", exist_ok=True)
     os.makedirs("splats", exist_ok=True)
 

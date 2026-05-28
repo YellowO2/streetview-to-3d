@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import json
 import os
 
@@ -48,20 +49,35 @@ async def get_job_status(job_id: str):
     }
 
 
-async def _select_support_panos(target_pano_id: str, lat: float, lon: float, session: ClientSession) -> list[str]:
-    """Fetch the target's Street View neighbors by lat/lon, dedupe, cap at MAX_SUPPORT_PANOS."""
+async def _select_support_panos(target_pano_id: str, lat: float, lon: float, session: ClientSession):
+    """Fetch the target's Street View neighbors by lat/lon, return pano objects (cap at MAX_SUPPORT_PANOS)."""
     pano = await streetview.find_panorama_async(lat, lon, session=session)
     if not pano:
         return []
     candidates = pano.links or pano.neighbors
-    support_ids: list[str] = []
+    support_panos = []
+    seen_ids: set[str] = set()
     for item in candidates:
         neighbor = item.pano if hasattr(item, "pano") else item
-        if neighbor and neighbor.id != target_pano_id and neighbor.id not in support_ids:
-            support_ids.append(neighbor.id)
-        if len(support_ids) >= MAX_SUPPORT_PANOS:
+        if neighbor and neighbor.id != target_pano_id and neighbor.id not in seen_ids:
+            seen_ids.add(neighbor.id)
+            support_panos.append(neighbor)
+        if len(support_panos) >= MAX_SUPPORT_PANOS:
             break
-    return support_ids
+    return support_panos
+
+
+async def _download_pano_object(pano, session: ClientSession) -> str:
+    """Download a support pano. Neighbor stubs lack image_sizes, so re-fetch by lat/lon first."""
+    from services.download_street_panorama import download_panorama_image
+    img_path = f"images/pano_{pano.id}.jpg"
+    if not os.path.exists(img_path):
+        os.makedirs("images", exist_ok=True)
+        full_pano = await streetview.find_panorama_async(pano.lat, pano.lon, session=session)
+        if not full_pano:
+            raise ValueError(f"Could not fetch support pano {pano.id} at ({pano.lat}, {pano.lon})")
+        await download_panorama_image(full_pano, img_path)
+    return img_path
 
 
 async def _run_pipeline_task(
@@ -74,16 +90,17 @@ async def _run_pipeline_task(
     try:
         lat = metadata.get("lat") if metadata else None
         lon = metadata.get("lon") if metadata else None
-        support_ids = await _select_support_panos(target_pano_id, lat, lon, session) if lat and lon else []
+        support_panos = await _select_support_panos(target_pano_id, lat, lon, session) if lat and lon else []
+        support_ids = [p.id for p in support_panos]
         print(f"Job {job_id}: target={target_pano_id} supports={support_ids}")
 
         target_path = await ensure_pano_downloaded(target_pano_id, session)
         support_paths: list[str] = []
-        for sid in support_ids:
+        for pano in support_panos:
             try:
-                support_paths.append(await ensure_pano_downloaded(sid, session))
+                support_paths.append(await _download_pano_object(pano, session))
             except Exception as e:
-                print(f"Support pano {sid} failed to download, skipping: {e}")
+                print(f"Support pano {pano.id} failed to download, skipping: {e}")
 
         update_job(job_id, support_pano_ids=[
             sid for sid, p in zip(support_ids, support_paths) if p
@@ -153,6 +170,7 @@ def _pipeline_sync(
             )
         finally:
             del pipeline
+            gc.collect()
             torch.cuda.empty_cache()
 
     ply_files = [f"/splats/{job_id}/final_output.ply"]

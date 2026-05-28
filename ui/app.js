@@ -44,6 +44,7 @@ function loadSplatsIntoScene(plyFiles) {
     }
   }
   scene.splatMeshes = [];
+  scene.resetCamera();
 
   for (const url of plyFiles) {
     const mesh = scene.addMesh(url, { x: 0, y: 0, z: 0 });
@@ -161,6 +162,16 @@ function drawMapLinks(parentLat, parentLon, link) {
   ).addTo(leafletMap);
 }
 
+function clearSplatsFromScene() {
+  if (!sceneManager) return;
+  if (sceneManager.splatMeshes) {
+    for (const mesh of sceneManager.splatMeshes) {
+      sceneManager.scene.remove(mesh);
+    }
+    sceneManager.splatMeshes = [];
+  }
+}
+
 async function handleSearchSubmit(event) {
   event.preventDefault();
 
@@ -173,6 +184,7 @@ async function handleSearchSubmit(event) {
     Object.keys(panoMetadataMap).forEach((k) => delete panoMetadataMap[k]);
     stopPolling();
     resetGenerateUI();
+    clearSplatsFromScene();
 
     const treeContainer = document.getElementById("treeContainer");
     treeContainer.style.display = "block";
