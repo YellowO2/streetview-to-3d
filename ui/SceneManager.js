@@ -1,29 +1,35 @@
 import * as THREE from "three";
 import { SplatMesh, SparkControls } from "@sparkjsdev/spark";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { ARButton } from "three/addons/webxr/ARButton.js";
 
 export class SceneManager {
   constructor() {
     this.scene = new THREE.Scene();
 
-    this.camera = new THREE.PerspectiveCamera(
-      60,
-      window.innerWidth / window.innerHeight,
-      0.1, //limit for rendering. Meaning if anything is closer than 0.1 units, it won't be rendered
-      1000,
-    );
-    this.camera.position.set(0, 0, 0); //start at center
+    this.container = document.getElementById("sceneContainer");
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
 
-    this.renderer = new THREE.WebGLRenderer();
-    this.renderer.xr.enabled = true;
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(this.renderer.domElement);
-    document.body.appendChild(ARButton.createButton(this.renderer));
+    this.camera = new THREE.PerspectiveCamera(60, w / h, 0.1, 1000);
+    this.camera.position.set(0, 0, 0);
 
-    this.controls = new SparkControls({
-      canvas: this.renderer.domElement,
-    }); //read sparks docs for more.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.setSize(w, h);
+    this.container.appendChild(this.renderer.domElement);
+
+    this.controls = new SparkControls({ canvas: this.renderer.domElement });
+
+    this._resizeObserver = new ResizeObserver(() => this._onResize());
+    this._resizeObserver.observe(this.container);
+  }
+
+  _onResize() {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(w, h);
   }
 
   addPanorama(imageUrl) {

@@ -2,32 +2,25 @@ models:
   # Update these paths to model paths on ur machine. They should not start with ./ unless the model files are within this directory.
   sharp: /home/q1intern/panoramic-to-3dgs/models/sharp_2572gikvuh.pt
   da3: /home/q1intern/panoramic-to-3dgs/models/models--depth-anything--DA3NESTED-GIANT-LARGE-1.1/snapshots/b2359bdf726fb44ef62acca04d629dcf158053e7
-  da360: ""
 
 pipeline:
-  depth_mode: da3           # da3 | da360
   scale_mode: da3_2dgrid_global
-    # scale_mode options:
-  #   near_edge          — match nearest-Z edge across slices, no depth model required
-  #   da3_per_point      — per-Voronoi-cell scale
-  #   da3_zslab          — scale by cutting depth band (Z slabs)
-  #   da3_zslab_global   — da3_zslab using points from all panos combined
-  #   da3_2dgrid         — scale by 2D grid (depth × FOV angle)
-  #   da3_2dgrid_global  — da3_2dgrid using points from all panos combined (recommended)
-  #   da3_y_ground       — uniform scale based on estimated ground elevation
+  # scale_mode options:
+  #   da3_2dgrid_global  — DA3 scale via 2D (depth × FOV) grid (recommended)
+  #   da3_y_ground       — uniform per-slice scale based on estimated ground elevation
+  #   near_edge          — match nearest-Z edge across slices (no depth model required)
   clean_image: false        # remove people via inpainting before processing
-  slice_count: 4         # number of horizontal SHARP view slices per pano
-  include_sky: true     # include an upward (+90° pitch) SHARP view (horizon + floor + sky)
+  slice_count: 4            # number of horizontal SHARP view slices per pano
+  include_sky: true         # include an upward (+90° pitch) SHARP view (horizon + floor + sky)
   debug: false              # save intermediate view slices and debug PCDs
 
 processor:
-  align_depth: 40        # metres — Gaussians within this range used for scale alignment
+  align_depth: 40         # metres — Gaussians within this range used for scale alignment
   near_depth: 50          # metres — distance between this and sky depth is removed.
   sky_depth: 50           # metres — beyond this is sky (kept but not aligned)
   num_z_slabs: 500
   num_fov_slabs: 250
   smooth_sigma_m: 0.5
   smooth_sigma_fov: 0.15
-  voronoi_buffer_m: 1.5     # inter-pano Voronoi trim buffer (metres)
   floor_keep_fraction: 0.6
   min_depth_coverage: 1.0
