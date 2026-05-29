@@ -146,7 +146,7 @@ opt_einsum==3.4.0
 packaging==26.0
 pandas==3.0.2
 pandocfilters==1.5.1
-panoramic-to-3dgs @ git+https://github.com/YellowO2/panoramic-to-3dgs.git@61c0de63c7534a58f99e5f01164bb72bce2a7696
+panoramic-to-3dgs @ git+https://github.com/YellowO2/panoramic-to-3dgs.git@ab6147e1ce2e2635cc7a89497cc6b38469bebd2f
 parso==0.8.6
 pexpect==4.9.0
 pillow==12.2.0
@@ -212,7 +212,7 @@ six==1.17.0
 soupsieve==2.8.3
 stack-data==0.6.3
 starlette==1.0.0
-streetlevel @ git+https://github.com/YellowO2/streetlevel.git@aa1bed50db8da1946a040d532aa1b8ac84a1a583
+streetlevel @ git+https://github.com/YellowO2/streetlevel.git@e765f238462020c2b641d0c2e026c9d10a983aa6
 sympy==1.14.0
 terminado==0.18.1
 threadpoolctl==3.6.0
