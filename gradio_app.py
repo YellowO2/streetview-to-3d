@@ -272,27 +272,39 @@ def handle_load(url_input):
     except Exception as e:
         return f"Download failed: {e}", _build_map(meta["lat"], meta["lon"]), _PANO_PLACEHOLDER, None
 
+    state = {"source": "streetview", "image_path": img_path, **meta}
     status = f"Loaded pano {meta['id']} at ({meta['lat']:.5f}, {meta['lon']:.5f}). Click Generate 3DGS to continue."
     return (
         status,
         _build_map(meta["lat"], meta["lon"]),
         _build_pano_viewer(_file_url(img_path)),
-        meta,  # store in state
+        state,
+    )
+
+
+def handle_upload(file_path):
+    """User uploaded their own equirectangular panorama."""
+    if not file_path:
+        return "No file uploaded.", _MAP_PLACEHOLDER, _PANO_PLACEHOLDER, None
+    abs_path = os.path.abspath(file_path)
+    state = {"source": "upload", "image_path": abs_path, "neighbors": []}
+    return (
+        f"Uploaded panorama loaded. Click Generate 3DGS to continue.",
+        _MAP_PLACEHOLDER,  # no map for uploads
+        _build_pano_viewer(_file_url(abs_path)),
+        state,
     )
 
 
 def handle_generate(pano_state, scale_mode, progress=gr.Progress()):
-    if not pano_state:
-        return "Load a location first.", _SPLAT_PLACEHOLDER, gr.update(visible=False, value=None)
+    if not pano_state or not pano_state.get("image_path"):
+        return "Load a Street View location or upload a panorama first.", _SPLAT_PLACEHOLDER, gr.update(visible=False, value=None)
 
-    progress(0.05, desc="Downloading target panorama...")
-    try:
-        target_path = _run_async(_download(pano_state["lat"], pano_state["lon"]))
-    except Exception as e:
-        return f"Target download failed: {e}", _SPLAT_PLACEHOLDER, gr.update(visible=False, value=None)
-
+    target_path = pano_state["image_path"]
     support_paths = []
-    neighbors = pano_state.get("neighbors", [])[:MAX_SUPPORT_PANOS]
+
+    # Only Street View sources have neighbor metadata to fetch depth-support panos from.
+    neighbors = pano_state.get("neighbors", [])[:MAX_SUPPORT_PANOS] if pano_state.get("source") == "streetview" else []
     for i, n in enumerate(neighbors):
         try:
             progress(0.05 + 0.15 * (i + 1) / max(len(neighbors), 1),
@@ -333,16 +345,24 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
 
     pano_state = gr.State(None)
 
-    with gr.Row(equal_height=True):
-        url_input = gr.Textbox(
-            placeholder="Google Maps URL or lat,lon (e.g. 1.3237, 103.7555)",
-            show_label=False,
-            container=False,
-            scale=5,
-        )
-        load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
+    with gr.Tabs():
+        with gr.Tab("Street View"):
+            with gr.Row(equal_height=True):
+                url_input = gr.Textbox(
+                    placeholder="Google Maps URL or lat,lon (e.g. 1.3237, 103.7555)",
+                    show_label=False,
+                    container=False,
+                    scale=5,
+                )
+                load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
+        with gr.Tab("Upload Panorama"):
+            upload_input = gr.File(
+                label="Upload an equirectangular panorama (.jpg / .png)",
+                file_types=["image"],
+                type="filepath",
+            )
 
-    status = gr.Textbox(label="Status", value="Paste a Google Maps URL to start.", interactive=False)
+    status = gr.Textbox(label="Status", value="Paste a Google Maps URL or upload a panorama to start.", interactive=False)
 
     with gr.Row():
         map_view = gr.HTML(_MAP_PLACEHOLDER)
@@ -370,6 +390,12 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     load_btn.click(
         fn=handle_load,
         inputs=[url_input],
+        outputs=[status, map_view, pano_view, pano_state],
+    )
+
+    upload_input.upload(
+        fn=handle_upload,
+        inputs=[upload_input],
         outputs=[status, map_view, pano_view, pano_state],
     )
 
