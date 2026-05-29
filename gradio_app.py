@@ -1,0 +1,390 @@
+"""
+Gradio interface for Street View to 3DGS.
+
+Run locally:  python gradio_app.py
+HF Spaces:    set as app.py, add `spaces` to requirements, enable ZeroGPU.
+"""
+
+import asyncio
+import html as html_lib
+import os
+import re
+import uuid
+
+import aiohttp
+import gradio as gr
+
+try:
+    import spaces
+    GPU = spaces.GPU
+except ImportError:
+    GPU = lambda fn: fn  # no-op outside HF Spaces
+
+from streetlevel import streetview
+from services.download_street_panorama import download_panorama_image
+
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://www.google.com/maps/",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+# Auto-pick up to N nearest neighbors as DA3 depth-support panos.
+MAX_SUPPORT_PANOS = 2
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+IMAGES_DIR = os.path.join(PROJECT_ROOT, "images")
+SPLATS_DIR = os.path.join(PROJECT_ROOT, "splats")
+os.makedirs(IMAGES_DIR, exist_ok=True)
+os.makedirs(SPLATS_DIR, exist_ok=True)
+
+
+# ── async helpers ──────────────────────────────────────────────────────────────
+
+def _run_async(coro):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+async def _fetch_pano(lat, lon):
+    """Fetch pano metadata + neighbor stubs."""
+    async with aiohttp.ClientSession(headers=_BROWSER_HEADERS) as session:
+        pano = await streetview.find_panorama_async(lat, lon, session=session)
+        if not pano:
+            return None
+        neighbors = []
+        for item in (pano.links or pano.neighbors):
+            n = item.pano if hasattr(item, "pano") else item
+            if n and n.lat is not None:
+                neighbors.append({"id": n.id, "lat": n.lat, "lon": n.lon})
+        return {"id": pano.id, "lat": pano.lat, "lon": pano.lon, "neighbors": neighbors}
+
+
+async def _download(lat, lon):
+    """Download a pano by lat/lon, return absolute path."""
+    async with aiohttp.ClientSession(headers=_BROWSER_HEADERS) as session:
+        pano = await streetview.find_panorama_async(lat, lon, session=session)
+        if not pano:
+            return None
+        img_path = os.path.join(IMAGES_DIR, f"pano_{pano.id}.jpg")
+        if not os.path.exists(img_path):
+            await download_panorama_image(pano, img_path)
+        return img_path
+
+
+# ── input parsing ──────────────────────────────────────────────────────────────
+
+def _extract_lat_lon(raw: str):
+    raw = raw.strip()
+    m = re.search(r"@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)", raw)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    m = re.match(r"^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$", raw)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    raise ValueError("Use a Google Maps URL with /@lat,lon or paste lat,lon directly.")
+
+
+# ── HTML / iframe builders ─────────────────────────────────────────────────────
+
+def _file_url(abs_path: str) -> str:
+    """Build Gradio's file-serving URL. /gradio_api/file= is the route in Gradio 5+."""
+    return f"/gradio_api/file={abs_path}"
+
+
+def _iframe(srcdoc: str, aspect: str = "16/9") -> str:
+    escaped = html_lib.escape(srcdoc, quote=True)
+    return (
+        f'<iframe srcdoc="{escaped}" sandbox="allow-scripts allow-same-origin" '
+        f'style="width:100%;aspect-ratio:{aspect};border:none;border-radius:8px;background:#000">'
+        "</iframe>"
+    )
+
+
+_MAP_PLACEHOLDER = _iframe(
+    "<html><body style='margin:0;background:#1e1e2e;color:#777;font:14px sans-serif;"
+    "display:flex;align-items:center;justify-content:center;height:100vh'>"
+    "Load a location to see it on the map</body></html>",
+    aspect="16/9",
+)
+_PANO_PLACEHOLDER = _iframe(
+    "<html><body style='margin:0;background:#111;color:#777;font:14px sans-serif;"
+    "display:flex;align-items:center;justify-content:center;height:100vh'>"
+    "Panorama viewer</body></html>"
+)
+_SPLAT_PLACEHOLDER = _iframe(
+    "<html><body style='margin:0;background:#111;color:#777;font:14px sans-serif;"
+    "display:flex;align-items:center;justify-content:center;height:100vh'>"
+    "Generate a 3DGS scene to view it here</body></html>"
+)
+
+
+def _build_map(lat: float, lon: float) -> str:
+    doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>html,body,#map{{margin:0;height:100%;width:100%}}</style>
+</head><body><div id="map"></div>
+<script>
+var m = L.map('map').setView([{lat},{lon}], 18);
+L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
+    {{maxZoom:19,attribution:'© OpenStreetMap'}}).addTo(m);
+L.circleMarker([{lat},{lon}],{{radius:9,color:'crimson',fillColor:'crimson',fillOpacity:0.9,weight:2}}).addTo(m);
+</script></body></html>"""
+    return _iframe(doc)
+
+
+def _build_pano_viewer(img_url: str) -> str:
+    doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{{margin:0;background:#000;overflow:hidden;cursor:grab}}body:active{{cursor:grabbing}}canvas{{display:block}}
+#hint{{position:fixed;bottom:8px;right:8px;color:rgba(255,255,255,.4);font:11px sans-serif;pointer-events:none}}</style>
+<script type="importmap">
+{{"imports":{{"three":"https://unpkg.com/three@0.178.0/build/three.module.js"}}}}
+</script></head><body><div id="hint">drag to look around</div>
+<script type="module">
+import * as THREE from 'three';
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.01, 1000);
+const renderer = new THREE.WebGLRenderer({{antialias:true}});
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const geo = new THREE.SphereGeometry(100, 64, 32); geo.scale(-1,1,1);
+const mat = new THREE.MeshBasicMaterial();
+scene.add(new THREE.Mesh(geo, mat));
+new THREE.TextureLoader().load('{img_url}', t => {{ mat.map=t; mat.needsUpdate=true; }});
+
+let lon = 0, lat = 0, dragging = false, lx = 0, ly = 0;
+renderer.domElement.addEventListener('pointerdown', e => {{ dragging = true; lx = e.clientX; ly = e.clientY; }});
+addEventListener('pointerup', () => dragging = false);
+addEventListener('pointermove', e => {{
+    if (!dragging) return;
+    lon -= (e.clientX - lx) * 0.2; lat += (e.clientY - ly) * 0.2;
+    lat = Math.max(-85, Math.min(85, lat));
+    lx = e.clientX; ly = e.clientY;
+}});
+renderer.domElement.addEventListener('wheel', e => {{
+    e.preventDefault();
+    camera.fov = Math.max(20, Math.min(100, camera.fov + e.deltaY * 0.05));
+    camera.updateProjectionMatrix();
+}}, {{passive:false}});
+
+addEventListener('resize', () => {{
+    camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+}});
+const tick = () => {{
+    const phi = THREE.MathUtils.degToRad(90 - lat);
+    const theta = THREE.MathUtils.degToRad(lon);
+    camera.lookAt(
+        100 * Math.sin(phi) * Math.cos(theta),
+        100 * Math.cos(phi),
+        100 * Math.sin(phi) * Math.sin(theta),
+    );
+    renderer.render(scene, camera);
+}};
+renderer.setAnimationLoop(tick);
+document.addEventListener('visibilitychange', () => {{
+    renderer.setAnimationLoop(document.hidden ? null : tick);
+}});
+</script></body></html>"""
+    return _iframe(doc)
+
+
+def _build_splat_viewer(ply_url: str) -> str:
+    doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{{margin:0;background:#000;overflow:hidden}}canvas{{display:block}}
+#hint{{position:fixed;bottom:8px;right:8px;color:rgba(255,255,255,.4);font:11px sans-serif;pointer-events:none}}</style>
+<script type="importmap">
+{{"imports":{{
+    "three":"https://unpkg.com/three@0.178.0/build/three.module.js",
+    "three/addons/":"https://unpkg.com/three@0.178.0/examples/jsm/",
+    "@sparkjsdev/spark":"https://sparkjs.dev/releases/spark/0.1.10/spark.module.js"
+}}}}
+</script></head><body><div id="hint">drag to move</div>
+<script type="module">
+import * as THREE from 'three';
+import {{ SplatMesh, SparkControls }} from '@sparkjsdev/spark';
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({{antialias:true}});
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const controls = new SparkControls({{canvas: renderer.domElement}});
+const splat = new SplatMesh({{url: '{ply_url}'}});
+splat.quaternion.set(1, 0, 0, 0);  // flip 180° around X — splats come out upside-down otherwise
+scene.add(splat);
+addEventListener('resize', () => {{
+    camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+}});
+const tick = () => {{ controls.update(camera); renderer.render(scene, camera); }};
+renderer.setAnimationLoop(tick);
+document.addEventListener('visibilitychange', () => {{
+    renderer.setAnimationLoop(document.hidden ? null : tick);
+}});
+</script></body></html>"""
+    return _iframe(doc)
+
+
+# ── GPU pipeline ───────────────────────────────────────────────────────────────
+
+@GPU
+def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode):
+    from panoramic_to_3dgs import Pipeline
+    from config import load_pipeline_config
+
+    os.makedirs(output_dir, exist_ok=True)
+    config = load_pipeline_config()
+    config.scale_mode = scale_mode
+    Pipeline(config).run(panorama_paths=panorama_paths, output_dir=output_dir, target_pano_id=0)
+
+    ply = os.path.join(output_dir, "final_output.ply")
+    return ply if os.path.exists(ply) else None
+
+
+# ── handlers ───────────────────────────────────────────────────────────────────
+
+def handle_load(url_input):
+    try:
+        lat, lon = _extract_lat_lon(url_input)
+    except ValueError as e:
+        return str(e), _MAP_PLACEHOLDER, _PANO_PLACEHOLDER, None
+
+    try:
+        meta = _run_async(_fetch_pano(lat, lon))
+    except Exception as e:
+        return f"Error: {e}", _MAP_PLACEHOLDER, _PANO_PLACEHOLDER, None
+    if not meta:
+        return "Panorama not found at that location.", _MAP_PLACEHOLDER, _PANO_PLACEHOLDER, None
+
+    try:
+        img_path = _run_async(_download(meta["lat"], meta["lon"]))
+    except Exception as e:
+        return f"Download failed: {e}", _build_map(meta["lat"], meta["lon"]), _PANO_PLACEHOLDER, None
+
+    status = f"Loaded pano {meta['id']} at ({meta['lat']:.5f}, {meta['lon']:.5f}). Click Generate 3DGS to continue."
+    return (
+        status,
+        _build_map(meta["lat"], meta["lon"]),
+        _build_pano_viewer(_file_url(img_path)),
+        meta,  # store in state
+    )
+
+
+def handle_generate(pano_state, scale_mode, progress=gr.Progress()):
+    if not pano_state:
+        return "Load a location first.", _SPLAT_PLACEHOLDER, gr.update(visible=False, value=None)
+
+    progress(0.05, desc="Downloading target panorama...")
+    try:
+        target_path = _run_async(_download(pano_state["lat"], pano_state["lon"]))
+    except Exception as e:
+        return f"Target download failed: {e}", _SPLAT_PLACEHOLDER, gr.update(visible=False, value=None)
+
+    support_paths = []
+    neighbors = pano_state.get("neighbors", [])[:MAX_SUPPORT_PANOS]
+    for i, n in enumerate(neighbors):
+        try:
+            progress(0.05 + 0.15 * (i + 1) / max(len(neighbors), 1),
+                     desc=f"Downloading support pano {i+1}/{len(neighbors)}...")
+            p = _run_async(_download(n["lat"], n["lon"]))
+            if p:
+                support_paths.append(p)
+        except Exception:
+            pass
+
+    progress(0.25, desc="Running 3DGS pipeline (a few minutes)...")
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    panorama_paths = [target_path, *support_paths]
+
+    try:
+        ply_path = _run_pipeline_gpu(panorama_paths, output_dir, scale_mode)
+    except Exception as e:
+        return f"Pipeline failed: {e}", _SPLAT_PLACEHOLDER, gr.update(visible=False, value=None)
+
+    if not ply_path or not os.path.exists(ply_path):
+        return "Pipeline finished but no PLY produced.", _SPLAT_PLACEHOLDER, gr.update(visible=False, value=None)
+
+    progress(1.0, desc="Done!")
+    return (
+        f"3DGS ready ({len(panorama_paths)} panos used).",
+        _build_splat_viewer(_file_url(ply_path)),
+        gr.update(visible=True, value=ply_path),
+    )
+
+
+# ── UI ─────────────────────────────────────────────────────────────────────────
+
+with gr.Blocks(title="Street View to 3DGS") as demo:
+    gr.Markdown(
+        "# Street View to 3DGS\n"
+        "Paste a Google Maps URL or `lat,lon`. Loads the panorama, then generates a 3D Gaussian Splat scene."
+    )
+
+    pano_state = gr.State(None)
+
+    with gr.Row(equal_height=True):
+        url_input = gr.Textbox(
+            placeholder="Google Maps URL or lat,lon (e.g. 1.3237, 103.7555)",
+            show_label=False,
+            container=False,
+            scale=5,
+        )
+        load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
+
+    status = gr.Textbox(label="Status", value="Paste a Google Maps URL to start.", interactive=False)
+
+    with gr.Row():
+        map_view = gr.HTML(_MAP_PLACEHOLDER)
+        pano_view = gr.HTML(_PANO_PLACEHOLDER)
+
+    gr.Markdown("---")
+    with gr.Row(equal_height=True):
+        scale_mode = gr.Dropdown(
+            choices=["da3_y_ground", "da3_2dgrid_global"],
+            value="da3_y_ground",
+            show_label=False,
+            container=False,
+            scale=3,
+        )
+        generate_btn = gr.Button("Generate 3DGS", variant="primary", scale=1, min_width=160)
+
+    splat_view = gr.HTML(_SPLAT_PLACEHOLDER)
+    ply_download = gr.DownloadButton(
+        label="⬇  Download 3DGS (.ply)",
+        visible=False,
+        variant="primary",
+        size="lg",
+    )
+
+    load_btn.click(
+        fn=handle_load,
+        inputs=[url_input],
+        outputs=[status, map_view, pano_view, pano_state],
+    )
+
+    generate_btn.click(
+        fn=handle_generate,
+        inputs=[pano_state, scale_mode],
+        outputs=[status, splat_view, ply_download],
+        show_progress="minimal",
+    )
+
+
+if __name__ == "__main__":
+    demo.launch(
+        allowed_paths=[IMAGES_DIR, SPLATS_DIR],
+        server_name="0.0.0.0",
+        server_port=7860,
+        theme=gr.themes.Default(),
+    )

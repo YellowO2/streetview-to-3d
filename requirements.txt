@@ -47,6 +47,7 @@ einops==0.8.2
 email-validator==2.3.0
 evo==1.36.3
 executing==2.2.1
+gradio>=4.0.0
 fastapi==0.136.0
 fastapi-cli==0.0.24
 fastapi-cloud-cli==0.15.1

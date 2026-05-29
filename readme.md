@@ -1,4 +1,6 @@
-# google-map-to-3d
+# Street View to 3DGS
+
+Convert Google Street View panoramas into 3D Gaussian Splat scenes.
 
 ## Requirements
 
