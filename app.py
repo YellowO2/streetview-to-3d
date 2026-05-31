@@ -369,29 +369,23 @@ def handle_generate(pano_state, scale_mode, progress=gr.Progress()):
     )
     for i, n in enumerate(neighbors):
         try:
-            progress(
-                0.01 + 0.04 * (i + 1) / max(len(neighbors), 1),
-                desc=f"Downloading support pano {i+1}/{len(neighbors)}...",
-            )
+            progress(0, desc=f"Downloading support pano {i+1}/{len(neighbors)}...")
             p = _run_async(_download(n["lat"], n["lon"]))
             if p:
                 support_paths.append(p)
         except Exception:
             pass
 
-    progress(0.05, desc="Running 3DGS pipeline (~2 min)...")
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     panorama_paths = [target_path, *support_paths]
-
-    # Real progress: the pipeline calls this at each stage boundary. We sit at
-    # 0.05 until the first stage report, then climb stage-by-stage to ~1.0.
-    def _on_stage(frac: float, msg: str) -> None:
-        progress(frac, desc=msg)
 
     t_start = time.time()
     try:
         ply_path = _run_pipeline_gpu(
-            panorama_paths, output_dir, scale_mode, progress_callback=_on_stage
+            panorama_paths,
+            output_dir,
+            scale_mode,
+            progress_callback=lambda f, msg: progress(f, desc=msg),
         )
     except Exception as e:
         yield (
