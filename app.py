@@ -268,7 +268,7 @@ document.addEventListener('visibilitychange', () => {{
 
 
 @GPU
-def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, progress_callback=None):
+def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode):
     from panoramic_to_3dgs import Pipeline
     from config import load_pipeline_config
 
@@ -276,10 +276,7 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, progress_callback=
     config = load_pipeline_config()
     config.scale_mode = scale_mode
     Pipeline(config).run(
-        panorama_paths=panorama_paths,
-        output_dir=output_dir,
-        target_pano_id=0,
-        progress_callback=progress_callback,
+        panorama_paths=panorama_paths, output_dir=output_dir, target_pano_id=0
     )
 
     ply = os.path.join(output_dir, "final_output.ply")
@@ -341,7 +338,7 @@ def handle_upload(file_path):
     )
 
 
-def handle_generate(pano_state, scale_mode, progress=gr.Progress()):
+def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True)):
     if not pano_state or not pano_state.get("image_path"):
         yield (
             "Load a Street View location or upload a panorama first.",
@@ -381,12 +378,7 @@ def handle_generate(pano_state, scale_mode, progress=gr.Progress()):
 
     t_start = time.time()
     try:
-        ply_path = _run_pipeline_gpu(
-            panorama_paths,
-            output_dir,
-            scale_mode,
-            progress_callback=lambda f, msg: progress(f, desc=msg),
-        )
+        ply_path = _run_pipeline_gpu(panorama_paths, output_dir, scale_mode)
     except Exception as e:
         yield (
             f"Pipeline failed: {e}",
