@@ -23,7 +23,7 @@ Check out the demo on [Hugging Face](https://huggingface.co/spaces/potato-bug/st
 <td align="center"><sub>Comparison with HunyuanWorld 2.0 + World Marble 1.1</sub></td>
 </tr>
 <tr>
-<td width="50%"><a href="https://youtu.be/mzIDZWxv4vA"><img src="https://img.youtube.com/vi/mzIDZWxv4vA/maxresdefault.jpg" alt="Demo video"></a></td>
+<td width="50%"><a href="https://youtu.be/mzIDZWxv4vA"><img src="https://img.youtube.com/vi/mzIDZWxv4vA/hqdefault.jpg" alt="Demo video"></a></td>
 <td width="50%"><a href="https://youtu.be/fYANbQXMZ_0"><img src="https://img.youtube.com/vi/fYANbQXMZ_0/maxresdefault.jpg" alt="Comparison with HunyuanWorld 2.0 + World Marble 1.1"></a></td>
 </tr>
 </table>
