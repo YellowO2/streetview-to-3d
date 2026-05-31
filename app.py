@@ -9,6 +9,8 @@ import asyncio
 import html as html_lib
 import os
 import re
+import threading
+import time
 import uuid
 
 import aiohttp
@@ -16,7 +18,8 @@ import gradio as gr
 
 try:
     import spaces
-    GPU = spaces.GPU
+
+    GPU = spaces.GPU(duration=240)
 except ImportError:
     GPU = lambda fn: fn  # no-op outside HF Spaces
 
@@ -45,6 +48,7 @@ os.makedirs(SPLATS_DIR, exist_ok=True)
 
 # ── async helpers ──────────────────────────────────────────────────────────────
 
+
 def _run_async(coro):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -61,7 +65,7 @@ async def _fetch_pano(lat, lon):
         if not pano:
             return None
         neighbors = []
-        for item in (pano.links or pano.neighbors):
+        for item in pano.links or pano.neighbors:
             n = item.pano if hasattr(item, "pano") else item
             if n and n.lat is not None:
                 neighbors.append({"id": n.id, "lat": n.lat, "lon": n.lon})
@@ -82,6 +86,7 @@ async def _download(lat, lon):
 
 # ── input parsing ──────────────────────────────────────────────────────────────
 
+
 def _extract_lat_lon(raw: str):
     raw = raw.strip()
     m = re.search(r"@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)", raw)
@@ -94,6 +99,7 @@ def _extract_lat_lon(raw: str):
 
 
 # ── HTML / iframe builders ─────────────────────────────────────────────────────
+
 
 def _file_url(abs_path: str) -> str:
     """Build Gradio's file-serving URL. /gradio_api/file= is the route in Gradio 5+."""
@@ -201,15 +207,23 @@ document.addEventListener('visibilitychange', () => {{
 
 def _build_splat_viewer(ply_url: str) -> str:
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>body{{margin:0;background:#000;overflow:hidden}}canvas{{display:block}}
-#hint{{position:fixed;bottom:8px;right:8px;color:rgba(255,255,255,.4);font:11px sans-serif;pointer-events:none}}</style>
+<style>body{{margin:0;background:#000;overflow:hidden;font:14px sans-serif;color:#bbb}}canvas{{display:block}}
+#hint{{position:fixed;bottom:8px;right:8px;color:rgba(255,255,255,.4);font:11px sans-serif;pointer-events:none}}
+#loading{{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;
+  background:#000;transition:opacity .4s;pointer-events:none;padding:1em}}
+#loading.gone{{opacity:0}}
+.dot{{display:inline-block;animation:blink 1.4s infinite both}}
+.dot:nth-child(2){{animation-delay:.2s}}.dot:nth-child(3){{animation-delay:.4s}}
+@keyframes blink{{0%,80%,100%{{opacity:0}}40%{{opacity:1}}}}</style>
 <script type="importmap">
 {{"imports":{{
     "three":"https://unpkg.com/three@0.178.0/build/three.module.js",
     "three/addons/":"https://unpkg.com/three@0.178.0/examples/jsm/",
     "@sparkjsdev/spark":"https://sparkjs.dev/releases/spark/0.1.10/spark.module.js"
 }}}}
-</script></head><body><div id="hint">drag to move</div>
+</script></head><body>
+<div id="loading">Loading 3DGS scene<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span><br><small style="color:#666">(a few hundred MB — ~30s)</small></div>
+<div id="hint">drag to move</div>
 <script type="module">
 import * as THREE from 'three';
 import {{ SplatMesh, SparkControls }} from '@sparkjsdev/spark';
@@ -223,6 +237,21 @@ const controls = new SparkControls({{canvas: renderer.domElement}});
 const splat = new SplatMesh({{url: '{ply_url}'}});
 splat.quaternion.set(1, 0, 0, 0);  // flip 180° around X — splats come out upside-down otherwise
 scene.add(splat);
+const hideLoading = () => {{
+    const el = document.getElementById('loading');
+    if (el) {{ el.classList.add('gone'); setTimeout(() => el.remove(), 500); }}
+}};
+if (splat.initialized && typeof splat.initialized.then === 'function') {{
+    splat.initialized.then(hideLoading).catch(hideLoading);
+}} else {{
+    // Fallback: hide once the splat has any visible content (numSplats > 0).
+    const check = () => {{
+        if (splat.numSplats && splat.numSplats > 0) hideLoading();
+        else setTimeout(check, 500);
+    }};
+    check();
+    setTimeout(hideLoading, 90000);  // hard cap
+}}
 addEventListener('resize', () => {{
     camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
@@ -238,6 +267,7 @@ document.addEventListener('visibilitychange', () => {{
 
 # ── GPU pipeline ───────────────────────────────────────────────────────────────
 
+
 @GPU
 def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode):
     from panoramic_to_3dgs import Pipeline
@@ -246,13 +276,16 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode):
     os.makedirs(output_dir, exist_ok=True)
     config = load_pipeline_config()
     config.scale_mode = scale_mode
-    Pipeline(config).run(panorama_paths=panorama_paths, output_dir=output_dir, target_pano_id=0)
+    Pipeline(config).run(
+        panorama_paths=panorama_paths, output_dir=output_dir, target_pano_id=0
+    )
 
     ply = os.path.join(output_dir, "final_output.ply")
     return ply if os.path.exists(ply) else None
 
 
 # ── handlers ───────────────────────────────────────────────────────────────────
+
 
 def handle_load(url_input):
     try:
@@ -265,12 +298,22 @@ def handle_load(url_input):
     except Exception as e:
         return f"Error: {e}", _MAP_PLACEHOLDER, _PANO_PLACEHOLDER, None
     if not meta:
-        return "Panorama not found at that location.", _MAP_PLACEHOLDER, _PANO_PLACEHOLDER, None
+        return (
+            "Panorama not found at that location.",
+            _MAP_PLACEHOLDER,
+            _PANO_PLACEHOLDER,
+            None,
+        )
 
     try:
         img_path = _run_async(_download(meta["lat"], meta["lon"]))
     except Exception as e:
-        return f"Download failed: {e}", _build_map(meta["lat"], meta["lon"]), _PANO_PLACEHOLDER, None
+        return (
+            f"Download failed: {e}",
+            _build_map(meta["lat"], meta["lon"]),
+            _PANO_PLACEHOLDER,
+            None,
+        )
 
     state = {"source": "streetview", "image_path": img_path, **meta}
     status = f"Loaded pano {meta['id']} at ({meta['lat']:.5f}, {meta['lon']:.5f}). Click Generate 3DGS to continue."
@@ -298,38 +341,93 @@ def handle_upload(file_path):
 
 def handle_generate(pano_state, scale_mode, progress=gr.Progress()):
     if not pano_state or not pano_state.get("image_path"):
-        return "Load a Street View location or upload a panorama first.", _SPLAT_PLACEHOLDER, gr.update(visible=False, value=None)
+        yield (
+            "Load a Street View location or upload a panorama first.",
+            _SPLAT_PLACEHOLDER,
+            gr.update(visible=False, value=None),
+        )
+        return
+
+    # Clear any previous splat from the viewer immediately so the old scene
+    # doesn't linger during the next 2-min run.
+    yield (
+        "Starting...",
+        _SPLAT_PLACEHOLDER,
+        gr.update(visible=False, value=None),
+    )
 
     target_path = pano_state["image_path"]
     support_paths = []
 
     # Only Street View sources have neighbor metadata to fetch depth-support panos from.
-    neighbors = pano_state.get("neighbors", [])[:MAX_SUPPORT_PANOS] if pano_state.get("source") == "streetview" else []
+    neighbors = (
+        pano_state.get("neighbors", [])[:MAX_SUPPORT_PANOS]
+        if pano_state.get("source") == "streetview"
+        else []
+    )
     for i, n in enumerate(neighbors):
         try:
-            progress(0.05 + 0.15 * (i + 1) / max(len(neighbors), 1),
-                     desc=f"Downloading support pano {i+1}/{len(neighbors)}...")
+            progress(
+                0.01 + 0.04 * (i + 1) / max(len(neighbors), 1),
+                desc=f"Downloading support pano {i+1}/{len(neighbors)}...",
+            )
             p = _run_async(_download(n["lat"], n["lon"]))
             if p:
                 support_paths.append(p)
         except Exception:
             pass
 
-    progress(0.25, desc="Running 3DGS pipeline (a few minutes)...")
+    progress(0.05, desc="Running 3DGS pipeline (~2 min)...")
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     panorama_paths = [target_path, *support_paths]
+
+    # Fake-tick progress while the pipeline runs — it's a single blocking call
+    # so we can't get real progress out of it. Asymptotic curve climbs from 0.05
+    # toward ~0.95 over ~120s (typical run), never quite reaching 1.0.
+    stop = threading.Event()
+
+    def _tick():
+        t0 = time.time()
+        while not stop.is_set():
+            elapsed = time.time() - t0
+            frac = 0.05 + 0.90 * (1 - 2 ** (-elapsed / 60))
+            try:
+                progress(frac, desc="Running 3DGS pipeline (~2 min)...")
+            except Exception:
+                break
+            if stop.wait(timeout=1.5):
+                break
+
+    ticker = threading.Thread(target=_tick, daemon=True)
+    ticker.start()
+    t_start = time.time()
 
     try:
         ply_path = _run_pipeline_gpu(panorama_paths, output_dir, scale_mode)
     except Exception as e:
-        return f"Pipeline failed: {e}", _SPLAT_PLACEHOLDER, gr.update(visible=False, value=None)
+        stop.set()
+        yield (
+            f"Pipeline failed: {e}",
+            _SPLAT_PLACEHOLDER,
+            gr.update(visible=False, value=None),
+        )
+        return
+    finally:
+        stop.set()
+        ticker.join(timeout=2.0)
 
     if not ply_path or not os.path.exists(ply_path):
-        return "Pipeline finished but no PLY produced.", _SPLAT_PLACEHOLDER, gr.update(visible=False, value=None)
+        yield (
+            "Pipeline finished but no PLY produced.",
+            _SPLAT_PLACEHOLDER,
+            gr.update(visible=False, value=None),
+        )
+        return
 
+    elapsed = time.time() - t_start
     progress(1.0, desc="Done!")
-    return (
-        f"3DGS ready ({len(panorama_paths)} panos used).",
+    yield (
+        f"3DGS ready ({len(panorama_paths)} panos, {elapsed:.0f}s). Loading viewer (~30s for large scenes)...",
         _build_splat_viewer(_file_url(ply_path)),
         gr.update(visible=True, value=ply_path),
     )
@@ -340,7 +438,7 @@ def handle_generate(pano_state, scale_mode, progress=gr.Progress()):
 with gr.Blocks(title="Street View to 3DGS") as demo:
     gr.Markdown(
         "# Street View to 3DGS\n"
-        "Paste a Google Maps URL or `lat,lon`. Loads the panorama, then generates a 3D Gaussian Splat scene."
+        "Paste a Google Maps URL or `lat,lon`, load the panorama, then generate a 3D Gaussian Splat scene."
     )
 
     pano_state = gr.State(None)
@@ -357,12 +455,16 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
                 load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
         with gr.Tab("Upload Panorama"):
             upload_input = gr.File(
-                label="Upload an equirectangular panorama (.jpg / .png)",
+                label="Upload an equirectangular panorama (.jpg / .png). This is likely to return suboptimal results due to certain optimisations not made.",
                 file_types=["image"],
                 type="filepath",
             )
 
-    status = gr.Textbox(label="Status", value="Paste a Google Maps URL or upload a panorama to start.", interactive=False)
+    status = gr.Textbox(
+        label="Status",
+        value="Paste a Google Maps URL or upload a panorama to start.",
+        interactive=False,
+    )
 
     with gr.Row():
         map_view = gr.HTML(_MAP_PLACEHOLDER)
@@ -377,7 +479,9 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
             container=False,
             scale=3,
         )
-        generate_btn = gr.Button("Generate 3DGS", variant="primary", scale=1, min_width=160)
+        generate_btn = gr.Button(
+            "Generate 3DGS", variant="primary", scale=1, min_width=160
+        )
 
     splat_view = gr.HTML(_SPLAT_PLACEHOLDER)
     ply_download = gr.DownloadButton(
@@ -404,6 +508,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         inputs=[pano_state, scale_mode],
         outputs=[status, splat_view, ply_download],
         show_progress="minimal",
+        show_progress_on=[splat_view],
     )
 
 
