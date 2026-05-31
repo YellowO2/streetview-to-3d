@@ -9,7 +9,6 @@ import asyncio
 import html as html_lib
 import os
 import re
-import threading
 import time
 import uuid
 
@@ -269,7 +268,7 @@ document.addEventListener('visibilitychange', () => {{
 
 
 @GPU
-def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode):
+def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, progress_callback=None):
     from panoramic_to_3dgs import Pipeline
     from config import load_pipeline_config
 
@@ -277,7 +276,10 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode):
     config = load_pipeline_config()
     config.scale_mode = scale_mode
     Pipeline(config).run(
-        panorama_paths=panorama_paths, output_dir=output_dir, target_pano_id=0
+        panorama_paths=panorama_paths,
+        output_dir=output_dir,
+        target_pano_id=0,
+        progress_callback=progress_callback,
     )
 
     ply = os.path.join(output_dir, "final_output.ply")
@@ -381,40 +383,23 @@ def handle_generate(pano_state, scale_mode, progress=gr.Progress()):
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     panorama_paths = [target_path, *support_paths]
 
-    # Fake-tick progress while the pipeline runs — it's a single blocking call
-    # so we can't get real progress out of it. Asymptotic curve climbs from 0.05
-    # toward ~0.95 over ~120s (typical run), never quite reaching 1.0.
-    stop = threading.Event()
+    # Real progress: the pipeline calls this at each stage boundary. We sit at
+    # 0.05 until the first stage report, then climb stage-by-stage to ~1.0.
+    def _on_stage(frac: float, msg: str) -> None:
+        progress(frac, desc=msg)
 
-    def _tick():
-        t0 = time.time()
-        while not stop.is_set():
-            elapsed = time.time() - t0
-            frac = 0.05 + 0.90 * (1 - 2 ** (-elapsed / 60))
-            try:
-                progress(frac, desc="Running 3DGS pipeline (~2 min)...")
-            except Exception:
-                break
-            if stop.wait(timeout=1.5):
-                break
-
-    ticker = threading.Thread(target=_tick, daemon=True)
-    ticker.start()
     t_start = time.time()
-
     try:
-        ply_path = _run_pipeline_gpu(panorama_paths, output_dir, scale_mode)
+        ply_path = _run_pipeline_gpu(
+            panorama_paths, output_dir, scale_mode, progress_callback=_on_stage
+        )
     except Exception as e:
-        stop.set()
         yield (
             f"Pipeline failed: {e}",
             _SPLAT_PLACEHOLDER,
             gr.update(visible=False, value=None),
         )
         return
-    finally:
-        stop.set()
-        ticker.join(timeout=2.0)
 
     if not ply_path or not os.path.exists(ply_path):
         yield (
