@@ -19,8 +19,10 @@ try:
     import spaces
 
     GPU = spaces.GPU(duration=240)
+    GPU_EDIT = spaces.GPU(duration=180)
 except ImportError:
     GPU = lambda fn: fn  # no-op outside HF Spaces
+    GPU_EDIT = lambda fn: fn
 
 from streetlevel import streetview
 from services.download_street_panorama import download_panorama_image
@@ -283,6 +285,20 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode):
     return ply if os.path.exists(ply) else None
 
 
+_editor = None
+
+
+@GPU_EDIT
+def _run_editor_gpu(image_path, prompt, mode, output_path):
+    global _editor
+    from components.ImageCleaner.ImageCleaner import ImageCleaner
+
+    if _editor is None:
+        _editor = ImageCleaner(offload=False)
+    _editor.edit(image_path, prompt, mode=mode, output_path=output_path)
+    return output_path
+
+
 # ── handlers ───────────────────────────────────────────────────────────────────
 
 
@@ -335,6 +351,42 @@ def handle_upload(file_path):
         _MAP_PLACEHOLDER,  # no map for uploads
         _build_pano_viewer(_file_url(abs_path)),
         state,
+    )
+
+
+EDIT_MODES = {
+    "General edit": "general",
+    "Remove people & vehicles": "remove_objects",
+}
+
+
+def handle_edit(pano_state, prompt, mode_label, progress=gr.Progress()):
+    if not pano_state or not pano_state.get("image_path"):
+        return (
+            "Load a Street View location or upload a panorama first.",
+            _PANO_PLACEHOLDER,
+            pano_state,
+        )
+    if not prompt or not prompt.strip():
+        return ("Enter an edit prompt.", gr.update(), pano_state)
+
+    mode = EDIT_MODES.get(mode_label, "general")
+    src = pano_state["image_path"]
+    out_path = os.path.join(IMAGES_DIR, f"edit_{uuid.uuid4().hex}.png")
+
+    progress(0, desc="Loading editor + running edit (~30s)...")
+    t0 = time.time()
+    try:
+        _run_editor_gpu(src, prompt.strip(), mode, out_path)
+    except Exception as e:
+        return (f"Edit failed: {e}", gr.update(), pano_state)
+
+    new_state = {**pano_state, "image_path": out_path}
+    elapsed = time.time() - t0
+    return (
+        f"Edit applied ({elapsed:.0f}s). Click Generate 3DGS to splat the edited pano.",
+        _build_pano_viewer(_file_url(out_path)),
+        new_state,
     )
 
 
@@ -442,6 +494,24 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         pano_view = gr.HTML(_PANO_PLACEHOLDER)
 
     gr.Markdown("---")
+    gr.Markdown("### Edit panorama (optional)")
+    with gr.Row(equal_height=True):
+        edit_prompt = gr.Textbox(
+            placeholder="e.g. Make it nighttime, remove the cars, change weather to snow",
+            show_label=False,
+            container=False,
+            scale=4,
+        )
+        edit_mode = gr.Dropdown(
+            choices=list(EDIT_MODES.keys()),
+            value="General edit",
+            show_label=False,
+            container=False,
+            scale=2,
+        )
+        edit_btn = gr.Button("Edit image", scale=1, min_width=120)
+
+    gr.Markdown("---")
     with gr.Row(equal_height=True):
         scale_mode = gr.Dropdown(
             choices=["da3_y_ground", "da3_2dgrid_global"],
@@ -472,6 +542,14 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         fn=handle_upload,
         inputs=[upload_input],
         outputs=[status, map_view, pano_view, pano_state],
+    )
+
+    edit_btn.click(
+        fn=handle_edit,
+        inputs=[pano_state, edit_prompt, edit_mode],
+        outputs=[status, pano_view, pano_state],
+        show_progress="minimal",
+        show_progress_on=[pano_view],
     )
 
     generate_btn.click(
