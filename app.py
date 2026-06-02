@@ -20,9 +20,11 @@ try:
 
     GPU = spaces.GPU(duration=240)
     GPU_EDIT = spaces.GPU(duration=180)
+    ON_SPACES = True
 except ImportError:
     GPU = lambda fn: fn  # no-op outside HF Spaces
     GPU_EDIT = lambda fn: fn
+    ON_SPACES = False
 
 from streetlevel import streetview
 from services.download_street_panorama import download_panorama_image
@@ -286,15 +288,22 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode):
 
 
 _editor = None
+if ON_SPACES:
+    # Eager-load at module level: ZeroGPU's boot-time CUDA mode supports the bulk
+    # .to("cuda") for huge multi-shard pipelines. Lazy loading inside @spaces.GPU
+    # crashes with NVML errors. Boot is slow (~5min cold), but each edit is fast
+    # (~15s) and burns minimal quota.
+    from components.ImageCleaner.ImageCleaner import ImageCleaner
+    _editor = ImageCleaner(offload=False)
 
 
 @GPU_EDIT
 def _run_editor_gpu(image_path, prompt, mode, output_path):
     global _editor
-    from components.ImageCleaner.ImageCleaner import ImageCleaner
-
     if _editor is None:
-        _editor = ImageCleaner(offload=False)
+        # Local fallback: lazy load with offload (won't OOM on 16GB cards).
+        from components.ImageCleaner.ImageCleaner import ImageCleaner
+        _editor = ImageCleaner(offload=True)
     _editor.edit(image_path, prompt, mode=mode, output_path=output_path)
     return output_path
 
