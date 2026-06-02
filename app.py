@@ -502,6 +502,12 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         map_view = gr.HTML(_MAP_PLACEHOLDER)
         pano_view = gr.HTML(_PANO_PLACEHOLDER)
 
+    pano_download = gr.DownloadButton(
+        label="⬇  Download current panorama",
+        visible=False,
+        size="sm",
+    )
+
     gr.Markdown("---")
     gr.Markdown("### Edit panorama (optional)")
     with gr.Row(equal_height=True):
@@ -539,6 +545,18 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         visible=False,
         variant="primary",
         size="lg",
+    )
+
+    def _refresh_pano_download(state):
+        path = (state or {}).get("image_path") if state else None
+        if path and os.path.exists(path):
+            return gr.update(visible=True, value=path)
+        return gr.update(visible=False, value=None)
+
+    pano_state.change(
+        fn=_refresh_pano_download,
+        inputs=[pano_state],
+        outputs=[pano_download],
     )
 
     load_btn.click(

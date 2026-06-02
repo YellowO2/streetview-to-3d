@@ -7,7 +7,7 @@ huggingface_hub
 pyyaml
 
 streetlevel @ git+https://github.com/YellowO2/streetlevel.git@e765f238462020c2b641d0c2e026c9d10a983aa6
-panoramic-to-3dgs @ git+https://github.com/YellowO2/panoramic-to-3dgs.git@dbd0b568bc39bb4a55a2c4cb9aece9d10a274f11
+panoramic-to-3dgs @ git+https://github.com/YellowO2/panoramic-to-3dgs.git@fff6b5a8f428b6fe1ca68b5ac6d6e745281d357a
 peft
 depth-anything-3 @ git+https://github.com/ByteDance-Seed/Depth-Anything-3.git@41736238f5bced4debf3f2a12375d2466874866d
 sharp @ git+https://github.com/apple/ml-sharp.git@1eaa046834b81852261262b41b0919f5c1efdd2e
