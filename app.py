@@ -18,8 +18,8 @@ import gradio as gr
 try:
     import spaces
 
-    GPU = spaces.GPU(duration=240)
-    GPU_EDIT = spaces.GPU(duration=180)
+    GPU = spaces.GPU(duration=180)
+    GPU_EDIT = spaces.GPU(duration=60)
     ON_SPACES = True
 except ImportError:
     GPU = lambda fn: fn  # no-op outside HF Spaces
@@ -208,7 +208,20 @@ document.addEventListener('visibilitychange', () => {{
     return _iframe(doc)
 
 
-def _build_splat_viewer(ply_url: str) -> str:
+def _splat_viewer_with_download(ply_url: str) -> str:
+    """Splat iframe + an inline download link below it. The link rides inside
+    the same HTML payload as the viewer, so it survives backgrounded-tab
+    WebSocket throttling that would otherwise drop separate component updates."""
+    download_link = (
+        f'<a href="{ply_url}" download '
+        f'style="display:inline-block;margin-top:8px;padding:10px 16px;'
+        f'background:#5b47d1;color:#fff;text-decoration:none;border-radius:8px;'
+        f'font:600 14px sans-serif;">⬇ Download 3DGS (.ply)</a>'
+    )
+    return f'<div>{_build_splat_iframe(ply_url)}{download_link}</div>'
+
+
+def _build_splat_iframe(ply_url: str) -> str:
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>body{{margin:0;background:#000;overflow:hidden;font:14px sans-serif;color:#bbb}}canvas{{display:block}}
 #hint{{position:fixed;bottom:8px;right:8px;color:rgba(255,255,255,.4);font:11px sans-serif;pointer-events:none}}
@@ -401,20 +414,12 @@ def handle_edit(pano_state, prompt, mode_label, progress=gr.Progress()):
 
 def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True)):
     if not pano_state or not pano_state.get("image_path"):
-        yield (
-            "Load a Street View location or upload a panorama first.",
-            _SPLAT_PLACEHOLDER,
-            gr.update(visible=False, value=None),
-        )
+        yield ("Load a Street View location or upload a panorama first.", _SPLAT_PLACEHOLDER)
         return
 
     # Clear any previous splat from the viewer immediately so the old scene
     # doesn't linger during the next 2-min run.
-    yield (
-        "Starting...",
-        _SPLAT_PLACEHOLDER,
-        gr.update(visible=False, value=None),
-    )
+    yield ("Starting...", _SPLAT_PLACEHOLDER)
 
     target_path = pano_state["image_path"]
     support_paths = []
@@ -441,27 +446,18 @@ def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True
     try:
         ply_path = _run_pipeline_gpu(panorama_paths, output_dir, scale_mode)
     except Exception as e:
-        yield (
-            f"Pipeline failed: {e}",
-            _SPLAT_PLACEHOLDER,
-            gr.update(visible=False, value=None),
-        )
+        yield (f"Pipeline failed: {e}", _SPLAT_PLACEHOLDER)
         return
 
     if not ply_path or not os.path.exists(ply_path):
-        yield (
-            "Pipeline finished but no PLY produced.",
-            _SPLAT_PLACEHOLDER,
-            gr.update(visible=False, value=None),
-        )
+        yield ("Pipeline finished but no PLY produced.", _SPLAT_PLACEHOLDER)
         return
 
     elapsed = time.time() - t_start
     progress(1.0, desc="Done!")
     yield (
         f"3DGS ready ({len(panorama_paths)} panos, {elapsed:.0f}s). Loading viewer (~30s for large scenes)...",
-        _build_splat_viewer(_file_url(ply_path)),
-        gr.update(visible=True, value=ply_path),
+        _splat_viewer_with_download(_file_url(ply_path)),
     )
 
 
@@ -540,12 +536,6 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         )
 
     splat_view = gr.HTML(_SPLAT_PLACEHOLDER)
-    ply_download = gr.DownloadButton(
-        label="⬇  Download 3DGS (.ply)",
-        visible=False,
-        variant="primary",
-        size="lg",
-    )
 
     def _refresh_pano_download(state):
         path = (state or {}).get("image_path") if state else None
@@ -582,7 +572,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     generate_btn.click(
         fn=handle_generate,
         inputs=[pano_state, scale_mode],
-        outputs=[status, splat_view, ply_download],
+        outputs=[status, splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],
     )
