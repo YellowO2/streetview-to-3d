@@ -286,7 +286,7 @@ document.addEventListener('visibilitychange', () => {{
 
 
 @GPU
-def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode):
+def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, depth_panorama_paths=None):
     from panoramic_to_3dgs import Pipeline
     from config import load_pipeline_config
 
@@ -294,7 +294,10 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode):
     config = load_pipeline_config()
     config.scale_mode = scale_mode
     Pipeline(config).run(
-        panorama_paths=panorama_paths, output_dir=output_dir, target_pano_id=0
+        panorama_paths=panorama_paths,
+        output_dir=output_dir,
+        target_pano_id=0,
+        depth_panorama_paths=depth_panorama_paths,
     )
 
     ply = os.path.join(output_dir, "final_output.ply")
@@ -353,7 +356,12 @@ def handle_load(url_input):
             None,
         )
 
-    state = {"source": "streetview", "image_path": img_path, **meta}
+    state = {
+        "source": "streetview",
+        "image_path": img_path,
+        "original_image_path": img_path,
+        **meta,
+    }
     status = f"Loaded pano {meta['id']} at ({meta['lat']:.5f}, {meta['lon']:.5f}). Click Generate 3DGS to continue."
     return (
         status,
@@ -368,7 +376,12 @@ def handle_upload(file_path):
     if not file_path:
         return "No file uploaded.", _MAP_PLACEHOLDER, _PANO_PLACEHOLDER, None
     abs_path = os.path.abspath(file_path)
-    state = {"source": "upload", "image_path": abs_path, "neighbors": []}
+    state = {
+        "source": "upload",
+        "image_path": abs_path,
+        "original_image_path": abs_path,
+        "neighbors": [],
+    }
     return (
         f"Uploaded panorama loaded. Click Generate 3DGS to continue.",
         _MAP_PLACEHOLDER,  # no map for uploads
@@ -383,7 +396,7 @@ EDIT_MODES = {
 }
 
 
-def handle_edit(pano_state, prompt, mode_label, progress=gr.Progress()):
+def handle_edit(pano_state, prompt, mode_label, preset_name, progress=gr.Progress()):
     if not pano_state or not pano_state.get("image_path"):
         return (
             "Load a Street View location or upload a panorama first.",
@@ -404,10 +417,20 @@ def handle_edit(pano_state, prompt, mode_label, progress=gr.Progress()):
     except Exception as e:
         return (f"Edit failed: {e}", gr.update(), pano_state)
 
+    # Geometry-preserving edits (lighting presets) keep original_image_path
+    # pinned so depth runs against the un-relit pano. Object removal or
+    # freeform edits assume geometry may have changed, so original moves too.
+    geom_preserving = (
+        preset_name and preset_name != "(none)" and mode == "general"
+    )
     new_state = {**pano_state, "image_path": out_path}
+    if not geom_preserving:
+        new_state["original_image_path"] = out_path
+
     elapsed = time.time() - t0
+    note = " (depth will use original pano)" if geom_preserving else ""
     return (
-        f"Edit applied ({elapsed:.0f}s). Click Generate 3DGS to splat the edited pano.",
+        f"Edit applied ({elapsed:.0f}s){note}. Click Generate 3DGS to splat the edited pano.",
         _build_pano_viewer(_file_url(out_path)),
         new_state,
     )
@@ -423,6 +446,7 @@ def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True
     yield ("Starting...", _SPLAT_PLACEHOLDER)
 
     target_path = pano_state["image_path"]
+    target_depth_path = pano_state.get("original_image_path", target_path)
     support_paths = []
 
     # Only Street View sources have neighbor metadata to fetch depth-support panos from.
@@ -442,10 +466,20 @@ def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True
 
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     panorama_paths = [target_path, *support_paths]
+    # Support panos are always originals (never edited), so depth list just
+    # swaps the target slot. Pass None when nothing differs to keep the
+    # pipeline path identical to pre-split behavior.
+    depth_paths = (
+        [target_depth_path, *support_paths]
+        if target_depth_path != target_path
+        else None
+    )
 
     t_start = time.time()
     try:
-        ply_path = _run_pipeline_gpu(panorama_paths, output_dir, scale_mode)
+        ply_path = _run_pipeline_gpu(
+            panorama_paths, output_dir, scale_mode, depth_panorama_paths=depth_paths
+        )
     except Exception as e:
         yield (f"Pipeline failed: {e}", _SPLAT_PLACEHOLDER)
         return
@@ -581,7 +615,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
 
     edit_btn.click(
         fn=handle_edit,
-        inputs=[pano_state, edit_prompt, edit_mode],
+        inputs=[pano_state, edit_prompt, edit_mode, lighting_preset],
         outputs=[status, pano_view, pano_state],
         show_progress="minimal",
         show_progress_on=[pano_view],
