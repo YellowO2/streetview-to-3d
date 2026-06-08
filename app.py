@@ -28,6 +28,7 @@ except ImportError:
 
 from streetlevel import streetview
 from services.download_street_panorama import download_panorama_image
+from prompts.lighting import PRESET_NAMES, build_prompt
 
 _BROWSER_HEADERS = {
     "User-Agent": (
@@ -507,20 +508,37 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     gr.Markdown("---")
     gr.Markdown("### Edit panorama (optional)")
     with gr.Row(equal_height=True):
-        edit_prompt = gr.Textbox(
-            placeholder="e.g. Make it nighttime, remove the cars, change weather to snow",
-            show_label=False,
-            container=False,
-            scale=4,
+        lighting_preset = gr.Dropdown(
+            choices=PRESET_NAMES,
+            value="(none)",
+            label="Time of day preset",
+            scale=2,
         )
         edit_mode = gr.Dropdown(
             choices=list(EDIT_MODES.keys()),
             value="General edit",
-            show_label=False,
-            container=False,
+            label="Edit mode",
             scale=2,
         )
+    with gr.Row(equal_height=True):
+        edit_prompt = gr.Textbox(
+            placeholder="Pick a preset above to auto-fill, or type your own (e.g. remove the cars, add snow)",
+            show_label=False,
+            container=False,
+            scale=4,
+            lines=2,
+        )
         edit_btn = gr.Button("Edit image", scale=1, min_width=120)
+
+    def _apply_preset(preset_name):
+        prompt = build_prompt(preset_name)
+        return gr.update(value=prompt) if prompt else gr.update()
+
+    lighting_preset.change(
+        fn=_apply_preset,
+        inputs=[lighting_preset],
+        outputs=[edit_prompt],
+    )
 
     gr.Markdown("---")
     with gr.Row(equal_height=True):
