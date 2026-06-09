@@ -18,9 +18,15 @@ import gradio as gr
 try:
     import spaces
 
-    GPU = spaces.GPU(duration=180)
-    GPU_EDIT = spaces.GPU(duration=120)
-    ON_SPACES = True
+    # spaces is also installed locally via requirements.txt, so gate on SPACE_ID
+    # which HF Spaces always sets but local machines don't have.
+    ON_SPACES = bool(os.getenv("SPACE_ID"))
+    if ON_SPACES:
+        GPU = spaces.GPU(duration=180)
+        GPU_EDIT = spaces.GPU(duration=120)
+    else:
+        GPU = lambda fn: fn
+        GPU_EDIT = lambda fn: fn
 except ImportError:
     GPU = lambda fn: fn  # no-op outside HF Spaces
     GPU_EDIT = lambda fn: fn
