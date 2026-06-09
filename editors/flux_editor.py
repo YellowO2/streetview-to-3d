@@ -1,9 +1,10 @@
 import torch
-from diffusers import AutoPipelineForImage2Image
+from diffusers import Flux2KleinPipeline
 from diffusers.utils import load_image
 from PIL import Image
 
-DEFAULT_STEPS = 8
+DEFAULT_STEPS = 4
+DEFAULT_GUIDANCE = 1.0
 
 
 class FluxEditor:
@@ -14,12 +15,12 @@ class FluxEditor:
         offload=False,
     ):
         self.device = device
-        self.pipe = AutoPipelineForImage2Image.from_pretrained(
+        self.pipe = Flux2KleinPipeline.from_pretrained(
             model_id,
             torch_dtype=torch.bfloat16,
         )
         if offload:
-            self.pipe.enable_sequential_cpu_offload()
+            self.pipe.enable_model_cpu_offload()
         else:
             self.pipe.to(device)
 
@@ -28,6 +29,7 @@ class FluxEditor:
         result = self.pipe(
             prompt=prompt,
             image=image,
+            guidance_scale=DEFAULT_GUIDANCE,
             num_inference_steps=DEFAULT_STEPS,
         ).images[0]
         if (result.width, result.height) != (image.width, image.height):
