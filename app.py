@@ -314,10 +314,15 @@ if ON_SPACES:
     from components.ImageCleaner.ImageCleaner import ImageCleaner
     _editor = ImageCleaner(offload=False)
 
-    # Pre-download FLUX.2-klein weights at boot (no GPU memory used) so the first
-    # GPU task loads from cache instead of downloading inside the quota window.
+    # Pre-download FLUX.2-klein weights in the background so the container starts
+    # immediately. By the time a user triggers a FLUX edit, weights will be cached.
+    import threading
     from huggingface_hub import snapshot_download
-    snapshot_download("black-forest-labs/FLUX.2-klein-9B")
+
+    def _prefetch_flux():
+        snapshot_download("black-forest-labs/FLUX.2-klein-9B")
+
+    threading.Thread(target=_prefetch_flux, daemon=True).start()
 
 
 @GPU_EDIT
