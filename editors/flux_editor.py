@@ -3,7 +3,6 @@ from diffusers import AutoPipelineForImage2Image
 from diffusers.utils import load_image
 from PIL import Image
 
-DEFAULT_STRENGTH = 0.75
 DEFAULT_STEPS = 28
 
 
@@ -29,7 +28,6 @@ class FluxEditor:
         result = self.pipe(
             prompt=prompt,
             image=image,
-            strength=DEFAULT_STRENGTH,
             num_inference_steps=DEFAULT_STEPS,
         ).images[0]
         if (result.width, result.height) != (image.width, image.height):
