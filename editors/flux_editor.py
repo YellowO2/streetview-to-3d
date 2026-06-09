@@ -3,7 +3,7 @@ from diffusers import AutoPipelineForImage2Image
 from diffusers.utils import load_image
 from PIL import Image
 
-DEFAULT_STEPS = 28
+DEFAULT_STEPS = 8
 
 
 class FluxEditor:

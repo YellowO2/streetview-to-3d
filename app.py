@@ -314,6 +314,11 @@ if ON_SPACES:
     from components.ImageCleaner.ImageCleaner import ImageCleaner
     _editor = ImageCleaner(offload=False)
 
+    # Pre-download FLUX.2-klein weights at boot (no GPU memory used) so the first
+    # GPU task loads from cache instead of downloading inside the quota window.
+    from huggingface_hub import snapshot_download
+    snapshot_download("black-forest-labs/FLUX.2-klein-9B")
+
 
 @GPU_EDIT
 def _run_editor_gpu(image_path, prompt, mode, output_path, edit_model="Qwen-Image-Edit-2511"):
