@@ -326,7 +326,7 @@ def _run_editor_gpu(image_path, prompt, mode, output_path, edit_model="Qwen-Imag
     if edit_model == "FLUX.2-klein":
         if _flux_editor is None:
             from editors.flux_editor import FluxEditor
-            _flux_editor = FluxEditor(offload=True)
+            _flux_editor = FluxEditor(offload=False)
         _flux_editor.edit(image_path, prompt, mode=mode, output_path=output_path)
     else:
         if _editor is None:
