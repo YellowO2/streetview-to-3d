@@ -286,13 +286,14 @@ document.addEventListener('visibilitychange', () => {{
 
 
 @GPU
-def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, depth_panorama_paths=None):
+def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, gs_backend, depth_panorama_paths=None):
     from panoramic_to_3dgs import Pipeline
     from config import load_pipeline_config
 
     os.makedirs(output_dir, exist_ok=True)
     config = load_pipeline_config()
     config.scale_mode = scale_mode
+    config.gs_backend = gs_backend
     Pipeline(config).run(
         panorama_paths=panorama_paths,
         output_dir=output_dir,
@@ -452,7 +453,7 @@ def handle_edit(pano_state, prompt, mode_label, preset_name, edit_model, progres
     )
 
 
-def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True)):
+def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(track_tqdm=True)):
     if not pano_state or not pano_state.get("image_path"):
         yield ("Load a Street View location or upload a panorama first.", _SPLAT_PLACEHOLDER)
         return
@@ -494,7 +495,7 @@ def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True
     t_start = time.time()
     try:
         ply_path = _run_pipeline_gpu(
-            panorama_paths, output_dir, scale_mode, depth_panorama_paths=depth_paths
+            panorama_paths, output_dir, scale_mode, gs_backend, depth_panorama_paths=depth_paths
         )
     except Exception as e:
         yield (f"Pipeline failed: {e}", _SPLAT_PLACEHOLDER)
@@ -598,12 +599,17 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
 
     gr.Markdown("---")
     with gr.Row(equal_height=True):
+        gs_backend = gr.Dropdown(
+            choices=["sharp", "da3"],
+            value="sharp",
+            label="GS backend",
+            scale=2,
+        )
         scale_mode = gr.Dropdown(
             choices=["da3_y_ground", "da3_2dgrid_global"],
             value="da3_y_ground",
-            show_label=False,
-            container=False,
-            scale=3,
+            label="Scale mode",
+            scale=2,
         )
         generate_btn = gr.Button(
             "Generate 3DGS", variant="primary", scale=1, min_width=160
@@ -645,7 +651,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
 
     generate_btn.click(
         fn=handle_generate,
-        inputs=[pano_state, scale_mode],
+        inputs=[pano_state, scale_mode, gs_backend],
         outputs=[status, splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],
