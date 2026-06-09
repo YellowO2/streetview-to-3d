@@ -19,7 +19,7 @@ try:
     import spaces
 
     GPU = spaces.GPU(duration=180)
-    GPU_EDIT = spaces.GPU(duration=60)
+    GPU_EDIT = spaces.GPU(duration=120)
     ON_SPACES = True
 except ImportError:
     GPU = lambda fn: fn  # no-op outside HF Spaces
