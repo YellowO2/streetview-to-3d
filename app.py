@@ -305,6 +305,7 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, depth_panorama_pat
 
 
 _editor = None
+_flux_editor = None
 if ON_SPACES:
     # Eager-load at module level: ZeroGPU's boot-time CUDA mode supports the bulk
     # .to("cuda") for huge multi-shard pipelines. Lazy loading inside @spaces.GPU
@@ -315,13 +316,18 @@ if ON_SPACES:
 
 
 @GPU_EDIT
-def _run_editor_gpu(image_path, prompt, mode, output_path):
-    global _editor
-    if _editor is None:
-        # Local fallback: lazy load with offload (won't OOM on 16GB cards).
-        from components.ImageCleaner.ImageCleaner import ImageCleaner
-        _editor = ImageCleaner(offload=True)
-    _editor.edit(image_path, prompt, mode=mode, output_path=output_path)
+def _run_editor_gpu(image_path, prompt, mode, output_path, edit_model="Qwen-Image-Edit-2511"):
+    global _editor, _flux_editor
+    if edit_model == "FLUX.2-klein":
+        if _flux_editor is None:
+            from editors.flux_editor import FluxEditor
+            _flux_editor = FluxEditor(offload=True)
+        _flux_editor.edit(image_path, prompt, mode=mode, output_path=output_path)
+    else:
+        if _editor is None:
+            from components.ImageCleaner.ImageCleaner import ImageCleaner
+            _editor = ImageCleaner(offload=True)
+        _editor.edit(image_path, prompt, mode=mode, output_path=output_path)
     return output_path
 
 
@@ -396,7 +402,7 @@ EDIT_MODES = {
 }
 
 
-def handle_edit(pano_state, prompt, mode_label, preset_name, progress=gr.Progress()):
+def handle_edit(pano_state, prompt, mode_label, preset_name, edit_model, progress=gr.Progress()):
     if not pano_state or not pano_state.get("image_path"):
         return (
             "Load a Street View location or upload a panorama first.",
@@ -413,7 +419,7 @@ def handle_edit(pano_state, prompt, mode_label, preset_name, progress=gr.Progres
     progress(0, desc="Loading editor + running edit (~30s)...")
     t0 = time.time()
     try:
-        _run_editor_gpu(src, prompt.strip(), mode, out_path)
+        _run_editor_gpu(src, prompt.strip(), mode, out_path, edit_model=edit_model)
     except Exception as e:
         return (f"Edit failed: {e}", gr.update(), pano_state)
 
@@ -554,6 +560,12 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
             label="Edit mode",
             scale=2,
         )
+        edit_model_selector = gr.Dropdown(
+            choices=["Qwen-Image-Edit-2511", "FLUX.2-klein"],
+            value="Qwen-Image-Edit-2511",
+            label="Edit model",
+            scale=2,
+        )
     with gr.Row(equal_height=True):
         edit_prompt = gr.Textbox(
             placeholder="Pick a preset above to auto-fill, or type your own (e.g. remove the cars, add snow)",
@@ -615,7 +627,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
 
     edit_btn.click(
         fn=handle_edit,
-        inputs=[pano_state, edit_prompt, edit_mode, lighting_preset],
+        inputs=[pano_state, edit_prompt, edit_mode, lighting_preset, edit_model_selector],
         outputs=[status, pano_view, pano_state],
         show_progress="minimal",
         show_progress_on=[pano_view],

@@ -1,10 +1,11 @@
 _SCENES = {
-    "Morning":     "early morning",
-    "Midday":      "midday",
+    "Morning": "early morning",
+    "Midday": "midday",
     "Golden hour": "golden hour",
-    "Dusk":        "dusk just after sunset",
-    "Night":       "late night with natural darkness",
-    "Overcast":    "an overcast day",
+    "Dusk": "dusk just after sunset",
+    "Night": "late night with natural darkness",
+    "Deep night": "midnight with all streetlamps and building lights off",
+    "Overcast": "an overcast day",
 }
 
 
