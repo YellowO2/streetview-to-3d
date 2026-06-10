@@ -1,20 +1,14 @@
-_SCENES = {
-    "Morning": "early morning",
-    "Midday": "midday",
-    "Golden hour": "golden hour",
-    "Dusk": "dusk just after sunset",
-    "Night": "late night with natural darkness",
-    "Deep night": "midnight with all streetlamps and building lights off",
-    "Overcast": "an overcast day",
+_PROMPTS = {
+    "Morning": "Relight the same scene to early morning, keeping all objects and geometry unchanged.",
+    "Midday": "Relight the same scene to midday, keeping all objects and geometry unchanged.",
+    "Dusk": "Relight the same scene to dusk just after sunset, keeping all objects and geometry unchanged.",
+    "Night": "Relight the same scene to late night with natural darkness, keeping all objects and geometry unchanged.",
+    "Deep night": "Change the scene to nighttime, keeping all objects and geometry unchanged. All lights should be off.",
 }
 
 
 def build_prompt(preset_name: str) -> str:
-    """Return the full prompt for a preset, or empty string if not found."""
-    scene = _SCENES.get(preset_name)
-    if not scene:
-        return ""
-    return f"Relight the same scene to {scene}, keeping all objects and geometry unchanged."
+    return _PROMPTS.get(preset_name, "")
 
 
-PRESET_NAMES = ["(none)", *_SCENES.keys()]
+PRESET_NAMES = ["(none)", *_PROMPTS.keys()]

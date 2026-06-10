@@ -176,7 +176,8 @@ document.body.appendChild(renderer.domElement);
 const geo = new THREE.SphereGeometry(100, 64, 32); geo.scale(-1,1,1);
 const mat = new THREE.MeshBasicMaterial();
 scene.add(new THREE.Mesh(geo, mat));
-new THREE.TextureLoader().load('{img_url}', t => {{ mat.map=t; mat.needsUpdate=true; }});
+new THREE.TextureLoader().load('{img_url}', t => {{ t.colorSpace=THREE.SRGBColorSpace; mat.map=t; mat.needsUpdate=true; }});
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 let lon = 0, lat = 0, dragging = false, lx = 0, ly = 0;
 renderer.domElement.addEventListener('pointerdown', e => {{ dragging = true; lx = e.clientX; ly = e.clientY; }});
@@ -255,6 +256,7 @@ const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 1000
 const renderer = new THREE.WebGLRenderer({{antialias:true}});
 renderer.setPixelRatio(devicePixelRatio);
 renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 const controls = new SparkControls({{canvas: renderer.domElement}});
 const splat = new SplatMesh({{url: '{ply_url}'}});
