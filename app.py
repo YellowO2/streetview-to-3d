@@ -314,7 +314,7 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, gs_backend, depth_
 
 
 @GPU
-def _run_video_pipeline_gpu(frame_paths, output_dir):
+def _run_video_pipeline_gpu(frame_paths, output_dir, lyra=False):
     import torch
     from depth_anything_3.utils.gsply_helpers import save_gaussian_ply
     from components.DepthMapGenerator.DA3Model import DA3Model
@@ -324,7 +324,23 @@ def _run_video_pipeline_gpu(frame_paths, output_dir):
     cfg = load_pipeline_config()
 
     da3 = DA3Model(cfg.da3_model)
-    prediction = da3.model.inference(frame_paths, infer_gs=True, export_format="mini_npz")
+    model = da3.model  # DepthAnything3 instance
+
+    if lyra:
+        from huggingface_hub import hf_hub_download
+        print("Downloading Lyra 2 DA3 checkpoint (cached after first run)...")
+        lyra_ckpt = hf_hub_download(repo_id="nvidia/Lyra-2.0", filename="checkpoints/recon/model.pt")
+        ckpt = torch.load(lyra_ckpt, map_location="cpu", weights_only=False)
+        state_dict = ckpt.get("module") or ckpt.get("model") or ckpt
+        if isinstance(state_dict, dict) and any(k.startswith("model.") for k in state_dict):
+            converted = {k[len("model."):]: v for k, v in state_dict.items() if k.startswith("model.")}
+        else:
+            converted = state_dict
+        missing, unexpected = model.model.load_state_dict(converted, strict=False)
+        print(f"  Lyra weights: {len(converted)} params, {len(missing)} missing, {len(unexpected)} unexpected")
+        model.eval()
+
+    prediction = model.inference(frame_paths, infer_gs=True, export_format="mini_npz")
 
     final_path = os.path.join(output_dir, "final_output.ply")
     ctx_depth = torch.from_numpy(prediction.depth).unsqueeze(-1).to(prediction.gaussians.means)
@@ -541,7 +557,7 @@ def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(tra
     )
 
 
-def handle_video_generate(video_path, sample_fps, progress=gr.Progress(track_tqdm=True)):
+def handle_video_generate(video_path, sample_fps, video_model, progress=gr.Progress(track_tqdm=True)):
     import cv2
 
     if not video_path:
@@ -575,12 +591,14 @@ def handle_video_generate(video_path, sample_fps, progress=gr.Progress(track_tqd
         yield ("Could not extract frames from video.", _SPLAT_PLACEHOLDER)
         return
 
-    yield (f"Running DA3 on {len(frame_paths)} frames (this takes ~2 min)...", _SPLAT_PLACEHOLDER)
+    use_lyra = video_model == "DA3 (Lyra 2 finetuned)"
+    model_label = "Lyra 2 finetuned DA3" if use_lyra else "DA3"
+    yield (f"Running {model_label} on {len(frame_paths)} frames (this takes ~2 min)...", _SPLAT_PLACEHOLDER)
 
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     t_start = time.time()
     try:
-        ply_path = _run_video_pipeline_gpu(frame_paths, output_dir)
+        ply_path = _run_video_pipeline_gpu(frame_paths, output_dir, lyra=use_lyra)
     except Exception as e:
         yield (f"Pipeline failed: {e}", _SPLAT_PLACEHOLDER)
         return
@@ -592,7 +610,7 @@ def handle_video_generate(video_path, sample_fps, progress=gr.Progress(track_tqd
     elapsed = time.time() - t_start
     progress(1.0, desc="Done!")
     yield (
-        f"3DGS ready ({len(frame_paths)} frames, {elapsed:.0f}s). Loading viewer...",
+        f"3DGS ready ({model_label}, {len(frame_paths)} frames, {elapsed:.0f}s). Loading viewer...",
         _splat_viewer_with_download(_file_url(ply_path)),
     )
 
@@ -626,7 +644,14 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         with gr.Tab("Video Test"):
             gr.Markdown("Upload a phone video. Frames are extracted and fed directly to DA3's GS mode.")
             video_input = gr.File(label="Upload video (.mp4, .mov, ...)", file_types=["video"], type="filepath")
-            n_frames_slider = gr.Slider(minimum=0.1, maximum=10, value=1, step=0.1, label="Sampling FPS (frames per second to extract)")
+            with gr.Row(equal_height=True):
+                n_frames_slider = gr.Slider(minimum=0.1, maximum=10, value=1, step=0.1, label="Sampling FPS", scale=3)
+                video_model_selector = gr.Dropdown(
+                    choices=["DA3 (standard)", "DA3 (Lyra 2 finetuned)"],
+                    value="DA3 (standard)",
+                    label="Model",
+                    scale=2,
+                )
             video_generate_btn = gr.Button("Generate 3DGS from Video", variant="primary")
 
     status = gr.Textbox(
@@ -748,7 +773,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
 
     video_generate_btn.click(
         fn=handle_video_generate,
-        inputs=[video_input, n_frames_slider],
+        inputs=[video_input, n_frames_slider, video_model_selector],
         outputs=[status, splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],
