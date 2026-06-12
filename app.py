@@ -313,10 +313,61 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, gs_backend, depth_
     return ply if os.path.exists(ply) else None
 
 
+def _save_gaussian_ply_pruned(gaussians, save_path, ctx_depth, opacity_threshold=0.05):
+    """save_gaussian_ply + opacity pruning added to the spatial mask.
+    save_gaussian_ply assumes Gaussians are in a V×H×W grid, so opacity must be
+    filtered inside the mask (not by pre-filtering the tensor)."""
+    import torch
+    from depth_anything_3.utils.gsply_helpers import export_ply, inverse_sigmoid
+    from einops import rearrange
+
+    src_v, out_h, out_w, _ = ctx_depth.shape
+
+    world_means = gaussians.means
+    world_shs = gaussians.harmonics
+    world_rotations = gaussians.rotations
+    gs_scales = gaussians.scales
+    gs_opacities = inverse_sigmoid(gaussians.opacities)
+
+    # border mask (same as save_gaussian_ply default)
+    mask = torch.zeros_like(ctx_depth, dtype=torch.bool)
+    gstrim_h = int(8 / 256 * out_h)
+    gstrim_w = int(8 / 256 * out_w)
+    mask[:, gstrim_h:-gstrim_h, gstrim_w:-gstrim_w, :] = 1
+    mask = mask.squeeze(-1)  # v h w
+
+    # opacity threshold in logit space: logit(t) = log(t/(1-t))
+    import math
+    logit_thresh = math.log(opacity_threshold / (1.0 - opacity_threshold))
+    op_grid = rearrange(gs_opacities[0], "(v h w) ... -> v h w ...", v=src_v, h=out_h, w=out_w)
+    if op_grid.dim() == 4:
+        op_vals = op_grid[..., 0]
+    else:
+        op_vals = op_grid
+    op_mask = op_vals > logit_thresh  # v h w
+
+    final_mask = mask & op_mask
+    kept = final_mask.sum().item()
+    total = mask.sum().item()
+    print(f"  Opacity pruning: {kept:,} / {total:,} kept ({100*kept/total:.1f}%)")
+
+    def trim_op(element):
+        return rearrange(element[0], "(v h w) ... -> v h w ...", v=src_v, h=out_h, w=out_w)[final_mask]
+
+    export_ply(
+        means=trim_op(world_means),
+        scales=trim_op(gs_scales),
+        rotations=trim_op(world_rotations),
+        harmonics=trim_op(world_shs),
+        opacities=trim_op(gs_opacities),
+        path=__import__('pathlib').Path(save_path),
+        save_sh_dc_only=True,
+    )
+
+
 @GPU
 def _run_video_pipeline_gpu(frame_paths, output_dir, lyra=False):
     import torch
-    from depth_anything_3.utils.gsply_helpers import save_gaussian_ply
     from components.DepthMapGenerator.DA3Model import DA3Model
     from config import load_pipeline_config
 
@@ -344,7 +395,7 @@ def _run_video_pipeline_gpu(frame_paths, output_dir, lyra=False):
 
     final_path = os.path.join(output_dir, "final_output.ply")
     ctx_depth = torch.from_numpy(prediction.depth).unsqueeze(-1).to(prediction.gaussians.means)
-    save_gaussian_ply(prediction.gaussians, final_path, ctx_depth=ctx_depth)
+    _save_gaussian_ply_pruned(prediction.gaussians, final_path, ctx_depth, opacity_threshold=0.05)
 
     return final_path if os.path.exists(final_path) else None
 
