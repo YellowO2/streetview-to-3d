@@ -541,7 +541,7 @@ def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(tra
     )
 
 
-def handle_video_generate(video_path, n_frames, progress=gr.Progress(track_tqdm=True)):
+def handle_video_generate(video_path, sample_fps, progress=gr.Progress(track_tqdm=True)):
     import cv2
 
     if not video_path:
@@ -551,21 +551,24 @@ def handle_video_generate(video_path, n_frames, progress=gr.Progress(track_tqdm=
     yield ("Extracting frames...", _SPLAT_PLACEHOLDER)
 
     cap = cv2.VideoCapture(video_path)
+    video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    n = max(1, min(int(n_frames), total))
+    frame_interval = max(1, int(video_fps / sample_fps))
 
     frames_dir = os.path.join(IMAGES_DIR, f"video_{uuid.uuid4().hex}")
     os.makedirs(frames_dir, exist_ok=True)
 
     frame_paths = []
-    for i in range(n):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(total * i / n))
+    idx = 0
+    while idx < total:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ret, frame = cap.read()
         if not ret:
-            continue
-        p = os.path.join(frames_dir, f"frame_{i:04d}.jpg")
+            break
+        p = os.path.join(frames_dir, f"frame_{len(frame_paths):04d}.jpg")
         cv2.imwrite(p, frame)
         frame_paths.append(p)
+        idx += frame_interval
     cap.release()
 
     if not frame_paths:
@@ -623,7 +626,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         with gr.Tab("Video Test"):
             gr.Markdown("Upload a phone video. Frames are extracted and fed directly to DA3's GS mode.")
             video_input = gr.File(label="Upload video (.mp4, .mov, ...)", file_types=["video"], type="filepath")
-            n_frames_slider = gr.Slider(minimum=4, maximum=20, value=10, step=1, label="Number of frames to extract")
+            n_frames_slider = gr.Slider(minimum=0.1, maximum=10, value=1, step=0.1, label="Sampling FPS (frames per second to extract)")
             video_generate_btn = gr.Button("Generate 3DGS from Video", variant="primary")
 
     status = gr.Textbox(
