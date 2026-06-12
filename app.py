@@ -313,6 +313,26 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, gs_backend, depth_
     return ply if os.path.exists(ply) else None
 
 
+@GPU
+def _run_video_pipeline_gpu(frame_paths, output_dir):
+    import torch
+    from depth_anything_3.utils.gsply_helpers import save_gaussian_ply
+    from components.DepthMapGenerator.DA3Model import DA3Model
+    from config import load_pipeline_config
+
+    os.makedirs(output_dir, exist_ok=True)
+    cfg = load_pipeline_config()
+
+    da3 = DA3Model(cfg.da3_model)
+    prediction = da3.model.inference(frame_paths, infer_gs=True, export_format="mini_npz")
+
+    final_path = os.path.join(output_dir, "final_output.ply")
+    ctx_depth = torch.from_numpy(prediction.depth).unsqueeze(-1).to(prediction.gaussians.means)
+    save_gaussian_ply(prediction.gaussians, final_path, ctx_depth=ctx_depth)
+
+    return final_path if os.path.exists(final_path) else None
+
+
 _editor = None
 _flux_editor = None
 if ON_SPACES:
@@ -521,6 +541,59 @@ def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(tra
     )
 
 
+def handle_video_generate(video_path, n_frames, progress=gr.Progress(track_tqdm=True)):
+    import cv2
+
+    if not video_path:
+        yield ("Upload a video first.", _SPLAT_PLACEHOLDER)
+        return
+
+    yield ("Extracting frames...", _SPLAT_PLACEHOLDER)
+
+    cap = cv2.VideoCapture(video_path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    n = max(1, min(int(n_frames), total))
+
+    frames_dir = os.path.join(IMAGES_DIR, f"video_{uuid.uuid4().hex}")
+    os.makedirs(frames_dir, exist_ok=True)
+
+    frame_paths = []
+    for i in range(n):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(total * i / n))
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        p = os.path.join(frames_dir, f"frame_{i:04d}.jpg")
+        cv2.imwrite(p, frame)
+        frame_paths.append(p)
+    cap.release()
+
+    if not frame_paths:
+        yield ("Could not extract frames from video.", _SPLAT_PLACEHOLDER)
+        return
+
+    yield (f"Running DA3 on {len(frame_paths)} frames (this takes ~2 min)...", _SPLAT_PLACEHOLDER)
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    t_start = time.time()
+    try:
+        ply_path = _run_video_pipeline_gpu(frame_paths, output_dir)
+    except Exception as e:
+        yield (f"Pipeline failed: {e}", _SPLAT_PLACEHOLDER)
+        return
+
+    if not ply_path or not os.path.exists(ply_path):
+        yield ("Pipeline finished but no PLY produced.", _SPLAT_PLACEHOLDER)
+        return
+
+    elapsed = time.time() - t_start
+    progress(1.0, desc="Done!")
+    yield (
+        f"3DGS ready ({len(frame_paths)} frames, {elapsed:.0f}s). Loading viewer...",
+        _splat_viewer_with_download(_file_url(ply_path)),
+    )
+
+
 # ── UI ─────────────────────────────────────────────────────────────────────────
 
 with gr.Blocks(title="Street View to 3DGS") as demo:
@@ -547,6 +620,11 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
                 file_types=["image"],
                 type="filepath",
             )
+        with gr.Tab("Video Test"):
+            gr.Markdown("Upload a phone video. Frames are extracted and fed directly to DA3's GS mode.")
+            video_input = gr.File(label="Upload video (.mp4, .mov, ...)", file_types=["video"], type="filepath")
+            n_frames_slider = gr.Slider(minimum=4, maximum=20, value=10, step=1, label="Number of frames to extract")
+            video_generate_btn = gr.Button("Generate 3DGS from Video", variant="primary")
 
     status = gr.Textbox(
         label="Status",
@@ -660,6 +738,14 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     generate_btn.click(
         fn=handle_generate,
         inputs=[pano_state, scale_mode, gs_backend],
+        outputs=[status, splat_view],
+        show_progress="minimal",
+        show_progress_on=[splat_view],
+    )
+
+    video_generate_btn.click(
+        fn=handle_video_generate,
+        inputs=[video_input, n_frames_slider],
         outputs=[status, splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],
