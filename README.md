@@ -14,8 +14,7 @@ short_description: Turns a Google Street View location into a 3DGS scene
 
 # Street View to 3DGS
 
-Convert Google Street View panoramas into 3D Gaussian Splat scenes. Step 1, generate a depth map with target panorama + nearby panoramic images. Step 2, generate peices of 3dgs with mlsharp. Step 3, align peices of 3dgs using the depth map generated. 
-
+Convert Google Street View panoramas into 3D Gaussian Splat scenes, built on top of [panoramic-to-3dgs](https://github.com/YellowO2/panoramic-to-3dgs).
 Check out the demo on [Hugging Face](https://huggingface.co/spaces/potato-bug/street-view-to-3dgs).
 
 <table>
