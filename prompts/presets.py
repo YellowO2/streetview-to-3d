@@ -4,11 +4,6 @@ _PRESETS = {
         "mode": "general",
         "geom_preserving": True,
     },
-    "Deep night": {
-        "prompt": "Change the scene to nighttime, keeping all objects and geometry unchanged. All lights should be off.",
-        "mode": "general",
-        "geom_preserving": True,
-    },
     "Remove people & vehicles": {
         "prompt": "Remove all people and vehicles from the scene, filling the gaps naturally.",
         "mode": "remove_objects",
