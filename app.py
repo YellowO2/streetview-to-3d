@@ -313,127 +313,24 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, gs_backend, depth_
     return ply if os.path.exists(ply) else None
 
 
-def _save_gaussian_ply_pruned(gaussians, save_path, ctx_depth, opacity_threshold=0.05):
-    """save_gaussian_ply + opacity pruning added to the spatial mask.
-    save_gaussian_ply assumes Gaussians are in a V×H×W grid, so opacity must be
-    filtered inside the mask (not by pre-filtering the tensor)."""
-    import torch
-    from depth_anything_3.utils.gsply_helpers import export_ply, inverse_sigmoid
-    from einops import rearrange
 
-    src_v, out_h, out_w, _ = ctx_depth.shape
-
-    world_means = gaussians.means
-    world_shs = gaussians.harmonics
-    world_rotations = gaussians.rotations
-    gs_scales = gaussians.scales
-    gs_opacities = inverse_sigmoid(gaussians.opacities)
-
-    # border mask (same as save_gaussian_ply default)
-    mask = torch.zeros_like(ctx_depth, dtype=torch.bool)
-    gstrim_h = int(8 / 256 * out_h)
-    gstrim_w = int(8 / 256 * out_w)
-    mask[:, gstrim_h:-gstrim_h, gstrim_w:-gstrim_w, :] = 1
-    mask = mask.squeeze(-1)  # v h w
-
-    # opacity threshold in logit space: logit(t) = log(t/(1-t))
-    import math
-    logit_thresh = math.log(opacity_threshold / (1.0 - opacity_threshold))
-    op_grid = rearrange(gs_opacities[0], "(v h w) ... -> v h w ...", v=src_v, h=out_h, w=out_w)
-    if op_grid.dim() == 4:
-        op_vals = op_grid[..., 0]
-    else:
-        op_vals = op_grid
-    op_mask = op_vals > logit_thresh  # v h w
-
-    final_mask = mask & op_mask
-    kept = final_mask.sum().item()
-    total = mask.sum().item()
-    print(f"  Opacity pruning: {kept:,} / {total:,} kept ({100*kept/total:.1f}%)")
-
-    def trim_op(element):
-        return rearrange(element[0], "(v h w) ... -> v h w ...", v=src_v, h=out_h, w=out_w)[final_mask]
-
-    export_ply(
-        means=trim_op(world_means),
-        scales=trim_op(gs_scales),
-        rotations=trim_op(world_rotations),
-        harmonics=trim_op(world_shs),
-        opacities=trim_op(gs_opacities),
-        path=__import__('pathlib').Path(save_path),
-        save_sh_dc_only=True,
-    )
-
-
-@GPU
-def _run_video_pipeline_gpu(frame_paths, output_dir, lyra=False):
-    import torch
-    from components.DepthMapGenerator.DA3Model import DA3Model
-    from config import load_pipeline_config
-
-    os.makedirs(output_dir, exist_ok=True)
-    cfg = load_pipeline_config()
-
-    da3 = DA3Model(cfg.da3_model)
-    model = da3.model  # DepthAnything3 instance
-
-    if lyra:
-        from huggingface_hub import hf_hub_download
-        print("Downloading Lyra 2 DA3 checkpoint (cached after first run)...")
-        lyra_ckpt = hf_hub_download(repo_id="nvidia/Lyra-2.0", filename="checkpoints/recon/model.pt")
-        ckpt = torch.load(lyra_ckpt, map_location="cpu", weights_only=False)
-        state_dict = ckpt.get("module") or ckpt.get("model") or ckpt
-        if isinstance(state_dict, dict) and any(k.startswith("model.") for k in state_dict):
-            converted = {k[len("model."):]: v for k, v in state_dict.items() if k.startswith("model.")}
-        else:
-            converted = state_dict
-        missing, unexpected = model.model.load_state_dict(converted, strict=False)
-        print(f"  Lyra weights: {len(converted)} params, {len(missing)} missing, {len(unexpected)} unexpected")
-        model.eval()
-
-    prediction = model.inference(frame_paths, infer_gs=True, export_format="mini_npz")
-
-    final_path = os.path.join(output_dir, "final_output.ply")
-    ctx_depth = torch.from_numpy(prediction.depth).unsqueeze(-1).to(prediction.gaussians.means)
-    _save_gaussian_ply_pruned(prediction.gaussians, final_path, ctx_depth, opacity_threshold=0.05)
-
-    return final_path if os.path.exists(final_path) else None
-
-
-_editor = None
 _flux_editor = None
 if ON_SPACES:
     # Eager-load at module level: ZeroGPU's boot-time CUDA mode supports the bulk
     # .to("cuda") for huge multi-shard pipelines. Lazy loading inside @spaces.GPU
     # crashes with NVML errors. Boot is slow (~5min cold), but each edit is fast
     # (~15s) and burns minimal quota.
-    from components.ImageCleaner.ImageCleaner import ImageCleaner
-    _editor = ImageCleaner(offload=False)
-
-    # Pre-download FLUX.2-klein weights in the background so the container starts
-    # immediately. By the time a user triggers a FLUX edit, weights will be cached.
-    import threading
-    from huggingface_hub import snapshot_download
-
-    def _prefetch_flux():
-        snapshot_download("black-forest-labs/FLUX.2-klein-9B")
-
-    threading.Thread(target=_prefetch_flux, daemon=True).start()
+    from editors.flux_editor import FluxEditor
+    _flux_editor = FluxEditor(offload=False)
 
 
 @GPU_EDIT
-def _run_editor_gpu(image_path, prompt, mode, output_path, edit_model="Qwen-Image-Edit-2511"):
-    global _editor, _flux_editor
-    if edit_model == "FLUX.2-klein":
-        if _flux_editor is None:
-            from editors.flux_editor import FluxEditor
-            _flux_editor = FluxEditor(offload=False)
-        _flux_editor.edit(image_path, prompt, mode=mode, output_path=output_path)
-    else:
-        if _editor is None:
-            from components.ImageCleaner.ImageCleaner import ImageCleaner
-            _editor = ImageCleaner(offload=True)
-        _editor.edit(image_path, prompt, mode=mode, output_path=output_path)
+def _run_editor_gpu(image_path, prompt, mode, output_path):
+    global _flux_editor
+    if _flux_editor is None:
+        from editors.flux_editor import FluxEditor
+        _flux_editor = FluxEditor(offload=True)
+    _flux_editor.edit(image_path, prompt, mode=mode, output_path=output_path)
     return output_path
 
 
@@ -483,24 +380,6 @@ def handle_load(url_input):
     )
 
 
-def handle_upload(file_path):
-    """User uploaded their own equirectangular panorama."""
-    if not file_path:
-        return "No file uploaded.", _MAP_PLACEHOLDER, _PANO_PLACEHOLDER, None
-    abs_path = os.path.abspath(file_path)
-    state = {
-        "source": "upload",
-        "image_path": abs_path,
-        "original_image_path": abs_path,
-        "neighbors": [],
-    }
-    return (
-        f"Uploaded panorama loaded. Click Generate 3DGS to continue.",
-        _MAP_PLACEHOLDER,  # no map for uploads
-        _build_pano_viewer(_file_url(abs_path)),
-        state,
-    )
-
 
 EDIT_MODES = {
     "General edit": "general",
@@ -508,7 +387,7 @@ EDIT_MODES = {
 }
 
 
-def handle_edit(pano_state, prompt, mode_label, preset_name, edit_model, progress=gr.Progress()):
+def handle_edit(pano_state, prompt, mode_label, preset_name, progress=gr.Progress()):
     if not pano_state or not pano_state.get("image_path"):
         return (
             "Load a Street View location or upload a panorama first.",
@@ -525,7 +404,7 @@ def handle_edit(pano_state, prompt, mode_label, preset_name, edit_model, progres
     progress(0, desc="Loading editor + running edit (~30s)...")
     t0 = time.time()
     try:
-        _run_editor_gpu(src, prompt.strip(), mode, out_path, edit_model=edit_model)
+        _run_editor_gpu(src, prompt.strip(), mode, out_path)
     except Exception as e:
         return (f"Edit failed: {e}", gr.update(), pano_state)
 
@@ -608,63 +487,6 @@ def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(tra
     )
 
 
-def handle_video_generate(video_path, sample_fps, video_model, progress=gr.Progress(track_tqdm=True)):
-    import cv2
-
-    if not video_path:
-        yield ("Upload a video first.", _SPLAT_PLACEHOLDER)
-        return
-
-    yield ("Extracting frames...", _SPLAT_PLACEHOLDER)
-
-    cap = cv2.VideoCapture(video_path)
-    video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    frame_interval = max(1, int(video_fps / sample_fps))
-
-    frames_dir = os.path.join(IMAGES_DIR, f"video_{uuid.uuid4().hex}")
-    os.makedirs(frames_dir, exist_ok=True)
-
-    frame_paths = []
-    idx = 0
-    while idx < total:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ret, frame = cap.read()
-        if not ret:
-            break
-        p = os.path.join(frames_dir, f"frame_{len(frame_paths):04d}.jpg")
-        cv2.imwrite(p, frame)
-        frame_paths.append(p)
-        idx += frame_interval
-    cap.release()
-
-    if not frame_paths:
-        yield ("Could not extract frames from video.", _SPLAT_PLACEHOLDER)
-        return
-
-    use_lyra = video_model == "DA3 (Lyra 2 finetuned)"
-    model_label = "Lyra 2 finetuned DA3" if use_lyra else "DA3"
-    yield (f"Running {model_label} on {len(frame_paths)} frames (this takes ~2 min)...", _SPLAT_PLACEHOLDER)
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    t_start = time.time()
-    try:
-        ply_path = _run_video_pipeline_gpu(frame_paths, output_dir, lyra=use_lyra)
-    except Exception as e:
-        yield (f"Pipeline failed: {e}", _SPLAT_PLACEHOLDER)
-        return
-
-    if not ply_path or not os.path.exists(ply_path):
-        yield ("Pipeline finished but no PLY produced.", _SPLAT_PLACEHOLDER)
-        return
-
-    elapsed = time.time() - t_start
-    progress(1.0, desc="Done!")
-    yield (
-        f"3DGS ready ({model_label}, {len(frame_paths)} frames, {elapsed:.0f}s). Loading viewer...",
-        _splat_viewer_with_download(_file_url(ply_path)),
-    )
-
 
 # ── UI ─────────────────────────────────────────────────────────────────────────
 
@@ -686,24 +508,6 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
                     scale=5,
                 )
                 load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
-        with gr.Tab("Upload Panorama"):
-            upload_input = gr.File(
-                label="Upload an equirectangular panorama (.jpg / .png). This is likely to return suboptimal results due to certain optimisations not made.",
-                file_types=["image"],
-                type="filepath",
-            )
-        with gr.Tab("Video Test"):
-            gr.Markdown("Upload a phone video. Frames are extracted and fed directly to DA3's GS mode.")
-            video_input = gr.File(label="Upload video (.mp4, .mov, ...)", file_types=["video"], type="filepath")
-            with gr.Row(equal_height=True):
-                n_frames_slider = gr.Slider(minimum=0.1, maximum=10, value=1, step=0.1, label="Sampling FPS", scale=3)
-                video_model_selector = gr.Dropdown(
-                    choices=["DA3 (standard)", "DA3 (Lyra 2 finetuned)"],
-                    value="DA3 (standard)",
-                    label="Model",
-                    scale=2,
-                )
-            video_generate_btn = gr.Button("Generate 3DGS from Video", variant="primary")
 
     status = gr.Textbox(
         label="Status",
@@ -734,12 +538,6 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
             choices=list(EDIT_MODES.keys()),
             value="General edit",
             label="Edit mode",
-            scale=2,
-        )
-        edit_model_selector = gr.Dropdown(
-            choices=["Qwen-Image-Edit-2511", "FLUX.2-klein"],
-            value="Qwen-Image-Edit-2511",
-            label="Edit model",
             scale=2,
         )
     with gr.Row(equal_height=True):
@@ -800,15 +598,9 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         outputs=[status, map_view, pano_view, pano_state],
     )
 
-    upload_input.upload(
-        fn=handle_upload,
-        inputs=[upload_input],
-        outputs=[status, map_view, pano_view, pano_state],
-    )
-
     edit_btn.click(
         fn=handle_edit,
-        inputs=[pano_state, edit_prompt, edit_mode, lighting_preset, edit_model_selector],
+        inputs=[pano_state, edit_prompt, edit_mode, lighting_preset],
         outputs=[status, pano_view, pano_state],
         show_progress="minimal",
         show_progress_on=[pano_view],
@@ -817,14 +609,6 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     generate_btn.click(
         fn=handle_generate,
         inputs=[pano_state, scale_mode, gs_backend],
-        outputs=[status, splat_view],
-        show_progress="minimal",
-        show_progress_on=[splat_view],
-    )
-
-    video_generate_btn.click(
-        fn=handle_video_generate,
-        inputs=[video_input, n_frames_slider, video_model_selector],
         outputs=[status, splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],

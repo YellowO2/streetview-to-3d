@@ -36,7 +36,9 @@ Requires an NVIDIA GPU with recent drivers. Python **3.12** is recommended.
 # 1. Create venv and activate
 python3.12 -m venv .venv && source .venv/bin/activate
 
-# 2. Install torch + torchvision matching your CUDA driver. Pick the right wheel index for your CUDA version. Check with `nvidia-smi`. For example:
+# 2. Install torch + torchvision matching your CUDA driver. 
+# Pick the right wheel index for your CUDA version. 
+# Check with `nvidia-smi`. For example:
 #      CUDA 12.1 → https://download.pytorch.org/whl/cu121
 #      CUDA 12.4 → https://download.pytorch.org/whl/cu124
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
@@ -48,7 +50,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Models (Sharp + DA3) are downloaded from the Hugging Face Hub on first run and cached under `~/.cache/huggingface/`.
+Models (Sharp, DA3, and FLUX) are downloaded from the Hugging Face Hub on first run and cached under `~/.cache/huggingface/`.
 
 ## Acknowledgments
 
@@ -56,6 +58,8 @@ This project relies on:
 
 - [Depth-Anything-3](https://github.com/ByteDance-Seed/Depth-Anything-3) (Apache 2.0)
 - [Apple ml-sharp](https://github.com/apple/ml-sharp) (Apple sample code license)
+- [FLUX.2-klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) (Black Forest Labs)
+- [flux-2-klein-4B-object-remove-lora](https://huggingface.co/fal/flux-2-klein-4B-object-remove-lora) (fal)
 
 ## License
 
