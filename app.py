@@ -339,29 +339,19 @@ def handle_load(url_input):
     try:
         lat, lon = _extract_lat_lon(url_input)
     except ValueError as e:
-        return str(e), _MAP_PLACEHOLDER, _PANO_PLACEHOLDER, None
+        raise gr.Error(str(e))
 
     try:
         meta = _run_async(_fetch_pano(lat, lon))
     except Exception as e:
-        return f"Error: {e}", _MAP_PLACEHOLDER, _PANO_PLACEHOLDER, None
+        raise gr.Error(str(e))
     if not meta:
-        return (
-            "Panorama not found at that location.",
-            _MAP_PLACEHOLDER,
-            _PANO_PLACEHOLDER,
-            None,
-        )
+        raise gr.Error("Panorama not found at that location.")
 
     try:
         img_path = _run_async(_download(meta["lat"], meta["lon"]))
     except Exception as e:
-        return (
-            f"Download failed: {e}",
-            _build_map(meta["lat"], meta["lon"]),
-            _PANO_PLACEHOLDER,
-            None,
-        )
+        raise gr.Error(f"Download failed: {e}")
 
     state = {
         "source": "streetview",
@@ -369,9 +359,7 @@ def handle_load(url_input):
         "original_image_path": img_path,
         **meta,
     }
-    status = f"Loaded pano {meta['id']} at ({meta['lat']:.5f}, {meta['lon']:.5f}). Click Generate 3DGS to continue."
     return (
-        status,
         _build_map(meta["lat"], meta["lon"]),
         _build_pano_viewer(_file_url(img_path)),
         state,
@@ -381,13 +369,9 @@ def handle_load(url_input):
 
 def handle_edit(pano_state, prompt, preset_name, progress=gr.Progress()):
     if not pano_state or not pano_state.get("image_path"):
-        return (
-            "Load a Street View location or upload a panorama first.",
-            _PANO_PLACEHOLDER,
-            pano_state,
-        )
+        raise gr.Error("Load a Street View location first.")
     if not prompt or not prompt.strip():
-        return ("Enter an edit prompt.", gr.update(), pano_state)
+        raise gr.Error("Enter an edit prompt.")
 
     preset = get_preset(preset_name)
     mode = preset["mode"] if preset else "general"
@@ -396,21 +380,17 @@ def handle_edit(pano_state, prompt, preset_name, progress=gr.Progress()):
     src = pano_state["image_path"]
     out_path = os.path.join(IMAGES_DIR, f"edit_{uuid.uuid4().hex}.png")
 
-    progress(0, desc="Running edit (~30s)...")
-    t0 = time.time()
+    progress(0, desc="Running edit (~40s)...")
     try:
         _run_editor_gpu(src, prompt.strip(), mode, out_path)
     except Exception as e:
-        return (f"Edit failed: {e}", gr.update(), pano_state)
+        raise gr.Error(f"Edit failed: {e}")
 
     new_state = {**pano_state, "image_path": out_path}
     if not geom_preserving:
         new_state["original_image_path"] = out_path
 
-    elapsed = time.time() - t0
-    note = " (depth will use original pano)" if geom_preserving else ""
     return (
-        f"Edit applied ({elapsed:.0f}s){note}. Click Generate 3DGS to splat the edited pano.",
         _build_pano_viewer(_file_url(out_path)),
         new_state,
     )
@@ -418,18 +398,14 @@ def handle_edit(pano_state, prompt, preset_name, progress=gr.Progress()):
 
 def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(track_tqdm=True)):
     if not pano_state or not pano_state.get("image_path"):
-        yield ("Load a Street View location or upload a panorama first.", _SPLAT_PLACEHOLDER)
-        return
+        raise gr.Error("Load a Street View location first.")
 
-    # Clear any previous splat from the viewer immediately so the old scene
-    # doesn't linger during the next 2-min run.
-    yield ("Starting...", _SPLAT_PLACEHOLDER)
+    yield _SPLAT_PLACEHOLDER
 
     target_path = pano_state["image_path"]
     target_depth_path = pano_state.get("original_image_path", target_path)
     support_paths = []
 
-    # Only Street View sources have neighbor metadata to fetch depth-support panos from.
     neighbors = (
         pano_state.get("neighbors", [])[:MAX_SUPPORT_PANOS]
         if pano_state.get("source") == "streetview"
@@ -446,9 +422,6 @@ def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(tra
 
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     panorama_paths = [target_path, *support_paths]
-    # Support panos are always originals (never edited), so depth list just
-    # swaps the target slot. Pass None when nothing differs to keep the
-    # pipeline path identical to pre-split behavior.
     depth_paths = (
         [target_depth_path, *support_paths]
         if target_depth_path != target_path
@@ -461,19 +434,14 @@ def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(tra
             panorama_paths, output_dir, scale_mode, gs_backend, depth_panorama_paths=depth_paths
         )
     except Exception as e:
-        yield (f"Pipeline failed: {e}", _SPLAT_PLACEHOLDER)
-        return
+        raise gr.Error(f"Pipeline failed: {e}")
 
     if not ply_path or not os.path.exists(ply_path):
-        yield ("Pipeline finished but no PLY produced.", _SPLAT_PLACEHOLDER)
-        return
+        raise gr.Error("Pipeline finished but no PLY produced.")
 
     elapsed = time.time() - t_start
-    progress(1.0, desc="Done!")
-    yield (
-        f"3DGS ready ({len(panorama_paths)} panos, {elapsed:.0f}s). Loading viewer (~30s for large scenes)...",
-        _splat_viewer_with_download(_file_url(ply_path)),
-    )
+    progress(1.0, desc=f"Done! {len(panorama_paths)} panos, {elapsed:.0f}s")
+    yield _splat_viewer_with_download(_file_url(ply_path))
 
 
 
@@ -498,12 +466,6 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
             scale=5,
         )
         load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
-
-    status = gr.Textbox(
-        label="Status",
-        value="Paste a Google Maps URL to start.",
-        interactive=False,
-    )
 
     with gr.Row():
         map_view = gr.HTML(_MAP_PLACEHOLDER)
@@ -578,13 +540,13 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     load_btn.click(
         fn=handle_load,
         inputs=[url_input],
-        outputs=[status, map_view, pano_view, pano_state],
+        outputs=[map_view, pano_view, pano_state],
     )
 
     edit_btn.click(
         fn=handle_edit,
         inputs=[pano_state, edit_prompt, edit_preset],
-        outputs=[status, pano_view, pano_state],
+        outputs=[pano_view, pano_state],
         show_progress="minimal",
         show_progress_on=[pano_view],
     )
@@ -592,7 +554,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     generate_btn.click(
         fn=handle_generate,
         inputs=[pano_state, scale_mode, gs_backend],
-        outputs=[status, splat_view],
+        outputs=[splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],
     )
