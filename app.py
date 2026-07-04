@@ -296,14 +296,6 @@ document.addEventListener('visibilitychange', () => {{
 _pipeline = None
 _flux_editor = None
 if ON_SPACES:
-    # Eager-load at module level: ZeroGPU's boot-time CUDA mode supports the bulk
-    # .to("cuda") for huge multi-shard pipelines. Lazy loading inside @spaces.GPU
-    # crashes with NVML errors. Boot is slow (~5min cold), but each call is fast
-    # and burns minimal quota.
-    from panoramic_to_3dgs import Pipeline
-    from config import load_pipeline_config
-    _pipeline = Pipeline(load_pipeline_config())
-
     from editors.flux_editor import FluxEditor
     _flux_editor = FluxEditor(offload=False)
 
