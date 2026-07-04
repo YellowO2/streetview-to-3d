@@ -293,33 +293,17 @@ document.addEventListener('visibilitychange', () => {{
 # ── GPU pipeline ───────────────────────────────────────────────────────────────
 
 
-@GPU
-def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, gs_backend, depth_panorama_paths=None):
-    from panoramic_to_3dgs import Pipeline
-    from config import load_pipeline_config
-
-    os.makedirs(output_dir, exist_ok=True)
-    config = load_pipeline_config()
-    config.scale_mode = scale_mode
-    config.gs_backend = gs_backend
-    Pipeline(config).run(
-        panorama_paths=panorama_paths,
-        output_dir=output_dir,
-        target_pano_id=0,
-        depth_panorama_paths=depth_panorama_paths,
-    )
-
-    ply = os.path.join(output_dir, "final_output.ply")
-    return ply if os.path.exists(ply) else None
-
-
-
+_pipeline = None
 _flux_editor = None
 if ON_SPACES:
     # Eager-load at module level: ZeroGPU's boot-time CUDA mode supports the bulk
     # .to("cuda") for huge multi-shard pipelines. Lazy loading inside @spaces.GPU
-    # crashes with NVML errors. Boot is slow (~5min cold), but each edit is fast
-    # (~15s) and burns minimal quota.
+    # crashes with NVML errors. Boot is slow (~5min cold), but each call is fast
+    # and burns minimal quota.
+    from panoramic_to_3dgs import Pipeline
+    from config import load_pipeline_config
+    _pipeline = Pipeline(load_pipeline_config())
+
     from editors.flux_editor import FluxEditor
     _flux_editor = FluxEditor(offload=False)
 
@@ -332,6 +316,28 @@ def _run_editor_gpu(image_path, prompt, mode, output_path):
         _flux_editor = FluxEditor(offload=True)
     _flux_editor.edit(image_path, prompt, mode=mode, output_path=output_path)
     return output_path
+
+
+@GPU
+def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, gs_backend, depth_panorama_paths=None):
+    global _pipeline
+    if _pipeline is None:
+        from panoramic_to_3dgs import Pipeline
+        from config import load_pipeline_config
+        _pipeline = Pipeline(load_pipeline_config())
+
+    os.makedirs(output_dir, exist_ok=True)
+    _pipeline.config.scale_mode = scale_mode
+    _pipeline.config.gs_backend = gs_backend
+    _pipeline.run(
+        panorama_paths=panorama_paths,
+        output_dir=output_dir,
+        target_pano_id=0,
+        depth_panorama_paths=depth_panorama_paths,
+    )
+
+    ply = os.path.join(output_dir, "final_output.ply")
+    return ply if os.path.exists(ply) else None
 
 
 # ── handlers ───────────────────────────────────────────────────────────────────
