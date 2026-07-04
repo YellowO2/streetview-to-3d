@@ -8,7 +8,6 @@ DEFAULT_STEPS = 4
 DEFAULT_GUIDANCE = 1.0
 
 PANO_ASPECT_THRESHOLD = 1.8
-REMOVE_LORA_REPO = "fal/flux-2-klein-4B-object-remove-lora"
 
 
 class FluxEditor:
@@ -27,9 +26,6 @@ class FluxEditor:
             self.pipe.enable_model_cpu_offload()
         else:
             self.pipe.to(device)
-
-        self.pipe.load_lora_weights(REMOVE_LORA_REPO, adapter_name="remove")
-        self.pipe.disable_lora()  # off by default
 
     def _run_pipe(self, image, prompt):
         result = self.pipe(
@@ -88,12 +84,6 @@ class FluxEditor:
         return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
 
     def edit(self, image_path, prompt, mode="general", output_path=None):
-        if mode == "remove_objects":
-            self.pipe.enable_lora()
-            self.pipe.set_adapters("remove")
-        else:
-            self.pipe.disable_lora()
-
         image = load_image(image_path)
         aspect = image.width / image.height
         if aspect >= PANO_ASPECT_THRESHOLD:
