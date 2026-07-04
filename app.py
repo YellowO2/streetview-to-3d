@@ -490,7 +490,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     pano_state = gr.State(None)
 
     # ── Step 1 ─────────────────────────────────────────────────────────────────
-    gr.Markdown("## Step 1 — Load panorama")
+    gr.Markdown("## Step 1. Load panorama")
     with gr.Row(equal_height=True):
         url_input = gr.Textbox(
             placeholder="Google Maps URL or lat,lon (e.g. 1.3237, 103.7555)",
@@ -516,7 +516,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         size="sm",
     )
 
-    gr.Markdown("### Edit (optional)")
+    gr.Markdown("### Edit panorama (optional)")
     with gr.Row(equal_height=True):
         edit_preset = gr.Dropdown(
             choices=PRESET_NAMES,
@@ -544,23 +544,23 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     )
 
     # ── Step 2 ─────────────────────────────────────────────────────────────────
-    gr.Markdown("## Step 2 — Generate 3DGS")
-    generate_btn = gr.Button("Generate 3DGS", variant="primary", min_width=160)
-
-    with gr.Accordion("Advanced settings", open=False):
-        with gr.Row():
-            gs_backend = gr.Dropdown(
-                choices=["sharp", "da3"],
-                value="sharp",
-                label="GS backend",
-                scale=2,
-            )
-            scale_mode = gr.Dropdown(
-                choices=["da3_y_ground", "da3_2dgrid_global"],
-                value="da3_y_ground",
-                label="Scale mode",
-                scale=2,
-            )
+    gr.Markdown("## Step 2. Generate 3DGS")
+    with gr.Row(equal_height=True):
+        gs_backend = gr.Dropdown(
+            choices=["sharp", "da3"],
+            value="sharp",
+            label="GS backend",
+            info="SHARP: better quality. DA3: faster.",
+            scale=2,
+        )
+        scale_mode = gr.Dropdown(
+            choices=["da3_y_ground", "da3_2dgrid_global"],
+            value="da3_y_ground",
+            label="Scale mode",
+            info="How depth is aligned to the scene.",
+            scale=2,
+        )
+        generate_btn = gr.Button("Generate 3DGS", variant="primary", scale=1, min_width=160)
 
     splat_view = gr.HTML(_SPLAT_PLACEHOLDER)
 
