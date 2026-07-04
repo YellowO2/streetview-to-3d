@@ -490,7 +490,8 @@ def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(tra
 with gr.Blocks(title="Street View to 3DGS") as demo:
     gr.Markdown(
         "# Street View to 3DGS\n"
-        "Convert a Google Street View location into a 3D Gaussian Splat scene."
+        "Convert a Google Street View location into a 3D Gaussian Splat scene. "
+        "[[GitHub](https://github.com/YellowO2/streetview-to-3dgs)]"
     )
 
     pano_state = gr.State(None)
