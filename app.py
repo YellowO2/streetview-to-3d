@@ -34,7 +34,7 @@ except ImportError:
 
 from streetlevel import streetview
 from services.download_street_panorama import download_panorama_image
-from prompts.lighting import PRESET_NAMES, build_prompt
+from prompts.presets import PRESET_NAMES, build_prompt, get_preset
 
 _BROWSER_HEADERS = {
     "User-Agent": (
@@ -381,13 +381,7 @@ def handle_load(url_input):
 
 
 
-EDIT_MODES = {
-    "General edit": "general",
-    "Remove people & vehicles": "remove_objects",
-}
-
-
-def handle_edit(pano_state, prompt, mode_label, preset_name, progress=gr.Progress()):
+def handle_edit(pano_state, prompt, preset_name, progress=gr.Progress()):
     if not pano_state or not pano_state.get("image_path"):
         return (
             "Load a Street View location or upload a panorama first.",
@@ -397,23 +391,20 @@ def handle_edit(pano_state, prompt, mode_label, preset_name, progress=gr.Progres
     if not prompt or not prompt.strip():
         return ("Enter an edit prompt.", gr.update(), pano_state)
 
-    mode = EDIT_MODES.get(mode_label, "general")
+    preset = get_preset(preset_name)
+    mode = preset["mode"] if preset else "general"
+    geom_preserving = preset["geom_preserving"] if preset else False
+
     src = pano_state["image_path"]
     out_path = os.path.join(IMAGES_DIR, f"edit_{uuid.uuid4().hex}.png")
 
-    progress(0, desc="Loading editor + running edit (~30s)...")
+    progress(0, desc="Running edit (~30s)...")
     t0 = time.time()
     try:
         _run_editor_gpu(src, prompt.strip(), mode, out_path)
     except Exception as e:
         return (f"Edit failed: {e}", gr.update(), pano_state)
 
-    # Geometry-preserving edits (lighting presets) keep original_image_path
-    # pinned so depth runs against the un-relit pano. Object removal or
-    # freeform edits assume geometry may have changed, so original moves too.
-    geom_preserving = (
-        preset_name and preset_name != "(none)" and mode == "general"
-    )
     new_state = {**pano_state, "image_path": out_path}
     if not geom_preserving:
         new_state["original_image_path"] = out_path
@@ -528,21 +519,14 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     gr.Markdown("---")
     gr.Markdown("### Edit panorama (optional)")
     with gr.Row(equal_height=True):
-        lighting_preset = gr.Dropdown(
+        edit_preset = gr.Dropdown(
             choices=PRESET_NAMES,
             value="(none)",
-            label="Time of day preset",
-            scale=2,
+            label="Preset",
+            scale=1,
         )
-        edit_mode = gr.Dropdown(
-            choices=list(EDIT_MODES.keys()),
-            value="General edit",
-            label="Edit mode",
-            scale=2,
-        )
-    with gr.Row(equal_height=True):
         edit_prompt = gr.Textbox(
-            placeholder="Pick a preset above to auto-fill, or type your own (e.g. remove the cars, add snow)",
+            placeholder="Pick a preset or type your own (e.g. add snow)",
             show_label=False,
             container=False,
             scale=4,
@@ -552,11 +536,11 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
 
     def _apply_preset(preset_name):
         prompt = build_prompt(preset_name)
-        return gr.update(value=prompt) if prompt else gr.update()
+        return gr.update(value=prompt) if prompt else gr.update(value="")
 
-    lighting_preset.change(
+    edit_preset.change(
         fn=_apply_preset,
-        inputs=[lighting_preset],
+        inputs=[edit_preset],
         outputs=[edit_prompt],
     )
 
@@ -600,7 +584,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
 
     edit_btn.click(
         fn=handle_edit,
-        inputs=[pano_state, edit_prompt, edit_mode, lighting_preset],
+        inputs=[pano_state, edit_prompt, edit_preset],
         outputs=[status, pano_view, pano_state],
         show_progress="minimal",
         show_progress_on=[pano_view],
