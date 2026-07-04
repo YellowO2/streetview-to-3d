@@ -484,25 +484,25 @@ def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(tra
 with gr.Blocks(title="Street View to 3DGS") as demo:
     gr.Markdown(
         "# Street View to 3DGS\n"
-        "Paste a Google Maps URL or `lat,lon`, load the panorama, then generate a 3D Gaussian Splat scene."
+        "Convert a Google Street View location into a 3D Gaussian Splat scene."
     )
 
     pano_state = gr.State(None)
 
-    with gr.Tabs():
-        with gr.Tab("Street View"):
-            with gr.Row(equal_height=True):
-                url_input = gr.Textbox(
-                    placeholder="Google Maps URL or lat,lon (e.g. 1.3237, 103.7555)",
-                    show_label=False,
-                    container=False,
-                    scale=5,
-                )
-                load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
+    # ── Step 1 ─────────────────────────────────────────────────────────────────
+    gr.Markdown("## Step 1 — Load panorama")
+    with gr.Row(equal_height=True):
+        url_input = gr.Textbox(
+            placeholder="Google Maps URL or lat,lon (e.g. 1.3237, 103.7555)",
+            show_label=False,
+            container=False,
+            scale=5,
+        )
+        load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
 
     status = gr.Textbox(
         label="Status",
-        value="Paste a Google Maps URL or upload a panorama to start.",
+        value="Paste a Google Maps URL to start.",
         interactive=False,
     )
 
@@ -516,8 +516,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         size="sm",
     )
 
-    gr.Markdown("---")
-    gr.Markdown("### Edit panorama (optional)")
+    gr.Markdown("### Edit (optional)")
     with gr.Row(equal_height=True):
         edit_preset = gr.Dropdown(
             choices=PRESET_NAMES,
@@ -532,7 +531,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
             scale=4,
             lines=2,
         )
-        edit_btn = gr.Button("Edit image", scale=1, min_width=120)
+        edit_btn = gr.Button("Edit", scale=1, min_width=80)
 
     def _apply_preset(preset_name):
         prompt = build_prompt(preset_name)
@@ -544,23 +543,24 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         outputs=[edit_prompt],
     )
 
-    gr.Markdown("---")
-    with gr.Row(equal_height=True):
-        gs_backend = gr.Dropdown(
-            choices=["sharp", "da3"],
-            value="sharp",
-            label="GS backend",
-            scale=2,
-        )
-        scale_mode = gr.Dropdown(
-            choices=["da3_y_ground", "da3_2dgrid_global"],
-            value="da3_y_ground",
-            label="Scale mode",
-            scale=2,
-        )
-        generate_btn = gr.Button(
-            "Generate 3DGS", variant="primary", scale=1, min_width=160
-        )
+    # ── Step 2 ─────────────────────────────────────────────────────────────────
+    gr.Markdown("## Step 2 — Generate 3DGS")
+    generate_btn = gr.Button("Generate 3DGS", variant="primary", min_width=160)
+
+    with gr.Accordion("Advanced settings", open=False):
+        with gr.Row():
+            gs_backend = gr.Dropdown(
+                choices=["sharp", "da3"],
+                value="sharp",
+                label="GS backend",
+                scale=2,
+            )
+            scale_mode = gr.Dropdown(
+                choices=["da3_y_ground", "da3_2dgrid_global"],
+                value="da3_y_ground",
+                label="Scale mode",
+                scale=2,
+            )
 
     splat_view = gr.HTML(_SPLAT_PLACEHOLDER)
 
