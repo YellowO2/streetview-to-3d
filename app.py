@@ -22,8 +22,8 @@ try:
     # which HF Spaces always sets but local machines don't have.
     ON_SPACES = bool(os.getenv("SPACE_ID"))
     if ON_SPACES:
-        GPU = spaces.GPU(duration=180)
-        GPU_EDIT = spaces.GPU(duration=120)
+        GPU = spaces.GPU(duration=108)
+        GPU_EDIT = spaces.GPU(duration=72)
     else:
         GPU = lambda fn: fn
         GPU_EDIT = lambda fn: fn
@@ -516,7 +516,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         size="sm",
     )
 
-    gr.Markdown("### Edit panorama (optional)")
+    gr.Markdown("### Edit panorama (optional) ~0.7 min")
     with gr.Row(equal_height=True):
         edit_preset = gr.Dropdown(
             choices=PRESET_NAMES,
@@ -544,7 +544,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     )
 
     # ── Step 2 ─────────────────────────────────────────────────────────────────
-    gr.Markdown("## Step 2. Generate 3DGS")
+    gr.Markdown("## Step 2. Generate 3DGS ~1.8 min")
     with gr.Row(equal_height=True):
         gs_backend = gr.Dropdown(
             choices=["sharp", "da3"],

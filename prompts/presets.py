@@ -5,7 +5,7 @@ _PRESETS = {
         "geom_preserving": True,
     },
     "Remove people & vehicles": {
-        "prompt": "Remove all people and vehicles from the scene, filling the gaps naturally.",
+        "prompt": "Remove all people and vehicles from the scene.",
         "mode": "remove_objects",
         "geom_preserving": False,
     },
