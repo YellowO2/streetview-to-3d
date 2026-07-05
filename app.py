@@ -396,7 +396,7 @@ def handle_edit(pano_state, prompt, preset_name, progress=gr.Progress()):
     )
 
 
-def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(track_tqdm=True)):
+def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True)):
     if not pano_state or not pano_state.get("image_path"):
         raise gr.Error("Load a Street View location first.")
 
@@ -431,7 +431,7 @@ def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(tra
     t_start = time.time()
     try:
         ply_path = _run_pipeline_gpu(
-            panorama_paths, output_dir, scale_mode, gs_backend, depth_panorama_paths=depth_paths
+            panorama_paths, output_dir, scale_mode, "sharp", depth_panorama_paths=depth_paths
         )
     except Exception as e:
         raise gr.Error(f"Pipeline failed: {e}")
@@ -447,11 +447,12 @@ def handle_generate(pano_state, scale_mode, gs_backend, progress=gr.Progress(tra
 
 # ── UI ─────────────────────────────────────────────────────────────────────────
 
-with gr.Blocks(title="Street View to 3DGS") as demo:
+with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !important; padding-right: 0 !important; }") as demo:
     gr.Markdown(
         "# Street View to 3DGS\n"
         "Convert a Google Street View location into a 3D Gaussian Splat scene. "
-        "[[GitHub](https://github.com/YellowO2/streetview-to-3dgs)]"
+        "[[GitHub](https://github.com/YellowO2/streetview-to-3dgs)]\n\n"
+        "**1.** Paste a Google Maps URL → **2.** Optionally edit the panorama → **3.** Generate 3DGS"
     )
 
     pano_state = gr.State(None)
@@ -467,9 +468,9 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         )
         load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
 
-    with gr.Row():
-        map_view = gr.HTML(_MAP_PLACEHOLDER)
-        pano_view = gr.HTML(_PANO_PLACEHOLDER)
+    with gr.Row(equal_height=True):
+        map_view = gr.HTML(_MAP_PLACEHOLDER, elem_classes="no-pad")
+        pano_view = gr.HTML(_PANO_PLACEHOLDER, elem_classes="no-pad")
 
     pano_download = gr.DownloadButton(
         label="⬇  Download current panorama",
@@ -477,20 +478,21 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
         size="sm",
     )
 
-    gr.Markdown("### Edit panorama (optional) ~0.7 min")
+    gr.Markdown("Edit panorama (optional) — ~0.7 min")
     with gr.Row(equal_height=True):
-        edit_preset = gr.Dropdown(
-            choices=PRESET_NAMES,
-            value="(none)",
-            label="Preset",
-            scale=1,
-        )
         edit_prompt = gr.Textbox(
             placeholder="Pick a preset or type your own (e.g. add snow)",
             show_label=False,
             container=False,
             scale=4,
             lines=2,
+        )
+        edit_preset = gr.Dropdown(
+            choices=PRESET_NAMES,
+            value="(none)",
+            show_label=False,
+            container=False,
+            scale=1,
         )
         edit_btn = gr.Button("Edit", scale=1, min_width=80)
 
@@ -507,13 +509,6 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
     # ── Step 2 ─────────────────────────────────────────────────────────────────
     gr.Markdown("## Step 2. Generate 3DGS ~1.8 min")
     with gr.Row(equal_height=True):
-        gs_backend = gr.Dropdown(
-            choices=["sharp", "da3"],
-            value="sharp",
-            label="GS backend",
-            info="SHARP: better quality. DA3: faster.",
-            scale=2,
-        )
         scale_mode = gr.Dropdown(
             choices=["da3_y_ground", "da3_2dgrid_global"],
             value="da3_y_ground",
@@ -553,7 +548,7 @@ with gr.Blocks(title="Street View to 3DGS") as demo:
 
     generate_btn.click(
         fn=handle_generate,
-        inputs=[pano_state, scale_mode, gs_backend],
+        inputs=[pano_state, scale_mode],
         outputs=[splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],
