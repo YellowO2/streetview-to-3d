@@ -9,6 +9,7 @@ import asyncio
 import html as html_lib
 import os
 import re
+import shutil
 import time
 import uuid
 
@@ -369,7 +370,7 @@ def handle_load(url_input):
 
 def handle_edit(pano_state, prompt, preset_name, progress=gr.Progress()):
     if not pano_state or not pano_state.get("image_path"):
-        raise gr.Error("Load a Street View location first.")
+        raise gr.Error("Load or upload a panorama first.")
     if not prompt or not prompt.strip():
         raise gr.Error("Enter an edit prompt.")
 
@@ -396,9 +397,19 @@ def handle_edit(pano_state, prompt, preset_name, progress=gr.Progress()):
     )
 
 
+def handle_upload(file_path):
+    if not file_path:
+        raise gr.Error("No file selected.")
+    ext = os.path.splitext(file_path)[1] or ".jpg"
+    dest = os.path.join(IMAGES_DIR, f"upload_{uuid.uuid4().hex}{ext}")
+    shutil.copy(file_path, dest)
+    state = {"source": "upload", "image_path": dest, "original_image_path": dest}
+    return (_build_pano_viewer(_file_url(dest)), state)
+
+
 def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True)):
     if not pano_state or not pano_state.get("image_path"):
-        raise gr.Error("Load a Street View location first.")
+        raise gr.Error("Load or upload a panorama first.")
 
     yield _SPLAT_PLACEHOLDER
 
@@ -467,6 +478,11 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
             scale=5,
         )
         load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
+    upload_pano = gr.File(
+        label="or upload your own panorama (equirectangular JPG/PNG)",
+        file_types=[".jpg", ".jpeg", ".png"],
+        file_count="single",
+    )
 
     with gr.Row(equal_height=True):
         map_view = gr.HTML(_MAP_PLACEHOLDER, elem_classes="no-pad")
@@ -536,6 +552,12 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
         fn=handle_load,
         inputs=[url_input],
         outputs=[map_view, pano_view, pano_state],
+    )
+
+    upload_pano.upload(
+        fn=handle_upload,
+        inputs=[upload_pano],
+        outputs=[pano_view, pano_state],
     )
 
     edit_btn.click(
