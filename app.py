@@ -478,12 +478,12 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
             scale=5,
         )
         load_btn = gr.Button("Load", variant="primary", scale=1, min_width=80)
-    upload_pano = gr.File(
-        label="or upload your own panorama (equirectangular JPG/PNG)",
-        file_types=[".jpg", ".jpeg", ".png"],
-        file_count="single",
-        height=80,
-    )
+        upload_pano = gr.UploadButton(
+            "Upload panorama (beta)",
+            file_types=[".jpg", ".jpeg", ".png"],
+            scale=1,
+            min_width=80,
+        )
 
     with gr.Row(equal_height=True):
         map_view = gr.HTML(_MAP_PLACEHOLDER, elem_classes="no-pad")
