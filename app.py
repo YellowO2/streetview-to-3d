@@ -482,6 +482,7 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
         label="or upload your own panorama (equirectangular JPG/PNG)",
         file_types=[".jpg", ".jpeg", ".png"],
         file_count="single",
+        height=80,
     )
 
     with gr.Row(equal_height=True):
