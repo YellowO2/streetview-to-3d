@@ -69,24 +69,71 @@ def _run_async(coro):
         loop.close()
 
 
+def _format_date(d):
+    if d is None:
+        return "unknown date"
+    s = f"{d.year:04d}-{d.month:02d}"
+    if getattr(d, "day", None):
+        s += f"-{d.day:02d}"
+    return s
+
+
+def _pano_to_meta(pano):
+    """Shared metadata shape for a resolved StreetViewPanorama, however it was found."""
+    neighbors = []
+    for item in pano.links or pano.neighbors:
+        n = item.pano if hasattr(item, "pano") else item
+        if n and n.lat is not None:
+            neighbors.append({"id": n.id, "lat": n.lat, "lon": n.lon})
+
+    dates = [{"id": pano.id, "label": _format_date(pano.date)}]
+    for h in pano.historical or []:
+        dates.append({"id": h.id, "label": _format_date(h.date)})
+
+    return {
+        "id": pano.id,
+        "lat": pano.lat,
+        "lon": pano.lon,
+        "date": _format_date(pano.date),
+        "neighbors": neighbors,
+        "dates": dates,
+    }
+
+
 async def _fetch_pano(lat, lon):
-    """Fetch pano metadata + neighbor stubs."""
+    """Fetch the newest pano at a location, with neighbor + historical-date stubs."""
     async with aiohttp.ClientSession(headers=_BROWSER_HEADERS) as session:
         pano = await streetview.find_panorama_async(lat, lon, session=session)
         if not pano:
             return None
-        neighbors = []
-        for item in pano.links or pano.neighbors:
-            n = item.pano if hasattr(item, "pano") else item
-            if n and n.lat is not None:
-                neighbors.append({"id": n.id, "lat": n.lat, "lon": n.lon})
-        return {"id": pano.id, "lat": pano.lat, "lon": pano.lon, "neighbors": neighbors}
+        return _pano_to_meta(pano)
+
+
+async def _fetch_pano_by_id(pano_id):
+    """Fetch pano metadata for a specific panorama ID (e.g. a historical capture)."""
+    async with aiohttp.ClientSession(headers=_BROWSER_HEADERS) as session:
+        pano = await streetview.find_panorama_by_id_async(pano_id, session=session)
+        if not pano:
+            return None
+        return _pano_to_meta(pano)
 
 
 async def _download(lat, lon):
     """Download a pano by lat/lon, return absolute path."""
     async with aiohttp.ClientSession(headers=_BROWSER_HEADERS) as session:
         pano = await streetview.find_panorama_async(lat, lon, session=session)
+        if not pano:
+            return None
+        img_path = os.path.join(IMAGES_DIR, f"pano_{pano.id}.jpg")
+        if not os.path.exists(img_path):
+            await download_panorama_image(pano, img_path)
+        return img_path
+
+
+async def _download_by_id(pano_id):
+    """Download a pano by its exact ID, return absolute path."""
+    async with aiohttp.ClientSession(headers=_BROWSER_HEADERS) as session:
+        pano = await streetview.find_panorama_by_id_async(pano_id, session=session)
         if not pano:
             return None
         img_path = os.path.join(IMAGES_DIR, f"pano_{pano.id}.jpg")
@@ -360,12 +407,44 @@ def handle_load(url_input):
         "original_image_path": img_path,
         **meta,
     }
+    date_choices = [(d["label"], d["id"]) for d in meta["dates"]]
+    return (
+        _build_map(meta["lat"], meta["lon"]),
+        _build_pano_viewer(_file_url(img_path)),
+        state,
+        gr.update(choices=date_choices, value=meta["id"], visible=len(date_choices) > 1),
+    )
+
+
+def handle_select_date(pano_state, selected_id):
+    if not pano_state or pano_state.get("source") != "streetview":
+        raise gr.Error("Load a Street View location first.")
+    if not selected_id or selected_id == pano_state.get("id"):
+        return gr.update(), gr.update(), pano_state
+
+    try:
+        meta = _run_async(_fetch_pano_by_id(selected_id))
+    except Exception as e:
+        raise gr.Error(f"Failed to load that date: {e}")
+    if not meta:
+        raise gr.Error("Panorama not found for that date.")
+
+    try:
+        img_path = _run_async(_download_by_id(meta["id"]))
+    except Exception as e:
+        raise gr.Error(f"Download failed: {e}")
+
+    state = {
+        "source": "streetview",
+        "image_path": img_path,
+        "original_image_path": img_path,
+        **meta,
+    }
     return (
         _build_map(meta["lat"], meta["lon"]),
         _build_pano_viewer(_file_url(img_path)),
         state,
     )
-
 
 
 def handle_edit(pano_state, prompt, preset_name, progress=gr.Progress()):
@@ -485,6 +564,13 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
             min_width=80,
         )
 
+    date_dropdown = gr.Dropdown(
+        label="Capture date",
+        info="Google Street View sometimes has multiple captures of the same spot.",
+        choices=[],
+        visible=False,
+    )
+
     with gr.Row(equal_height=True):
         map_view = gr.HTML(_MAP_PLACEHOLDER, elem_classes="no-pad")
         pano_view = gr.HTML(_PANO_PLACEHOLDER, elem_classes="no-pad")
@@ -552,6 +638,12 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
     load_btn.click(
         fn=handle_load,
         inputs=[url_input],
+        outputs=[map_view, pano_view, pano_state, date_dropdown],
+    )
+
+    date_dropdown.change(
+        fn=handle_select_date,
+        inputs=[pano_state, date_dropdown],
         outputs=[map_view, pano_view, pano_state],
     )
 
@@ -559,6 +651,9 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
         fn=handle_upload,
         inputs=[upload_pano],
         outputs=[pano_view, pano_state],
+    ).then(
+        fn=lambda: gr.update(choices=[], value=None, visible=False),
+        outputs=[date_dropdown],
     )
 
     edit_btn.click(
