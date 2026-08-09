@@ -97,6 +97,7 @@ def _pano_to_meta(pano):
         "date": _format_date(pano.date),
         "neighbors": neighbors,
         "dates": dates,
+        "heading": pano.heading,
         "pitch": pano.pitch,
         "roll": pano.roll,
     }
@@ -144,16 +145,17 @@ async def _download_by_id(pano_id):
         return img_path
 
 
-def _correct_slope(image_path: str, pitch: float, roll: float) -> str:
-    """De-tilt a panorama by its own pitch/roll (Street View's upright-correction
-    metadata), so its ground plane looks level before DA3 depth/pose inference.
-    Experimental — validating whether this improves DA3's view-consistency
-    filtering on sloped streets. Returns a new file path; original untouched."""
+def _correct_slope(image_path: str, heading: float, pitch: float, roll: float) -> str:
+    """De-tilt a panorama by its own heading/pitch/roll (Street View's
+    upright-correction metadata), so its ground plane looks level before DA3
+    depth/pose inference. Experimental — validating whether this improves
+    DA3's view-consistency filtering on sloped streets. Returns a new file
+    path; original untouched."""
     import cv2
     from components.ViewExtractor.Equirec2Perspec import rotate_equirectangular
 
     img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-    corrected = rotate_equirectangular(img, roll=-roll, pitch=-pitch)
+    corrected = rotate_equirectangular(img, heading=heading, roll=roll, pitch=pitch)
     out_path = image_path.rsplit(".", 1)[0] + "_leveled.jpg"
     cv2.imwrite(out_path, corrected)
     return out_path
@@ -546,9 +548,16 @@ def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, corr
     target_path = pano_state["image_path"]
     target_depth_path = pano_state.get("original_image_path", target_path)
 
-    if correct_slope and pano_state.get("pitch") is not None and pano_state.get("roll") is not None:
+    if (
+        correct_slope
+        and pano_state.get("heading") is not None
+        and pano_state.get("pitch") is not None
+        and pano_state.get("roll") is not None
+    ):
         try:
-            target_depth_path = _correct_slope(target_depth_path, pano_state["pitch"], pano_state["roll"])
+            target_depth_path = _correct_slope(
+                target_depth_path, pano_state["heading"], pano_state["pitch"], pano_state["roll"]
+            )
         except Exception as e:
             raise gr.Error(f"Slope correction failed: {e}")
 
