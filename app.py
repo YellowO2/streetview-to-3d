@@ -520,7 +520,7 @@ def handle_upload(file_path):
     return (_build_pano_viewer(_file_url(dest)), state)
 
 
-def handle_generate(pano_state, scale_mode, output_mode, progress=gr.Progress(track_tqdm=True)):
+def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, progress=gr.Progress(track_tqdm=True)):
     if not pano_state or not pano_state.get("image_path"):
         raise gr.Error("Load or upload a panorama first.")
 
@@ -532,7 +532,7 @@ def handle_generate(pano_state, scale_mode, output_mode, progress=gr.Progress(tr
 
     neighbors = (
         pano_state.get("neighbors", [])[:MAX_SUPPORT_PANOS]
-        if pano_state.get("source") == "streetview"
+        if use_support_panos and pano_state.get("source") == "streetview"
         else []
     )
     for i, n in enumerate(neighbors):
@@ -670,8 +670,14 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
             choices=["3D Gaussian Splat", "DA3 Point Cloud"],
             value="3D Gaussian Splat",
             label="Output type",
-            info="3DGS for photoreal rendering, or a raw DA3 point cloud for voxel/low-poly art.",
+            info="Generate a 3DGS or a point cloud.",
             scale=2,
+        )
+        use_support_panos = gr.Checkbox(
+            value=True,
+            label="Use supporting panoramas",
+            info="Nearby panos as DA3 depth/pose context.",
+            scale=1,
         )
         generate_btn = gr.Button("Generate", variant="primary", scale=1, min_width=160)
 
@@ -726,7 +732,7 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
 
     generate_btn.click(
         fn=handle_generate,
-        inputs=[pano_state, scale_mode, output_mode],
+        inputs=[pano_state, scale_mode, output_mode, use_support_panos],
         outputs=[splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],
