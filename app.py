@@ -550,7 +550,8 @@ def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, corr
     target_depth_path = pano_state.get("original_image_path", target_path)
 
     if (
-        correct_slope
+        output_mode == "DA3 Point Cloud"
+        and correct_slope
         and pano_state.get("heading") is not None
         and pano_state.get("pitch") is not None
         and pano_state.get("roll") is not None
@@ -778,6 +779,14 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
         fn=lambda mode: gr.update(visible=mode == "3D Gaussian Splat"),
         inputs=[output_mode],
         outputs=[scale_mode],
+    )
+    output_mode.change(
+        fn=lambda mode: (
+            gr.update(visible=mode == "DA3 Point Cloud"),
+            gr.update(visible=mode == "DA3 Point Cloud"),
+        ),
+        inputs=[output_mode],
+        outputs=[correct_slope, slope_multiplier],
     )
 
     generate_btn.click(
