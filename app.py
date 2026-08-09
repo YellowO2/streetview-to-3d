@@ -723,12 +723,14 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
             label="Correct for slope (experimental)",
             info="De-tilt the target pano using its pitch/roll before DA3.",
             scale=1,
+            visible=False,
         )
         slope_multiplier = gr.Number(
             value=1.0,
             label="Slope correction ×",
             info="Scales the pitch/roll correction. Try >1 if 1x isn't enough.",
             scale=1,
+            visible=False,
         )
         generate_btn = gr.Button("Generate", variant="primary", scale=1, min_width=160)
 
