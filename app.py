@@ -277,6 +277,21 @@ def _splat_viewer_with_download(ply_url: str) -> str:
     return f'<div>{_build_splat_iframe(ply_url)}{download_link}</div>'
 
 
+def _pointcloud_download_view(ply_url: str) -> str:
+    """Plain download link for the raw DA3 point cloud — no live viewer, since
+    the splat viewer's SplatMesh renderer expects 3DGS splat data, not a
+    colored point cloud."""
+    return (
+        '<div style="display:flex;align-items:center;justify-content:center;'
+        'aspect-ratio:16/9;background:#111;border-radius:8px">'
+        f'<a href="{ply_url}" download '
+        'style="display:inline-block;padding:10px 16px;'
+        'background:#5b47d1;color:#fff;text-decoration:none;border-radius:8px;'
+        'font:600 14px sans-serif;">⬇ Download DA3 point cloud (.ply)</a>'
+        "</div>"
+    )
+
+
 def _build_splat_iframe(ply_url: str) -> str:
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>body{{margin:0;background:#000;overflow:hidden;font:14px sans-serif;color:#bbb}}canvas{{display:block}}
@@ -359,7 +374,7 @@ def _run_editor_gpu(image_path, prompt, mode, output_path):
 
 
 @GPU
-def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, gs_backend, depth_panorama_paths=None):
+def _run_pipeline_gpu(target_appearance_path, output_dir, scale_mode, gs_backend, support_paths=None, target_depth_path=None):
     global _pipeline
     if _pipeline is None:
         from panoramic_to_3dgs import Pipeline
@@ -370,13 +385,32 @@ def _run_pipeline_gpu(panorama_paths, output_dir, scale_mode, gs_backend, depth_
     _pipeline.config.scale_mode = scale_mode
     _pipeline.config.gs_backend = gs_backend
     _pipeline.run(
-        panorama_paths=panorama_paths,
+        target_appearance_path=target_appearance_path,
         output_dir=output_dir,
-        target_pano_id=0,
-        depth_panorama_paths=depth_panorama_paths,
+        target_depth_path=target_depth_path,
+        support_paths=support_paths,
     )
 
     ply = os.path.join(output_dir, "final_output.ply")
+    return ply if os.path.exists(ply) else None
+
+
+@GPU
+def _run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None):
+    global _pipeline
+    if _pipeline is None:
+        from panoramic_to_3dgs import Pipeline
+        from config import load_pipeline_config
+        _pipeline = Pipeline(load_pipeline_config())
+
+    os.makedirs(output_dir, exist_ok=True)
+    _pipeline.run_da3_pointcloud(
+        target_depth_path=target_depth_path,
+        output_dir=output_dir,
+        support_paths=support_paths,
+    )
+
+    ply = os.path.join(output_dir, "da3_pointcloud.ply")
     return ply if os.path.exists(ply) else None
 
 
@@ -486,7 +520,7 @@ def handle_upload(file_path):
     return (_build_pano_viewer(_file_url(dest)), state)
 
 
-def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True)):
+def handle_generate(pano_state, scale_mode, output_mode, progress=gr.Progress(track_tqdm=True)):
     if not pano_state or not pano_state.get("image_path"):
         raise gr.Error("Load or upload a panorama first.")
 
@@ -511,17 +545,30 @@ def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True
             pass
 
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    panorama_paths = [target_path, *support_paths]
-    depth_paths = (
-        [target_depth_path, *support_paths]
-        if target_depth_path != target_path
-        else None
-    )
-
     t_start = time.time()
+
+    if output_mode == "DA3 Point Cloud":
+        try:
+            ply_path = _run_pointcloud_gpu(target_depth_path, output_dir, support_paths=support_paths)
+        except Exception as e:
+            raise gr.Error(f"Pipeline failed: {e}")
+
+        if not ply_path or not os.path.exists(ply_path):
+            raise gr.Error("Pipeline finished but no point cloud produced.")
+
+        elapsed = time.time() - t_start
+        progress(1.0, desc=f"Done! {1 + len(support_paths)} panos, {elapsed:.0f}s")
+        yield _pointcloud_download_view(_file_url(ply_path))
+        return
+
     try:
         ply_path = _run_pipeline_gpu(
-            panorama_paths, output_dir, scale_mode, "sharp", depth_panorama_paths=depth_paths
+            target_path,
+            output_dir,
+            scale_mode,
+            "sharp",
+            support_paths=support_paths,
+            target_depth_path=target_depth_path if target_depth_path != target_path else None,
         )
     except Exception as e:
         raise gr.Error(f"Pipeline failed: {e}")
@@ -530,7 +577,7 @@ def handle_generate(pano_state, scale_mode, progress=gr.Progress(track_tqdm=True
         raise gr.Error("Pipeline finished but no PLY produced.")
 
     elapsed = time.time() - t_start
-    progress(1.0, desc=f"Done! {len(panorama_paths)} panos, {elapsed:.0f}s")
+    progress(1.0, desc=f"Done! {1 + len(support_paths)} panos, {elapsed:.0f}s")
     yield _splat_viewer_with_download(_file_url(ply_path))
 
 
@@ -619,7 +666,14 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
             info="How depth is aligned to the scene.",
             scale=2,
         )
-        generate_btn = gr.Button("Generate 3DGS", variant="primary", scale=1, min_width=160)
+        output_mode = gr.Dropdown(
+            choices=["3D Gaussian Splat", "DA3 Point Cloud"],
+            value="3D Gaussian Splat",
+            label="Output type",
+            info="3DGS for photoreal rendering, or a raw DA3 point cloud for voxel/low-poly art.",
+            scale=2,
+        )
+        generate_btn = gr.Button("Generate", variant="primary", scale=1, min_width=160)
 
     splat_view = gr.HTML(_SPLAT_PLACEHOLDER)
 
@@ -664,9 +718,15 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
         show_progress_on=[pano_view],
     )
 
+    output_mode.change(
+        fn=lambda mode: gr.update(visible=mode == "3D Gaussian Splat"),
+        inputs=[output_mode],
+        outputs=[scale_mode],
+    )
+
     generate_btn.click(
         fn=handle_generate,
-        inputs=[pano_state, scale_mode],
+        inputs=[pano_state, scale_mode, output_mode],
         outputs=[splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],
