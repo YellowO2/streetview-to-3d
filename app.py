@@ -145,17 +145,18 @@ async def _download_by_id(pano_id):
         return img_path
 
 
-def _correct_slope(image_path: str, heading: float, pitch: float, roll: float) -> str:
+def _correct_slope(image_path: str, heading: float, pitch: float, roll: float, multiplier: float = 1.0) -> str:
     """De-tilt a panorama by its own heading/pitch/roll (Street View's
     upright-correction metadata), so its ground plane looks level before DA3
     depth/pose inference. Experimental — validating whether this improves
-    DA3's view-consistency filtering on sloped streets. Returns a new file
-    path; original untouched."""
+    DA3's view-consistency filtering on sloped streets. `multiplier` scales
+    pitch/roll, to test whether a stronger-than-reported correction helps
+    further. Returns a new file path; original untouched."""
     import cv2
     from components.ViewExtractor.Equirec2Perspec import rotate_equirectangular
 
     img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-    corrected = rotate_equirectangular(img, heading=heading, roll=roll, pitch=pitch)
+    corrected = rotate_equirectangular(img, heading=heading, roll=roll * multiplier, pitch=pitch * multiplier)
     out_path = image_path.rsplit(".", 1)[0] + "_leveled.jpg"
     cv2.imwrite(out_path, corrected)
     return out_path
@@ -539,7 +540,7 @@ def handle_upload(file_path):
     return (_build_pano_viewer(_file_url(dest)), state)
 
 
-def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, correct_slope, progress=gr.Progress(track_tqdm=True)):
+def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, correct_slope, slope_multiplier, progress=gr.Progress(track_tqdm=True)):
     if not pano_state or not pano_state.get("image_path"):
         raise gr.Error("Load or upload a panorama first.")
 
@@ -556,7 +557,11 @@ def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, corr
     ):
         try:
             target_depth_path = _correct_slope(
-                target_depth_path, pano_state["heading"], pano_state["pitch"], pano_state["roll"]
+                target_depth_path,
+                pano_state["heading"],
+                pano_state["pitch"],
+                pano_state["roll"],
+                multiplier=slope_multiplier,
             )
         except Exception as e:
             raise gr.Error(f"Slope correction failed: {e}")
@@ -718,6 +723,12 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
             info="De-tilt the target pano using its pitch/roll before DA3.",
             scale=1,
         )
+        slope_multiplier = gr.Number(
+            value=1.0,
+            label="Slope correction ×",
+            info="Scales the pitch/roll correction. Try >1 if 1x isn't enough.",
+            scale=1,
+        )
         generate_btn = gr.Button("Generate", variant="primary", scale=1, min_width=160)
 
     splat_view = gr.HTML(_SPLAT_PLACEHOLDER)
@@ -771,7 +782,7 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
 
     generate_btn.click(
         fn=handle_generate,
-        inputs=[pano_state, scale_mode, output_mode, use_support_panos, correct_slope],
+        inputs=[pano_state, scale_mode, output_mode, use_support_panos, correct_slope, slope_multiplier],
         outputs=[splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],
