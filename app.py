@@ -97,6 +97,8 @@ def _pano_to_meta(pano):
         "date": _format_date(pano.date),
         "neighbors": neighbors,
         "dates": dates,
+        "pitch": pano.pitch,
+        "roll": pano.roll,
     }
 
 
@@ -140,6 +142,21 @@ async def _download_by_id(pano_id):
         if not os.path.exists(img_path):
             await download_panorama_image(pano, img_path)
         return img_path
+
+
+def _correct_slope(image_path: str, pitch: float, roll: float) -> str:
+    """De-tilt a panorama by its own pitch/roll (Street View's upright-correction
+    metadata), so its ground plane looks level before DA3 depth/pose inference.
+    Experimental — validating whether this improves DA3's view-consistency
+    filtering on sloped streets. Returns a new file path; original untouched."""
+    import cv2
+    from components.ViewExtractor.Equirec2Perspec import rotate_equirectangular
+
+    img = cv2.imread(image_path, cv2.IMREAD_COLOR)
+    corrected = rotate_equirectangular(img, roll=-roll, pitch=-pitch)
+    out_path = image_path.rsplit(".", 1)[0] + "_leveled.jpg"
+    cv2.imwrite(out_path, corrected)
+    return out_path
 
 
 # ── input parsing ──────────────────────────────────────────────────────────────
@@ -520,7 +537,7 @@ def handle_upload(file_path):
     return (_build_pano_viewer(_file_url(dest)), state)
 
 
-def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, progress=gr.Progress(track_tqdm=True)):
+def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, correct_slope, progress=gr.Progress(track_tqdm=True)):
     if not pano_state or not pano_state.get("image_path"):
         raise gr.Error("Load or upload a panorama first.")
 
@@ -528,6 +545,13 @@ def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, prog
 
     target_path = pano_state["image_path"]
     target_depth_path = pano_state.get("original_image_path", target_path)
+
+    if correct_slope and pano_state.get("pitch") is not None and pano_state.get("roll") is not None:
+        try:
+            target_depth_path = _correct_slope(target_depth_path, pano_state["pitch"], pano_state["roll"])
+        except Exception as e:
+            raise gr.Error(f"Slope correction failed: {e}")
+
     support_paths = []
 
     neighbors = (
@@ -679,6 +703,12 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
             info="Nearby panos as DA3 depth/pose context.",
             scale=1,
         )
+        correct_slope = gr.Checkbox(
+            value=False,
+            label="Correct for slope (experimental)",
+            info="De-tilt the target pano using its pitch/roll before DA3.",
+            scale=1,
+        )
         generate_btn = gr.Button("Generate", variant="primary", scale=1, min_width=160)
 
     splat_view = gr.HTML(_SPLAT_PLACEHOLDER)
@@ -732,7 +762,7 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
 
     generate_btn.click(
         fn=handle_generate,
-        inputs=[pano_state, scale_mode, output_mode, use_support_panos],
+        inputs=[pano_state, scale_mode, output_mode, use_support_panos, correct_slope],
         outputs=[splat_view],
         show_progress="minimal",
         show_progress_on=[splat_view],
