@@ -42,7 +42,15 @@ except ImportError:
 from streetlevel import streetview
 from streetlevel.lookaround import lookaround as apple_lookaround
 from streetlevel.lookaround.auth import Authenticator as AppleAuthenticator
+from streetlevel.lookaround import reproject as apple_reproject
 from streetlevel.lookaround.reproject import to_equirectangular as apple_to_equirectangular
+
+# ZeroGPU only permits CUDA ops inside @spaces.GPU-wrapped calls; reproject.py
+# picks CUDA by default whenever it's "available", which ZeroGPU reports as
+# true everywhere. Stitching a panorama doesn't need a GPU, so force CPU
+# rather than spend GPU quota/allocation latency on it.
+import torch as _torch
+apple_reproject._device = _torch.device("cpu")
 from streetlevel.geo import wgs84_to_tile_coord
 from services.download_street_panorama import download_panorama_image
 from prompts.presets import PRESET_NAMES, build_prompt, get_preset
