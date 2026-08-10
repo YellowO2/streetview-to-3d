@@ -7,6 +7,8 @@ HF Spaces:    set as app.py, add `spaces` to requirements, enable ZeroGPU.
 
 import asyncio
 import html as html_lib
+import io
+import math
 import os
 import re
 import shutil
@@ -15,6 +17,10 @@ import uuid
 
 import aiohttp
 import gradio as gr
+import pillow_heif
+from PIL import Image
+
+pillow_heif.register_heif_opener()
 
 try:
     import spaces
@@ -34,6 +40,10 @@ except ImportError:
     ON_SPACES = False
 
 from streetlevel import streetview
+from streetlevel.lookaround import lookaround as apple_lookaround
+from streetlevel.lookaround.auth import Authenticator as AppleAuthenticator
+from streetlevel.lookaround.reproject import to_equirectangular as apple_to_equirectangular
+from streetlevel.geo import wgs84_to_tile_coord
 from services.download_street_panorama import download_panorama_image
 from prompts.presets import PRESET_NAMES, build_prompt, get_preset
 
@@ -49,6 +59,12 @@ _BROWSER_HEADERS = {
 
 # Auto-pick up to N nearest neighbors as DA3 depth-support panos.
 MAX_SUPPORT_PANOS = 2
+
+# Apple Look Around face zoom (0=full res/slow, 7=lowest). 3 is a fast, decent-quality default.
+APPLE_ZOOM = 3
+APPLE_CANDIDATE_COUNT = 5
+
+_apple_auth = None
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 IMAGES_DIR = os.path.join(PROJECT_ROOT, "images")
@@ -143,6 +159,72 @@ async def _download_by_id(pano_id):
         if not os.path.exists(img_path):
             await download_panorama_image(pano, img_path)
         return img_path
+
+
+def _haversine_m(lat1, lon1, lat2, lon2):
+    r = 6371000
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlam / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def _apple_nearby_panos(lat, lon):
+    """All Look Around panos on the target tile + its 8 neighbors, keyed by ID."""
+    tx, ty = wgs84_to_tile_coord(lat, lon, 17)
+    seen = {}
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            tile = apple_lookaround.get_coverage_tile(tx + dx, ty + dy)
+            for p in tile.panos:
+                seen[p.id] = p
+    return seen
+
+
+def _apple_candidates(lat, lon, k=APPLE_CANDIDATE_COUNT):
+    """Nearest k Look Around panos to (lat, lon), sorted by distance."""
+    panos = _apple_nearby_panos(lat, lon)
+    return sorted(panos.values(), key=lambda p: _haversine_m(lat, lon, p.lat, p.lon))[:k]
+
+
+def _apple_pano_to_meta(pano):
+    """Shared metadata shape for a resolved LookaroundPanorama."""
+    return {
+        "id": pano.id,
+        "build_id": pano.build_id,
+        "lat": pano.lat,
+        "lon": pano.lon,
+        "date": _format_date(pano.date),
+        "neighbors": [],
+        "dates": [],
+        "heading": pano.heading,
+        "pitch": pano.pitch,
+        "roll": pano.roll,
+    }
+
+
+def _get_apple_auth():
+    global _apple_auth
+    if _apple_auth is None:
+        _apple_auth = AppleAuthenticator()
+    return _apple_auth
+
+
+def _download_lookaround(pano) -> str:
+    """Fetch all 6 faces of a Look Around pano and stitch to equirectangular, cached by ID."""
+    img_path = os.path.join(IMAGES_DIR, f"lookaround_{pano.id}.jpg")
+    if os.path.exists(img_path):
+        return img_path
+
+    auth = _get_apple_auth()
+    faces = [
+        Image.open(io.BytesIO(apple_lookaround.get_panorama_face(pano, face_idx, APPLE_ZOOM, auth)))
+        for face_idx in range(6)
+    ]
+    equi = apple_to_equirectangular(faces, pano.camera_metadata)
+    equi.save(img_path, quality=92)
+    return img_path
 
 
 def _correct_slope(image_path: str, heading: float, pitch: float, roll: float, multiplier: float = 1.0) -> str:
@@ -461,39 +543,57 @@ def handle_load(url_input):
         "original_image_path": img_path,
         **meta,
     }
-    date_choices = [(d["label"], d["id"]) for d in meta["dates"]]
+    pano_choices = [(f"Google · {d['label']}", f"google:{d['id']}") for d in meta["dates"]]
+    try:
+        for p in _apple_candidates(meta["lat"], meta["lon"]):
+            dist_m = _haversine_m(meta["lat"], meta["lon"], p.lat, p.lon)
+            pano_choices.append((f"Apple · {dist_m:.0f}m · {_format_date(p.date)}", f"apple:{p.id}"))
+    except Exception:
+        pass  # Look Around coverage lookup is best-effort; Google picker still works without it.
+
     return (
         _build_map(meta["lat"], meta["lon"]),
         _build_pano_viewer(_file_url(img_path)),
         state,
-        gr.update(choices=date_choices, value=meta["id"], visible=len(date_choices) > 1),
+        gr.update(choices=pano_choices, value=f"google:{meta['id']}", visible=len(pano_choices) > 1),
     )
 
 
-def handle_select_date(pano_state, selected_id):
-    if not pano_state or pano_state.get("source") != "streetview":
+def handle_select_pano(pano_state, selected_value):
+    if not pano_state or pano_state.get("source") not in ("streetview", "lookaround"):
         raise gr.Error("Load a Street View location first.")
-    if not selected_id or selected_id == pano_state.get("id"):
+    current_value = ("google" if pano_state["source"] == "streetview" else "apple") + ":" + str(pano_state.get("id"))
+    if not selected_value or selected_value == current_value:
         return gr.update(), gr.update(), pano_state
 
-    try:
-        meta = _run_async(_fetch_pano_by_id(selected_id))
-    except Exception as e:
-        raise gr.Error(f"Failed to load that date: {e}")
-    if not meta:
-        raise gr.Error("Panorama not found for that date.")
+    source, pano_id = selected_value.split(":", 1)
 
-    try:
-        img_path = _run_async(_download_by_id(meta["id"]))
-    except Exception as e:
-        raise gr.Error(f"Download failed: {e}")
+    if source == "google":
+        try:
+            meta = _run_async(_fetch_pano_by_id(pano_id))
+        except Exception as e:
+            raise gr.Error(f"Failed to load that date: {e}")
+        if not meta:
+            raise gr.Error("Panorama not found for that date.")
+        try:
+            img_path = _run_async(_download_by_id(meta["id"]))
+        except Exception as e:
+            raise gr.Error(f"Download failed: {e}")
+        state = {"source": "streetview", "image_path": img_path, "original_image_path": img_path, **meta}
+    else:
+        try:
+            pano = _apple_nearby_panos(pano_state["lat"], pano_state["lon"]).get(int(pano_id))
+        except Exception as e:
+            raise gr.Error(f"Failed to look up that Apple panorama: {e}")
+        if not pano:
+            raise gr.Error("Apple panorama not found near that location.")
+        try:
+            img_path = _download_lookaround(pano)
+        except Exception as e:
+            raise gr.Error(f"Download failed: {e}")
+        meta = _apple_pano_to_meta(pano)
+        state = {"source": "lookaround", "image_path": img_path, "original_image_path": img_path, **meta}
 
-    state = {
-        "source": "streetview",
-        "image_path": img_path,
-        "original_image_path": img_path,
-        **meta,
-    }
     return (
         _build_map(meta["lat"], meta["lon"]),
         _build_pano_viewer(_file_url(img_path)),
@@ -650,9 +750,9 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
             min_width=80,
         )
 
-    date_dropdown = gr.Dropdown(
-        label="Capture date",
-        info="Google Street View sometimes has multiple captures of the same spot.",
+    pano_dropdown = gr.Dropdown(
+        label="Source pano",
+        info="Other captures of this spot — Google Street View dates and nearby Apple Look Around panos.",
         choices=[],
         visible=False,
     )
@@ -751,12 +851,12 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
     load_btn.click(
         fn=handle_load,
         inputs=[url_input],
-        outputs=[map_view, pano_view, pano_state, date_dropdown],
+        outputs=[map_view, pano_view, pano_state, pano_dropdown],
     )
 
-    date_dropdown.change(
-        fn=handle_select_date,
-        inputs=[pano_state, date_dropdown],
+    pano_dropdown.change(
+        fn=handle_select_pano,
+        inputs=[pano_state, pano_dropdown],
         outputs=[map_view, pano_view, pano_state],
     )
 
@@ -766,7 +866,7 @@ with gr.Blocks(title="Street View to 3DGS", css=".no-pad { padding-left: 0 !impo
         outputs=[pano_view, pano_state],
     ).then(
         fn=lambda: gr.update(choices=[], value=None, visible=False),
-        outputs=[date_dropdown],
+        outputs=[pano_dropdown],
     )
 
     edit_btn.click(

@@ -8,6 +8,8 @@ huggingface_hub
 pyyaml
 
 streetlevel @ git+https://github.com/YellowO2/streetlevel.git
+torchvision
+pillow-heif
 panoramic-to-3dgs @ git+https://github.com/YellowO2/panoramic-to-3dgs.git@fb618010d5c34ae562ec450c1ee5438779d9ac11
 diffusers
 peft
