@@ -172,6 +172,30 @@ def handle_generate_chain(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
 
 
+def handle_filter_sweep(state, progress=gr.Progress(track_tqdm=True)):
+    """Debug button: runs DA3 inference once and produces one point cloud per
+    FILTER_SWEEP_LEVELS threshold, to check how much the consensus filter is
+    actually doing. Separate from handle_generate_chain -- doesn't touch or
+    replace the normal Generate output."""
+    if len(state.get("selected", [])) < 2:
+        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    by_key = _nodes_by_key(state)
+    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    progress(0, desc=f"Running filter sweep over {len(ordered_nodes)} nodes...")
+    try:
+        results = reconstruct.reconstruct_chain_filter_sweep(ordered_nodes, output_dir)
+    except Exception as e:
+        raise gr.Error(f"Filter sweep failed: {e}")
+
+    progress(1.0, desc="Done!")
+    yield viewers.filter_sweep_links(results)
+
+
 def build_tab():
     state = gr.State(_empty_state())
 
@@ -194,6 +218,9 @@ def build_tab():
         with gr.Column(scale=0, min_width=140):
             clear_btn = gr.Button("Clear selection")
             generate_btn = gr.Button("Generate", variant="primary")
+            # Debug: compares consensus-filter strictness levels from one
+            # DA3 inference call. Not part of the normal Generate flow.
+            filter_sweep_btn = gr.Button("Test filter levels (debug)")
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -219,6 +246,14 @@ def build_tab():
 
     generate_btn.click(
         fn=handle_generate_chain,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    filter_sweep_btn.click(
+        fn=handle_filter_sweep,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",

@@ -22,12 +22,24 @@ or a GPU box.
 import asyncio
 
 from services.lookaround_fetch import apple_candidates, download_lookaround
-from services.pipeline_runner import run_pointcloud_gpu
+from services.pipeline_runner import run_pointcloud_gpu, run_pointcloud_sweep_gpu
 from services.streetview_fetch import download_images_for_nodes
 
 # Per node, how many nearest Apple Look Around panos to pull in as extra
 # support context. No distance cutoff yet -- closest-K only.
 APPLE_SUPPORT_PER_NODE = 1
+
+# (label, dist_thresh_m, angle_thresh_deg), loosening from DA3Model's current
+# default down to no filter at all -- for reconstruct_chain_filter_sweep,
+# to check how much the consensus filter is actually doing before deciding
+# whether/how to change it.
+FILTER_SWEEP_LEVELS = [
+    ("Current (0.2m, 1°)", 0.2, 1),
+    ("Loose (0.5m, 3°)", 0.5, 3),
+    ("Looser (1.0m, 5°)", 1.0, 5),
+    ("Very loose (2.0m, 10°)", 2.0, 10),
+    ("No filter", float("inf"), float("inf")),
+]
 
 
 def _gather_apple_support(nodes: list[dict]) -> list[str]:
@@ -46,6 +58,20 @@ def _gather_apple_support(nodes: list[dict]) -> list[str]:
     return paths
 
 
+def _download_chain_and_support(nodes: list[dict]) -> tuple[str, list[str]]:
+    """Shared by reconstruct_chain and reconstruct_chain_filter_sweep: download
+    the chain's own images plus per-node Apple support panos. Returns
+    (target_depth_path, support_paths)."""
+    if len(nodes) < 2:
+        raise ValueError("Need at least 2 nodes in the chain for DA3 to have multi-view context.")
+
+    # Same download helper (services/streetview_fetch.py) app.py's
+    # single-pano tab uses for its support panos -- not a separate copy.
+    image_paths = asyncio.run(download_images_for_nodes(nodes))
+    support_paths = image_paths[1:] + _gather_apple_support(nodes)
+    return image_paths[0], support_paths
+
+
 def reconstruct_chain(nodes: list[dict], output_dir: str) -> str:
     """Download the chain's images plus per-node Apple support panos, and run
     one joint DA3 pass over all of them (first node as target, rest as
@@ -55,21 +81,37 @@ def reconstruct_chain(nodes: list[dict], output_dir: str) -> str:
 
     Returns the path to the merged da3_pointcloud.ply.
     """
-    if len(nodes) < 2:
-        raise ValueError("Need at least 2 nodes in the chain for DA3 to have multi-view context.")
-
-    # Same download helper (services/streetview_fetch.py) app.py's
-    # single-pano tab uses for its support panos -- not a separate copy.
-    image_paths = asyncio.run(download_images_for_nodes(nodes))
-    support_paths = image_paths[1:] + _gather_apple_support(nodes)
+    target_depth_path, support_paths = _download_chain_and_support(nodes)
 
     # Reuses app.py's own pipeline runner/singleton (services/pipeline_runner.py)
     # rather than loading a second separate copy of the DA3/SHARP models.
     ply_path = run_pointcloud_gpu(
-        target_depth_path=image_paths[0],
+        target_depth_path=target_depth_path,
         output_dir=output_dir,
         support_paths=support_paths,
     )
     if not ply_path:
         raise RuntimeError("Pipeline finished but no point cloud was produced.")
     return ply_path
+
+
+def reconstruct_chain_filter_sweep(nodes: list[dict], output_dir: str) -> list[tuple[str, str | None]]:
+    """Debug helper for street_builder/tab.py's filter-sweep button: same
+    inputs as reconstruct_chain, but runs DA3 inference once and saves one
+    point cloud per FILTER_SWEEP_LEVELS threshold instead of a single merged
+    result -- to check how much the consensus filter actually matters before
+    deciding whether/how to change it.
+
+    Returns a list of (label, ply_path_or_None) pairs, same order as
+    FILTER_SWEEP_LEVELS.
+    """
+    target_depth_path, support_paths = _download_chain_and_support(nodes)
+
+    threshold_levels = [(dist, angle) for _, dist, angle in FILTER_SWEEP_LEVELS]
+    out_paths = run_pointcloud_sweep_gpu(
+        target_depth_path=target_depth_path,
+        output_dir=output_dir,
+        threshold_levels=threshold_levels,
+        support_paths=support_paths,
+    )
+    return [(label, path) for (label, _, _), path in zip(FILTER_SWEEP_LEVELS, out_paths)]

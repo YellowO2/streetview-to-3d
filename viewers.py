@@ -259,6 +259,33 @@ def pointcloud_viewer_with_download(ply_url: str) -> str:
     return f'<div>{build_pointcloud_viewer(ply_url)}{download_link}</div>'
 
 
+def filter_sweep_links(levels: list[tuple[str, str | None]]) -> str:
+    """Download-link list for the DA3 filter-threshold sweep debug button
+    (street_builder/reconstruct.py's reconstruct_chain_filter_sweep): one
+    .ply per (dist_thresh, angle_thresh) level, all from a single DA3
+    inference call. No live viewer here -- download each and drag it into
+    the point-cloud viewer above to compare visually. Per-level kept-view
+    counts are only in the server log, not shown here."""
+    items = []
+    for label, path in levels:
+        if path:
+            items.append(
+                f'<li style="margin:4px 0"><a href="{file_url(path)}" download '
+                f'style="color:#8ab4f8">{html_lib.escape(label)}</a></li>'
+            )
+        else:
+            items.append(
+                f'<li style="margin:4px 0;color:#888">{html_lib.escape(label)} — no views survived</li>'
+            )
+    return (
+        '<div style="padding:12px;background:#1e1e2e;border-radius:8px">'
+        '<p style="color:#aaa;margin:0 0 8px;font:13px sans-serif">'
+        "Filter sweep results — download each and drag it into the viewer above to compare:</p>"
+        f'<ul style="margin:0;padding-left:20px;font:13px sans-serif;list-style:none">{"".join(items)}</ul>'
+        "</div>"
+    )
+
+
 def build_splat_iframe(ply_url: str) -> str:
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>body{{margin:0;background:#000;overflow:hidden;font:14px sans-serif;color:#bbb}}canvas{{display:block}}

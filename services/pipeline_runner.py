@@ -80,3 +80,19 @@ def run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None):
 
     ply = os.path.join(output_dir, "da3_pointcloud.ply")
     return ply if os.path.exists(ply) else None
+
+
+@GPU
+def run_pointcloud_sweep_gpu(target_depth_path, output_dir, threshold_levels, support_paths=None):
+    """Debug helper: one DA3 inference pass, one point cloud saved per
+    (dist_thresh, angle_thresh) in threshold_levels. See
+    Pipeline.run_da3_pointcloud_sweep for why this doesn't cost a GPU
+    forward pass per level."""
+    pipeline = get_pipeline()
+    os.makedirs(output_dir, exist_ok=True)
+    return pipeline.run_da3_pointcloud_sweep(
+        target_depth_path=target_depth_path,
+        output_dir=output_dir,
+        threshold_levels=threshold_levels,
+        support_paths=support_paths,
+    )
