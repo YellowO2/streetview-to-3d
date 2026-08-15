@@ -434,4 +434,11 @@ if __name__ == "__main__":
         theme=gr.themes.Default(),
         css=".no-pad { padding-left: 0 !important; padding-right: 0 !important; } " + BRIDGE_CSS,
         head=BRIDGE_HEAD_SCRIPT,
+        # Explicitly off: the startup log showed "with SSR (Node proxy ->
+        # Python :7861)" -- an extra Node.js hop HF Spaces enables by
+        # default -- right before the Space got stuck permanently on
+        # "restarting" despite the Python server itself logging a
+        # successful start. Forcing plain client-side rendering removes
+        # that layer as a suspect.
+        ssr_mode=False,
     )
