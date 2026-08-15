@@ -133,7 +133,11 @@ def build_pointcloud_viewer(ply_url: str) -> str:
     Point size and camera distance are both derived from the loaded geometry's
     bounding sphere, since a point cloud's absolute scale isn't known ahead of
     time (unlike the fixed-radius pano sphere in build_pano_viewer). This is a
-    rough heuristic, not tuned against a real render — may need adjusting."""
+    rough heuristic, not tuned against a real render — may need adjusting.
+
+    Also accepts drag-and-drop: dropping a local .ply file onto the viewer
+    replaces whatever's currently shown, parsed client-side (PLYLoader.parse),
+    no upload/round-trip to the server."""
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>body{{margin:0;background:#000;overflow:hidden;cursor:grab;font:14px sans-serif;color:#bbb}}body:active{{cursor:grabbing}}canvas{{display:block}}
 #hint{{position:fixed;bottom:8px;right:8px;color:rgba(255,255,255,.4);font:11px sans-serif;pointer-events:none}}
@@ -142,7 +146,11 @@ def build_pointcloud_viewer(ply_url: str) -> str:
 #loading.gone{{opacity:0}}
 .dot{{display:inline-block;animation:blink 1.4s infinite both}}
 .dot:nth-child(2){{animation-delay:.2s}}.dot:nth-child(3){{animation-delay:.4s}}
-@keyframes blink{{0%,80%,100%{{opacity:0}}40%{{opacity:1}}}}</style>
+@keyframes blink{{0%,80%,100%{{opacity:0}}40%{{opacity:1}}}}
+#dropzone{{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(66,133,244,.15);border:3px dashed #4285f4;pointer-events:none;
+  font-size:18px;color:#fff;z-index:10}}
+#dropzone.active{{display:flex}}</style>
 <script type="importmap">
 {{"imports":{{
     "three":"https://unpkg.com/three@0.178.0/build/three.module.js",
@@ -150,7 +158,8 @@ def build_pointcloud_viewer(ply_url: str) -> str:
 }}}}
 </script></head><body>
 <div id="loading">Loading point cloud<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>
-<div id="hint">drag to orbit, scroll to zoom</div>
+<div id="hint">drag to orbit · scroll to zoom · drop a .ply to preview it</div>
+<div id="dropzone">Drop .ply to preview</div>
 <script type="module">
 import * as THREE from 'three';
 import {{ PLYLoader }} from 'three/addons/loaders/PLYLoader.js';
@@ -167,7 +176,10 @@ document.body.appendChild(renderer.domElement);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
-new PLYLoader().load('{ply_url}', geometry => {{
+const loader = new PLYLoader();
+let currentPoints = null;
+
+function showGeometry(geometry) {{
     geometry.computeBoundingSphere();
     const sphere = geometry.boundingSphere;
     const hasColor = !!geometry.getAttribute('color');
@@ -176,7 +188,14 @@ new PLYLoader().load('{ply_url}', geometry => {{
         vertexColors: hasColor,
         color: hasColor ? 0xffffff : 0x4285f4,
     }});
-    scene.add(new THREE.Points(geometry, material));
+
+    if (currentPoints) {{
+        scene.remove(currentPoints);
+        currentPoints.geometry.dispose();
+        currentPoints.material.dispose();
+    }}
+    currentPoints = new THREE.Points(geometry, material);
+    scene.add(currentPoints);
 
     controls.target.copy(sphere.center);
     camera.position.copy(sphere.center).add(new THREE.Vector3(0, 0, sphere.radius * 2.2 || 5));
@@ -186,9 +205,30 @@ new PLYLoader().load('{ply_url}', geometry => {{
     controls.update();
 
     document.getElementById('loading').classList.add('gone');
-}}, undefined, err => {{
+}}
+
+loader.load('{ply_url}', showGeometry, undefined, err => {{
     console.error('PLY load failed', err);
     document.getElementById('loading').textContent = 'Failed to load point cloud';
+}});
+
+const dropzone = document.getElementById('dropzone');
+addEventListener('dragover', e => {{ e.preventDefault(); dropzone.classList.add('active'); }});
+addEventListener('dragleave', e => {{ if (e.target === document.documentElement) dropzone.classList.remove('active'); }});
+addEventListener('drop', e => {{
+    e.preventDefault();
+    dropzone.classList.remove('active');
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {{
+        try {{
+            showGeometry(loader.parse(reader.result));
+        }} catch (err) {{
+            console.error('Failed to parse dropped PLY', err);
+        }}
+    }};
+    reader.readAsArrayBuffer(file);
 }});
 
 addEventListener('resize', () => {{
