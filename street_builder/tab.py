@@ -196,6 +196,31 @@ def handle_filter_sweep(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.filter_sweep_links(results)
 
 
+def handle_best4(state, progress=gr.Progress(track_tqdm=True)):
+    """Experimental button: instead of trusting the chain's own Google nodes,
+    scores a wider candidate pool (chain nodes + nearby Apple panos) solo
+    through DA3 and reconstructs using only the top BEST4_FINAL_COUNT
+    scorers. Separate from handle_generate_chain -- doesn't touch or replace
+    the normal Generate output."""
+    if len(state.get("selected", [])) < 2:
+        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    by_key = _nodes_by_key(state)
+    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    progress(0, desc=f"Scoring candidates near {len(ordered_nodes)} nodes...")
+    try:
+        ply_path = reconstruct.reconstruct_chain_best4(ordered_nodes, output_dir)
+    except Exception as e:
+        raise gr.Error(f"Best-4 reconstruction failed: {e}")
+
+    progress(1.0, desc="Done!")
+    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
+
+
 def build_tab():
     state = gr.State(_empty_state())
 
@@ -221,6 +246,10 @@ def build_tab():
             # Debug: compares consensus-filter strictness levels from one
             # DA3 inference call. Not part of the normal Generate flow.
             filter_sweep_btn = gr.Button("Test filter levels (debug)")
+            # Experimental: solo-scores a wider candidate pool and
+            # reconstructs with only the top 4. Not part of the normal
+            # Generate flow.
+            best4_btn = gr.Button("Reconstruct (best-4, experimental)")
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -254,6 +283,14 @@ def build_tab():
 
     filter_sweep_btn.click(
         fn=handle_filter_sweep,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    best4_btn.click(
+        fn=handle_best4,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",

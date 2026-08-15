@@ -22,12 +22,19 @@ or a GPU box.
 import asyncio
 
 from services.lookaround_fetch import apple_candidates, download_lookaround
-from services.pipeline_runner import run_pointcloud_gpu, run_pointcloud_sweep_gpu
+from services.pipeline_runner import run_pointcloud_gpu, run_pointcloud_sweep_gpu, score_candidates_gpu
 from services.streetview_fetch import download_images_for_nodes
 
 # Per node, how many nearest Apple Look Around panos to pull in as extra
 # support context. No distance cutoff yet -- closest-K only.
 APPLE_SUPPORT_PER_NODE = 1
+
+# reconstruct_chain_best4: how many Apple candidates per node go into the
+# scored pool (wider than APPLE_SUPPORT_PER_NODE, since here every candidate
+# competes on its own solo score rather than being trusted by distance alone),
+# and how many total winners the final DA3 call gets.
+CANDIDATE_POOL_APPLE_PER_NODE = 4
+BEST4_FINAL_COUNT = 4
 
 # (label, dist_thresh_m, angle_thresh_deg), loosening from DA3Model's current
 # default down to no filter at all -- for reconstruct_chain_filter_sweep,
@@ -115,3 +122,76 @@ def reconstruct_chain_filter_sweep(nodes: list[dict], output_dir: str) -> list[t
         support_paths=support_paths,
     )
     return [(label, path) for (label, _, _), path in zip(FILTER_SWEEP_LEVELS, out_paths)]
+
+
+def _gather_candidate_pool(nodes: list[dict]) -> list[tuple[str, str]]:
+    """(label, image_path) pairs for every chain node's own Google image plus
+    nearby Apple candidates -- the pool reconstruct_chain_best4 scores and
+    ranks, rather than trusting the chain nodes or closest-K blindly. The
+    chain's Google nodes only mark where to search; they compete in this same
+    pool and aren't guaranteed a spot in the final reconstruction."""
+    pool = []
+    seen_paths = set()
+
+    image_paths = asyncio.run(download_images_for_nodes(nodes))
+    for node, path in zip(nodes, image_paths):
+        if path not in seen_paths:
+            pool.append((f"google:{node['id']}", path))
+            seen_paths.add(path)
+
+    for node in nodes:
+        try:
+            candidates = apple_candidates(node["lat"], node["lon"], k=CANDIDATE_POOL_APPLE_PER_NODE)
+        except Exception as e:
+            print(f"Apple candidate lookup failed for node {node['id']}: {e}")
+            continue
+        for pano in candidates:
+            try:
+                path = download_lookaround(pano)
+            except Exception as e:
+                print(f"Apple candidate download failed for {pano.id}: {e}")
+                continue
+            if path not in seen_paths:
+                pool.append((f"apple:{pano.id}", path))
+                seen_paths.add(path)
+
+    return pool
+
+
+def reconstruct_chain_best4(nodes: list[dict], output_dir: str) -> str:
+    """Instead of trusting the chain's own Google nodes (plus closest-K Apple
+    support) by default, builds a candidate pool (the chain's Google nodes +
+    nearby Apple panos), scores each candidate SOLO through DA3 -- its own
+    ~18 view-slices' self-consistency keep-rate, no other pano in the batch
+    (see Pipeline.score_candidates) -- and reconstructs using only the
+    BEST4_FINAL_COUNT highest-scoring candidates.
+
+    Note this only measures each candidate's own internal coherence, not
+    whether it'll correlate well with the others once combined -- two
+    individually clean panos that are just too far apart could still both
+    score high solo and fail to line up in the final joint DA3 call. That's
+    exactly the open question this whole experiment is testing.
+    """
+    pool = _gather_candidate_pool(nodes)
+    if len(pool) < 2:
+        raise ValueError("Need at least 2 candidate panos (chain nodes + Apple support) to score.")
+
+    labels, paths = zip(*pool)
+    scores = score_candidates_gpu(list(paths))
+    ranked = sorted(zip(labels, paths, scores), key=lambda x: x[2], reverse=True)
+    print(f"Candidate scores (label, keep-count/18): {[(l, s) for l, _, s in ranked]}")
+
+    winners = ranked[:BEST4_FINAL_COUNT]
+    if len(winners) < 2:
+        raise ValueError("Not enough candidates survived scoring for multi-view reconstruction.")
+
+    winner_paths = [p for _, p, _ in winners]
+    print(f"Reconstructing with top {len(winner_paths)}: {[l for l, _, _ in winners]}")
+    ply_path = run_pointcloud_gpu(
+        target_depth_path=winner_paths[0],
+        output_dir=output_dir,
+        support_paths=list(winner_paths[1:]),
+    )
+    if not ply_path:
+        raise RuntimeError("Pipeline finished but no point cloud was produced.")
+    return ply_path

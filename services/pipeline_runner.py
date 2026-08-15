@@ -96,3 +96,9 @@ def run_pointcloud_sweep_gpu(target_depth_path, output_dir, threshold_levels, su
         threshold_levels=threshold_levels,
         support_paths=support_paths,
     )
+
+
+@GPU
+def score_candidates_gpu(candidate_paths, dist_thresh=0.2, angle_thresh=1):
+    pipeline = get_pipeline()
+    return pipeline.score_candidates(candidate_paths, dist_thresh=dist_thresh, angle_thresh=angle_thresh)
