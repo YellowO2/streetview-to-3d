@@ -1,10 +1,18 @@
 """Turns a street-builder chain into an actual point cloud: download the real
-panorama images for the selected nodes and run a single DA3 pass on the
-whole chain jointly. Called directly by the Generate button in tab.py.
+panorama images for the selected nodes, plus one closest Apple Look Around
+support pano per node, and run a single DA3 pass on the whole batch jointly.
+Called directly by the Generate button in tab.py.
 
-No Apple support panos and no windowing yet -- this reconstructs the whole
-selected chain in one DA3 call. Fine for short chains; long chains will need
-splitting into overlapping windows stitched back together (future work).
+No windowing/stitching yet -- this reconstructs the whole selected chain in
+one DA3 call. Fine for short chains (that's what's being tested right now);
+long chains will need splitting into overlapping windows stitched back
+together (future work, deliberately deferred).
+
+Google historical-date variants (other captures at the same node) are not
+gathered here yet -- unlike Apple candidates, they don't have a meaningful
+"closest" (same lat/lon as the node itself, so distance-based top-K can't
+rank them against Apple candidates). Left as a separate follow-up rather than
+folded into this same closest-K pick.
 
 Requires a CUDA GPU (via the panoramic_to_3dgs/depth_anything_3/sharp
 dependencies) -- not runnable on this machine locally. Verified here only as
@@ -13,15 +21,37 @@ or a GPU box.
 """
 import asyncio
 
+from services.lookaround_fetch import apple_candidates, download_lookaround
 from services.pipeline_runner import run_pointcloud_gpu
 from services.streetview_fetch import download_images_for_nodes
 
+# Per node, how many nearest Apple Look Around panos to pull in as extra
+# support context. No distance cutoff yet -- closest-K only.
+APPLE_SUPPORT_PER_NODE = 1
+
+
+def _gather_apple_support(nodes: list[dict]) -> list[str]:
+    """Closest APPLE_SUPPORT_PER_NODE Look Around pano(s) per node, downloaded
+    and stitched to equirectangular. Best-effort per node -- a lookup/download
+    failure for one node's Apple support shouldn't abort the whole chain."""
+    paths = []
+    for node in nodes:
+        try:
+            candidates = apple_candidates(node["lat"], node["lon"], k=APPLE_SUPPORT_PER_NODE)
+            for pano in candidates:
+                print(f"Downloading Apple support pano for node {node['id']}: {pano.id}")
+                paths.append(download_lookaround(pano))
+        except Exception as e:
+            print(f"Apple support lookup failed for node {node['id']}: {e}")
+    return paths
+
 
 def reconstruct_chain(nodes: list[dict], output_dir: str) -> str:
-    """Download the chain's images and run one joint DA3 pass over all of
-    them (first node as target, rest as support -- functionally symmetric,
-    DA3 reconstructs them jointly regardless of which one is nominally
-    "target"; only the target's pose gets used as the output's origin).
+    """Download the chain's images plus per-node Apple support panos, and run
+    one joint DA3 pass over all of them (first node as target, rest as
+    support -- functionally symmetric, DA3 reconstructs them jointly
+    regardless of which one is nominally "target"; only the target's pose
+    gets used as the output's origin).
 
     Returns the path to the merged da3_pointcloud.ply.
     """
@@ -31,13 +61,14 @@ def reconstruct_chain(nodes: list[dict], output_dir: str) -> str:
     # Same download helper (services/streetview_fetch.py) app.py's
     # single-pano tab uses for its support panos -- not a separate copy.
     image_paths = asyncio.run(download_images_for_nodes(nodes))
+    support_paths = image_paths[1:] + _gather_apple_support(nodes)
 
     # Reuses app.py's own pipeline runner/singleton (services/pipeline_runner.py)
     # rather than loading a second separate copy of the DA3/SHARP models.
     ply_path = run_pointcloud_gpu(
         target_depth_path=image_paths[0],
         output_dir=output_dir,
-        support_paths=image_paths[1:],
+        support_paths=support_paths,
     )
     if not ply_path:
         raise RuntimeError("Pipeline finished but no point cloud was produced.")
