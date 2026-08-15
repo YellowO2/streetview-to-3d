@@ -15,10 +15,20 @@ import pillow_heif
 
 pillow_heif.register_heif_opener()
 
+# Must be the first project import. ZeroGPU requires `spaces` (imported by
+# services.pipeline_runner) to load before anything CUDA-related does.
+# services.lookaround_fetch imports streetlevel's `reproject` module, which
+# initializes CUDA at import time to pick its default device -- if that runs
+# first, `import spaces` fails with "CUDA has been initialized before
+# importing the `spaces` package." Importing pipeline_runner here, before
+# the services import below, guarantees the required order regardless of
+# what order the names in that later `from services import ...` get resolved in.
+from services import pipeline_runner
+
 import viewers
 from paths import IMAGES_DIR, SPLATS_DIR
 from prompts.presets import PRESET_NAMES, build_prompt, get_preset
-from services import geo, lookaround_fetch, pipeline_runner, slope_correction, streetview_fetch
+from services import geo, lookaround_fetch, slope_correction, streetview_fetch
 from street_builder.tab import build_tab as build_street_builder_tab, BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
 
 # Auto-pick up to N nearest neighbors as DA3 depth-support panos.
