@@ -195,7 +195,9 @@ def build_tab():
             clear_btn = gr.Button("Clear selection")
             generate_btn = gr.Button("Generate", variant="primary")
 
-    reconstruct_view = gr.HTML(viewers.SPLAT_PLACEHOLDER)
+    # Drop-ready from page load (not a static placeholder) -- lets you
+    # preview an already-downloaded .ply without needing a GPU run first.
+    reconstruct_view = gr.HTML(viewers.build_pointcloud_viewer())
 
     load_btn.click(
         fn=handle_load_area,

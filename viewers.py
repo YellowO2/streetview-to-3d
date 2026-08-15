@@ -124,7 +124,7 @@ def splat_viewer_with_download(ply_url: str) -> str:
     return f'<div>{build_splat_iframe(ply_url)}{download_link}</div>'
 
 
-def build_pointcloud_viewer(ply_url: str) -> str:
+def build_pointcloud_viewer(ply_url: str | None = None) -> str:
     """Live viewer for a raw DA3 point cloud (XYZ + per-vertex color), via
     three.js's PLYLoader + THREE.Points — distinct from build_splat_iframe,
     which expects 3D Gaussian Splat data (a different format) via SplatMesh
@@ -137,7 +137,10 @@ def build_pointcloud_viewer(ply_url: str) -> str:
 
     Also accepts drag-and-drop: dropping a local .ply file onto the viewer
     replaces whatever's currently shown, parsed client-side (PLYLoader.parse),
-    no upload/round-trip to the server."""
+    no upload/round-trip to the server. ply_url is optional — with none given,
+    the viewer renders empty and ready for a drop (used as the Street Builder
+    tab's initial state, so you can preview an already-downloaded .ply without
+    needing a GPU run first)."""
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>body{{margin:0;background:#000;overflow:hidden;cursor:grab;font:14px sans-serif;color:#bbb}}body:active{{cursor:grabbing}}canvas{{display:block}}
 #hint{{position:fixed;bottom:8px;right:8px;color:rgba(255,255,255,.4);font:11px sans-serif;pointer-events:none}}
@@ -157,7 +160,7 @@ def build_pointcloud_viewer(ply_url: str) -> str:
     "three/addons/":"https://unpkg.com/three@0.178.0/examples/jsm/"
 }}}}
 </script></head><body>
-<div id="loading">Loading point cloud<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></div>
+<div id="loading">{"Loading point cloud<span class=\"dot\">.</span><span class=\"dot\">.</span><span class=\"dot\">.</span>" if ply_url else "Drop a .ply file here to preview it"}</div>
 <div id="hint">drag to orbit · scroll to zoom · drop a .ply to preview it</div>
 <div id="dropzone">Drop .ply to preview</div>
 <script type="module">
@@ -207,10 +210,10 @@ function showGeometry(geometry) {{
     document.getElementById('loading').classList.add('gone');
 }}
 
-loader.load('{ply_url}', showGeometry, undefined, err => {{
+{f'''loader.load('{ply_url}', showGeometry, undefined, err => {{
     console.error('PLY load failed', err);
     document.getElementById('loading').textContent = 'Failed to load point cloud';
-}});
+}});''' if ply_url else ''}
 
 const dropzone = document.getElementById('dropzone');
 addEventListener('dragover', e => {{ e.preventDefault(); dropzone.classList.add('active'); }});
