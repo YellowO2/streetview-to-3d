@@ -219,7 +219,7 @@ def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, corr
 
         elapsed = time.time() - t_start
         progress(1.0, desc=f"Done! {1 + len(support_paths)} panos, {elapsed:.0f}s")
-        yield viewers.pointcloud_download_view(viewers.file_url(ply_path))
+        yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
         return
 
     try:

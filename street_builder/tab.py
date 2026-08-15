@@ -169,7 +169,7 @@ def handle_generate_chain(state, progress=gr.Progress(track_tqdm=True)):
         raise gr.Error(f"Reconstruction failed: {e}")
 
     progress(1.0, desc="Done!")
-    yield viewers.pointcloud_download_view(viewers.file_url(ply_path))
+    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
 
 
 def build_tab():
