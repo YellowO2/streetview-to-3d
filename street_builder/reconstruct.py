@@ -406,6 +406,51 @@ def reconstruct_chain_best4_drop_one_test(nodes: list[dict], output_dir: str, st
     return results
 
 
+def reconstruct_chain_best4_pairwise_test(nodes: list[dict], output_dir: str, step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str | None]]:
+    """One-off diagnostic, not a permanent feature (see CAR_REMOVAL_TEST_LABELS):
+    reconstructs the exact same 4 known best4 winners (see
+    _known_best4_winners -- no re-scoring), but as all 6 possible 2-candidate
+    pairs instead of the full 4 or a 3-way drop-one. The drop-one test showed
+    each collapsing pano (apple:...071389, apple:...072390) fails even when
+    the *other* collapsing one is entirely absent, ruling out a two-way
+    conflict between just those two -- this narrows further: does each
+    collapsing pano fail against literally every partner (pointing at that
+    pano being individually flawed), or only against pano_0/pano_2
+    specifically (pointing at two separate, mutually-inconsistent capture
+    clusters)? The pano_1-vs-pano_3 pair is the most diagnostic single case,
+    since they're the closest two candidates of all six (~1.3m apart) --
+    good correlation there despite both failing against pano_0/pano_2 would
+    be strong evidence for the latter.
+
+    Returns [(label, ply_path_or_None), ...], one per pair, label formatted
+    "A vs B".
+    """
+    from itertools import combinations
+
+    winners = _known_best4_winners(nodes)
+    if len(winners) < 2:
+        raise ValueError("Need at least 2 best-4 winners to test pairs.")
+
+    results = []
+    with tempfile.TemporaryDirectory() as alias_dir:
+        for a, b in combinations(winners, 2):
+            pair_label = f"{a.label} vs {b.label}"
+            print(f"Pairwise test: reconstructing {pair_label}")
+            pair_paths = [_labeled_alias(a, alias_dir), _labeled_alias(b, alias_dir)]
+            run_output_dir = os.path.join(
+                output_dir, f"pair_{a.label.replace(':', '_')}_{b.label.replace(':', '_')}"
+            )
+            ply_path = run_pointcloud_gpu(
+                target_depth_path=pair_paths[0],
+                output_dir=run_output_dir,
+                support_paths=pair_paths[1:],
+                step_degrees=step_degrees,
+            )
+            results.append((pair_label, ply_path))
+
+    return results
+
+
 def _chain_windows(nodes: list[dict], size: int = WINDOW_NODE_SIZE, stride: int = WINDOW_STRIDE) -> list[list[dict]]:
     """Slice the ordered chain into overlapping raw-node windows, e.g.
     [A,B,C,D] with size=2, stride=1 -> [[A,B], [B,C], [C,D]]."""
