@@ -17,12 +17,20 @@ try:
     if ON_SPACES:
         GPU = spaces.GPU(duration=108)
         GPU_EDIT = spaces.GPU(duration=72)
+        # Longer budget for run_windowed_reconstruction_gpu: it does an
+        # entire multi-window chunk+connect job (scoring + reconstruction for
+        # every window) inside one GPU call, specifically to avoid the
+        # 'Expired ZeroGPU proxy token' failure hit when that was split into
+        # several small per-window calls instead.
+        GPU_WINDOWED = spaces.GPU(duration=280)
     else:
         GPU = lambda fn: fn
         GPU_EDIT = lambda fn: fn
+        GPU_WINDOWED = lambda fn: fn
 except ImportError:
     GPU = lambda fn: fn  # no-op outside HF Spaces
     GPU_EDIT = lambda fn: fn
+    GPU_WINDOWED = lambda fn: fn
     ON_SPACES = False
 
 _pipeline = None
@@ -104,10 +112,12 @@ def score_candidates_gpu(candidate_paths, dist_thresh=0.2, angle_thresh=1):
     return pipeline.score_candidates(candidate_paths, dist_thresh=dist_thresh, angle_thresh=angle_thresh)
 
 
-@GPU
-def run_pointcloud_with_poses_gpu(target_depth_path, support_paths=None):
+@GPU_WINDOWED
+def run_windowed_reconstruction_gpu(windows, boundary_coords, final_count=4, forced_overlap=2):
     pipeline = get_pipeline()
-    return pipeline.run_da3_pointcloud_with_poses(target_depth_path, support_paths=support_paths)
+    return pipeline.run_windowed_reconstruction(
+        windows, boundary_coords, final_count=final_count, forced_overlap=forced_overlap
+    )
 
 
 def save_pointcloud(points, colors, path):

@@ -23,19 +23,15 @@ import asyncio
 import os
 from collections import namedtuple
 
-import numpy as np
-
-from services.geo import haversine_m
 from services.lookaround_fetch import apple_candidates, download_lookaround
 from services.pipeline_runner import (
     run_pointcloud_gpu,
     run_pointcloud_sweep_gpu,
-    run_pointcloud_with_poses_gpu,
+    run_windowed_reconstruction_gpu,
     save_pointcloud,
     score_candidates_gpu,
 )
 from services.streetview_fetch import download_images_for_nodes
-from street_builder import stitch
 
 # Per node, how many nearest Apple Look Around panos to pull in as extra
 # support context. No distance cutoff yet -- closest-K only.
@@ -239,20 +235,24 @@ def _chain_windows(nodes: list[dict], size: int = WINDOW_NODE_SIZE, stride: int 
 def reconstruct_chain_windowed(nodes: list[dict], output_dir: str) -> str:
     """Chunk + connect, for chains too long to reconstruct in a single DA3
     call: splits the chain into overlapping raw-node windows (_chain_windows),
-    and for each window picks BEST4_FINAL_COUNT candidates from that window's
-    own local pool (_gather_candidate_pool) -- except WINDOW_FORCED_OVERLAP of
-    them, which are forced to be the previous window's own winners closest to
-    the shared boundary node, rather than freshly picked. That forcing does
-    two things at once: guarantees those slots are already-vetted good nodes
-    (not an untested raw chain node), and guarantees the two windows share a
-    literal identical image, which is what makes rigid alignment (stitch.py)
-    between them valid at all.
+    gathers each window's own candidate pool (chain nodes + nearby Apple
+    panos, same as reconstruct_chain_best4's pool), and hands the whole
+    multi-window job to Pipeline.run_windowed_reconstruction in ONE GPU call.
 
-    Runs DA3 per window (via run_pointcloud_with_poses_gpu, so each window's
-    own per-node poses come back alongside its points), rigid-aligns each
-    window onto a single running global frame anchored on the first window
-    using the shared images' poses in both windows, and merges all windows'
-    (now globally-aligned) points into one final point cloud.
+    That single call does, per window: scoring every candidate solo, forced-
+    overlap selection (WINDOW_FORCED_OVERLAP of each window's picks are
+    forced to be the previous window's own winners closest to the shared
+    boundary node -- see run_windowed_reconstruction's docstring for why),
+    DA3 reconstruction, and rigid alignment onto a running global frame.
+
+    The consolidation into one call is necessary, not just an optimization:
+    an earlier version called separate small GPU functions once per window
+    (mirroring reconstruct_chain_best4's own score-then-reconstruct split),
+    and that hit ZeroGPU's proxy-token lifetime after only 2 windows (4
+    sequential @spaces.GPU calls) in real testing -- 'Expired ZeroGPU proxy
+    token'. Every @spaces.GPU call is a fresh GPU acquisition and, since
+    Pipeline doesn't cache a DA3Model across calls, a fresh ~35GB model
+    reload; one call per whole job avoids paying that N times over.
 
     Falls back to reconstruct_chain_best4 directly for a 2-node chain (a
     single window -- nothing to stitch).
@@ -263,61 +263,21 @@ def reconstruct_chain_windowed(nodes: list[dict], output_dir: str) -> str:
         return reconstruct_chain_best4(nodes, output_dir)
 
     windows = _chain_windows(nodes)
-
-    global_pts = global_cols = None
-    global_R, global_t = np.eye(3), np.zeros(3)
-    prev_winners: list[Candidate] | None = None
-    prev_poses: dict | None = None
-
-    for window_idx, window_nodes in enumerate(windows):
-        pool = _gather_candidate_pool(window_nodes)
+    pools = [_gather_candidate_pool(w) for w in windows]
+    for i, (pool, window_nodes) in enumerate(zip(pools, windows)):
         if len(pool) < 2:
-            raise ValueError(f"Window {window_idx} ({[n['id'] for n in window_nodes]}) has too few candidates to score.")
-        ranked = _score_and_rank(pool)
+            raise ValueError(f"Window {i} ({[n['id'] for n in window_nodes]}) has too few candidates to score.")
 
-        if prev_winners is None:
-            winners = ranked[:BEST4_FINAL_COUNT]
-            forced_paths = []
-        else:
-            # Boundary = the raw chain node shared between this window and
-            # the previous one (windows overlap by one raw node, WINDOW_STRIDE=1).
-            boundary = window_nodes[0]
-            forced = sorted(prev_winners, key=lambda c: haversine_m(boundary["lat"], boundary["lon"], c.lat, c.lon))[:WINDOW_FORCED_OVERLAP]
-            forced_paths = [c.path for c in forced]
-            new_picks = [c for c in ranked if c.path not in forced_paths][:BEST4_FINAL_COUNT - len(forced)]
-            winners = forced + new_picks
+    # Plain tuples, not Candidate namedtuples -- keeps the pickled payload
+    # across the ZeroGPU call boundary simple/robust.
+    pool_tuples = [[tuple(c) for c in pool] for pool in pools]
+    # Windows overlap by one raw node (WINDOW_STRIDE=1): the node shared
+    # between window i and window i+1 is always windows[i+1][0].
+    boundary_coords = [(windows[i + 1][0]["lat"], windows[i + 1][0]["lon"]) for i in range(len(windows) - 1)]
 
-        if len(winners) < 2:
-            raise ValueError(f"Window {window_idx} has too few usable candidates for multi-view reconstruction.")
-
-        print(f"Window {window_idx} reconstructing with: {[c.label for c in winners]}")
-        pts, cols, pano_poses = run_pointcloud_with_poses_gpu(
-            target_depth_path=winners[0].path,
-            support_paths=[c.path for c in winners[1:]],
-        )
-
-        if window_idx == 0:
-            global_pts, global_cols = pts, cols
-        else:
-            this_idx = {c.path: i for i, c in enumerate(winners)}
-            prev_idx = {c.path: i for i, c in enumerate(prev_winners)}
-            try:
-                shared_from = [(pano_poses[this_idx[p]]["center"], pano_poses[this_idx[p]]["rotation"]) for p in forced_paths]
-                shared_to = [(prev_poses[prev_idx[p]]["center"], prev_poses[prev_idx[p]]["rotation"]) for p in forced_paths]
-            except KeyError:
-                raise RuntimeError(
-                    f"Window {window_idx}: a forced overlap anchor's views were entirely filtered "
-                    "out by DA3's consensus check in one of the two windows, so there's no pose to "
-                    "align on. (This is the failure mode we flagged as an open risk earlier.)"
-                )
-
-            local_R, local_t = stitch.solve_rigid_alignment(shared_from, shared_to)
-            global_R, global_t = stitch.compose_transforms(global_R, global_t, local_R, local_t)
-
-            global_pts = np.concatenate([global_pts, stitch.apply_transform(pts, global_R, global_t)], axis=0)
-            global_cols = np.concatenate([global_cols, cols], axis=0)
-
-        prev_winners, prev_poses = winners, pano_poses
+    pts, cols = run_windowed_reconstruction_gpu(
+        pool_tuples, boundary_coords, final_count=BEST4_FINAL_COUNT, forced_overlap=WINDOW_FORCED_OVERLAP
+    )
 
     os.makedirs(output_dir, exist_ok=True)
-    return save_pointcloud(global_pts, global_cols, os.path.join(output_dir, "da3_pointcloud.ply"))
+    return save_pointcloud(pts, cols, os.path.join(output_dir, "da3_pointcloud.ply"))
