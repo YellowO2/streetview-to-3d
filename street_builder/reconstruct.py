@@ -23,10 +23,12 @@ import asyncio
 import os
 from collections import namedtuple
 
+from services.geo import haversine_m
 from services.lookaround_fetch import apple_candidates, download_lookaround
 from services.pipeline_runner import (
     run_pointcloud_gpu,
     run_pointcloud_sweep_gpu,
+    run_windowed_reconstruction_full_pool_gpu,
     run_windowed_reconstruction_gpu,
     save_pointcloud,
     score_candidates_gpu,
@@ -43,6 +45,14 @@ APPLE_SUPPORT_PER_NODE = 1
 # and how many total winners the final DA3 call gets.
 CANDIDATE_POOL_APPLE_PER_NODE = 4
 BEST4_FINAL_COUNT = 4
+
+# _gather_candidate_pool's Apple lookup is nearest-K only, with no cap on how
+# far "nearest" might actually be if local Apple coverage is sparse -- this
+# bounds it, so a pool built for one window can't reach into territory well
+# outside that window's own span. ~2.5x the ~10m consecutive-node spacing
+# we've measured on our one real test street; sparser streets may need this
+# retuned, but there's no data yet to justify a fancier per-street estimate.
+APPLE_CANDIDATE_MAX_DIST_M = 25.0
 
 # reconstruct_chain_windowed: raw chain nodes per window's own candidate pool
 # (WINDOW_NODE_SIZE), how many raw nodes consecutive windows overlap by
@@ -170,6 +180,10 @@ def _gather_candidate_pool(nodes: list[dict]) -> list[Candidate]:
             print(f"Apple candidate lookup failed for node {node['id']}: {e}")
             continue
         for pano in candidates:
+            dist = haversine_m(node["lat"], node["lon"], pano.lat, pano.lon)
+            if dist > APPLE_CANDIDATE_MAX_DIST_M:
+                print(f"Apple candidate {pano.id} skipped: {dist:.1f}m from node {node['id']} (> {APPLE_CANDIDATE_MAX_DIST_M}m cap)")
+                continue
             try:
                 path = download_lookaround(pano)
             except Exception as e:
@@ -229,41 +243,6 @@ def reconstruct_chain_best4(nodes: list[dict], output_dir: str) -> str:
 FULL_POOL_STEP_DEGREES = 45
 
 
-def reconstruct_chain_full_pool(nodes: list[dict], output_dir: str) -> str:
-    """Experimental: the opposite bet from reconstruct_chain_best4. Instead
-    of solo-scoring and keeping only the top BEST4_FINAL_COUNT candidates,
-    passes the ENTIRE candidate pool (chain nodes + nearby Apple panos, no
-    down-selection at all) into one joint DA3 call -- testing whether the
-    quality problems we saw with unfiltered input (e.g. raw chain nodes
-    solo-scoring 5/18, 2/18) were actually caused by distance (nodes too far
-    apart to correlate, which windowing already fixes structurally) rather
-    than genuine per-pano capture-quality variance that scoring was filtering
-    out. If this comes out clean, per-pano scoring may not be pulling as much
-    weight as we assumed for a single tight window; if specific panos still
-    get rejected the way the raw nodes did before, that's evidence it still
-    matters even at this close range.
-
-    Uses FULL_POOL_STEP_DEGREES (45, vs. DA3's own default of 20) to keep the
-    image count reasonable despite not down-selecting -- coarser slicing
-    trades per-pano slice redundancy (adjacent slices overlap ~78% at the
-    default step) for a lower image count at the same viewpoint coverage.
-    """
-    pool = _gather_candidate_pool(nodes)
-    if len(pool) < 2:
-        raise ValueError("Need at least 2 candidate panos (chain nodes + Apple support) to reconstruct.")
-
-    print(f"Reconstructing with full pool ({len(pool)} candidates, step={FULL_POOL_STEP_DEGREES}): {[c.label for c in pool]}")
-    ply_path = run_pointcloud_gpu(
-        target_depth_path=pool[0].path,
-        output_dir=output_dir,
-        support_paths=[c.path for c in pool[1:]],
-        step_degrees=FULL_POOL_STEP_DEGREES,
-    )
-    if not ply_path:
-        raise RuntimeError("Pipeline finished but no point cloud was produced.")
-    return ply_path
-
-
 def _chain_windows(nodes: list[dict], size: int = WINDOW_NODE_SIZE, stride: int = WINDOW_STRIDE) -> list[list[dict]]:
     """Slice the ordered chain into overlapping raw-node windows, e.g.
     [A,B,C,D] with size=2, stride=1 -> [[A,B], [B,C], [C,D]]."""
@@ -316,6 +295,67 @@ def reconstruct_chain_windowed(nodes: list[dict], output_dir: str) -> str:
     pts, cols = run_windowed_reconstruction_gpu(
         pool_tuples, boundary_coords, final_count=BEST4_FINAL_COUNT, forced_overlap=WINDOW_FORCED_OVERLAP
     )
+
+    os.makedirs(output_dir, exist_ok=True)
+    return save_pointcloud(pts, cols, os.path.join(output_dir, "da3_pointcloud.ply"))
+
+
+def reconstruct_chain_windowed_full_pool(nodes: list[dict], output_dir: str) -> str:
+    """Chunk + connect, same windowing as reconstruct_chain_windowed, but the
+    opposite bet on what goes into each window: no solo-scoring, no best4
+    down-selection -- every window's FULL local candidate pool (chain nodes +
+    nearby Apple panos, same _gather_candidate_pool as reconstruct_chain_best4)
+    goes into that window's DA3 call.
+
+    Tests whether the quality problems best4 was built to fix were really
+    about distance (which windowing already fixes structurally, since a
+    window's pool only spans ~1 raw node's worth of range -- see
+    APPLE_CANDIDATE_MAX_DIST_M) rather than genuine per-pano capture-quality
+    variance that scoring was filtering out. We have direct evidence of the
+    latter too (the raw chain nodes solo-scored 5/18 and 2/18 on their own,
+    nothing to do with distance from other panos), so this is a real open
+    question, not a foregone conclusion either way.
+
+    Uses FULL_POOL_STEP_DEGREES (45, vs. DA3's own default of 20) to keep the
+    image count reasonable despite not down-selecting.
+
+    Alignment between adjacent windows doesn't need an explicit forced-
+    carryover step here (unlike reconstruct_chain_windowed): windows overlap
+    by one raw chain node, and since both windows independently gather that
+    same node's own image + its nearest-K Apple candidates, those candidates
+    already show up in both windows' full pools automatically. See
+    Pipeline.run_windowed_reconstruction_full_pool for how that natural
+    overlap gets used.
+
+    Falls back to a single non-windowed DA3 call directly for a 2-node chain
+    (a single window -- nothing to stitch).
+    """
+    if len(nodes) < 2:
+        raise ValueError("Need at least 2 nodes in the chain for DA3 to have multi-view context.")
+
+    if len(nodes) == 2:
+        pool = _gather_candidate_pool(nodes)
+        if len(pool) < 2:
+            raise ValueError("Need at least 2 candidate panos (chain nodes + Apple support) to reconstruct.")
+        print(f"Reconstructing with full pool ({len(pool)} candidates, step={FULL_POOL_STEP_DEGREES}): {[c.label for c in pool]}")
+        ply_path = run_pointcloud_gpu(
+            target_depth_path=pool[0].path,
+            output_dir=output_dir,
+            support_paths=[c.path for c in pool[1:]],
+            step_degrees=FULL_POOL_STEP_DEGREES,
+        )
+        if not ply_path:
+            raise RuntimeError("Pipeline finished but no point cloud was produced.")
+        return ply_path
+
+    windows = _chain_windows(nodes)
+    pools = [_gather_candidate_pool(w) for w in windows]
+    for i, (pool, window_nodes) in enumerate(zip(pools, windows)):
+        if len(pool) < 2:
+            raise ValueError(f"Window {i} ({[n['id'] for n in window_nodes]}) has too few candidates to reconstruct.")
+
+    pool_tuples = [[tuple(c) for c in pool] for pool in pools]
+    pts, cols = run_windowed_reconstruction_full_pool_gpu(pool_tuples, step_degrees=FULL_POOL_STEP_DEGREES)
 
     os.makedirs(output_dir, exist_ok=True)
     return save_pointcloud(pts, cols, os.path.join(output_dir, "da3_pointcloud.ply"))

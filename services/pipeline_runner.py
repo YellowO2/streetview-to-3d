@@ -121,6 +121,12 @@ def run_windowed_reconstruction_gpu(windows, boundary_coords, final_count=4, for
     )
 
 
+@GPU_WINDOWED
+def run_windowed_reconstruction_full_pool_gpu(windows, step_degrees=20):
+    pipeline = get_pipeline()
+    return pipeline.run_windowed_reconstruction_full_pool(windows, step_degrees=step_degrees)
+
+
 def save_pointcloud(points, colors, path):
     """Not GPU-wrapped -- pure disk I/O (open3d write), no CUDA involved.
     Lazy import to match get_pipeline()'s pattern, so this module still

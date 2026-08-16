@@ -245,10 +245,12 @@ def handle_windowed(state, progress=gr.Progress(track_tqdm=True)):
 
 
 def handle_full_pool(state, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button: the opposite bet from best-4 -- passes the whole
-    candidate pool into one DA3 call with no down-selection, at a coarser
-    slice step. See reconstruct.reconstruct_chain_full_pool. Separate from
-    every other button -- doesn't touch or replace any of them."""
+    """Experimental button: same chunk+connect windowing as handle_windowed,
+    but the opposite bet on what goes into each window -- no solo-scoring,
+    no best-4 down-selection, every window's full local candidate pool goes
+    into that window's DA3 call. See
+    reconstruct.reconstruct_chain_windowed_full_pool. Separate from every
+    other button -- doesn't touch or replace any of them."""
     if len(state.get("selected", [])) < 2:
         raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
 
@@ -260,7 +262,7 @@ def handle_full_pool(state, progress=gr.Progress(track_tqdm=True)):
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     progress(0, desc=f"Reconstructing full candidate pool near {len(ordered_nodes)} nodes...")
     try:
-        ply_path = reconstruct.reconstruct_chain_full_pool(ordered_nodes, output_dir)
+        ply_path = reconstruct.reconstruct_chain_windowed_full_pool(ordered_nodes, output_dir)
     except Exception as e:
         raise gr.Error(f"Full-pool reconstruction failed: {e}")
 
