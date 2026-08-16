@@ -270,6 +270,33 @@ def handle_full_pool(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
 
 
+def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
+    """Experimental button: greedy same-capture-pass sliding-window
+    reconstruction -- see reconstruct.reconstruct_chain_greedy. Grades every
+    2-node window with a real pairwise DA3 call (not solo score), preferring
+    whichever capture pass (Apple build_id / Google historical date) has the
+    best coverage, and can return multiple disconnected segments instead of
+    one merged cloud if no single pass covers the whole selection. Separate
+    from every other button -- doesn't touch or replace any of them."""
+    if len(state.get("selected", [])) < 2:
+        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    by_key = _nodes_by_key(state)
+    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    progress(0, desc=f"Walking {len(ordered_nodes)} nodes by capture pass...")
+    try:
+        results = reconstruct.reconstruct_chain_greedy(ordered_nodes, output_dir)
+    except Exception as e:
+        raise gr.Error(f"Greedy reconstruction failed: {e}")
+
+    progress(1.0, desc="Done!")
+    yield viewers.filter_sweep_links(results)
+
+
 def handle_car_removal_test(state, progress=gr.Progress(track_tqdm=True)):
     """One-off diagnostic button, not a permanent feature -- see
     reconstruct.CAR_REMOVAL_TEST_LABELS. Same as handle_best4, but runs
@@ -435,6 +462,11 @@ def build_tab():
             # Experimental: whole candidate pool, no down-selection, coarser
             # slice step. Not part of the normal Generate flow.
             full_pool_btn = gr.Button("Reconstruct (full pool, experimental)")
+            # Experimental: greedy same-capture-pass sliding window, graded
+            # by real pairwise DA3 calls instead of solo score. Can return
+            # multiple disconnected segments. Not part of the normal
+            # Generate flow.
+            greedy_btn = gr.Button("Reconstruct (greedy same-pass, experimental)")
             # One-off diagnostic: removes cars/people from the two specific
             # best-4 winners known to collapse on this test chain. Not part
             # of the normal flow -- delete once the test's done.
@@ -510,6 +542,14 @@ def build_tab():
 
     full_pool_btn.click(
         fn=handle_full_pool,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    greedy_btn.click(
+        fn=handle_greedy,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",

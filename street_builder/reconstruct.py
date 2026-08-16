@@ -28,6 +28,7 @@ from services.geo import haversine_m
 from services.lookaround_fetch import apple_candidates, download_lookaround
 from services.pipeline_runner import (
     run_editor_gpu,
+    run_greedy_pass_reconstruction_gpu,
     run_pointcloud_gpu,
     run_pointcloud_sweep_gpu,
     run_windowed_reconstruction_full_pool_gpu,
@@ -35,7 +36,7 @@ from services.pipeline_runner import (
     save_pointcloud,
     score_candidates_gpu,
 )
-from services.streetview_fetch import download_images_for_nodes
+from services.streetview_fetch import download_images_for_nodes, download_pano_by_id
 
 # Per node, how many nearest Apple Look Around panos to pull in as extra
 # support context. No distance cutoff yet -- closest-K only.
@@ -108,6 +109,28 @@ KNOWN_BEST4_LABELS = [
 WINDOW_NODE_SIZE = 2
 WINDOW_STRIDE = 1
 WINDOW_FORCED_OVERLAP = 2
+
+# reconstruct_chain_greedy: how many of a node's most-recent Google historical
+# captures count as separate "passes" to try (node["dates"] is newest-first,
+# so this is just a head-truncation) -- capped for the same reason
+# CANDIDATE_POOL_APPLE_PER_NODE is capped: every option here gets downloaded
+# eagerly (no per-window lazy fetch inside the GPU call), so this bounds how
+# many Google downloads one street selection costs.
+GOOGLE_DATE_OPTIONS_PER_NODE = 3
+
+# Fraction of a candidate's own view-slices that must survive DA3's consensus
+# filter for a greedy-walk window to count as "healthy". 0.5 matches the
+# clean empirical separation observed all session: healthy same-pass pairs
+# kept 9-12/12 of their slices, collapsed cross-pass pairs kept 0-1/12 --
+# there's been no messy middle ground so far, so this doesn't need tuning.
+GREEDY_KEEP_RATE_THRESHOLD = 0.5
+
+# How many candidate passes to try at a given street position before giving
+# up and closing out the current segment there. Bounds worst-case GPU calls
+# per position rather than exhaustively trying every available pass.
+GREEDY_MAX_ATTEMPTS_PER_POSITION = 3
+
+GREEDY_STEP_DEGREES = BEST4_STEP_DEGREES
 
 # (label, path, lat, lon) -- lat/lon needed by reconstruct_chain_windowed to
 # pick which of a window's winners are "closest to the boundary" with the
@@ -264,7 +287,7 @@ def _pass_options(nodes: list[dict]) -> list[dict[tuple[str, str], object]]:
     for node in nodes:
         node_options = {}
 
-        for entry in node.get("dates", []):
+        for entry in node.get("dates", [])[:GOOGLE_DATE_OPTIONS_PER_NODE]:
             node_options[("google", entry["label"])] = entry["id"]
 
         try:
@@ -303,6 +326,100 @@ def _rank_passes_at(options: list[dict], start: int, exclude: set | None = None)
         return n
 
     return sorted(candidates, key=run_length, reverse=True)
+
+
+def _resolve_pass_candidates(nodes: list[dict], options: list[dict[tuple[str, str], object]]) -> list[dict[tuple[str, str], Candidate]]:
+    """Downloads whichever specific candidates _pass_options found (bounded
+    by CANDIDATE_POOL_APPLE_PER_NODE's build_id cap and
+    GOOGLE_DATE_OPTIONS_PER_NODE) and resolves each to a Candidate. Runs
+    eagerly for every option here, not lazily per-attempt inside the GPU
+    call -- keeps network I/O outside the ZeroGPU boundary, matching every
+    other reconstruction path in this file.
+
+    Google historical captures don't get their own lat/lon lookup (that'd
+    be a second network call per candidate just for a value nothing in the
+    greedy walk actually reads -- see Pipeline.run_greedy_pass_reconstruction,
+    which decides everything from DA3's own output poses, not GPS); the
+    node's own lat/lon is reused instead, same as _gather_candidate_pool
+    does for a node's primary Google image.
+    """
+    resolved = []
+    for node, node_options in zip(nodes, options):
+        node_resolved = {}
+        for key, value in node_options.items():
+            source, pass_key = key
+            try:
+                if source == "apple":
+                    pano = value
+                    path = download_lookaround(pano)
+                    node_resolved[key] = Candidate(f"apple:{pano.id}", path, pano.lat, pano.lon)
+                else:
+                    pano_id = value
+                    path = asyncio.run(download_pano_by_id(pano_id))
+                    if not path:
+                        raise ValueError(f"Panorama {pano_id} not found")
+                    node_resolved[key] = Candidate(f"google:{pano_id}", path, node["lat"], node["lon"])
+            except Exception as e:
+                print(f"Pass candidate download failed for {key} at node {node['id']}: {e}")
+        resolved.append(node_resolved)
+    return resolved
+
+
+def reconstruct_chain_greedy(nodes: list[dict], output_dir: str, step_degrees: int = GREEDY_STEP_DEGREES) -> list[tuple[str, str]]:
+    """Greedy same-capture-pass sliding-window reconstruction: instead of
+    picking candidates by solo score (reconstruct_chain_best4) or windowing
+    raw chain nodes with forced-overlap carryover (reconstruct_chain_windowed),
+    walks the street node-by-node preferring whichever capture pass (Apple
+    build_id or Google historical-date group -- see _pass_options) has the
+    best contiguous coverage going forward, and health-checks each 2-node
+    window with a real pairwise DA3 call (not solo score -- this session
+    found solo score doesn't reliably predict either direction) before
+    committing. See Pipeline.run_greedy_pass_reconstruction for the actual
+    walk/branch logic, which runs entirely inside one GPU call for the same
+    proxy-token-lifetime reason reconstruct_chain_windowed does.
+
+    Unlike every other reconstruct_chain_* function here, this can return
+    MULTIPLE disconnected point clouds ("segments") instead of one merged
+    result -- a street with no single pass covering it end-to-end is
+    expected to break into segments the user pieces together manually, not
+    a failure to engineer around.
+
+    Returns [(label, ply_path), ...], one per segment, in street order.
+    """
+    if len(nodes) < 2:
+        raise ValueError("Need at least 2 nodes in the chain for DA3 to have multi-view context.")
+
+    options = _pass_options(nodes)
+    resolved = _resolve_pass_candidates(nodes, options)
+    for node, node_resolved in zip(nodes, resolved):
+        if not node_resolved:
+            raise ValueError(f"Node {node['id']} has no usable capture-pass candidates at all.")
+
+    try_order = [_rank_passes_at(options, i) for i in range(len(options))]
+    node_candidates = [
+        [(key[0], key[1], c.label, c.path, c.lat, c.lon) for key, c in node_resolved.items()]
+        for node_resolved in resolved
+    ]
+
+    segments = run_greedy_pass_reconstruction_gpu(
+        node_candidates,
+        try_order,
+        keep_rate_threshold=GREEDY_KEEP_RATE_THRESHOLD,
+        max_attempts_per_position=GREEDY_MAX_ATTEMPTS_PER_POSITION,
+        step_degrees=step_degrees,
+    )
+    if not segments:
+        raise RuntimeError("No segment of this street could be reconstructed with any available capture pass.")
+
+    os.makedirs(output_dir, exist_ok=True)
+    results = []
+    for seg_idx, (pts, cols, node_range, pass_used) in enumerate(segments):
+        start, end = node_range
+        source, pass_key = pass_used
+        label = f"segment {seg_idx} (nodes {start}-{end}, {source}:{pass_key})"
+        path = save_pointcloud(pts, cols, os.path.join(output_dir, f"segment_{seg_idx}.ply"))
+        results.append((label, path))
+    return results
 
 
 def _known_best4_winners(nodes: list[dict]) -> list[Candidate]:

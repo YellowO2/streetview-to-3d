@@ -129,6 +129,20 @@ def run_windowed_reconstruction_full_pool_gpu(windows, step_degrees=20):
     return pipeline.run_windowed_reconstruction_full_pool(windows, step_degrees=step_degrees)
 
 
+@GPU_WINDOWED
+def run_greedy_pass_reconstruction_gpu(
+    node_candidates, try_order, keep_rate_threshold=0.5, max_attempts_per_position=3, step_degrees=20
+):
+    pipeline = get_pipeline()
+    return pipeline.run_greedy_pass_reconstruction(
+        node_candidates,
+        try_order,
+        keep_rate_threshold=keep_rate_threshold,
+        max_attempts_per_position=max_attempts_per_position,
+        step_degrees=step_degrees,
+    )
+
+
 def save_pointcloud(points, colors, path):
     """Not GPU-wrapped -- pure disk I/O (open3d write), no CUDA involved.
     Lazy import to match get_pipeline()'s pattern, so this module still
