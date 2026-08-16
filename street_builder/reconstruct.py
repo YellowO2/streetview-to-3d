@@ -253,6 +253,29 @@ def _known_best4_winners(nodes: list[dict]) -> list[Candidate]:
     return [by_label[label] for label in KNOWN_BEST4_LABELS]
 
 
+def _known_best4_pano_objects(nodes: list[dict]) -> dict:
+    """Looks up the raw LookaroundPanorama objects (not just the label/path/
+    lat/lon Candidate tuple _gather_candidate_pool builds) for the 4 known
+    best4 winners -- needed for their heading/pitch/roll metadata, which
+    Candidate doesn't carry. Returns {label: pano}, all 4 KNOWN_BEST4_LABELS
+    guaranteed present (raises if any are missing)."""
+    found = {}
+    for node in nodes:
+        try:
+            candidates = apple_candidates(node["lat"], node["lon"], k=CANDIDATE_POOL_APPLE_PER_NODE)
+        except Exception as e:
+            print(f"Apple candidate lookup failed for node {node['id']}: {e}")
+            continue
+        for pano in candidates:
+            label = f"apple:{pano.id}"
+            if label in KNOWN_BEST4_LABELS:
+                found[label] = pano
+    missing = [label for label in KNOWN_BEST4_LABELS if label not in found]
+    if missing:
+        raise ValueError(f"Known best-4 winners not found via Apple lookup: {missing}")
+    return found
+
+
 def _labeled_alias(candidate: Candidate, alias_dir: str) -> str:
     """Symlink to candidate.path named by source + lat/lon instead of its
     opaque pano ID (e.g. apple_lat1.234567_lon103.456789.jpg). The real
@@ -449,6 +472,63 @@ def reconstruct_chain_best4_pairwise_test(nodes: list[dict], output_dir: str, st
             results.append((pair_label, ply_path))
 
     return results
+
+
+def reconstruct_chain_best4_slope_correction_test(
+    nodes: list[dict],
+    output_dir: str,
+    labels: list[str] | None = None,
+    multiplier: float = 1.0,
+    step_degrees: int = BEST4_STEP_DEGREES,
+) -> str:
+    """One-off diagnostic, not a permanent feature (see CAR_REMOVAL_TEST_LABELS):
+    de-tilts the given candidates (default: all 4 known best4 winners) by
+    their own heading/pitch/roll (services/slope_correction.correct_slope,
+    already used for the single-pano Google flow, applied here to Apple
+    metadata for the first time) before reconstruction. Tests whether the
+    small (~0.1-0.2deg) but systematic pitch difference between the two
+    capture passes A/C (build_id 2147485257) and B/D (build_id 2147486516,
+    ~7 weeks apart) is enough to explain the cross-pass reconstruction
+    failures. `multiplier` scales the correction, in case the reported
+    pitch/roll undersells the actual misalignment (see app.py's own
+    "Try >1x" note on this same knob for the single-pano flow).
+
+    labels: subset of KNOWN_BEST4_LABELS to reconstruct with, in that fixed
+    order (e.g. just the A-vs-B pair, the worst-correlating one, to check
+    for a signal cheaply before spending a full 4-way run).
+    """
+    from services.slope_correction import correct_slope
+
+    labels = labels or KNOWN_BEST4_LABELS
+    pano_objs = _known_best4_pano_objects(nodes)
+    print(f"Slope-correction test (multiplier={multiplier}): de-tilting {labels}")
+
+    with tempfile.TemporaryDirectory() as alias_dir:
+        corrected = []
+        for label in labels:
+            pano = pano_objs[label]
+            raw_path = download_lookaround(pano)
+            leveled_path = correct_slope(raw_path, pano.heading, pano.pitch, pano.roll, multiplier=multiplier)
+            # "appleLeveled" (not "apple") as the alias source, so _labeled_alias's
+            # filename actually differs from the unleveled run's -- otherwise both
+            # runs would alias to the identical "apple_lat..lon..jpg" name and the
+            # DA3 log couldn't tell which version was reconstructed.
+            leveled_label = f"appleLeveled:{label.split(':', 1)[1]}"
+            corrected.append(Candidate(leveled_label, leveled_path, pano.lat, pano.lon))
+
+        if len(corrected) < 2:
+            raise ValueError("Need at least 2 labels to reconstruct.")
+
+        winner_paths = [_labeled_alias(c, alias_dir) for c in corrected]
+        ply_path = run_pointcloud_gpu(
+            target_depth_path=winner_paths[0],
+            output_dir=output_dir,
+            support_paths=winner_paths[1:],
+            step_degrees=step_degrees,
+        )
+    if not ply_path:
+        raise RuntimeError("Pipeline finished but no point cloud was produced.")
+    return ply_path
 
 
 def _chain_windows(nodes: list[dict], size: int = WINDOW_NODE_SIZE, stride: int = WINDOW_STRIDE) -> list[list[dict]]:

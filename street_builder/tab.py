@@ -348,6 +348,58 @@ def handle_pairwise_test(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.filter_sweep_links(results)
 
 
+def handle_slope_test_ab(state, progress=gr.Progress(track_tqdm=True)):
+    """One-off diagnostic button, not a permanent feature -- see
+    reconstruct.reconstruct_chain_best4_slope_correction_test. De-tilts just
+    the A/B pair (the worst-correlating one, 4/12 + 1/12 in the raw pairwise
+    test) by their own heading/pitch/roll before reconstructing, to check
+    for a signal cheaply before spending a full 4-way run. Delete this
+    handler + its button once the test's done."""
+    if len(state.get("selected", [])) < 2:
+        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    by_key = _nodes_by_key(state)
+    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    progress(0, desc=f"Fetching known best-4 candidates near {len(ordered_nodes)} nodes...")
+    try:
+        ply_path = reconstruct.reconstruct_chain_best4_slope_correction_test(
+            ordered_nodes, output_dir, labels=reconstruct.KNOWN_BEST4_LABELS[:2]
+        )
+    except Exception as e:
+        raise gr.Error(f"Slope-correction test (A vs B) failed: {e}")
+
+    progress(1.0, desc="Done!")
+    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
+
+
+def handle_slope_test_all4(state, progress=gr.Progress(track_tqdm=True)):
+    """One-off diagnostic button, not a permanent feature -- see
+    reconstruct.reconstruct_chain_best4_slope_correction_test. De-tilts all
+    4 known best-4 winners by their own heading/pitch/roll before
+    reconstructing. Delete this handler + its button once the test's done."""
+    if len(state.get("selected", [])) < 2:
+        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    by_key = _nodes_by_key(state)
+    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    progress(0, desc=f"Fetching known best-4 candidates near {len(ordered_nodes)} nodes...")
+    try:
+        ply_path = reconstruct.reconstruct_chain_best4_slope_correction_test(ordered_nodes, output_dir)
+    except Exception as e:
+        raise gr.Error(f"Slope-correction test (all 4) failed: {e}")
+
+    progress(1.0, desc="Done!")
+    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
+
+
 def build_tab():
     state = gr.State(_empty_state())
 
@@ -394,6 +446,13 @@ def build_tab():
             # One-off diagnostic: reconstructs all 6 pairs among the 4 known
             # winners. Not part of the normal flow -- delete once done.
             pairwise_test_btn = gr.Button("Test: pairwise (debug)")
+            # One-off diagnostic: de-tilts the worst-correlating pair (A/B)
+            # by its own heading/pitch/roll before reconstructing. Not part
+            # of the normal flow -- delete once done.
+            slope_test_ab_btn = gr.Button("Test: slope correct A vs B (debug)")
+            # One-off diagnostic: same de-tilt, all 4 known winners. Not
+            # part of the normal flow -- delete once done.
+            slope_test_all4_btn = gr.Button("Test: slope correct all 4 (debug)")
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -475,6 +534,22 @@ def build_tab():
 
     pairwise_test_btn.click(
         fn=handle_pairwise_test,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    slope_test_ab_btn.click(
+        fn=handle_slope_test_ab,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    slope_test_all4_btn.click(
+        fn=handle_slope_test_all4,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",
