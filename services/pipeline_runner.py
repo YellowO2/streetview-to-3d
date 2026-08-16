@@ -77,13 +77,14 @@ def run_pipeline_gpu(target_appearance_path, output_dir, scale_mode, gs_backend,
 
 
 @GPU
-def run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None):
+def run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None, step_degrees=20):
     pipeline = get_pipeline()
     os.makedirs(output_dir, exist_ok=True)
     pipeline.run_da3_pointcloud(
         target_depth_path=target_depth_path,
         output_dir=output_dir,
         support_paths=support_paths,
+        step_degrees=step_degrees,
     )
 
     ply = os.path.join(output_dir, "da3_pointcloud.ply")

@@ -226,6 +226,44 @@ def reconstruct_chain_best4(nodes: list[dict], output_dir: str) -> str:
     return ply_path
 
 
+FULL_POOL_STEP_DEGREES = 45
+
+
+def reconstruct_chain_full_pool(nodes: list[dict], output_dir: str) -> str:
+    """Experimental: the opposite bet from reconstruct_chain_best4. Instead
+    of solo-scoring and keeping only the top BEST4_FINAL_COUNT candidates,
+    passes the ENTIRE candidate pool (chain nodes + nearby Apple panos, no
+    down-selection at all) into one joint DA3 call -- testing whether the
+    quality problems we saw with unfiltered input (e.g. raw chain nodes
+    solo-scoring 5/18, 2/18) were actually caused by distance (nodes too far
+    apart to correlate, which windowing already fixes structurally) rather
+    than genuine per-pano capture-quality variance that scoring was filtering
+    out. If this comes out clean, per-pano scoring may not be pulling as much
+    weight as we assumed for a single tight window; if specific panos still
+    get rejected the way the raw nodes did before, that's evidence it still
+    matters even at this close range.
+
+    Uses FULL_POOL_STEP_DEGREES (45, vs. DA3's own default of 20) to keep the
+    image count reasonable despite not down-selecting -- coarser slicing
+    trades per-pano slice redundancy (adjacent slices overlap ~78% at the
+    default step) for a lower image count at the same viewpoint coverage.
+    """
+    pool = _gather_candidate_pool(nodes)
+    if len(pool) < 2:
+        raise ValueError("Need at least 2 candidate panos (chain nodes + Apple support) to reconstruct.")
+
+    print(f"Reconstructing with full pool ({len(pool)} candidates, step={FULL_POOL_STEP_DEGREES}): {[c.label for c in pool]}")
+    ply_path = run_pointcloud_gpu(
+        target_depth_path=pool[0].path,
+        output_dir=output_dir,
+        support_paths=[c.path for c in pool[1:]],
+        step_degrees=FULL_POOL_STEP_DEGREES,
+    )
+    if not ply_path:
+        raise RuntimeError("Pipeline finished but no point cloud was produced.")
+    return ply_path
+
+
 def _chain_windows(nodes: list[dict], size: int = WINDOW_NODE_SIZE, stride: int = WINDOW_STRIDE) -> list[list[dict]]:
     """Slice the ordered chain into overlapping raw-node windows, e.g.
     [A,B,C,D] with size=2, stride=1 -> [[A,B], [B,C], [C,D]]."""

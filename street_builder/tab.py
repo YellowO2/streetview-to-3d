@@ -244,6 +244,30 @@ def handle_windowed(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
 
 
+def handle_full_pool(state, progress=gr.Progress(track_tqdm=True)):
+    """Experimental button: the opposite bet from best-4 -- passes the whole
+    candidate pool into one DA3 call with no down-selection, at a coarser
+    slice step. See reconstruct.reconstruct_chain_full_pool. Separate from
+    every other button -- doesn't touch or replace any of them."""
+    if len(state.get("selected", [])) < 2:
+        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    by_key = _nodes_by_key(state)
+    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    progress(0, desc=f"Reconstructing full candidate pool near {len(ordered_nodes)} nodes...")
+    try:
+        ply_path = reconstruct.reconstruct_chain_full_pool(ordered_nodes, output_dir)
+    except Exception as e:
+        raise gr.Error(f"Full-pool reconstruction failed: {e}")
+
+    progress(1.0, desc="Done!")
+    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
+
+
 def build_tab():
     state = gr.State(_empty_state())
 
@@ -276,6 +300,9 @@ def build_tab():
             # Experimental: chunk+connect for chains longer than one DA3
             # call can handle. Not part of the normal Generate flow.
             windowed_btn = gr.Button("Reconstruct (windowed, experimental)")
+            # Experimental: whole candidate pool, no down-selection, coarser
+            # slice step. Not part of the normal Generate flow.
+            full_pool_btn = gr.Button("Reconstruct (full pool, experimental)")
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -325,6 +352,14 @@ def build_tab():
 
     windowed_btn.click(
         fn=handle_windowed,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    full_pool_btn.click(
+        fn=handle_full_pool,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",
