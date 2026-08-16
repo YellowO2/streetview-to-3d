@@ -296,6 +296,32 @@ def handle_car_removal_test(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
 
 
+def handle_drop_one_test(state, progress=gr.Progress(track_tqdm=True)):
+    """One-off diagnostic button, not a permanent feature -- see
+    reconstruct.reconstruct_chain_best4_drop_one_test. Reconstructs the
+    best-4 winners minus one of the two known-collapsing panos at a time (no
+    Flux edit), to check whether each collapsing pano is fine on its own
+    against the other two winners once the *other* collapsing one is
+    excluded. Delete this handler + its button once the test's done."""
+    if len(state.get("selected", [])) < 2:
+        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    by_key = _nodes_by_key(state)
+    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    progress(0, desc=f"Scoring candidates near {len(ordered_nodes)} nodes...")
+    try:
+        results = reconstruct.reconstruct_chain_best4_drop_one_test(ordered_nodes, output_dir)
+    except Exception as e:
+        raise gr.Error(f"Drop-one test failed: {e}")
+
+    progress(1.0, desc="Done!")
+    yield viewers.filter_sweep_links(results)
+
+
 def build_tab():
     state = gr.State(_empty_state())
 
@@ -335,6 +361,10 @@ def build_tab():
             # best-4 winners known to collapse on this test chain. Not part
             # of the normal flow -- delete once the test's done.
             car_removal_test_btn = gr.Button("Test: remove cars (debug)")
+            # One-off diagnostic: reconstructs best-4 minus one of the two
+            # collapsing panos at a time, no Flux edit. Not part of the
+            # normal flow -- delete once the test's done.
+            drop_one_test_btn = gr.Button("Test: drop one pano (debug)")
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -400,6 +430,14 @@ def build_tab():
 
     car_removal_test_btn.click(
         fn=handle_car_removal_test,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    drop_one_test_btn.click(
+        fn=handle_drop_one_test,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",

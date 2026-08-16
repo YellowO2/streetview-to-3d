@@ -344,6 +344,51 @@ def reconstruct_chain_best4_car_removal_test(nodes: list[dict], output_dir: str,
     return ply_path
 
 
+def reconstruct_chain_best4_drop_one_test(nodes: list[dict], output_dir: str, step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str | None]]:
+    """One-off diagnostic, not a permanent feature (see CAR_REMOVAL_TEST_LABELS):
+    same pool-gather/score/rank as reconstruct_chain_best4, but instead of
+    editing anything, runs two 3-candidate reconstructions -- winners minus
+    one of the two collapsing panos, then winners minus the other -- to check
+    whether each collapsing pano gets accepted fine once the *other*
+    collapsing one is out of the batch (pointing at a pairwise conflict
+    between those two specifically) or still gets rejected against the other
+    two winners alone (pointing at something else). Cheaper than the car-
+    removal test since it skips Flux entirely. Per-pano keep-counts are only
+    in the server log (DA3Model.py), same as every other debug path here.
+
+    Returns [(label, ply_path_or_None), ...], one per dropped candidate.
+    """
+    pool = _gather_candidate_pool(nodes)
+    if len(pool) < 2:
+        raise ValueError("Need at least 2 candidate panos (chain nodes + Apple support) to score.")
+
+    ranked = _score_and_rank(pool, step_degrees=step_degrees)
+    winners = ranked[:BEST4_FINAL_COUNT]
+    if len(winners) < 3:
+        raise ValueError("Need at least 3 best-4 winners to drop one and still have multi-view context.")
+
+    results = []
+    with tempfile.TemporaryDirectory() as alias_dir:
+        for dropped_label in sorted(CAR_REMOVAL_TEST_LABELS):
+            remaining = [c for c in winners if c.label != dropped_label]
+            if len(remaining) == len(winners):
+                print(f"Drop-one test: {dropped_label} wasn't among this run's winners, skipping.")
+                results.append((f"without {dropped_label}", None))
+                continue
+            print(f"Drop-one test: reconstructing without {dropped_label} -- {[c.label for c in remaining]}")
+            remaining_paths = [_labeled_alias(c, alias_dir) for c in remaining]
+            run_output_dir = os.path.join(output_dir, f"drop_{dropped_label.replace(':', '_')}")
+            ply_path = run_pointcloud_gpu(
+                target_depth_path=remaining_paths[0],
+                output_dir=run_output_dir,
+                support_paths=remaining_paths[1:],
+                step_degrees=step_degrees,
+            )
+            results.append((f"without {dropped_label}", ply_path))
+
+    return results
+
+
 def _chain_windows(nodes: list[dict], size: int = WINDOW_NODE_SIZE, stride: int = WINDOW_STRIDE) -> list[list[dict]]:
     """Slice the ordered chain into overlapping raw-node windows, e.g.
     [A,B,C,D] with size=2, stride=1 -> [[A,B], [B,C], [C,D]]."""
