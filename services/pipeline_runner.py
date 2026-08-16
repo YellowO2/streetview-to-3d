@@ -102,3 +102,17 @@ def run_pointcloud_sweep_gpu(target_depth_path, output_dir, threshold_levels, su
 def score_candidates_gpu(candidate_paths, dist_thresh=0.2, angle_thresh=1):
     pipeline = get_pipeline()
     return pipeline.score_candidates(candidate_paths, dist_thresh=dist_thresh, angle_thresh=angle_thresh)
+
+
+@GPU
+def run_pointcloud_with_poses_gpu(target_depth_path, support_paths=None):
+    pipeline = get_pipeline()
+    return pipeline.run_da3_pointcloud_with_poses(target_depth_path, support_paths=support_paths)
+
+
+def save_pointcloud(points, colors, path):
+    """Not GPU-wrapped -- pure disk I/O (open3d write), no CUDA involved.
+    Lazy import to match get_pipeline()'s pattern, so this module still
+    imports cleanly on machines without panoramic_to_3dgs installed."""
+    from panoramic_to_3dgs import save_da3_pointcloud
+    return save_da3_pointcloud(points, colors, path)

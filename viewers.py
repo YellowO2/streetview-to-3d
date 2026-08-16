@@ -183,6 +183,14 @@ const loader = new PLYLoader();
 let currentPoints = null;
 
 function showGeometry(geometry) {{
+    // DA3's raw point cloud comes out in a Y-down/Z-forward (computer-vision)
+    // convention; three.js is Y-up. Bake the flip into the geometry itself
+    // (not a rotation on the Points mesh) so the bounding-sphere camera
+    // framing below -- computed from this geometry -- stays correct. Same
+    // root issue as splat.quaternion.set(1,0,0,0) in build_splat_iframe,
+    // just applied before framing instead of after, since that viewer has no
+    // dynamic bounding-sphere framing to keep in sync.
+    geometry.rotateX(Math.PI);
     geometry.computeBoundingSphere();
     const sphere = geometry.boundingSphere;
     const hasColor = !!geometry.getAttribute('color');
