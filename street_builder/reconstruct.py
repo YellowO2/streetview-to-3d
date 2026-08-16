@@ -46,11 +46,19 @@ APPLE_SUPPORT_PER_NODE = 1
 CANDIDATE_POOL_APPLE_PER_NODE = 4
 BEST4_FINAL_COUNT = 4
 
-# Yaw step for extract_views_for_da3's slicing (default 20 -> 18 slices/pano,
-# ~78% overlap between neighbors). Used as reconstruct_chain_best4's default
-# step_degrees (comparing against the original 20-degree result) and for the
-# full-pool experiments, where a coarser step is needed to keep the
-# unfiltered pool's image count down.
+# Yaw step for extract_views_for_da3's slicing. DA3's own default (20 ->
+# 18 slices/pano, ~78% overlap) turned out to matter for more than
+# redundancy: at step=45 (8 slices/pano), 2 of 4 best-4 winners went from
+# partial acceptance to fully rejected -- fewer slices makes a pano's own
+# per-slice consensus noisier, not just less redundant. 30 (12 slices, still
+# evenly divides 360) is the middle ground being tested now, used for BOTH
+# scoring and final reconstruction so the two stay consistent with each
+# other (reconstruct_chain_best4's step_degrees default).
+BEST4_STEP_DEGREES = 30
+
+# Used only by the full-pool experiments, where a coarser step is needed to
+# keep the unfiltered pool's image count down (10 unscored candidates would
+# otherwise exceed the crash threshold we've observed).
 FULL_POOL_STEP_DEGREES = 45
 
 # _gather_candidate_pool's Apple lookup is nearest-K only, with no cap on how
@@ -203,21 +211,22 @@ def _gather_candidate_pool(nodes: list[dict]) -> list[Candidate]:
     return pool
 
 
-def _score_and_rank(pool: list[Candidate]) -> list[Candidate]:
+def _score_and_rank(pool: list[Candidate], step_degrees: int = 20) -> list[Candidate]:
     """Solo-score every candidate in the pool and return them sorted
-    best-first. Shared by reconstruct_chain_best4 and reconstruct_chain_windowed
-    (one window's pool, in the latter case)."""
-    scores = score_candidates_gpu([c.path for c in pool])
+    best-first. Only caller currently is reconstruct_chain_best4 --
+    reconstruct_chain_windowed's scoring happens server-side inside
+    Pipeline.run_windowed_reconstruction instead."""
+    scores = score_candidates_gpu([c.path for c in pool], step_degrees=step_degrees)
     ranked = [c for c, _ in sorted(zip(pool, scores), key=lambda x: x[1], reverse=True)]
-    print(f"Candidate scores (label, keep-count/18): {list(zip((c.label for c in pool), scores))}")
+    print(f"Candidate scores (label, keep-count/{360 // step_degrees + (360 % step_degrees > 0)}): {list(zip((c.label for c in pool), scores))}")
     return ranked
 
 
-def reconstruct_chain_best4(nodes: list[dict], output_dir: str, step_degrees: int = FULL_POOL_STEP_DEGREES) -> str:
+def reconstruct_chain_best4(nodes: list[dict], output_dir: str, step_degrees: int = BEST4_STEP_DEGREES) -> str:
     """Instead of trusting the chain's own Google nodes (plus closest-K Apple
     support) by default, builds a candidate pool (the chain's Google nodes +
     nearby Apple panos), scores each candidate SOLO through DA3 -- its own
-    ~18 view-slices' self-consistency keep-rate, no other pano in the batch
+    view-slices' self-consistency keep-rate, no other pano in the batch
     (see Pipeline.score_candidates) -- and reconstructs using only the
     BEST4_FINAL_COUNT highest-scoring candidates.
 
@@ -227,18 +236,20 @@ def reconstruct_chain_best4(nodes: list[dict], output_dir: str, step_degrees: in
     score high solo and fail to line up in the final joint DA3 call. That's
     exactly the open question this whole experiment is testing.
 
-    step_degrees only affects the final reconstruction call, not the solo-
-    scoring pass (which stays at DA3Model's own default) -- currently
-    defaulted to FULL_POOL_STEP_DEGREES (45) rather than DA3's usual 20, to
-    directly compare against the earlier step=20 best-4 result (36/72 kept)
-    and check whether coarser slicing holds up as well on the same winners.
-    Pass step_degrees=20 explicitly to go back to the original behavior.
+    step_degrees is used for BOTH the solo-scoring pass and the final
+    reconstruction call, kept in sync deliberately: a candidate's keep-rate
+    depends on its own per-pano consensus (median center, mean rotation
+    across its own slices), which gets noisier with fewer slices -- scoring
+    at a different step than reconstruction risks a mismatch (a candidate
+    whose consensus looked robust at one slice count might not be at
+    another). Defaults to BEST4_STEP_DEGREES (30); pass 20 explicitly for
+    DA3's own original default.
     """
     pool = _gather_candidate_pool(nodes)
     if len(pool) < 2:
         raise ValueError("Need at least 2 candidate panos (chain nodes + Apple support) to score.")
 
-    ranked = _score_and_rank(pool)
+    ranked = _score_and_rank(pool, step_degrees=step_degrees)
     winners = ranked[:BEST4_FINAL_COUNT]
     if len(winners) < 2:
         raise ValueError("Not enough candidates survived scoring for multi-view reconstruction.")
