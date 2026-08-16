@@ -85,6 +85,20 @@ APPLE_CANDIDATE_MAX_DIST_M = 25.0
 CAR_REMOVAL_TEST_LABELS = {"apple:8733854682473071389", "apple:8733854682473072390"}
 CAR_REMOVAL_TEST_PROMPT = "Remove all people and vehicles from the scene."
 
+# Fixed order = the exact best4 winners already confirmed on this test chain,
+# pano_0..pano_3 in the same order every diagnostic run below uses -- so
+# per-pano keep-counts stay directly comparable across runs. Re-scoring from
+# scratch each time (the pool has several candidates tied at 10/12) risked
+# silently picking a *different* top-4 set run to run, which would've
+# invalidated the comparison; skipping scoring here avoids that AND saves a
+# full GPU scoring pass per debug click.
+KNOWN_BEST4_LABELS = [
+    "apple:2722660790751527800",
+    "apple:8733854682473071389",
+    "apple:2722660790751529047",
+    "apple:8733854682473072390",
+]
+
 # reconstruct_chain_windowed: raw chain nodes per window's own candidate pool
 # (WINDOW_NODE_SIZE), how many raw nodes consecutive windows overlap by
 # (WINDOW_STRIDE controls this: overlap = WINDOW_NODE_SIZE - WINDOW_STRIDE),
@@ -227,6 +241,18 @@ def _gather_candidate_pool(nodes: list[dict]) -> list[Candidate]:
     return pool
 
 
+def _known_best4_winners(nodes: list[dict]) -> list[Candidate]:
+    """Re-gathers the candidate pool (needed to re-download/re-locate the
+    images and their lat/lon) but skips scoring entirely -- filters straight
+    to KNOWN_BEST4_LABELS, in that fixed order. See KNOWN_BEST4_LABELS for why."""
+    pool = _gather_candidate_pool(nodes)
+    by_label = {c.label: c for c in pool}
+    missing = [label for label in KNOWN_BEST4_LABELS if label not in by_label]
+    if missing:
+        raise ValueError(f"Known best-4 winners not found in current candidate pool: {missing}")
+    return [by_label[label] for label in KNOWN_BEST4_LABELS]
+
+
 def _labeled_alias(candidate: Candidate, alias_dir: str) -> str:
     """Symlink to candidate.path named by source + lat/lon instead of its
     opaque pano ID (e.g. apple_lat1.234567_lon103.456789.jpg). The real
@@ -304,21 +330,15 @@ def reconstruct_chain_best4(nodes: list[dict], output_dir: str, step_degrees: in
 
 def reconstruct_chain_best4_car_removal_test(nodes: list[dict], output_dir: str, step_degrees: int = BEST4_STEP_DEGREES) -> str:
     """One-off diagnostic, not a permanent feature (see CAR_REMOVAL_TEST_LABELS):
-    same pool-gather/score/rank as reconstruct_chain_best4, but before the
-    final reconstruction call, runs Flux's "Remove people & vehicles" edit on
-    whichever of the 4 winners match CAR_REMOVAL_TEST_LABELS. Everything else
-    is untouched. Compare this run's per-pano keep-counts (printed by DA3, see
-    DA3Model.py) against the un-edited run's to check whether moving
-    cars/people -- not distance -- explain why those two panos collapsed."""
-    pool = _gather_candidate_pool(nodes)
-    if len(pool) < 2:
-        raise ValueError("Need at least 2 candidate panos (chain nodes + Apple support) to score.")
-
-    ranked = _score_and_rank(pool, step_degrees=step_degrees)
-    winners = ranked[:BEST4_FINAL_COUNT]
-    if len(winners) < 2:
-        raise ValueError("Not enough candidates survived scoring for multi-view reconstruction.")
-
+    reconstructs the exact same 4 candidates already confirmed as the best4
+    winners on this chain (see _known_best4_winners -- no re-scoring), but
+    before the final reconstruction call, runs Flux's "Remove people &
+    vehicles" edit on whichever of the 4 match CAR_REMOVAL_TEST_LABELS.
+    Everything else is untouched. Compare this run's per-pano keep-counts
+    (printed by DA3, see DA3Model.py) against the un-edited run's to check
+    whether moving cars/people -- not distance -- explain why those two
+    panos collapsed."""
+    winners = _known_best4_winners(nodes)
     to_clean = [c for c in winners if c.label in CAR_REMOVAL_TEST_LABELS]
     print(f"Reconstructing with top {len(winners)} (step={step_degrees}), removing cars/people from: {[c.label for c in to_clean]}")
 
@@ -346,24 +366,21 @@ def reconstruct_chain_best4_car_removal_test(nodes: list[dict], output_dir: str,
 
 def reconstruct_chain_best4_drop_one_test(nodes: list[dict], output_dir: str, step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str | None]]:
     """One-off diagnostic, not a permanent feature (see CAR_REMOVAL_TEST_LABELS):
-    same pool-gather/score/rank as reconstruct_chain_best4, but instead of
-    editing anything, runs two 3-candidate reconstructions -- winners minus
-    one of the two collapsing panos, then winners minus the other -- to check
-    whether each collapsing pano gets accepted fine once the *other*
-    collapsing one is out of the batch (pointing at a pairwise conflict
-    between those two specifically) or still gets rejected against the other
-    two winners alone (pointing at something else). Cheaper than the car-
-    removal test since it skips Flux entirely. Per-pano keep-counts are only
-    in the server log (DA3Model.py), same as every other debug path here.
+    reconstructs the exact same 4 candidates already confirmed as the best4
+    winners on this chain (see _known_best4_winners -- no re-scoring), but
+    instead of editing anything, runs two 3-candidate reconstructions --
+    winners minus one of the two collapsing panos, then winners minus the
+    other -- to check whether each collapsing pano gets accepted fine once
+    the *other* collapsing one is out of the batch (pointing at a pairwise
+    conflict between those two specifically) or still gets rejected against
+    the other two winners alone (pointing at something else). Cheaper than
+    the car-removal test since it skips Flux entirely. Per-pano keep-counts
+    are only in the server log (DA3Model.py), same as every other debug path
+    here.
 
     Returns [(label, ply_path_or_None), ...], one per dropped candidate.
     """
-    pool = _gather_candidate_pool(nodes)
-    if len(pool) < 2:
-        raise ValueError("Need at least 2 candidate panos (chain nodes + Apple support) to score.")
-
-    ranked = _score_and_rank(pool, step_degrees=step_degrees)
-    winners = ranked[:BEST4_FINAL_COUNT]
+    winners = _known_best4_winners(nodes)
     if len(winners) < 3:
         raise ValueError("Need at least 3 best-4 winners to drop one and still have multi-view context.")
 
