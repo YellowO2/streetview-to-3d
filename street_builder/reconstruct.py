@@ -21,6 +21,7 @@ or a GPU box.
 """
 import asyncio
 import os
+import tempfile
 from collections import namedtuple
 
 from services.geo import haversine_m
@@ -211,6 +212,24 @@ def _gather_candidate_pool(nodes: list[dict]) -> list[Candidate]:
     return pool
 
 
+def _labeled_alias(candidate: Candidate, alias_dir: str) -> str:
+    """Symlink to candidate.path named by source + lat/lon instead of its
+    opaque pano ID (e.g. apple_lat1.234567_lon103.456789.jpg). The real
+    cached file (services/lookaround_fetch.py, services/streetview_fetch.py)
+    stays ID-named for reuse elsewhere in the app -- this only affects the
+    path string handed to panoramic-to-3dgs, whose per-pano DA3 log now uses
+    os.path.basename(path) as the pano_id (see DA3Model.py), so this alias is
+    what actually shows up in that log: which candidate got how many views
+    kept, tagged with the coordinates needed to check whether rejections
+    correlate with distance between the reconstructed panos."""
+    source = candidate.label.split(":", 1)[0]
+    ext = os.path.splitext(candidate.path)[1]
+    alias_path = os.path.join(alias_dir, f"{source}_lat{candidate.lat:.6f}_lon{candidate.lon:.6f}{ext}")
+    if not os.path.exists(alias_path):
+        os.symlink(os.path.abspath(candidate.path), alias_path)
+    return alias_path
+
+
 def _score_and_rank(pool: list[Candidate], step_degrees: int = 20) -> list[Candidate]:
     """Solo-score every candidate in the pool and return them sorted
     best-first. Only caller currently is reconstruct_chain_best4 --
@@ -255,12 +274,14 @@ def reconstruct_chain_best4(nodes: list[dict], output_dir: str, step_degrees: in
         raise ValueError("Not enough candidates survived scoring for multi-view reconstruction.")
 
     print(f"Reconstructing with top {len(winners)} (step={step_degrees}): {[c.label for c in winners]}")
-    ply_path = run_pointcloud_gpu(
-        target_depth_path=winners[0].path,
-        output_dir=output_dir,
-        support_paths=[c.path for c in winners[1:]],
-        step_degrees=step_degrees,
-    )
+    with tempfile.TemporaryDirectory() as alias_dir:
+        winner_paths = [_labeled_alias(c, alias_dir) for c in winners]
+        ply_path = run_pointcloud_gpu(
+            target_depth_path=winner_paths[0],
+            output_dir=output_dir,
+            support_paths=winner_paths[1:],
+            step_degrees=step_degrees,
+        )
     if not ply_path:
         raise RuntimeError("Pipeline finished but no point cloud was produced.")
     return ply_path
