@@ -241,6 +241,70 @@ def _gather_candidate_pool(nodes: list[dict]) -> list[Candidate]:
     return pool
 
 
+def _pass_options(nodes: list[dict]) -> list[dict[tuple[str, str], object]]:
+    """Per node, every available capture pass, metadata only (no downloads):
+    Apple candidates grouped by build_id (within APPLE_CANDIDATE_MAX_DIST_M,
+    nearest pano per build_id), and Google historical captures grouped by
+    date label -- pulled straight off the node's own "dates" field
+    (services/streetview_fetch.py's pano_to_meta), so the grouping itself
+    costs zero extra network calls. Keyed by (source, pass_key) so passes
+    never mix across sources -- only same-source/same-pass compatibility has
+    been validated (see this session's build_id findings).
+
+    Values: an Apple `LookaroundPanorama` object for ("apple", build_id)
+    keys, or a bare pano ID string for ("google", date_label) keys (Google's
+    own metadata/image for a specific historical ID is only fetched once a
+    pass is actually chosen to try -- see reconstruct_chain_greedy).
+
+    This is purely a cheap way to decide which pass to *try first*; the
+    actual accept/reject decision is always a real pairwise DA3 call on the
+    exact candidate pair (see _rank_passes_at's docstring).
+    """
+    options = []
+    for node in nodes:
+        node_options = {}
+
+        for entry in node.get("dates", []):
+            node_options[("google", entry["label"])] = entry["id"]
+
+        try:
+            candidates = apple_candidates(node["lat"], node["lon"], k=CANDIDATE_POOL_APPLE_PER_NODE)
+        except Exception as e:
+            print(f"Apple candidate lookup failed for node {node['id']}: {e}")
+            candidates = []
+        for pano in candidates:
+            dist = haversine_m(node["lat"], node["lon"], pano.lat, pano.lon)
+            if dist > APPLE_CANDIDATE_MAX_DIST_M:
+                continue
+            key = ("apple", pano.build_id)
+            existing = node_options.get(key)
+            if existing is None or dist < haversine_m(node["lat"], node["lon"], existing.lat, existing.lon):
+                node_options[key] = pano
+
+        options.append(node_options)
+    return options
+
+
+def _rank_passes_at(options: list[dict], start: int, exclude: set | None = None) -> list[tuple[str, str]]:
+    """Rank the (source, pass_key) pairs available at node index `start` by
+    how many consecutive nodes starting there also have that same pass --
+    pure index math over _pass_options' already-gathered metadata, no
+    GPU/network cost. This only picks the order to *try* passes in; it is
+    not a substitute for the real pairwise DA3 health check (grading is
+    always done on the actual candidate pair, not this heuristic)."""
+    exclude = exclude or set()
+    candidates = [key for key in options[start] if key not in exclude]
+
+    def run_length(key):
+        n, i = 0, start
+        while i < len(options) and key in options[i]:
+            n += 1
+            i += 1
+        return n
+
+    return sorted(candidates, key=run_length, reverse=True)
+
+
 def _known_best4_winners(nodes: list[dict]) -> list[Candidate]:
     """Re-gathers the candidate pool (needed to re-download/re-locate the
     images and their lat/lon) but skips scoring entirely -- filters straight
