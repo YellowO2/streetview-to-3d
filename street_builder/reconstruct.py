@@ -46,6 +46,13 @@ APPLE_SUPPORT_PER_NODE = 1
 CANDIDATE_POOL_APPLE_PER_NODE = 4
 BEST4_FINAL_COUNT = 4
 
+# Yaw step for extract_views_for_da3's slicing (default 20 -> 18 slices/pano,
+# ~78% overlap between neighbors). Used as reconstruct_chain_best4's default
+# step_degrees (comparing against the original 20-degree result) and for the
+# full-pool experiments, where a coarser step is needed to keep the
+# unfiltered pool's image count down.
+FULL_POOL_STEP_DEGREES = 45
+
 # _gather_candidate_pool's Apple lookup is nearest-K only, with no cap on how
 # far "nearest" might actually be if local Apple coverage is sparse -- this
 # bounds it, so a pool built for one window can't reach into territory well
@@ -206,7 +213,7 @@ def _score_and_rank(pool: list[Candidate]) -> list[Candidate]:
     return ranked
 
 
-def reconstruct_chain_best4(nodes: list[dict], output_dir: str) -> str:
+def reconstruct_chain_best4(nodes: list[dict], output_dir: str, step_degrees: int = FULL_POOL_STEP_DEGREES) -> str:
     """Instead of trusting the chain's own Google nodes (plus closest-K Apple
     support) by default, builds a candidate pool (the chain's Google nodes +
     nearby Apple panos), scores each candidate SOLO through DA3 -- its own
@@ -219,6 +226,13 @@ def reconstruct_chain_best4(nodes: list[dict], output_dir: str) -> str:
     individually clean panos that are just too far apart could still both
     score high solo and fail to line up in the final joint DA3 call. That's
     exactly the open question this whole experiment is testing.
+
+    step_degrees only affects the final reconstruction call, not the solo-
+    scoring pass (which stays at DA3Model's own default) -- currently
+    defaulted to FULL_POOL_STEP_DEGREES (45) rather than DA3's usual 20, to
+    directly compare against the earlier step=20 best-4 result (36/72 kept)
+    and check whether coarser slicing holds up as well on the same winners.
+    Pass step_degrees=20 explicitly to go back to the original behavior.
     """
     pool = _gather_candidate_pool(nodes)
     if len(pool) < 2:
@@ -229,18 +243,16 @@ def reconstruct_chain_best4(nodes: list[dict], output_dir: str) -> str:
     if len(winners) < 2:
         raise ValueError("Not enough candidates survived scoring for multi-view reconstruction.")
 
-    print(f"Reconstructing with top {len(winners)}: {[c.label for c in winners]}")
+    print(f"Reconstructing with top {len(winners)} (step={step_degrees}): {[c.label for c in winners]}")
     ply_path = run_pointcloud_gpu(
         target_depth_path=winners[0].path,
         output_dir=output_dir,
         support_paths=[c.path for c in winners[1:]],
+        step_degrees=step_degrees,
     )
     if not ply_path:
         raise RuntimeError("Pipeline finished but no point cloud was produced.")
     return ply_path
-
-
-FULL_POOL_STEP_DEGREES = 45
 
 
 def _chain_windows(nodes: list[dict], size: int = WINDOW_NODE_SIZE, stride: int = WINDOW_STRIDE) -> list[list[dict]]:
