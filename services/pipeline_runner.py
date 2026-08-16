@@ -124,12 +124,6 @@ def run_windowed_reconstruction_gpu(windows, boundary_coords, final_count=4, for
 
 
 @GPU_WINDOWED
-def run_windowed_reconstruction_full_pool_gpu(windows, step_degrees=20):
-    pipeline = get_pipeline()
-    return pipeline.run_windowed_reconstruction_full_pool(windows, step_degrees=step_degrees)
-
-
-@GPU_WINDOWED
 def run_greedy_pass_reconstruction_gpu(
     node_candidates, try_order, keep_rate_threshold=0.5, max_attempts_per_position=3, step_degrees=20
 ):

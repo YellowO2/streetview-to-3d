@@ -244,32 +244,6 @@ def handle_windowed(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
 
 
-def handle_full_pool(state, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button: same chunk+connect windowing as handle_windowed,
-    but the opposite bet on what goes into each window -- no solo-scoring,
-    no best-4 down-selection, every window's full local candidate pool goes
-    into that window's DA3 call. See
-    reconstruct.reconstruct_chain_windowed_full_pool. Separate from every
-    other button -- doesn't touch or replace any of them."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Reconstructing full candidate pool near {len(ordered_nodes)} nodes...")
-    try:
-        ply_path = reconstruct.reconstruct_chain_windowed_full_pool(ordered_nodes, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Full-pool reconstruction failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
-
-
 def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
     """Experimental button: greedy same-capture-pass sliding-window
     reconstruction -- see reconstruct.reconstruct_chain_greedy. Grades every
@@ -295,136 +269,6 @@ def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
 
     progress(1.0, desc="Done!")
     yield viewers.filter_sweep_links(results)
-
-
-def handle_car_removal_test(state, progress=gr.Progress(track_tqdm=True)):
-    """One-off diagnostic button, not a permanent feature -- see
-    reconstruct.CAR_REMOVAL_TEST_LABELS. Same as handle_best4, but runs
-    Flux's "Remove people & vehicles" edit on the two specific winners known
-    (from a prior run on this same test chain) to collapse to near-zero
-    keep-rate, to check whether moving cars/people (vs. distance) explain
-    that collapse. Delete this handler + its button once the test's done."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Fetching known best-4 candidates near {len(ordered_nodes)} nodes...")
-    try:
-        ply_path = reconstruct.reconstruct_chain_best4_car_removal_test(ordered_nodes, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Car-removal test failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
-
-
-def handle_drop_one_test(state, progress=gr.Progress(track_tqdm=True)):
-    """One-off diagnostic button, not a permanent feature -- see
-    reconstruct.reconstruct_chain_best4_drop_one_test. Reconstructs the
-    best-4 winners minus one of the two known-collapsing panos at a time (no
-    Flux edit), to check whether each collapsing pano is fine on its own
-    against the other two winners once the *other* collapsing one is
-    excluded. Delete this handler + its button once the test's done."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Fetching known best-4 candidates near {len(ordered_nodes)} nodes...")
-    try:
-        results = reconstruct.reconstruct_chain_best4_drop_one_test(ordered_nodes, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Drop-one test failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.filter_sweep_links(results)
-
-
-def handle_pairwise_test(state, progress=gr.Progress(track_tqdm=True)):
-    """One-off diagnostic button, not a permanent feature -- see
-    reconstruct.reconstruct_chain_best4_pairwise_test. Reconstructs all 6
-    2-candidate pairs among the 4 known best-4 winners (no Flux, no
-    re-scoring), to check whether each collapsing pano fails against every
-    partner or only against specific ones. Delete this handler + its button
-    once the test's done."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Fetching known best-4 candidates near {len(ordered_nodes)} nodes...")
-    try:
-        results = reconstruct.reconstruct_chain_best4_pairwise_test(ordered_nodes, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Pairwise test failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.filter_sweep_links(results)
-
-
-def handle_slope_test_ab(state, progress=gr.Progress(track_tqdm=True)):
-    """One-off diagnostic button, not a permanent feature -- see
-    reconstruct.reconstruct_chain_best4_slope_correction_test. De-tilts just
-    the A/B pair (the worst-correlating one, 4/12 + 1/12 in the raw pairwise
-    test) by their own heading/pitch/roll before reconstructing, to check
-    for a signal cheaply before spending a full 4-way run. Delete this
-    handler + its button once the test's done."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Fetching known best-4 candidates near {len(ordered_nodes)} nodes...")
-    try:
-        ply_path = reconstruct.reconstruct_chain_best4_slope_correction_test(
-            ordered_nodes, output_dir, labels=reconstruct.KNOWN_BEST4_LABELS[:2]
-        )
-    except Exception as e:
-        raise gr.Error(f"Slope-correction test (A vs B) failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
-
-
-def handle_slope_test_all4(state, progress=gr.Progress(track_tqdm=True)):
-    """One-off diagnostic button, not a permanent feature -- see
-    reconstruct.reconstruct_chain_best4_slope_correction_test. De-tilts all
-    4 known best-4 winners by their own heading/pitch/roll before
-    reconstructing. Delete this handler + its button once the test's done."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Fetching known best-4 candidates near {len(ordered_nodes)} nodes...")
-    try:
-        ply_path = reconstruct.reconstruct_chain_best4_slope_correction_test(ordered_nodes, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Slope-correction test (all 4) failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
 
 
 def build_tab():
@@ -459,32 +303,11 @@ def build_tab():
             # Experimental: chunk+connect for chains longer than one DA3
             # call can handle. Not part of the normal Generate flow.
             windowed_btn = gr.Button("Reconstruct (windowed, experimental)")
-            # Experimental: whole candidate pool, no down-selection, coarser
-            # slice step. Not part of the normal Generate flow.
-            full_pool_btn = gr.Button("Reconstruct (full pool, experimental)")
             # Experimental: greedy same-capture-pass sliding window, graded
             # by real pairwise DA3 calls instead of solo score. Can return
             # multiple disconnected segments. Not part of the normal
             # Generate flow.
             greedy_btn = gr.Button("Reconstruct (greedy same-pass, experimental)")
-            # One-off diagnostic: removes cars/people from the two specific
-            # best-4 winners known to collapse on this test chain. Not part
-            # of the normal flow -- delete once the test's done.
-            car_removal_test_btn = gr.Button("Test: remove cars (debug)")
-            # One-off diagnostic: reconstructs best-4 minus one of the two
-            # collapsing panos at a time, no Flux edit. Not part of the
-            # normal flow -- delete once the test's done.
-            drop_one_test_btn = gr.Button("Test: drop one pano (debug)")
-            # One-off diagnostic: reconstructs all 6 pairs among the 4 known
-            # winners. Not part of the normal flow -- delete once done.
-            pairwise_test_btn = gr.Button("Test: pairwise (debug)")
-            # One-off diagnostic: de-tilts the worst-correlating pair (A/B)
-            # by its own heading/pitch/roll before reconstructing. Not part
-            # of the normal flow -- delete once done.
-            slope_test_ab_btn = gr.Button("Test: slope correct A vs B (debug)")
-            # One-off diagnostic: same de-tilt, all 4 known winners. Not
-            # part of the normal flow -- delete once done.
-            slope_test_all4_btn = gr.Button("Test: slope correct all 4 (debug)")
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -540,56 +363,8 @@ def build_tab():
         show_progress_on=[reconstruct_view],
     )
 
-    full_pool_btn.click(
-        fn=handle_full_pool,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
     greedy_btn.click(
         fn=handle_greedy,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    car_removal_test_btn.click(
-        fn=handle_car_removal_test,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    drop_one_test_btn.click(
-        fn=handle_drop_one_test,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    pairwise_test_btn.click(
-        fn=handle_pairwise_test,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    slope_test_ab_btn.click(
-        fn=handle_slope_test_ab,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    slope_test_all4_btn.click(
-        fn=handle_slope_test_all4,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",

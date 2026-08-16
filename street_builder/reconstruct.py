@@ -27,11 +27,9 @@ from collections import namedtuple
 from services.geo import haversine_m
 from services.lookaround_fetch import apple_candidates, download_lookaround
 from services.pipeline_runner import (
-    run_editor_gpu,
     run_greedy_pass_reconstruction_gpu,
     run_pointcloud_gpu,
     run_pointcloud_sweep_gpu,
-    run_windowed_reconstruction_full_pool_gpu,
     run_windowed_reconstruction_gpu,
     save_pointcloud,
     score_candidates_gpu,
@@ -59,11 +57,6 @@ BEST4_FINAL_COUNT = 4
 # other (reconstruct_chain_best4's step_degrees default).
 BEST4_STEP_DEGREES = 30
 
-# Used only by the full-pool experiments, where a coarser step is needed to
-# keep the unfiltered pool's image count down (10 unscored candidates would
-# otherwise exceed the crash threshold we've observed).
-FULL_POOL_STEP_DEGREES = 45
-
 # _gather_candidate_pool's Apple lookup is nearest-K only, with no cap on how
 # far "nearest" might actually be if local Apple coverage is sparse -- this
 # bounds it, so a pool built for one window can't reach into territory well
@@ -71,34 +64,6 @@ FULL_POOL_STEP_DEGREES = 45
 # we've measured on our one real test street; sparser streets may need this
 # retuned, but there's no data yet to justify a fancier per-street estimate.
 APPLE_CANDIDATE_MAX_DIST_M = 25.0
-
-# One-off diagnostic for reconstruct_chain_best4_car_removal_test: on our one
-# real test chain, two of the four best-4 winners (apple:8733854682473071389,
-# apple:8733854682473072390) scored well solo (11/12, 10/12) but collapsed to
-# near-zero (0/12, 1/12) once reconstructed jointly with the other two -- and
-# they're only ~1.3m apart from each other (closer than any other pair in the
-# set), which argues against "too far apart" and for a genuine content
-# mismatch (moving cars/people) between those two specific captures. Both
-# panos visibly contain a car; testing whether Flux's "Remove people &
-# vehicles" preset run on just these two (not all four, to save GPU time)
-# recovers their keep-rate. Hardcoded to this specific test chain -- delete
-# this constant + the function below once the test's been run.
-CAR_REMOVAL_TEST_LABELS = {"apple:8733854682473071389", "apple:8733854682473072390"}
-CAR_REMOVAL_TEST_PROMPT = "Remove all people and vehicles from the scene."
-
-# Fixed order = the exact best4 winners already confirmed on this test chain,
-# pano_0..pano_3 in the same order every diagnostic run below uses -- so
-# per-pano keep-counts stay directly comparable across runs. Re-scoring from
-# scratch each time (the pool has several candidates tied at 10/12) risked
-# silently picking a *different* top-4 set run to run, which would've
-# invalidated the comparison; skipping scoring here avoids that AND saves a
-# full GPU scoring pass per debug click.
-KNOWN_BEST4_LABELS = [
-    "apple:2722660790751527800",
-    "apple:8733854682473071389",
-    "apple:2722660790751529047",
-    "apple:8733854682473072390",
-]
 
 # reconstruct_chain_windowed: raw chain nodes per window's own candidate pool
 # (WINDOW_NODE_SIZE), how many raw nodes consecutive windows overlap by
@@ -438,41 +403,6 @@ def reconstruct_chain_greedy(nodes: list[dict], output_dir: str, step_degrees: i
     return results
 
 
-def _known_best4_winners(nodes: list[dict]) -> list[Candidate]:
-    """Re-gathers the candidate pool (needed to re-download/re-locate the
-    images and their lat/lon) but skips scoring entirely -- filters straight
-    to KNOWN_BEST4_LABELS, in that fixed order. See KNOWN_BEST4_LABELS for why."""
-    pool = _gather_candidate_pool(nodes)
-    by_label = {c.label: c for c in pool}
-    missing = [label for label in KNOWN_BEST4_LABELS if label not in by_label]
-    if missing:
-        raise ValueError(f"Known best-4 winners not found in current candidate pool: {missing}")
-    return [by_label[label] for label in KNOWN_BEST4_LABELS]
-
-
-def _known_best4_pano_objects(nodes: list[dict]) -> dict:
-    """Looks up the raw LookaroundPanorama objects (not just the label/path/
-    lat/lon Candidate tuple _gather_candidate_pool builds) for the 4 known
-    best4 winners -- needed for their heading/pitch/roll metadata, which
-    Candidate doesn't carry. Returns {label: pano}, all 4 KNOWN_BEST4_LABELS
-    guaranteed present (raises if any are missing)."""
-    found = {}
-    for node in nodes:
-        try:
-            candidates = apple_candidates(node["lat"], node["lon"], k=CANDIDATE_POOL_APPLE_PER_NODE)
-        except Exception as e:
-            print(f"Apple candidate lookup failed for node {node['id']}: {e}")
-            continue
-        for pano in candidates:
-            label = f"apple:{pano.id}"
-            if label in KNOWN_BEST4_LABELS:
-                found[label] = pano
-    missing = [label for label in KNOWN_BEST4_LABELS if label not in found]
-    if missing:
-        raise ValueError(f"Known best-4 winners not found via Apple lookup: {missing}")
-    return found
-
-
 def _labeled_alias(candidate: Candidate, alias_dir: str) -> str:
     """Symlink to candidate.path named by source + lat/lon instead of its
     opaque pano ID (e.g. apple_lat1.234567_lon103.456789.jpg). The real
@@ -548,186 +478,6 @@ def reconstruct_chain_best4(nodes: list[dict], output_dir: str, step_degrees: in
     return ply_path
 
 
-def reconstruct_chain_best4_car_removal_test(nodes: list[dict], output_dir: str, step_degrees: int = BEST4_STEP_DEGREES) -> str:
-    """One-off diagnostic, not a permanent feature (see CAR_REMOVAL_TEST_LABELS):
-    reconstructs the exact same 4 candidates already confirmed as the best4
-    winners on this chain (see _known_best4_winners -- no re-scoring), but
-    before the final reconstruction call, runs Flux's "Remove people &
-    vehicles" edit on whichever of the 4 match CAR_REMOVAL_TEST_LABELS.
-    Everything else is untouched. Compare this run's per-pano keep-counts
-    (printed by DA3, see DA3Model.py) against the un-edited run's to check
-    whether moving cars/people -- not distance -- explain why those two
-    panos collapsed."""
-    winners = _known_best4_winners(nodes)
-    to_clean = [c for c in winners if c.label in CAR_REMOVAL_TEST_LABELS]
-    print(f"Reconstructing with top {len(winners)} (step={step_degrees}), removing cars/people from: {[c.label for c in to_clean]}")
-
-    with tempfile.TemporaryDirectory() as edit_dir, tempfile.TemporaryDirectory() as alias_dir:
-        cleaned_winners = []
-        for c in winners:
-            if c.label in CAR_REMOVAL_TEST_LABELS:
-                edited_path = os.path.join(edit_dir, os.path.basename(c.path))
-                run_editor_gpu(c.path, CAR_REMOVAL_TEST_PROMPT, "remove_objects", edited_path)
-                cleaned_winners.append(Candidate(c.label, edited_path, c.lat, c.lon))
-            else:
-                cleaned_winners.append(c)
-
-        winner_paths = [_labeled_alias(c, alias_dir) for c in cleaned_winners]
-        ply_path = run_pointcloud_gpu(
-            target_depth_path=winner_paths[0],
-            output_dir=output_dir,
-            support_paths=winner_paths[1:],
-            step_degrees=step_degrees,
-        )
-    if not ply_path:
-        raise RuntimeError("Pipeline finished but no point cloud was produced.")
-    return ply_path
-
-
-def reconstruct_chain_best4_drop_one_test(nodes: list[dict], output_dir: str, step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str | None]]:
-    """One-off diagnostic, not a permanent feature (see CAR_REMOVAL_TEST_LABELS):
-    reconstructs the exact same 4 candidates already confirmed as the best4
-    winners on this chain (see _known_best4_winners -- no re-scoring), but
-    instead of editing anything, runs two 3-candidate reconstructions --
-    winners minus one of the two collapsing panos, then winners minus the
-    other -- to check whether each collapsing pano gets accepted fine once
-    the *other* collapsing one is out of the batch (pointing at a pairwise
-    conflict between those two specifically) or still gets rejected against
-    the other two winners alone (pointing at something else). Cheaper than
-    the car-removal test since it skips Flux entirely. Per-pano keep-counts
-    are only in the server log (DA3Model.py), same as every other debug path
-    here.
-
-    Returns [(label, ply_path_or_None), ...], one per dropped candidate.
-    """
-    winners = _known_best4_winners(nodes)
-    if len(winners) < 3:
-        raise ValueError("Need at least 3 best-4 winners to drop one and still have multi-view context.")
-
-    results = []
-    with tempfile.TemporaryDirectory() as alias_dir:
-        for dropped_label in sorted(CAR_REMOVAL_TEST_LABELS):
-            remaining = [c for c in winners if c.label != dropped_label]
-            if len(remaining) == len(winners):
-                print(f"Drop-one test: {dropped_label} wasn't among this run's winners, skipping.")
-                results.append((f"without {dropped_label}", None))
-                continue
-            print(f"Drop-one test: reconstructing without {dropped_label} -- {[c.label for c in remaining]}")
-            remaining_paths = [_labeled_alias(c, alias_dir) for c in remaining]
-            run_output_dir = os.path.join(output_dir, f"drop_{dropped_label.replace(':', '_')}")
-            ply_path = run_pointcloud_gpu(
-                target_depth_path=remaining_paths[0],
-                output_dir=run_output_dir,
-                support_paths=remaining_paths[1:],
-                step_degrees=step_degrees,
-            )
-            results.append((f"without {dropped_label}", ply_path))
-
-    return results
-
-
-def reconstruct_chain_best4_pairwise_test(nodes: list[dict], output_dir: str, step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str | None]]:
-    """One-off diagnostic, not a permanent feature (see CAR_REMOVAL_TEST_LABELS):
-    reconstructs the exact same 4 known best4 winners (see
-    _known_best4_winners -- no re-scoring), but as all 6 possible 2-candidate
-    pairs instead of the full 4 or a 3-way drop-one. The drop-one test showed
-    each collapsing pano (apple:...071389, apple:...072390) fails even when
-    the *other* collapsing one is entirely absent, ruling out a two-way
-    conflict between just those two -- this narrows further: does each
-    collapsing pano fail against literally every partner (pointing at that
-    pano being individually flawed), or only against pano_0/pano_2
-    specifically (pointing at two separate, mutually-inconsistent capture
-    clusters)? The pano_1-vs-pano_3 pair is the most diagnostic single case,
-    since they're the closest two candidates of all six (~1.3m apart) --
-    good correlation there despite both failing against pano_0/pano_2 would
-    be strong evidence for the latter.
-
-    Returns [(label, ply_path_or_None), ...], one per pair, label formatted
-    "A vs B".
-    """
-    from itertools import combinations
-
-    winners = _known_best4_winners(nodes)
-    if len(winners) < 2:
-        raise ValueError("Need at least 2 best-4 winners to test pairs.")
-
-    results = []
-    with tempfile.TemporaryDirectory() as alias_dir:
-        for a, b in combinations(winners, 2):
-            pair_label = f"{a.label} vs {b.label}"
-            print(f"Pairwise test: reconstructing {pair_label}")
-            pair_paths = [_labeled_alias(a, alias_dir), _labeled_alias(b, alias_dir)]
-            run_output_dir = os.path.join(
-                output_dir, f"pair_{a.label.replace(':', '_')}_{b.label.replace(':', '_')}"
-            )
-            ply_path = run_pointcloud_gpu(
-                target_depth_path=pair_paths[0],
-                output_dir=run_output_dir,
-                support_paths=pair_paths[1:],
-                step_degrees=step_degrees,
-            )
-            results.append((pair_label, ply_path))
-
-    return results
-
-
-def reconstruct_chain_best4_slope_correction_test(
-    nodes: list[dict],
-    output_dir: str,
-    labels: list[str] | None = None,
-    multiplier: float = 1.0,
-    step_degrees: int = BEST4_STEP_DEGREES,
-) -> str:
-    """One-off diagnostic, not a permanent feature (see CAR_REMOVAL_TEST_LABELS):
-    de-tilts the given candidates (default: all 4 known best4 winners) by
-    their own heading/pitch/roll (services/slope_correction.correct_slope,
-    already used for the single-pano Google flow, applied here to Apple
-    metadata for the first time) before reconstruction. Tests whether the
-    small (~0.1-0.2deg) but systematic pitch difference between the two
-    capture passes A/C (build_id 2147485257) and B/D (build_id 2147486516,
-    ~7 weeks apart) is enough to explain the cross-pass reconstruction
-    failures. `multiplier` scales the correction, in case the reported
-    pitch/roll undersells the actual misalignment (see app.py's own
-    "Try >1x" note on this same knob for the single-pano flow).
-
-    labels: subset of KNOWN_BEST4_LABELS to reconstruct with, in that fixed
-    order (e.g. just the A-vs-B pair, the worst-correlating one, to check
-    for a signal cheaply before spending a full 4-way run).
-    """
-    from services.slope_correction import correct_slope
-
-    labels = labels or KNOWN_BEST4_LABELS
-    pano_objs = _known_best4_pano_objects(nodes)
-    print(f"Slope-correction test (multiplier={multiplier}): de-tilting {labels}")
-
-    with tempfile.TemporaryDirectory() as alias_dir:
-        corrected = []
-        for label in labels:
-            pano = pano_objs[label]
-            raw_path = download_lookaround(pano)
-            leveled_path = correct_slope(raw_path, pano.heading, pano.pitch, pano.roll, multiplier=multiplier)
-            # "appleLeveled" (not "apple") as the alias source, so _labeled_alias's
-            # filename actually differs from the unleveled run's -- otherwise both
-            # runs would alias to the identical "apple_lat..lon..jpg" name and the
-            # DA3 log couldn't tell which version was reconstructed.
-            leveled_label = f"appleLeveled:{label.split(':', 1)[1]}"
-            corrected.append(Candidate(leveled_label, leveled_path, pano.lat, pano.lon))
-
-        if len(corrected) < 2:
-            raise ValueError("Need at least 2 labels to reconstruct.")
-
-        winner_paths = [_labeled_alias(c, alias_dir) for c in corrected]
-        ply_path = run_pointcloud_gpu(
-            target_depth_path=winner_paths[0],
-            output_dir=output_dir,
-            support_paths=winner_paths[1:],
-            step_degrees=step_degrees,
-        )
-    if not ply_path:
-        raise RuntimeError("Pipeline finished but no point cloud was produced.")
-    return ply_path
-
-
 def _chain_windows(nodes: list[dict], size: int = WINDOW_NODE_SIZE, stride: int = WINDOW_STRIDE) -> list[list[dict]]:
     """Slice the ordered chain into overlapping raw-node windows, e.g.
     [A,B,C,D] with size=2, stride=1 -> [[A,B], [B,C], [C,D]]."""
@@ -780,67 +530,6 @@ def reconstruct_chain_windowed(nodes: list[dict], output_dir: str) -> str:
     pts, cols = run_windowed_reconstruction_gpu(
         pool_tuples, boundary_coords, final_count=BEST4_FINAL_COUNT, forced_overlap=WINDOW_FORCED_OVERLAP
     )
-
-    os.makedirs(output_dir, exist_ok=True)
-    return save_pointcloud(pts, cols, os.path.join(output_dir, "da3_pointcloud.ply"))
-
-
-def reconstruct_chain_windowed_full_pool(nodes: list[dict], output_dir: str) -> str:
-    """Chunk + connect, same windowing as reconstruct_chain_windowed, but the
-    opposite bet on what goes into each window: no solo-scoring, no best4
-    down-selection -- every window's FULL local candidate pool (chain nodes +
-    nearby Apple panos, same _gather_candidate_pool as reconstruct_chain_best4)
-    goes into that window's DA3 call.
-
-    Tests whether the quality problems best4 was built to fix were really
-    about distance (which windowing already fixes structurally, since a
-    window's pool only spans ~1 raw node's worth of range -- see
-    APPLE_CANDIDATE_MAX_DIST_M) rather than genuine per-pano capture-quality
-    variance that scoring was filtering out. We have direct evidence of the
-    latter too (the raw chain nodes solo-scored 5/18 and 2/18 on their own,
-    nothing to do with distance from other panos), so this is a real open
-    question, not a foregone conclusion either way.
-
-    Uses FULL_POOL_STEP_DEGREES (45, vs. DA3's own default of 20) to keep the
-    image count reasonable despite not down-selecting.
-
-    Alignment between adjacent windows doesn't need an explicit forced-
-    carryover step here (unlike reconstruct_chain_windowed): windows overlap
-    by one raw chain node, and since both windows independently gather that
-    same node's own image + its nearest-K Apple candidates, those candidates
-    already show up in both windows' full pools automatically. See
-    Pipeline.run_windowed_reconstruction_full_pool for how that natural
-    overlap gets used.
-
-    Falls back to a single non-windowed DA3 call directly for a 2-node chain
-    (a single window -- nothing to stitch).
-    """
-    if len(nodes) < 2:
-        raise ValueError("Need at least 2 nodes in the chain for DA3 to have multi-view context.")
-
-    if len(nodes) == 2:
-        pool = _gather_candidate_pool(nodes)
-        if len(pool) < 2:
-            raise ValueError("Need at least 2 candidate panos (chain nodes + Apple support) to reconstruct.")
-        print(f"Reconstructing with full pool ({len(pool)} candidates, step={FULL_POOL_STEP_DEGREES}): {[c.label for c in pool]}")
-        ply_path = run_pointcloud_gpu(
-            target_depth_path=pool[0].path,
-            output_dir=output_dir,
-            support_paths=[c.path for c in pool[1:]],
-            step_degrees=FULL_POOL_STEP_DEGREES,
-        )
-        if not ply_path:
-            raise RuntimeError("Pipeline finished but no point cloud was produced.")
-        return ply_path
-
-    windows = _chain_windows(nodes)
-    pools = [_gather_candidate_pool(w) for w in windows]
-    for i, (pool, window_nodes) in enumerate(zip(pools, windows)):
-        if len(pool) < 2:
-            raise ValueError(f"Window {i} ({[n['id'] for n in window_nodes]}) has too few candidates to reconstruct.")
-
-    pool_tuples = [[tuple(c) for c in pool] for pool in pools]
-    pts, cols = run_windowed_reconstruction_full_pool_gpu(pool_tuples, step_degrees=FULL_POOL_STEP_DEGREES)
 
     os.makedirs(output_dir, exist_ok=True)
     return save_pointcloud(pts, cols, os.path.join(output_dir, "da3_pointcloud.ply"))
