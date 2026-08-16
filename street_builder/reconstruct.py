@@ -396,18 +396,34 @@ def reconstruct_chain_greedy(nodes: list[dict], output_dir: str, step_degrees: i
             raise ValueError(f"Node {node['id']} has no usable capture-pass candidates at all.")
 
     try_order = [_rank_passes_at(options, i) for i in range(len(options))]
-    node_candidates = [
-        [(key[0], key[1], c.label, c.path, c.lat, c.lon) for key, c in node_resolved.items()]
-        for node_resolved in resolved
-    ]
 
-    segments = run_greedy_pass_reconstruction_gpu(
-        node_candidates,
-        try_order,
-        keep_rate_threshold=GREEDY_KEEP_RATE_THRESHOLD,
-        max_attempts_per_position=GREEDY_MAX_ATTEMPTS_PER_POSITION,
-        step_degrees=step_degrees,
-    )
+    # Alias every candidate to a source+pass+lat/lon filename, same reasoning
+    # as _labeled_alias: panoramic-to-3dgs's DA3 log identifies a pano by
+    # os.path.basename(path), so this is what actually shows up there. Can't
+    # reuse _labeled_alias directly -- its source+lat/lon naming would
+    # collide here, since every Google historical date at one node shares
+    # that node's own lat/lon (see _resolve_pass_candidates); pass_key is
+    # folded into the name too so different dates/build_ids stay distinct.
+    with tempfile.TemporaryDirectory() as alias_dir:
+        node_candidates = []
+        for node_resolved in resolved:
+            entries = []
+            for (source, pass_key), c in node_resolved.items():
+                ext = os.path.splitext(c.path)[1]
+                alias_name = f"{source}_{pass_key}_lat{c.lat:.6f}_lon{c.lon:.6f}{ext}".replace("/", "_")
+                alias_path = os.path.join(alias_dir, alias_name)
+                if not os.path.exists(alias_path):
+                    os.symlink(os.path.abspath(c.path), alias_path)
+                entries.append((source, pass_key, c.label, alias_path, c.lat, c.lon))
+            node_candidates.append(entries)
+
+        segments = run_greedy_pass_reconstruction_gpu(
+            node_candidates,
+            try_order,
+            keep_rate_threshold=GREEDY_KEEP_RATE_THRESHOLD,
+            max_attempts_per_position=GREEDY_MAX_ATTEMPTS_PER_POSITION,
+            step_degrees=step_degrees,
+        )
     if not segments:
         raise RuntimeError("No segment of this street could be reconstructed with any available capture pass.")
 
