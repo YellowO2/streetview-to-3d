@@ -27,6 +27,7 @@ from collections import namedtuple
 from services.geo import haversine_m
 from services.lookaround_fetch import apple_candidates, download_lookaround
 from services.pipeline_runner import (
+    run_editor_gpu,
     run_pointcloud_gpu,
     run_pointcloud_sweep_gpu,
     run_windowed_reconstruction_full_pool_gpu,
@@ -69,6 +70,20 @@ FULL_POOL_STEP_DEGREES = 45
 # we've measured on our one real test street; sparser streets may need this
 # retuned, but there's no data yet to justify a fancier per-street estimate.
 APPLE_CANDIDATE_MAX_DIST_M = 25.0
+
+# One-off diagnostic for reconstruct_chain_best4_car_removal_test: on our one
+# real test chain, two of the four best-4 winners (apple:8733854682473071389,
+# apple:8733854682473072390) scored well solo (11/12, 10/12) but collapsed to
+# near-zero (0/12, 1/12) once reconstructed jointly with the other two -- and
+# they're only ~1.3m apart from each other (closer than any other pair in the
+# set), which argues against "too far apart" and for a genuine content
+# mismatch (moving cars/people) between those two specific captures. Both
+# panos visibly contain a car; testing whether Flux's "Remove people &
+# vehicles" preset run on just these two (not all four, to save GPU time)
+# recovers their keep-rate. Hardcoded to this specific test chain -- delete
+# this constant + the function below once the test's been run.
+CAR_REMOVAL_TEST_LABELS = {"apple:8733854682473071389", "apple:8733854682473072390"}
+CAR_REMOVAL_TEST_PROMPT = "Remove all people and vehicles from the scene."
 
 # reconstruct_chain_windowed: raw chain nodes per window's own candidate pool
 # (WINDOW_NODE_SIZE), how many raw nodes consecutive windows overlap by
@@ -276,6 +291,48 @@ def reconstruct_chain_best4(nodes: list[dict], output_dir: str, step_degrees: in
     print(f"Reconstructing with top {len(winners)} (step={step_degrees}): {[c.label for c in winners]}")
     with tempfile.TemporaryDirectory() as alias_dir:
         winner_paths = [_labeled_alias(c, alias_dir) for c in winners]
+        ply_path = run_pointcloud_gpu(
+            target_depth_path=winner_paths[0],
+            output_dir=output_dir,
+            support_paths=winner_paths[1:],
+            step_degrees=step_degrees,
+        )
+    if not ply_path:
+        raise RuntimeError("Pipeline finished but no point cloud was produced.")
+    return ply_path
+
+
+def reconstruct_chain_best4_car_removal_test(nodes: list[dict], output_dir: str, step_degrees: int = BEST4_STEP_DEGREES) -> str:
+    """One-off diagnostic, not a permanent feature (see CAR_REMOVAL_TEST_LABELS):
+    same pool-gather/score/rank as reconstruct_chain_best4, but before the
+    final reconstruction call, runs Flux's "Remove people & vehicles" edit on
+    whichever of the 4 winners match CAR_REMOVAL_TEST_LABELS. Everything else
+    is untouched. Compare this run's per-pano keep-counts (printed by DA3, see
+    DA3Model.py) against the un-edited run's to check whether moving
+    cars/people -- not distance -- explain why those two panos collapsed."""
+    pool = _gather_candidate_pool(nodes)
+    if len(pool) < 2:
+        raise ValueError("Need at least 2 candidate panos (chain nodes + Apple support) to score.")
+
+    ranked = _score_and_rank(pool, step_degrees=step_degrees)
+    winners = ranked[:BEST4_FINAL_COUNT]
+    if len(winners) < 2:
+        raise ValueError("Not enough candidates survived scoring for multi-view reconstruction.")
+
+    to_clean = [c for c in winners if c.label in CAR_REMOVAL_TEST_LABELS]
+    print(f"Reconstructing with top {len(winners)} (step={step_degrees}), removing cars/people from: {[c.label for c in to_clean]}")
+
+    with tempfile.TemporaryDirectory() as edit_dir, tempfile.TemporaryDirectory() as alias_dir:
+        cleaned_winners = []
+        for c in winners:
+            if c.label in CAR_REMOVAL_TEST_LABELS:
+                edited_path = os.path.join(edit_dir, os.path.basename(c.path))
+                run_editor_gpu(c.path, CAR_REMOVAL_TEST_PROMPT, "remove_objects", edited_path)
+                cleaned_winners.append(Candidate(c.label, edited_path, c.lat, c.lon))
+            else:
+                cleaned_winners.append(c)
+
+        winner_paths = [_labeled_alias(c, alias_dir) for c in cleaned_winners]
         ply_path = run_pointcloud_gpu(
             target_depth_path=winner_paths[0],
             output_dir=output_dir,

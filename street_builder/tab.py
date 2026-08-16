@@ -270,6 +270,32 @@ def handle_full_pool(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
 
 
+def handle_car_removal_test(state, progress=gr.Progress(track_tqdm=True)):
+    """One-off diagnostic button, not a permanent feature -- see
+    reconstruct.CAR_REMOVAL_TEST_LABELS. Same as handle_best4, but runs
+    Flux's "Remove people & vehicles" edit on the two specific winners known
+    (from a prior run on this same test chain) to collapse to near-zero
+    keep-rate, to check whether moving cars/people (vs. distance) explain
+    that collapse. Delete this handler + its button once the test's done."""
+    if len(state.get("selected", [])) < 2:
+        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    by_key = _nodes_by_key(state)
+    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    progress(0, desc=f"Scoring candidates near {len(ordered_nodes)} nodes...")
+    try:
+        ply_path = reconstruct.reconstruct_chain_best4_car_removal_test(ordered_nodes, output_dir)
+    except Exception as e:
+        raise gr.Error(f"Car-removal test failed: {e}")
+
+    progress(1.0, desc="Done!")
+    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
+
+
 def build_tab():
     state = gr.State(_empty_state())
 
@@ -305,6 +331,10 @@ def build_tab():
             # Experimental: whole candidate pool, no down-selection, coarser
             # slice step. Not part of the normal Generate flow.
             full_pool_btn = gr.Button("Reconstruct (full pool, experimental)")
+            # One-off diagnostic: removes cars/people from the two specific
+            # best-4 winners known to collapse on this test chain. Not part
+            # of the normal flow -- delete once the test's done.
+            car_removal_test_btn = gr.Button("Test: remove cars (debug)")
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -362,6 +392,14 @@ def build_tab():
 
     full_pool_btn.click(
         fn=handle_full_pool,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    car_removal_test_btn.click(
+        fn=handle_car_removal_test,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",
