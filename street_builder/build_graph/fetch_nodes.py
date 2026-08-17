@@ -20,7 +20,11 @@ def fetch_corridor_nodes(start_lat, start_lon, end_lat, end_lon, apple_radius_m=
     - For each Google stop, also fetches its historical dates (one graph
       node per date) and nearby Apple panos within apple_radius_m.
 
-    Returns a flat list of {key, source, id, lat, lon, date} dicts.
+    Returns (nodes, google_stops): nodes is the flat {key, source, id, lat,
+    lon, date} list; google_stops is the real backbone (one entry per
+    physical Google stop, no date/expansion) -- callers that need positions
+    spread across the whole corridor (see walk_graph._local_batch) should
+    use google_stops, not nodes (which has many same-position date variants).
     """
     mid_lat, mid_lon = (start_lat + end_lat) / 2, (start_lon + end_lon) / 2
     span_m = haversine_m(start_lat, start_lon, end_lat, end_lon)
@@ -60,4 +64,4 @@ def fetch_corridor_nodes(start_lat, start_lon, end_lat, end_lon, apple_radius_m=
                 "_pano": p,  # kept for download_lookaround (needs the object, not just the id)
             })
 
-    return nodes
+    return nodes, google_stops

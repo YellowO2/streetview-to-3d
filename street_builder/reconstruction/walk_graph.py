@@ -38,19 +38,19 @@ def _download(node):
         return None
 
 
-def _local_batch(nodes, edges, lat, lon):
-    """Nearest node per date to (lat, lon), plus each one's own edge-list
-    neighbors (already capped by build_graph) -- the local batch worth
-    trying first, instead of the whole corridor."""
-    best_per_date = {}
+def _local_batch(nodes, google_stops):
+    """Nearest candidate of each date to each real Google stop -- spreads
+    phase-1 downloads across the whole corridor (google_stops already runs
+    its full length), instead of clustering near just one point."""
+    by_date = {}
     for n in nodes:
-        d = haversine_m(n["lat"], n["lon"], lat, lon)
-        if n["date"] not in best_per_date or d < best_per_date[n["date"]][1]:
-            best_per_date[n["date"]] = (n["key"], d)
+        by_date.setdefault(n["date"], []).append(n)
 
-    keys = {key for key, _ in best_per_date.values()}
-    for key in list(keys):
-        keys.update(other for other, _ in edges.get(key, []))
+    keys = set()
+    for stop in google_stops:
+        for candidates in by_date.values():
+            nearest = min(candidates, key=lambda n: haversine_m(stop["lat"], stop["lon"], n["lat"], n["lon"]))
+            keys.add(nearest["key"])
     return keys
 
 
@@ -70,13 +70,13 @@ def _download_and_filter(keys, by_key, edges):
 def reconstruct_pathfind(start_lat, start_lon, end_lat, end_lon, output_dir,
                          step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str]]:
     """Auto-path a street start -> end. Returns [(label, ply_path), ...]."""
-    nodes, edges = build_corridor_graph(start_lat, start_lon, end_lat, end_lon)
+    nodes, edges, google_stops = build_corridor_graph(start_lat, start_lon, end_lat, end_lon)
     nodes = [n for n in nodes if edges.get(n["key"])]  # drop isolated (never testable)
     if len(nodes) < 2:
         raise ValueError("Not enough connected candidates along this street.")
     by_key = {n["key"]: n for n in nodes}
 
-    batch_keys = _local_batch(nodes, edges, start_lat, start_lon)
+    batch_keys = _local_batch(nodes, google_stops)
     print(f"Phase 1: downloading {len(batch_keys)}/{len(nodes)} local candidates...")
     node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
 
