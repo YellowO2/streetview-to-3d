@@ -35,6 +35,7 @@ from services.pipeline_runner import (
     score_candidates_gpu,
 )
 from services.streetview_fetch import download_images_for_nodes, download_pano_by_id, format_date
+from street_builder.candidates import APPLE_CANDIDATE_MAX_DIST_M
 
 # Per node, how many nearest Apple Look Around panos to pull in as extra
 # support context. No distance cutoff yet -- closest-K only.
@@ -56,14 +57,6 @@ BEST4_FINAL_COUNT = 4
 # scoring and final reconstruction so the two stay consistent with each
 # other (reconstruct_chain_best4's step_degrees default).
 BEST4_STEP_DEGREES = 30
-
-# _gather_candidate_pool's Apple lookup is nearest-K only, with no cap on how
-# far "nearest" might actually be if local Apple coverage is sparse -- this
-# bounds it, so a pool built for one window can't reach into territory well
-# outside that window's own span. ~2.5x the ~10m consecutive-node spacing
-# we've measured on our one real test street; sparser streets may need this
-# retuned, but there's no data yet to justify a fancier per-street estimate.
-APPLE_CANDIDATE_MAX_DIST_M = 25.0
 
 # reconstruct_chain_windowed: raw chain nodes per window's own candidate pool
 # (WINDOW_NODE_SIZE), how many raw nodes consecutive windows overlap by

@@ -1,11 +1,5 @@
-"""Fetch real Street View / Look Around panorama nodes near a location, for the
-street-builder map picker. Normalizes both sources into one shape so the map
-UI and Gradio wiring don't need to know which service a node came from.
-
-Deliberately independent of app.py (no imports from it) so this stays usable
-on its own, e.g. from a future non-Gradio script. Does import from services/
-for small shared utilities (geo math) that app.py also uses -- that's a
-one-way dependency on plain helpers, not on app.py itself.
+"""Low-level fetch of real Street View / Look Around panoramas near a
+location. Used by the map picker and by street_builder/pathfinding/.
 """
 from streetlevel import streetview
 from streetlevel.geo import wgs84_to_tile_coord
@@ -13,10 +7,7 @@ from streetlevel.lookaround import lookaround as apple_lookaround
 
 from services.geo import haversine_m as _haversine_m
 
-# Both services publish coverage on zoom-17 Slippy Map tiles. Fetching the
-# center tile plus its 8 neighbors (not just the one tile) avoids gaps right
-# at a tile edge, matching the radius app.py already uses for its Apple
-# neighbor lookup.
+# Both services publish coverage on zoom-17 Slippy Map tiles.
 _TILE_ZOOM = 17
 
 
@@ -37,12 +28,7 @@ def google_tile_panos(lat, lon):
 
 
 def apple_tile_panos(lat, lon):
-    """All Look Around panos on the 3x3 tile neighborhood around (lat, lon), keyed by id.
-
-    Not used by the street-builder map picker (that's Google-only — see
-    nearby_nodes below). Kept here for the later step where support panos
-    get gathered automatically near each chosen Google node.
-    """
+    """All Look Around panos on the 3x3 tile neighborhood around (lat, lon), keyed by id."""
     seen = {}
     for tx, ty in _tile_neighborhood(lat, lon):
         tile = apple_lookaround.get_coverage_tile(tx, ty)
@@ -51,30 +37,21 @@ def apple_tile_panos(lat, lon):
     return seen
 
 
-def _node_key(source, pano_id):
+def node_key(source, pano_id):
     return f"{source}:{pano_id}"
 
 
-# Google alone is far sparser than Google+Apple combined (the old combined
-# fetch hit 9000 raw hits / 1500 within 150m in dense downtown Singapore;
-# Google alone is ~30 within 150m at the same spot), so this can afford a
-# wider default radius and a much lower safety cap.
 DEFAULT_RADIUS_M = 350
 MAX_NODES = 200
 
 
 def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
-    """Distance-sorted Google Street View nodes within radius_m of (lat, lon), plus the
-    edges (pairs of node keys) Street View's own coverage graph links between them.
+    """Google Street View nodes within radius_m of (lat, lon), distance-sorted,
+    plus edges from Street View's own coverage graph.
 
-    Nodes are the street-builder chain's only source — Apple Look Around is
-    gathered separately, later, as automatic support imagery per selected
-    node, not as something you click on this map.
-
-    Returns (nodes, edges). Each node: {key, source, id, lat, lon, heading}.
-    Each edge: (key_a, key_b), only included when both ends survive the
-    radius/cap filtering (an edge to a node outside that set isn't
-    selectable, so there's nothing useful to draw it against).
+    Returns (nodes, edges). Node: {key, source, id, lat, lon, heading} --
+    no date (tile listing doesn't carry it; see pathfinding/fetch_nodes.py
+    for the full per-pano fetch that does). Edge: (key_a, key_b).
     """
     try:
         panos = google_tile_panos(lat, lon)
@@ -87,7 +64,7 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
         if _haversine_m(lat, lon, p.lat, p.lon) > radius_m:
             continue
         nodes.append({
-            "key": _node_key("google", p.id),
+            "key": node_key("google", p.id),
             "source": "google",
             "id": p.id,
             "lat": p.lat,
@@ -105,8 +82,14 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
         if not p:
             continue
         for link in (p.links or []):
-            other_key = _node_key("google", link.pano.id)
+            other_key = node_key("google", link.pano.id)
             if other_key in kept_keys and other_key != key:
                 edges.add(tuple(sorted((key, other_key))))
 
     return nodes, sorted(edges)
+
+
+# Max distance a candidate can be from a node and still count as "at" it.
+# ~2.5x the measured ~10m real node spacing. Shared by
+# street_builder/pathfinding/ and street_builder/reconstruct.py.
+APPLE_CANDIDATE_MAX_DIST_M = 25.0
