@@ -2,18 +2,20 @@
 
 Client half of the pathfinding flow:
 - build the candidate graph (build_graph, no GPU)
-- download candidates (network, cached; the GPU call can't fetch, so this
-  has to happen before it -- see the two-phase note below)
-- hand nodes + edges to run_pathfind_reconstruction (one GPU call: the
-  real best-first search + DA3 tests + stitching live there)
+- download the top-N-date candidates (network, cached; the GPU call can't
+  fetch, so this has to happen before it -- see _local_batch)
+- hand nodes + edges to run_pathfind_reconstruction in ONE GPU call: the
+  real best-first search + DA3 tests + stitching live there
 
-Two-phase download, not "download everything": a corridor can hold
-hundreds of candidates (Apple frames run ~1.2m apart), but the search only
-ever tests a few dozen. Phase 1 downloads a bounded local batch (see
-_local_batch); only if that doesn't reach the end do we download the rest
-of the corridor and retry. Phase 2 re-runs the search from scratch (no
-resumable state across GPU calls), so it re-tests phase 1's edges too --
-acceptable since it's a rare fallback, not the common path.
+One GPU call, not two: an earlier version fell back to a second call
+(download everything, retry) if the first didn't reach the end. That's
+exactly the pattern that causes 'Expired ZeroGPU proxy token' -- each
+@spaces.GPU call requests a fresh session credential, and a second
+request can arrive after the first one's already aged out. The top-N
+date filter already keeps the single download bounded (64 images on a
+real 8-node/~70m test street), so there's no real need for a fallback
+call -- if the top-N dates can't reach the end, that's the honest
+result, not something worth risking a second GPU acquisition for.
 
 v1: single date, single segment. See run_pathfind_reconstruction.
 """
@@ -27,9 +29,9 @@ from street_builder.build_graph.build_graph import build_corridor_graph
 from street_builder.build_graph.fetch_nodes import POINT_MAX_DIST_M
 from street_builder.reconstruction.best4 import BEST4_STEP_DEGREES
 
-# How many dates to keep for phase 1, ranked by coverage span (does this
-# date's coverage reach from near-start to near-end at all) -- a date
-# confined to one stretch of the route can't connect it on its own.
+# How many dates to keep, ranked by coverage span (does this date's
+# coverage reach from near-start to near-end at all) -- a date confined to
+# one stretch of the route can't connect it on its own.
 DATE_TOP_N = 8
 
 
@@ -68,13 +70,15 @@ def _rank_dates(by_date, points, max_dist_m, top_n):
 def _local_batch(nodes, points):
     """Keep every already-gathered candidate whose date ranks in the
     top-N by coverage span -- no further per-point filtering, since
-    fetch_corridor_nodes already bounded the pool to "near the route"."""
+    fetch_corridor_nodes already bounded the pool to "near the route".
+    This is the whole download batch (single GPU call, see module docstring
+    for why there's no second-pass fallback)."""
     by_date = {}
     for n in nodes:
         by_date.setdefault(n["date"], []).append(n)
 
     top_dates = _rank_dates(by_date, points, POINT_MAX_DIST_M, DATE_TOP_N)
-    print(f"Phase 1: top dates by coverage span: {top_dates}")
+    print(f"Top dates by coverage span: {top_dates}")
 
     return {n["key"] for n in nodes if n["date"] in top_dates}
 
@@ -109,23 +113,12 @@ def reconstruct_pathfind(waypoints, output_dir,
     by_key = {n["key"]: n for n in nodes}
 
     batch_keys = _local_batch(nodes, points)
-    print(f"Phase 1: downloading {len(batch_keys)}/{len(nodes)} local candidates...")
+    print(f"Downloading {len(batch_keys)}/{len(nodes)} top-date candidates...")
     node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
 
     segments = run_pathfind_reconstruction_gpu(
         node_entries, batch_edges, start_lat, start_lon, end_lat, end_lon, step_degrees=step_degrees,
     )
-
-    if not segments or not segments[0][4]:  # segments[0] = (pts, cols, path_edges, date, reached)
-        print("Phase 1 didn't reach the end -- downloading the rest of the corridor...")
-        rest_keys = {n["key"] for n in nodes} - batch_keys
-        rest_entries, _ = _download_and_filter(rest_keys, by_key, edges)
-        all_entries = node_entries + rest_entries
-        have = {e[0] for e in all_entries}
-        full_edges = {k: [(o, d) for o, d in v if o in have] for k, v in edges.items() if k in have}
-        segments = run_pathfind_reconstruction_gpu(
-            all_entries, full_edges, start_lat, start_lon, end_lat, end_lon, step_degrees=step_degrees,
-        )
 
     if not segments:
         raise RuntimeError("No connected path found between start and end.")
