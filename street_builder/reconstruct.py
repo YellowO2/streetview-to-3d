@@ -34,7 +34,7 @@ from services.pipeline_runner import (
     save_pointcloud,
     score_candidates_gpu,
 )
-from services.streetview_fetch import download_images_for_nodes, download_pano_by_id
+from services.streetview_fetch import download_images_for_nodes, download_pano_by_id, format_date
 
 # Per node, how many nearest Apple Look Around panos to pull in as extra
 # support context. No distance cutoff yet -- closest-K only.
@@ -229,31 +229,39 @@ def _gather_candidate_pool(nodes: list[dict]) -> list[Candidate]:
     return pool
 
 
-def _pass_options(nodes: list[dict]) -> list[dict[tuple[str, str], object]]:
-    """Per node, every available capture pass, metadata only (no downloads):
-    Apple candidates grouped by build_id (within APPLE_CANDIDATE_MAX_DIST_M,
-    nearest pano per build_id), and Google historical captures grouped by
-    date label -- pulled straight off the node's own "dates" field
-    (services/streetview_fetch.py's pano_to_meta), so the grouping itself
-    costs zero extra network calls. Keyed by (source, pass_key) so passes
-    never mix across sources -- only same-source/same-pass compatibility has
-    been validated (see this session's build_id findings).
+def _pass_options(nodes: list[dict]) -> list[dict[str, object]]:
+    """Per node, every available capture pass, metadata only (no downloads),
+    keyed by a plain date string (format_date(pano.date) -- the same
+    function both Apple's and Google's metadata already use, see
+    services/lookaround_fetch.py importing it from services/streetview_fetch.py,
+    which is why the two sources' date strings are directly comparable).
+    Unlike the build_id-keyed version this replaced, a single unified key
+    means an Apple candidate and a Google candidate on the same date are
+    treated as the same pass -- untested in practice before now, but never
+    trusted from the date match alone: every pass, same-source or not, only
+    gets used after a real pairwise DA3 call (see _rank_passes_at's
+    docstring). Apple's build_id is essentially one day's drive anyway, so
+    grouping by date instead loses basically nothing for Apple.
 
-    Values: an Apple `LookaroundPanorama` object for ("apple", build_id)
-    keys, or a bare pano ID string for ("google", date_label) keys (Google's
-    own metadata/image for a specific historical ID is only fetched once a
-    pass is actually chosen to try -- see reconstruct_chain_greedy).
+    Google historical captures come straight off the node's own "dates"
+    field (services/streetview_fetch.py's pano_to_meta), zero extra network
+    calls. Apple candidates are looked up via apple_candidates within
+    APPLE_CANDIDATE_MAX_DIST_M; if both sources land on the same date at a
+    node, Google's own image wins that slot (it's always 0m from the node,
+    unbeatable by nearest-Apple-candidate comparison).
 
-    This is purely a cheap way to decide which pass to *try first*; the
-    actual accept/reject decision is always a real pairwise DA3 call on the
-    exact candidate pair (see _rank_passes_at's docstring).
+    Values: an Apple `LookaroundPanorama` object, or a bare Google pano ID
+    string (Google's own metadata/image for a specific historical ID is
+    only fetched once a pass is actually chosen to try -- see
+    reconstruct_chain_greedy). _resolve_pass_candidates tells them apart via
+    `isinstance(value, str)`.
     """
     options = []
     for node in nodes:
         node_options = {}
 
         for entry in node.get("dates", [])[:GOOGLE_DATE_OPTIONS_PER_NODE]:
-            node_options[("google", entry["label"])] = entry["id"]
+            node_options[entry["label"]] = entry["id"]
 
         try:
             candidates = apple_candidates(node["lat"], node["lon"], k=CANDIDATE_POOL_APPLE_PER_NODE)
@@ -264,22 +272,24 @@ def _pass_options(nodes: list[dict]) -> list[dict[tuple[str, str], object]]:
             dist = haversine_m(node["lat"], node["lon"], pano.lat, pano.lon)
             if dist > APPLE_CANDIDATE_MAX_DIST_M:
                 continue
-            key = ("apple", pano.build_id)
-            existing = node_options.get(key)
+            date = format_date(pano.date)
+            existing = node_options.get(date)
+            if isinstance(existing, str):
+                continue  # Google's own same-date image already claims this slot
             if existing is None or dist < haversine_m(node["lat"], node["lon"], existing.lat, existing.lon):
-                node_options[key] = pano
+                node_options[date] = pano
 
         options.append(node_options)
     return options
 
 
-def _rank_passes_at(options: list[dict], start: int, exclude: set | None = None) -> list[tuple[str, str]]:
-    """Rank the (source, pass_key) pairs available at node index `start` by
-    how many consecutive nodes starting there also have that same pass --
-    pure index math over _pass_options' already-gathered metadata, no
-    GPU/network cost. This only picks the order to *try* passes in; it is
-    not a substitute for the real pairwise DA3 health check (grading is
-    always done on the actual candidate pair, not this heuristic)."""
+def _rank_passes_at(options: list[dict], start: int, exclude: set | None = None) -> list[str]:
+    """Rank the dates available at node index `start` by how many
+    consecutive nodes starting there also have that same date -- pure index
+    math over _pass_options' already-gathered metadata, no GPU/network
+    cost. This only picks the order to *try* passes in; it is not a
+    substitute for the real pairwise DA3 health check (grading is always
+    done on the actual candidate pair, not this heuristic)."""
     exclude = exclude or set()
     candidates = [key for key in options[start] if key not in exclude]
 
@@ -293,13 +303,12 @@ def _rank_passes_at(options: list[dict], start: int, exclude: set | None = None)
     return sorted(candidates, key=run_length, reverse=True)
 
 
-def _resolve_pass_candidates(nodes: list[dict], options: list[dict[tuple[str, str], object]]) -> list[dict[tuple[str, str], Candidate]]:
+def _resolve_pass_candidates(nodes: list[dict], options: list[dict[str, object]]) -> list[dict[str, Candidate]]:
     """Downloads whichever specific candidates _pass_options found (bounded
-    by CANDIDATE_POOL_APPLE_PER_NODE's build_id cap and
-    GOOGLE_DATE_OPTIONS_PER_NODE) and resolves each to a Candidate. Runs
-    eagerly for every option here, not lazily per-attempt inside the GPU
-    call -- keeps network I/O outside the ZeroGPU boundary, matching every
-    other reconstruction path in this file.
+    by CANDIDATE_POOL_APPLE_PER_NODE and GOOGLE_DATE_OPTIONS_PER_NODE) and
+    resolves each to a Candidate. Runs eagerly for every option here, not
+    lazily per-attempt inside the GPU call -- keeps network I/O outside the
+    ZeroGPU boundary, matching every other reconstruction path in this file.
 
     Google historical captures don't get their own lat/lon lookup (that'd
     be a second network call per candidate just for a value nothing in the
@@ -311,36 +320,35 @@ def _resolve_pass_candidates(nodes: list[dict], options: list[dict[tuple[str, st
     resolved = []
     for node, node_options in zip(nodes, options):
         node_resolved = {}
-        for key, value in node_options.items():
-            source, pass_key = key
+        for date, value in node_options.items():
             try:
-                if source == "apple":
-                    pano = value
-                    path = download_lookaround(pano)
-                    node_resolved[key] = Candidate(f"apple:{pano.id}", path, pano.lat, pano.lon)
-                else:
+                if isinstance(value, str):
                     pano_id = value
                     path = asyncio.run(download_pano_by_id(pano_id))
                     if not path:
                         raise ValueError(f"Panorama {pano_id} not found")
-                    node_resolved[key] = Candidate(f"google:{pano_id}", path, node["lat"], node["lon"])
+                    node_resolved[date] = Candidate(f"google:{pano_id}", path, node["lat"], node["lon"])
+                else:
+                    pano = value
+                    path = download_lookaround(pano)
+                    node_resolved[date] = Candidate(f"apple:{pano.id}", path, pano.lat, pano.lon)
             except Exception as e:
-                print(f"Pass candidate download failed for {key} at node {node['id']}: {e}")
+                print(f"Pass candidate download failed for {date} at node {node['id']}: {e}")
         resolved.append(node_resolved)
     return resolved
 
 
 def reconstruct_chain_greedy(nodes: list[dict], output_dir: str, step_degrees: int = GREEDY_STEP_DEGREES) -> list[tuple[str, str]]:
-    """Greedy same-capture-pass sliding-window reconstruction: instead of
-    picking candidates by solo score (reconstruct_chain_best4) or windowing
-    raw chain nodes with forced-overlap carryover (reconstruct_chain_windowed),
-    walks the street node-by-node preferring whichever capture pass (Apple
-    build_id or Google historical-date group -- see _pass_options) has the
-    best contiguous coverage going forward, and health-checks each 2-node
-    window with a real pairwise DA3 call (not solo score -- this session
-    found solo score doesn't reliably predict either direction) before
-    committing. See Pipeline.run_greedy_pass_reconstruction for the actual
-    walk/branch logic, which runs entirely inside one GPU call for the same
+    """Greedy same-date sliding-window reconstruction: instead of picking
+    candidates by solo score (reconstruct_chain_best4) or windowing raw
+    chain nodes with forced-overlap carryover (reconstruct_chain_windowed),
+    walks the street node-by-node preferring whichever capture date (Apple
+    or Google, see _pass_options) has the best contiguous coverage going
+    forward, and health-checks each 2-node window with a real pairwise DA3
+    call (not solo score -- this session found solo score doesn't reliably
+    predict either direction) before committing. See
+    Pipeline.run_greedy_pass_reconstruction for the actual walk/branch
+    logic, which runs entirely inside one GPU call for the same
     proxy-token-lifetime reason reconstruct_chain_windowed does.
 
     Unlike every other reconstruct_chain_* function here, this can return
@@ -362,24 +370,25 @@ def reconstruct_chain_greedy(nodes: list[dict], output_dir: str, step_degrees: i
 
     try_order = [_rank_passes_at(options, i) for i in range(len(options))]
 
-    # Alias every candidate to a source+pass+lat/lon filename, same reasoning
+    # Alias every candidate to a source+date+lat/lon filename, same reasoning
     # as _labeled_alias: panoramic-to-3dgs's DA3 log identifies a pano by
     # os.path.basename(path), so this is what actually shows up there. Can't
     # reuse _labeled_alias directly -- its source+lat/lon naming would
     # collide here, since every Google historical date at one node shares
-    # that node's own lat/lon (see _resolve_pass_candidates); pass_key is
-    # folded into the name too so different dates/build_ids stay distinct.
+    # that node's own lat/lon (see _resolve_pass_candidates); date is
+    # folded into the name too so different dates stay distinct.
     with tempfile.TemporaryDirectory() as alias_dir:
         node_candidates = []
         for node_resolved in resolved:
             entries = []
-            for (source, pass_key), c in node_resolved.items():
+            for date, c in node_resolved.items():
+                source = c.label.split(":", 1)[0]
                 ext = os.path.splitext(c.path)[1]
-                alias_name = f"{source}_{pass_key}_lat{c.lat:.6f}_lon{c.lon:.6f}{ext}".replace("/", "_")
+                alias_name = f"{source}_{date}_lat{c.lat:.6f}_lon{c.lon:.6f}{ext}".replace("/", "_")
                 alias_path = os.path.join(alias_dir, alias_name)
                 if not os.path.exists(alias_path):
                     os.symlink(os.path.abspath(c.path), alias_path)
-                entries.append((source, pass_key, c.label, alias_path, c.lat, c.lon))
+                entries.append((date, c.label, alias_path, c.lat, c.lon))
             node_candidates.append(entries)
 
         segments = run_greedy_pass_reconstruction_gpu(
@@ -394,10 +403,9 @@ def reconstruct_chain_greedy(nodes: list[dict], output_dir: str, step_degrees: i
 
     os.makedirs(output_dir, exist_ok=True)
     results = []
-    for seg_idx, (pts, cols, node_range, pass_used) in enumerate(segments):
+    for seg_idx, (pts, cols, node_range, date_used) in enumerate(segments):
         start, end = node_range
-        source, pass_key = pass_used
-        label = f"segment {seg_idx} (nodes {start}-{end}, {source}:{pass_key})"
+        label = f"segment {seg_idx} (nodes {start}-{end}, date {date_used})"
         path = save_pointcloud(pts, cols, os.path.join(output_dir, f"segment_{seg_idx}.ply"))
         results.append((label, path))
     return results
