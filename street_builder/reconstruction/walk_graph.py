@@ -9,9 +9,9 @@ Client half of the pathfinding flow:
 
 Two-phase download, not "download everything": a corridor can hold
 hundreds of candidates (Apple frames run ~1.2m apart), but the search only
-ever tests a few dozen. Phase 1 downloads just the local neighborhood near
-the start; only if that doesn't reach the end do we download the rest of
-the corridor and retry. Phase 2 re-runs the search from scratch (no
+ever tests a few dozen. Phase 1 downloads a bounded local batch (see
+_local_batch); only if that doesn't reach the end do we download the rest
+of the corridor and retry. Phase 2 re-runs the search from scratch (no
 resumable state across GPU calls), so it re-tests phase 1's edges too --
 acceptable since it's a rare fallback, not the common path.
 
@@ -24,7 +24,13 @@ from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
 from street_builder.build_graph.build_graph import build_corridor_graph
+from street_builder.build_graph.fetch_nodes import POINT_MAX_DIST_M
 from street_builder.reconstruction.best4 import BEST4_STEP_DEGREES
+
+# How many dates to keep for phase 1, ranked by coverage span (does this
+# date's coverage reach from near-start to near-end at all) -- a date
+# confined to one stretch of the route can't connect it on its own.
+DATE_TOP_N = 8
 
 
 def _download(node):
@@ -38,20 +44,39 @@ def _download(node):
         return None
 
 
-def _local_batch(nodes, google_stops):
-    """Nearest candidate of each date to each real Google stop -- spreads
-    phase-1 downloads across the whole corridor (google_stops already runs
-    its full length), instead of clustering near just one point."""
+def _covered_indices(candidates, points, max_dist_m):
+    """Indices of sample points with >=1 candidate within max_dist_m."""
+    covered = set()
+    for i, (lat, lon) in enumerate(points):
+        if any(haversine_m(lat, lon, c["lat"], c["lon"]) <= max_dist_m for c in candidates):
+            covered.add(i)
+    return covered
+
+
+def _rank_dates(by_date, points, max_dist_m, top_n):
+    """Dates ranked by span (earliest to latest covered point -- does
+    coverage reach start to end) then total coverage count as tiebreaker."""
+    scored = []
+    for date, candidates in by_date.items():
+        covered = _covered_indices(candidates, points, max_dist_m)
+        span = (max(covered) - min(covered)) if covered else 0
+        scored.append((date, span, len(covered)))
+    scored.sort(key=lambda t: (t[1], t[2]), reverse=True)
+    return [date for date, _, _ in scored[:top_n]]
+
+
+def _local_batch(nodes, points):
+    """Keep every already-gathered candidate whose date ranks in the
+    top-N by coverage span -- no further per-point filtering, since
+    fetch_corridor_nodes already bounded the pool to "near the route"."""
     by_date = {}
     for n in nodes:
         by_date.setdefault(n["date"], []).append(n)
 
-    keys = set()
-    for stop in google_stops:
-        for candidates in by_date.values():
-            nearest = min(candidates, key=lambda n: haversine_m(stop["lat"], stop["lon"], n["lat"], n["lon"]))
-            keys.add(nearest["key"])
-    return keys
+    top_dates = _rank_dates(by_date, points, POINT_MAX_DIST_M, DATE_TOP_N)
+    print(f"Phase 1: top dates by coverage span: {top_dates}")
+
+    return {n["key"] for n in nodes if n["date"] in top_dates}
 
 
 def _download_and_filter(keys, by_key, edges):
@@ -77,13 +102,13 @@ def reconstruct_pathfind(waypoints, output_dir,
         raise ValueError("Need at least 2 selected nodes (start and end).")
     (start_lat, start_lon), (end_lat, end_lon) = waypoints[0], waypoints[-1]
 
-    nodes, edges, google_stops = build_corridor_graph(waypoints)
+    nodes, edges, points = build_corridor_graph(waypoints)
     nodes = [n for n in nodes if edges.get(n["key"])]  # drop isolated (never testable)
     if len(nodes) < 2:
         raise ValueError("Not enough connected candidates along this street.")
     by_key = {n["key"]: n for n in nodes}
 
-    batch_keys = _local_batch(nodes, google_stops)
+    batch_keys = _local_batch(nodes, points)
     print(f"Phase 1: downloading {len(batch_keys)}/{len(nodes)} local candidates...")
     node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
 

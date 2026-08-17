@@ -3,72 +3,81 @@ import asyncio
 
 from services.geo import haversine_m
 from services.streetview_fetch import fetch_pano_by_id, format_date
-from street_builder.map_selection.candidates import (
-    APPLE_CANDIDATE_MAX_DIST_M,
-    MAX_NODES,
-    apple_tile_panos,
-    nearby_nodes,
-    node_key,
-)
+from street_builder.map_selection.candidates import MAX_NODES, apple_tile_panos, nearby_nodes, node_key
+
+# Sample points every this many meters along the clicked route -- the one
+# spine used for both gathering (this file) and date-coverage ranking
+# (walk_graph.py), instead of relying on wherever real nodes happen to be.
+POINT_SPACING_M = 5.0
+
+# A candidate only counts as "at" a sample point within this range.
+POINT_MAX_DIST_M = 8.0
 
 
-def fetch_corridor_nodes(waypoints, apple_radius_m=APPLE_CANDIDATE_MAX_DIST_M):
-    """Every Google + Apple pano near the real street traced by waypoints.
-
-    waypoints: ordered [(lat, lon), ...] -- the user's full clicked chain,
-    used as a polyline "spine", not just its first/last point. Fetches
-    within a radius of each consecutive pair's own midpoint (a series of
-    overlapping circles along the route) instead of one big circle over
-    the whole start->end span -- so the corridor traces the actual shape
-    the user clicked and excludes a geometrically-nearby branch they
-    didn't select (e.g. a fork the route doesn't take).
-
-    - Uses real Google node positions as the backbone (follows the actual
-      street shape, curves included) instead of a straight-line guess.
-    - For each Google stop, also fetches its historical dates (one graph
-      node per date) and nearby Apple panos within apple_radius_m.
-
-    Returns (nodes, google_stops): nodes is the flat {key, source, id, lat,
-    lon, date} list; google_stops is the real backbone (one entry per
-    physical Google stop, no date/expansion) -- callers that need positions
-    spread across the whole corridor (see walk_graph._local_batch) should
-    use google_stops, not nodes (which has many same-position date variants).
-    """
-    stops_by_key = {}
+def interpolate_points(waypoints, spacing_m: float = POINT_SPACING_M) -> list[tuple[float, float]]:
+    """Evenly-spaced (lat, lon) points along the waypoint polyline, one
+    segment (consecutive waypoint pair) at a time."""
+    points = [waypoints[0]]
     for (lat1, lon1), (lat2, lon2) in zip(waypoints, waypoints[1:]):
-        mid_lat, mid_lon = (lat1 + lat2) / 2, (lon1 + lon2) / 2
-        span_m = haversine_m(lat1, lon1, lat2, lon2)
-        seg_stops, _ = nearby_nodes(mid_lat, mid_lon, radius_m=span_m / 2 + apple_radius_m, max_nodes=MAX_NODES)
-        for s in seg_stops:
-            stops_by_key[s["key"]] = s
-    google_stops = list(stops_by_key.values())
+        seg_len = haversine_m(lat1, lon1, lat2, lon2)
+        n_steps = max(1, round(seg_len / spacing_m))
+        for i in range(1, n_steps + 1):
+            t = i / n_steps
+            points.append((lat1 + (lat2 - lat1) * t, lon1 + (lon2 - lon1) * t))
+    return points
+
+
+def fetch_corridor_nodes(waypoints, max_dist_m: float = POINT_MAX_DIST_M):
+    """Every Google + Apple pano within max_dist_m of any interpolated
+    point along the waypoint polyline (see interpolate_points).
+
+    - For each point: nearby_nodes (Google stops) + apple_tile_panos
+      (Apple), both metadata only. A newly-seen Google stop gets one extra
+      fetch_pano_by_id call for its real historical dates (one graph node
+      per date); already-seen stops/panos aren't re-fetched.
+
+    Returns (nodes, points): nodes is the flat {key, source, id, lat, lon,
+    date} list; points is the interpolated point list (needed by
+    walk_graph.py for date-coverage ranking).
+    """
+    points = interpolate_points(waypoints)
 
     nodes = []
-    for gs in google_stops:
-        try:
-            meta = asyncio.run(fetch_pano_by_id(gs["id"]))
-        except Exception as e:
-            print(f"Google date lookup failed for {gs['id']}: {e}")
-            continue
-        if not meta:
-            continue
-        for entry in meta["dates"]:
-            nodes.append({
-                "key": node_key("google", entry["id"]), "source": "google", "id": entry["id"],
-                "lat": gs["lat"], "lon": gs["lon"], "date": entry["label"],
-            })
-
+    seen_google_ids = set()
     seen_apple_ids = set()
-    for gn in google_stops:
+
+    for lat, lon in points:
         try:
-            candidates = apple_tile_panos(gn["lat"], gn["lon"])
+            google_candidates, _ = nearby_nodes(lat, lon, radius_m=max_dist_m, max_nodes=MAX_NODES)
         except Exception as e:
-            print(f"Apple corridor lookup failed near {gn['id']}: {e}")
-            continue
-        for p in candidates.values():
+            print(f"Google lookup failed near ({lat}, {lon}): {e}")
+            google_candidates = []
+        for gc in google_candidates:
+            if gc["id"] in seen_google_ids:
+                continue
+            seen_google_ids.add(gc["id"])
+            try:
+                meta = asyncio.run(fetch_pano_by_id(gc["id"]))
+            except Exception as e:
+                print(f"Google date lookup failed for {gc['id']}: {e}")
+                continue
+            if not meta:
+                continue
+            for entry in meta["dates"]:
+                nodes.append({
+                    "key": node_key("google", entry["id"]), "source": "google", "id": entry["id"],
+                    "lat": gc["lat"], "lon": gc["lon"], "date": entry["label"],
+                })
+
+        try:
+            apple_candidates = apple_tile_panos(lat, lon)
+        except Exception as e:
+            print(f"Apple lookup failed near ({lat}, {lon}): {e}")
+            apple_candidates = {}
+        for p in apple_candidates.values():
             if p.id in seen_apple_ids:
                 continue
-            if haversine_m(gn["lat"], gn["lon"], p.lat, p.lon) > apple_radius_m:
+            if haversine_m(lat, lon, p.lat, p.lon) > max_dist_m:
                 continue
             seen_apple_ids.add(p.id)
             nodes.append({
@@ -77,4 +86,4 @@ def fetch_corridor_nodes(waypoints, apple_radius_m=APPLE_CANDIDATE_MAX_DIST_M):
                 "_pano": p,  # kept for download_lookaround (needs the object, not just the id)
             })
 
-    return nodes, google_stops
+    return nodes, points

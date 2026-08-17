@@ -18,10 +18,10 @@ def build_corridor_graph(waypoints):
     within EDGE_MAX_DIST_M, capped at MAX_EDGES_PER_NODE nearest per node.
     Edges are untested candidates -- walk_graph.py runs the real DA3 check.
 
-    Returns (nodes, edges, google_stops). edges: {key -> [(other_key, dist_m), ...]},
-    sorted nearest-first. google_stops: the real backbone (see fetch_corridor_nodes).
+    Returns (nodes, edges, points). edges: {key -> [(other_key, dist_m), ...]},
+    sorted nearest-first. points: the interpolated spine (see fetch_corridor_nodes).
     """
-    nodes, google_stops = fetch_corridor_nodes(waypoints)
+    nodes, points = fetch_corridor_nodes(waypoints)
 
     by_date = {}
     for n in nodes:
@@ -40,4 +40,4 @@ def build_corridor_graph(waypoints):
         edges[key].sort(key=lambda pair: pair[1])
         edges[key] = edges[key][:MAX_EDGES_PER_NODE]
 
-    return nodes, edges, google_stops
+    return nodes, edges, points
