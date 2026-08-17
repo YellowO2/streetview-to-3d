@@ -29,7 +29,7 @@ import viewers
 from paths import IMAGES_DIR, SPLATS_DIR
 from prompts.presets import PRESET_NAMES, build_prompt, get_preset
 from services import geo, lookaround_fetch, slope_correction, streetview_fetch
-from street_builder.tab import build_tab as build_street_builder_tab, BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
+from street_builder.map_selection.tab import build_tab as build_street_builder_tab, BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
 
 # Auto-pick up to N nearest neighbors as DA3 depth-support panos.
 MAX_SUPPORT_PANOS = 2

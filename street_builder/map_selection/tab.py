@@ -23,9 +23,9 @@ import gradio as gr
 import viewers
 from paths import SPLATS_DIR
 from services.geo import extract_lat_lon, haversine_m
-from street_builder import candidates as candidates_mod
-from street_builder import map_ui
-from street_builder import reconstruct
+from street_builder.map_selection import candidates as candidates_mod
+from street_builder.map_selection import map_ui
+from street_builder.reconstruction import best4, filter_sweep, generate, greedy, windowed
 
 BRIDGE_ELEM_ID = "street_builder_bridge"
 
@@ -164,7 +164,7 @@ def handle_generate_chain(state, progress=gr.Progress(track_tqdm=True)):
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     progress(0, desc=f"Reconstructing {len(ordered_nodes)} nodes...")
     try:
-        ply_path = reconstruct.reconstruct_chain(ordered_nodes, output_dir)
+        ply_path = generate.reconstruct_chain(ordered_nodes, output_dir)
     except Exception as e:
         raise gr.Error(f"Reconstruction failed: {e}")
 
@@ -188,7 +188,7 @@ def handle_filter_sweep(state, progress=gr.Progress(track_tqdm=True)):
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     progress(0, desc=f"Running filter sweep over {len(ordered_nodes)} nodes...")
     try:
-        results = reconstruct.reconstruct_chain_filter_sweep(ordered_nodes, output_dir)
+        results = filter_sweep.reconstruct_chain_filter_sweep(ordered_nodes, output_dir)
     except Exception as e:
         raise gr.Error(f"Filter sweep failed: {e}")
 
@@ -213,7 +213,7 @@ def handle_best4(state, progress=gr.Progress(track_tqdm=True)):
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     progress(0, desc=f"Scoring candidates near {len(ordered_nodes)} nodes...")
     try:
-        ply_path = reconstruct.reconstruct_chain_best4(ordered_nodes, output_dir)
+        ply_path = best4.reconstruct_chain_best4(ordered_nodes, output_dir)
     except Exception as e:
         raise gr.Error(f"Best-4 reconstruction failed: {e}")
 
@@ -223,7 +223,7 @@ def handle_best4(state, progress=gr.Progress(track_tqdm=True)):
 
 def handle_windowed(state, progress=gr.Progress(track_tqdm=True)):
     """Experimental button: chunk+connect for chains longer than one DA3 call
-    can handle -- see reconstruct.reconstruct_chain_windowed. Separate from
+    can handle -- see windowed.reconstruct_chain_windowed. Separate from
     handle_generate_chain and handle_best4 -- doesn't touch or replace either."""
     if len(state.get("selected", [])) < 2:
         raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
@@ -236,7 +236,7 @@ def handle_windowed(state, progress=gr.Progress(track_tqdm=True)):
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     progress(0, desc=f"Chunking + reconstructing {len(ordered_nodes)} nodes...")
     try:
-        ply_path = reconstruct.reconstruct_chain_windowed(ordered_nodes, output_dir)
+        ply_path = windowed.reconstruct_chain_windowed(ordered_nodes, output_dir)
     except Exception as e:
         raise gr.Error(f"Windowed reconstruction failed: {e}")
 
@@ -246,7 +246,7 @@ def handle_windowed(state, progress=gr.Progress(track_tqdm=True)):
 
 def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
     """Experimental button: greedy same-capture-pass sliding-window
-    reconstruction -- see reconstruct.reconstruct_chain_greedy. Grades every
+    reconstruction -- see greedy.reconstruct_chain_greedy. Grades every
     2-node window with a real pairwise DA3 call (not solo score), preferring
     whichever capture pass (Apple build_id / Google historical date) has the
     best coverage, and can return multiple disconnected segments instead of
@@ -263,7 +263,7 @@ def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     progress(0, desc=f"Walking {len(ordered_nodes)} nodes by capture pass...")
     try:
-        results = reconstruct.reconstruct_chain_greedy(ordered_nodes, output_dir)
+        results = greedy.reconstruct_chain_greedy(ordered_nodes, output_dir)
     except Exception as e:
         raise gr.Error(f"Greedy reconstruction failed: {e}")
 

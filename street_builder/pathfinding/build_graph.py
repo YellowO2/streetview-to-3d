@@ -1,6 +1,6 @@
 """Turn fetch_nodes' candidate list into a graph (no GPU, no validation)."""
 from services.geo import haversine_m
-from street_builder.candidates import APPLE_CANDIDATE_MAX_DIST_M
+from street_builder.map_selection.candidates import APPLE_CANDIDATE_MAX_DIST_M
 from street_builder.pathfinding.fetch_nodes import fetch_corridor_nodes
 
 # Max distance between two same-date candidates to count as a valid hop.

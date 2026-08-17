@@ -3,7 +3,7 @@ import asyncio
 
 from services.geo import haversine_m
 from services.streetview_fetch import fetch_pano_by_id, format_date
-from street_builder.candidates import (
+from street_builder.map_selection.candidates import (
     APPLE_CANDIDATE_MAX_DIST_M,
     MAX_NODES,
     apple_tile_panos,
