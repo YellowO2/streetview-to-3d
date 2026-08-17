@@ -10,7 +10,7 @@ pyyaml
 streetlevel @ git+https://github.com/YellowO2/streetlevel.git
 torchvision
 pillow-heif
-panoramic-to-3dgs @ git+https://github.com/YellowO2/panoramic-to-3dgs.git@122f6bcd6f18353f19af5f1f9f552b6486d340a8
+panoramic-to-3dgs @ git+https://github.com/YellowO2/panoramic-to-3dgs.git@8c613d6de0ee39a9e655763a9e788cc7d3dd6fbd
 diffusers
 peft
 depth-anything-3 @ git+https://github.com/ByteDance-Seed/Depth-Anything-3.git@41736238f5bced4debf3f2a12375d2466874866d

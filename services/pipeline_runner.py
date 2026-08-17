@@ -145,6 +145,12 @@ def run_pathfind_reconstruction_gpu(nodes, edges, start_lat, start_lon, end_lat,
     )
 
 
+@GPU
+def test_pairs_gpu(pairs, step_degrees=20):
+    pipeline = get_pipeline()
+    return pipeline.test_pairs(pairs, step_degrees=step_degrees)
+
+
 def save_pointcloud(points, colors, path):
     """Not GPU-wrapped -- pure disk I/O (open3d write), no CUDA involved.
     Lazy import to match get_pipeline()'s pattern, so this module still

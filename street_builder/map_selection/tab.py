@@ -25,7 +25,7 @@ from paths import SPLATS_DIR
 from services.geo import extract_lat_lon, haversine_m
 from street_builder.map_selection import candidates as candidates_mod
 from street_builder.map_selection import map_ui
-from street_builder.reconstruction import best4, filter_sweep, generate, greedy, walk_graph, windowed
+from street_builder.reconstruction import best4, cross_date_test, filter_sweep, generate, greedy, walk_graph, windowed
 
 BRIDGE_ELEM_ID = "street_builder_bridge"
 
@@ -299,6 +299,19 @@ def handle_pathfind(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.filter_sweep_links(results)
 
 
+def handle_cross_date_test(state, progress=gr.Progress(track_tqdm=True)):
+    """One-off diagnostic button: real pairwise DA3 success rate between
+    nearby candidates of different dates, on the known 8-node test street
+    (ignores current map selection). Delete this handler + its button once
+    the cross-date question's answered. See reconstruction/cross_date_test.py."""
+    yield "<p>Running cross-date pairwise test...</p>"
+    try:
+        lines = cross_date_test.test_cross_date_success_rate()
+    except Exception as e:
+        raise gr.Error(f"Cross-date test failed: {e}")
+    yield "<pre>" + "\n".join(lines) + "</pre>"
+
+
 def build_tab():
     state = gr.State(_empty_state())
 
@@ -341,6 +354,10 @@ def build_tab():
             # with real DA3 tests -- picks its own nodes, not the clicked
             # ones. Not part of the normal Generate flow.
             pathfind_btn = gr.Button("Auto-path (start → end, experimental)")
+            # One-off diagnostic: real pairwise DA3 success rate between
+            # nearby candidates of different dates, on a hardcoded test
+            # street (ignores current selection). Delete once done.
+            cross_date_test_btn = gr.Button("Test: cross-date pairs (debug)")
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -406,6 +423,14 @@ def build_tab():
 
     pathfind_btn.click(
         fn=handle_pathfind,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    cross_date_test_btn.click(
+        fn=handle_cross_date_test,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",
