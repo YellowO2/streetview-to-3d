@@ -1,5 +1,5 @@
 """Low-level fetch of real Street View / Look Around panoramas near a
-location. Used by the map picker and by street_builder/pathfinding/.
+location. Used by the map picker and by street_builder/build_graph/.
 """
 from streetlevel import streetview
 from streetlevel.geo import wgs84_to_tile_coord
@@ -50,7 +50,7 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
     plus edges from Street View's own coverage graph.
 
     Returns (nodes, edges). Node: {key, source, id, lat, lon, heading} --
-    no date (tile listing doesn't carry it; see pathfinding/fetch_nodes.py
+    no date (tile listing doesn't carry it; see build_graph/fetch_nodes.py
     for the full per-pano fetch that does). Edge: (key_a, key_b).
     """
     try:
@@ -91,5 +91,5 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
 
 # Max distance a candidate can be from a node and still count as "at" it.
 # ~2.5x the measured ~10m real node spacing. Shared by
-# street_builder/pathfinding/ and street_builder/reconstruct.py.
+# street_builder/build_graph/ and street_builder/reconstruction/.
 APPLE_CANDIDATE_MAX_DIST_M = 25.0
