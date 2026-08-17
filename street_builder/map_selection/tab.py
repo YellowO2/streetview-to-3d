@@ -25,7 +25,7 @@ from paths import SPLATS_DIR
 from services.geo import extract_lat_lon, haversine_m
 from street_builder.map_selection import candidates as candidates_mod
 from street_builder.map_selection import map_ui
-from street_builder.reconstruction import best4, filter_sweep, generate, greedy, windowed
+from street_builder.reconstruction import best4, filter_sweep, generate, greedy, walk_graph, windowed
 
 BRIDGE_ELEM_ID = "street_builder_bridge"
 
@@ -271,6 +271,34 @@ def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.filter_sweep_links(results)
 
 
+def handle_pathfind(state, progress=gr.Progress(track_tqdm=True)):
+    """Experimental button: auto-path start -> end. The first and last
+    selected nodes are just the two zone anchors -- walk_graph gathers every
+    Google + Apple pano along the street, builds a same-date candidate graph,
+    and best-first searches it with real DA3 tests (it picks its own nodes,
+    not the ones you clicked between). See walk_graph.reconstruct_pathfind."""
+    if len(state.get("selected", [])) < 2:
+        raise gr.Error("Select a start and an end node (the two path anchors).")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    by_key = _nodes_by_key(state)
+    ordered = [by_key[k] for k in state["selected"] if k in by_key]
+    start, end = ordered[0], ordered[-1]
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    progress(0, desc="Gathering + auto-pathing the street...")
+    try:
+        results = walk_graph.reconstruct_pathfind(
+            start["lat"], start["lon"], end["lat"], end["lon"], output_dir
+        )
+    except Exception as e:
+        raise gr.Error(f"Auto-path failed: {e}")
+
+    progress(1.0, desc="Done!")
+    yield viewers.filter_sweep_links(results)
+
+
 def build_tab():
     state = gr.State(_empty_state())
 
@@ -308,6 +336,11 @@ def build_tab():
             # multiple disconnected segments. Not part of the normal
             # Generate flow.
             greedy_btn = gr.Button("Reconstruct (greedy same-pass, experimental)")
+            # Experimental: auto-path start -> end. Gathers every pano along
+            # the street, builds a same-date graph, best-first searches it
+            # with real DA3 tests -- picks its own nodes, not the clicked
+            # ones. Not part of the normal Generate flow.
+            pathfind_btn = gr.Button("Auto-path (start → end, experimental)")
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -365,6 +398,14 @@ def build_tab():
 
     greedy_btn.click(
         fn=handle_greedy,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    pathfind_btn.click(
+        fn=handle_pathfind,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",

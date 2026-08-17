@@ -57,6 +57,7 @@ def fetch_corridor_nodes(start_lat, start_lon, end_lat, end_lon, apple_radius_m=
             nodes.append({
                 "key": node_key("apple", p.id), "source": "apple", "id": p.id,
                 "lat": p.lat, "lon": p.lon, "date": format_date(p.date),
+                "_pano": p,  # kept for download_lookaround (needs the object, not just the id)
             })
 
     return nodes
