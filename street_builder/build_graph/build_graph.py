@@ -12,16 +12,16 @@ EDGE_MAX_DIST_M = APPLE_CANDIDATE_MAX_DIST_M
 MAX_EDGES_PER_NODE = 20
 
 
-def build_corridor_graph(start_lat, start_lon, end_lat, end_lon):
-    """Build a candidate graph: nodes = every panorama along the corridor,
-    edges = same-date pairs within EDGE_MAX_DIST_M, capped at
-    MAX_EDGES_PER_NODE nearest per node. Edges are untested candidates --
-    walk_graph.py runs the real DA3 check.
+def build_corridor_graph(waypoints):
+    """Build a candidate graph: nodes = every panorama along the corridor
+    traced by waypoints (see fetch_corridor_nodes), edges = same-date pairs
+    within EDGE_MAX_DIST_M, capped at MAX_EDGES_PER_NODE nearest per node.
+    Edges are untested candidates -- walk_graph.py runs the real DA3 check.
 
     Returns (nodes, edges, google_stops). edges: {key -> [(other_key, dist_m), ...]},
     sorted nearest-first. google_stops: the real backbone (see fetch_corridor_nodes).
     """
-    nodes, google_stops = fetch_corridor_nodes(start_lat, start_lon, end_lat, end_lon)
+    nodes, google_stops = fetch_corridor_nodes(waypoints)
 
     by_date = {}
     for n in nodes:

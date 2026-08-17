@@ -272,26 +272,26 @@ def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
 
 
 def handle_pathfind(state, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button: auto-path start -> end. The first and last
-    selected nodes are just the two zone anchors -- walk_graph gathers every
-    Google + Apple pano along the street, builds a same-date candidate graph,
-    and best-first searches it with real DA3 tests (it picks its own nodes,
-    not the ones you clicked between). See walk_graph.reconstruct_pathfind."""
+    """Experimental button: auto-path along the clicked chain's route shape.
+    Your full chain traces the corridor (not just a bounding circle around
+    start/end) -- walk_graph gathers every Google + Apple pano near that
+    traced route, builds a same-date candidate graph, and best-first
+    searches start -> end with real DA3 tests. It's still free to use more,
+    fewer, or different stops than you clicked -- the chain shapes *where*
+    to look, not which exact photos to use. See walk_graph.reconstruct_pathfind."""
     if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select a start and an end node (the two path anchors).")
+        raise gr.Error("Select at least 2 nodes tracing the route (start to end).")
 
     yield viewers.SPLAT_PLACEHOLDER
 
     by_key = _nodes_by_key(state)
     ordered = [by_key[k] for k in state["selected"] if k in by_key]
-    start, end = ordered[0], ordered[-1]
+    waypoints = [(n["lat"], n["lon"]) for n in ordered]
 
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     progress(0, desc="Gathering + auto-pathing the street...")
     try:
-        results = walk_graph.reconstruct_pathfind(
-            start["lat"], start["lon"], end["lat"], end["lon"], output_dir
-        )
+        results = walk_graph.reconstruct_pathfind(waypoints, output_dir)
     except Exception as e:
         raise gr.Error(f"Auto-path failed: {e}")
 

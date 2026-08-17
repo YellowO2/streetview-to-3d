@@ -67,10 +67,17 @@ def _download_and_filter(keys, by_key, edges):
     return entries, filtered
 
 
-def reconstruct_pathfind(start_lat, start_lon, end_lat, end_lon, output_dir,
+def reconstruct_pathfind(waypoints, output_dir,
                          step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str]]:
-    """Auto-path a street start -> end. Returns [(label, ply_path), ...]."""
-    nodes, edges, google_stops = build_corridor_graph(start_lat, start_lon, end_lat, end_lon)
+    """Auto-path a street along the user's clicked chain. waypoints: ordered
+    [(lat, lon), ...] -- the full chain traces the route shape (see
+    fetch_corridor_nodes); only the first/last are used as the search's
+    start/end goal. Returns [(label, ply_path), ...]."""
+    if len(waypoints) < 2:
+        raise ValueError("Need at least 2 selected nodes (start and end).")
+    (start_lat, start_lon), (end_lat, end_lon) = waypoints[0], waypoints[-1]
+
+    nodes, edges, google_stops = build_corridor_graph(waypoints)
     nodes = [n for n in nodes if edges.get(n["key"])]  # drop isolated (never testable)
     if len(nodes) < 2:
         raise ValueError("Not enough connected candidates along this street.")

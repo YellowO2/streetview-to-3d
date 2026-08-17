@@ -12,8 +12,16 @@ from street_builder.map_selection.candidates import (
 )
 
 
-def fetch_corridor_nodes(start_lat, start_lon, end_lat, end_lon, apple_radius_m=APPLE_CANDIDATE_MAX_DIST_M):
-    """Every Google + Apple pano near the real street between start and end.
+def fetch_corridor_nodes(waypoints, apple_radius_m=APPLE_CANDIDATE_MAX_DIST_M):
+    """Every Google + Apple pano near the real street traced by waypoints.
+
+    waypoints: ordered [(lat, lon), ...] -- the user's full clicked chain,
+    used as a polyline "spine", not just its first/last point. Fetches
+    within a radius of each consecutive pair's own midpoint (a series of
+    overlapping circles along the route) instead of one big circle over
+    the whole start->end span -- so the corridor traces the actual shape
+    the user clicked and excludes a geometrically-nearby branch they
+    didn't select (e.g. a fork the route doesn't take).
 
     - Uses real Google node positions as the backbone (follows the actual
       street shape, curves included) instead of a straight-line guess.
@@ -26,9 +34,14 @@ def fetch_corridor_nodes(start_lat, start_lon, end_lat, end_lon, apple_radius_m=
     spread across the whole corridor (see walk_graph._local_batch) should
     use google_stops, not nodes (which has many same-position date variants).
     """
-    mid_lat, mid_lon = (start_lat + end_lat) / 2, (start_lon + end_lon) / 2
-    span_m = haversine_m(start_lat, start_lon, end_lat, end_lon)
-    google_stops, _ = nearby_nodes(mid_lat, mid_lon, radius_m=span_m / 2 + apple_radius_m, max_nodes=MAX_NODES)
+    stops_by_key = {}
+    for (lat1, lon1), (lat2, lon2) in zip(waypoints, waypoints[1:]):
+        mid_lat, mid_lon = (lat1 + lat2) / 2, (lon1 + lon2) / 2
+        span_m = haversine_m(lat1, lon1, lat2, lon2)
+        seg_stops, _ = nearby_nodes(mid_lat, mid_lon, radius_m=span_m / 2 + apple_radius_m, max_nodes=MAX_NODES)
+        for s in seg_stops:
+            stops_by_key[s["key"]] = s
+    google_stops = list(stops_by_key.values())
 
     nodes = []
     for gs in google_stops:
