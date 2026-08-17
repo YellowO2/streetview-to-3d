@@ -11,8 +11,14 @@ from paths import IMAGES_DIR
 from services.http_headers import BROWSER_HEADERS
 
 # zoom=4 → ~6656×3328 px per pano, ~91 tiles. zoom=5 → ~13312×6656 px, ~338 tiles.
-# Zoom 4 is high enough for the pipeline and keeps tile bursts well below Google's rate limit.
+# Zoom 4 is high enough for SHARP (the actual 3DGS appearance source).
 _DOWNLOAD_ZOOM = 4
+
+# DA3 only (depth/pose, never SHARP appearance): DA3 internally caps each
+# view slice at 504px regardless of input size, and a slice is pano_w/4.
+# zoom=2 -> 2048px pano -> 512px slice, just above that cap -- measured
+# directly, not estimated. Higher zoom here is wasted download+compute.
+DA3_ONLY_ZOOM = 2
 
 
 async def download_panorama_image(pano, img_path: str, zoom: int = _DOWNLOAD_ZOOM) -> None:
@@ -94,31 +100,37 @@ async def fetch_pano_by_id(pano_id):
         return pano_to_meta(pano)
 
 
-async def download_pano(lat, lon):
+# Zoom baked into the cache filename -- a low-res (DA3-only) and high-res
+# (SHARP appearance) request for the same pano must not collide.
+def _cache_path(pano_id, zoom):
+    return os.path.join(IMAGES_DIR, f"pano_{pano_id}_z{zoom}.jpg")
+
+
+async def download_pano(lat, lon, zoom: int = _DOWNLOAD_ZOOM):
     """Download a pano by lat/lon, return absolute path."""
     async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
         pano = await streetview.find_panorama_async(lat, lon, session=session)
         if not pano:
             return None
-        img_path = os.path.join(IMAGES_DIR, f"pano_{pano.id}.jpg")
+        img_path = _cache_path(pano.id, zoom)
         if not os.path.exists(img_path):
-            await download_panorama_image(pano, img_path)
+            await download_panorama_image(pano, img_path, zoom=zoom)
         return img_path
 
 
-async def download_pano_by_id(pano_id):
+async def download_pano_by_id(pano_id, zoom: int = _DOWNLOAD_ZOOM):
     """Download a pano by its exact ID, return absolute path."""
     async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
         pano = await streetview.find_panorama_by_id_async(pano_id, session=session)
         if not pano:
             return None
-        img_path = os.path.join(IMAGES_DIR, f"pano_{pano.id}.jpg")
+        img_path = _cache_path(pano.id, zoom)
         if not os.path.exists(img_path):
-            await download_panorama_image(pano, img_path)
+            await download_panorama_image(pano, img_path, zoom=zoom)
         return img_path
 
 
-async def download_images_for_nodes(nodes: list[dict]) -> list[str]:
+async def download_images_for_nodes(nodes: list[dict], zoom: int = _DOWNLOAD_ZOOM) -> list[str]:
     """Download/cache images for an ordered list of {id, ...} node dicts (the
     shape both pano_to_meta's neighbor entries and street_builder's exported
     chain nodes share). The one place both the single-pano tab's support-pano
@@ -127,7 +139,7 @@ async def download_images_for_nodes(nodes: list[dict]) -> list[str]:
     paths = []
     for i, node in enumerate(nodes):
         print(f"Downloading pano {i + 1}/{len(nodes)}: {node['id']}")
-        path = await download_pano_by_id(node["id"])
+        path = await download_pano_by_id(node["id"], zoom=zoom)
         if not path:
             raise ValueError(f"Panorama {node['id']} not found")
         paths.append(path)

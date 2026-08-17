@@ -20,8 +20,15 @@ from paths import IMAGES_DIR
 from services.geo import haversine_m
 from services.streetview_fetch import format_date
 
-# Apple Look Around face zoom (0=full res/slow, 7=lowest). 3 is a fast, decent-quality default.
+# Apple zoom is inverted vs Google's (0=full res/slow, 7=lowest). 3 is a
+# fast, decent-quality default -- kept for whoever needs real detail.
 APPLE_ZOOM = 3
+
+# DA3 only (never SHARP appearance): DA3 caps each view slice at 504px,
+# slice = pano_w/4. zoom=5 -> 2288px pano -> 572px slice, just above that
+# cap -- measured directly. zoom=3's 4560px pano is 2x more than DA3 uses.
+DA3_ONLY_APPLE_ZOOM = 5
+
 APPLE_CANDIDATE_COUNT = 5
 
 _apple_auth = None
@@ -68,15 +75,17 @@ def get_apple_auth():
     return _apple_auth
 
 
-def download_lookaround(pano) -> str:
-    """Fetch all 6 faces of a Look Around pano and stitch to equirectangular, cached by ID."""
-    img_path = os.path.join(IMAGES_DIR, f"lookaround_{pano.id}.jpg")
+def download_lookaround(pano, zoom: int = APPLE_ZOOM) -> str:
+    """Fetch all 6 faces of a Look Around pano and stitch to equirectangular.
+    Cached by ID + zoom -- a low-res (DA3-only) and high-res (SHARP
+    appearance) request for the same pano must not collide."""
+    img_path = os.path.join(IMAGES_DIR, f"lookaround_{pano.id}_z{zoom}.jpg")
     if os.path.exists(img_path):
         return img_path
 
     auth = get_apple_auth()
     faces = [
-        Image.open(io.BytesIO(apple_lookaround.get_panorama_face(pano, face_idx, APPLE_ZOOM, auth)))
+        Image.open(io.BytesIO(apple_lookaround.get_panorama_face(pano, face_idx, zoom, auth)))
         for face_idx in range(6)
     ]
     equi = apple_to_equirectangular(faces, pano.camera_metadata)

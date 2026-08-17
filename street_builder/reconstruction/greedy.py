@@ -13,9 +13,9 @@ import os
 import tempfile
 
 from services.geo import haversine_m
-from services.lookaround_fetch import apple_candidates, download_lookaround
+from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, apple_candidates, download_lookaround
 from services.pipeline_runner import run_greedy_pass_reconstruction_gpu, save_pointcloud
-from services.streetview_fetch import download_pano_by_id, format_date
+from services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, format_date
 from street_builder.map_selection.candidates import APPLE_CANDIDATE_MAX_DIST_M
 from street_builder.reconstruction.best4 import BEST4_STEP_DEGREES
 from street_builder.reconstruction.common import CANDIDATE_POOL_APPLE_PER_NODE, Candidate
@@ -93,13 +93,13 @@ def _resolve_pass_candidates(nodes: list[dict], options: list[dict[str, object]]
             try:
                 if isinstance(value, str):
                     pano_id = value
-                    path = asyncio.run(download_pano_by_id(pano_id))
+                    path = asyncio.run(download_pano_by_id(pano_id, zoom=DA3_ONLY_ZOOM))
                     if not path:
                         raise ValueError(f"Panorama {pano_id} not found")
                     node_resolved[date] = Candidate(f"google:{pano_id}", path, node["lat"], node["lon"])
                 else:
                     pano = value
-                    path = download_lookaround(pano)
+                    path = download_lookaround(pano, zoom=DA3_ONLY_APPLE_ZOOM)
                     node_resolved[date] = Candidate(f"apple:{pano.id}", path, pano.lat, pano.lon)
             except Exception as e:
                 print(f"Pass candidate download failed for {date} at node {node['id']}: {e}")

@@ -6,11 +6,17 @@ from street_builder.build_graph.fetch_nodes import fetch_corridor_nodes
 # Max distance between two same-date candidates to count as a valid hop.
 EDGE_MAX_DIST_M = APPLE_CANDIDATE_MAX_DIST_M
 
+# Cap per node -- Apple can be ~1.2m between frames, so one node can have
+# 100+ same-date neighbors within EDGE_MAX_DIST_M. Keeps every node's own
+# fan-out bounded without dropping any node from the graph.
+MAX_EDGES_PER_NODE = 20
+
 
 def build_corridor_graph(start_lat, start_lon, end_lat, end_lon):
     """Build a candidate graph: nodes = every panorama along the corridor,
-    edges = same-date pairs within EDGE_MAX_DIST_M. Edges are untested
-    candidates -- walk_graph.py runs the real DA3 check.
+    edges = same-date pairs within EDGE_MAX_DIST_M, capped at
+    MAX_EDGES_PER_NODE nearest per node. Edges are untested candidates --
+    walk_graph.py runs the real DA3 check.
 
     Returns (nodes, edges). edges: {key -> [(other_key, dist_m), ...]},
     sorted nearest-first.
@@ -32,5 +38,6 @@ def build_corridor_graph(start_lat, start_lon, end_lat, end_lon):
 
     for key in edges:
         edges[key].sort(key=lambda pair: pair[1])
+        edges[key] = edges[key][:MAX_EDGES_PER_NODE]
 
     return nodes, edges

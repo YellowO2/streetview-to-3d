@@ -2,31 +2,69 @@
 
 Client half of the pathfinding flow:
 - build the candidate graph (build_graph, no GPU)
-- download every candidate image (network, cached; the GPU call can't
-  fetch, so this is eager for now -- slow first run, fast after)
+- download candidates (network, cached; the GPU call can't fetch, so this
+  has to happen before it -- see the two-phase note below)
 - hand nodes + edges to run_pathfind_reconstruction (one GPU call: the
   real best-first search + DA3 tests + stitching live there)
+
+Two-phase download, not "download everything": a corridor can hold
+hundreds of candidates (Apple frames run ~1.2m apart), but the search only
+ever tests a few dozen. Phase 1 downloads just the local neighborhood near
+the start; only if that doesn't reach the end do we download the rest of
+the corridor and retry. Phase 2 re-runs the search from scratch (no
+resumable state across GPU calls), so it re-tests phase 1's edges too --
+acceptable since it's a rare fallback, not the common path.
 
 v1: single date, single segment. See run_pathfind_reconstruction.
 """
 import os
 
-from services.lookaround_fetch import download_lookaround
+from services.geo import haversine_m
+from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
-from services.streetview_fetch import run_async, download_pano_by_id
+from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
 from street_builder.build_graph.build_graph import build_corridor_graph
 from street_builder.reconstruction.best4 import BEST4_STEP_DEGREES
 
 
 def _download(node):
-    """Download a node's equirectangular image, return path (None on failure)."""
+    """Download a node's equirectangular image at DA3-only res, return path (None on failure)."""
     try:
         if node["source"] == "apple":
-            return download_lookaround(node["_pano"])
-        return run_async(download_pano_by_id(node["id"]))
+            return download_lookaround(node["_pano"], zoom=DA3_ONLY_APPLE_ZOOM)
+        return run_async(download_pano_by_id(node["id"], zoom=DA3_ONLY_ZOOM))
     except Exception as e:
         print(f"Download failed for {node['key']}: {e}")
         return None
+
+
+def _local_batch(nodes, edges, lat, lon):
+    """Nearest node per date to (lat, lon), plus each one's own edge-list
+    neighbors (already capped by build_graph) -- the local batch worth
+    trying first, instead of the whole corridor."""
+    best_per_date = {}
+    for n in nodes:
+        d = haversine_m(n["lat"], n["lon"], lat, lon)
+        if n["date"] not in best_per_date or d < best_per_date[n["date"]][1]:
+            best_per_date[n["date"]] = (n["key"], d)
+
+    keys = {key for key, _ in best_per_date.values()}
+    for key in list(keys):
+        keys.update(other for other, _ in edges.get(key, []))
+    return keys
+
+
+def _download_and_filter(keys, by_key, edges):
+    """Download this batch, return (node_entries, edges restricted to what downloaded)."""
+    entries = []
+    for key in keys:
+        n = by_key[key]
+        path = _download(n)
+        if path:
+            entries.append((key, path, n["lat"], n["lon"], n["date"]))
+    have = {e[0] for e in entries}
+    filtered = {k: [(o, d) for o, d in v if o in have] for k, v in edges.items() if k in have}
+    return entries, filtered
 
 
 def reconstruct_pathfind(start_lat, start_lon, end_lat, end_lon, output_dir,
@@ -36,22 +74,27 @@ def reconstruct_pathfind(start_lat, start_lon, end_lat, end_lon, output_dir,
     nodes = [n for n in nodes if edges.get(n["key"])]  # drop isolated (never testable)
     if len(nodes) < 2:
         raise ValueError("Not enough connected candidates along this street.")
+    by_key = {n["key"]: n for n in nodes}
 
-    print(f"Downloading {len(nodes)} corridor candidates (cached after first run)...")
-    node_entries = []
-    for i, n in enumerate(nodes):
-        path = _download(n)
-        if path:
-            node_entries.append((n["key"], path, n["lat"], n["lon"], n["date"]))
-        if (i + 1) % 25 == 0:
-            print(f"  {i + 1}/{len(nodes)} downloaded")
-
-    have = {e[0] for e in node_entries}
-    edges = {k: [(o, d) for o, d in v if o in have] for k, v in edges.items() if k in have}
+    batch_keys = _local_batch(nodes, edges, start_lat, start_lon)
+    print(f"Phase 1: downloading {len(batch_keys)}/{len(nodes)} local candidates...")
+    node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
 
     segments = run_pathfind_reconstruction_gpu(
-        node_entries, edges, start_lat, start_lon, end_lat, end_lon, step_degrees=step_degrees,
+        node_entries, batch_edges, start_lat, start_lon, end_lat, end_lon, step_degrees=step_degrees,
     )
+
+    if not segments or not segments[0][4]:  # segments[0] = (pts, cols, path_edges, date, reached)
+        print("Phase 1 didn't reach the end -- downloading the rest of the corridor...")
+        rest_keys = {n["key"] for n in nodes} - batch_keys
+        rest_entries, _ = _download_and_filter(rest_keys, by_key, edges)
+        all_entries = node_entries + rest_entries
+        have = {e[0] for e in all_entries}
+        full_edges = {k: [(o, d) for o, d in v if o in have] for k, v in edges.items() if k in have}
+        segments = run_pathfind_reconstruction_gpu(
+            all_entries, full_edges, start_lat, start_lon, end_lat, end_lon, step_degrees=step_degrees,
+        )
+
     if not segments:
         raise RuntimeError("No connected path found between start and end.")
 

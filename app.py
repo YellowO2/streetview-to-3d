@@ -198,8 +198,12 @@ def handle_generate(pano_state, scale_mode, output_mode, use_support_panos, corr
             progress(0, desc=f"Downloading support pano {i+1}/{len(neighbors)}...")
             # By id (same download_pano_by_id street_builder's reconstruction
             # script uses), not by lat/lon -- avoids a second coordinate
-            # lookup when the exact pano id is already known.
-            p = streetview_fetch.run_async(streetview_fetch.download_pano_by_id(n["id"]))
+            # lookup when the exact pano id is already known. Low-res: a
+            # support pano only ever feeds DA3 depth/pose, never SHARP's
+            # own appearance generation (that's target_path alone).
+            p = streetview_fetch.run_async(
+                streetview_fetch.download_pano_by_id(n["id"], zoom=streetview_fetch.DA3_ONLY_ZOOM)
+            )
             if p:
                 support_paths.append(p)
         except Exception:
