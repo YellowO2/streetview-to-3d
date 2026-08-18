@@ -175,7 +175,7 @@ def reconstruct_pathfind(waypoints, output_dir,
     node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
 
     segments = run_pathfind_reconstruction_gpu(
-        node_entries, batch_edges, start_lat, start_lon, end_lat, end_lon,
+        node_entries, batch_edges, start_lat, start_lon, [(end_lat, end_lon)],
         step_degrees=step_degrees, date_order=top_dates,
     )
 
