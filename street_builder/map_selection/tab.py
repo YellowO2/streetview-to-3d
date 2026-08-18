@@ -298,7 +298,7 @@ def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
 
 
 def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button, step 1 of 2: gathers every Google + Apple pano
+    """Experimental button, step 1 of 3: gathers every Google + Apple pano
     near the clicked graph's real shape -- branches and loops included,
     since the selection graph (state["selected"] + state["selected_edges"])
     is only ever built from real Street View edges (see
@@ -334,7 +334,7 @@ def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
 
 
 def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button, step 2 of 2: runs the real multi-goal best-first
+    """Experimental button, step 2 of 3: runs the real multi-goal best-first
     search over whatever handle_pathfind_prepare already downloaded -- the
     fixed start node stays the search's start; every other selected node is
     a goal, and the search doesn't stop at the first one reached, it keeps
@@ -345,19 +345,48 @@ def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
     token's validity is wall-clock, and a long download sitting ahead of
     the @spaces.GPU call (as one combined button used to do) is exactly
     what can let it go stale before the schedule request is ever sent.
-    See walk_graph.run_prepared_pathfind."""
+
+    Only saves each segment's own preview here -- joining them (step 3,
+    handle_pathfind_join) is a separate button on purpose: it needs no GPU
+    at all, so keeping it out of this call means re-testing/tuning the join
+    step doesn't require re-running the expensive DA3 search each time.
+    See walk_graph.run_prepared_pathfind_segments/save_pathfind_segments."""
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
-    yield viewers.SPLAT_PLACEHOLDER
+    yield viewers.SPLAT_PLACEHOLDER, None
 
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     try:
-        results = walk_graph.run_prepared_pathfind(prep, output_dir)
+        segments = walk_graph.run_prepared_pathfind_segments(prep)
+        output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+        results = walk_graph.save_pathfind_segments(segments, output_dir)
     except Exception as e:
         raise gr.Error(f"Auto-path failed: {e}")
 
-    yield viewers.filter_sweep_links(results)
+    note = "" if len(segments) > 1 else "<p>Single segment -- nothing to join.</p>"
+    yield viewers.filter_sweep_links(results) + note, segments
+
+
+def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
+    """Experimental button, step 3 of 3: fits each segment from the last Run
+    against its own real GPS positions and merges them into one point cloud
+    (see join_segments.join_segments). No GPU -- safe to press again after
+    tweaking the join logic without re-running Run. See
+    walk_graph.save_joined_pathfind."""
+    if not prep or not segments:
+        raise gr.Error("Nothing to join yet -- press \"Run Auto-path\" first.")
+    if len(segments) < 2:
+        raise gr.Error("Only one segment -- nothing to join.")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    try:
+        output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+        label, ply = walk_graph.save_joined_pathfind(prep, segments, output_dir)
+    except Exception as e:
+        raise gr.Error(f"Join failed: {e}")
+
+    yield viewers.filter_sweep_links([(label, ply)])
 
 
 def build_tab():
@@ -398,17 +427,22 @@ def build_tab():
             # Generate flow.
             greedy_btn = gr.Button("Reconstruct (greedy same-pass, experimental)")
             # Experimental: auto-path across the whole clicked graph
-            # (branches/loops included). Split into two steps -- prepare
-            # (gather + download, no GPU) then run (the actual GPU search)
-            # -- so the GPU-triggering click is its own fresh interaction
-            # instead of following a long download inside one combined
-            # request; see handle_pathfind_run's docstring for why. Not
-            # part of the normal Generate flow.
+            # (branches/loops included). Split into three steps -- prepare
+            # (gather + download, no GPU), run (the actual GPU search), join
+            # (fit + merge multiple segments, no GPU) -- so the
+            # GPU-triggering click is its own fresh interaction instead of
+            # following a long download inside one combined request (see
+            # handle_pathfind_run's docstring), and re-testing/tuning the
+            # join step doesn't require re-running the expensive GPU search
+            # each time (see handle_pathfind_join's docstring). Not part of
+            # the normal Generate flow.
             pathfind_prepare_btn = gr.Button("1. Prepare auto-path (experimental)")
             pathfind_run_btn = gr.Button("2. Run auto-path")
+            pathfind_join_btn = gr.Button("3. Join segments")
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
+    pathfind_segments_state = gr.State(None)
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -483,6 +517,14 @@ def build_tab():
     pathfind_run_btn.click(
         fn=handle_pathfind_run,
         inputs=[pathfind_prep_state],
+        outputs=[reconstruct_view, pathfind_segments_state],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    pathfind_join_btn.click(
+        fn=handle_pathfind_join,
+        inputs=[pathfind_prep_state, pathfind_segments_state],
         outputs=[reconstruct_view],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],

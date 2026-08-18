@@ -216,17 +216,32 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
 
 def run_prepared_pathfind(prep: dict, output_dir,
                           step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str]]:
-    """GPU step: takes prepare_pathfind's output and runs the real
-    multi-goal best-first search (see run_pathfind_reconstruction). Nothing
-    but this call happens first, so the GPU-scheduling request goes out as
-    close as possible to whatever button click triggered it.
+    """Convenience one-shot: GPU search + save per-segment previews + join
+    (if there's more than one segment) in a single call. UI callers doing
+    the 3-step Prepare/Run/Join flow (see tab.py) should call
+    run_prepared_pathfind_segments, save_pathfind_segments, and
+    save_joined_pathfind separately instead -- join doesn't need the GPU at
+    all, so splitting it out means re-testing/tuning it doesn't require
+    re-running the expensive DA3 search each time.
 
     Returns [(label, ply_path), ...] -- one per segment (see
     run_pathfind_reconstruction for what a "segment" is), plus one more
     "joined" entry (see join_segments.join_segments) when there's more
     than one segment to actually combine."""
     segments = run_prepared_pathfind_segments(prep, step_degrees=step_degrees)
+    results = save_pathfind_segments(segments, output_dir)
+    if len(segments) > 1:
+        try:
+            results.append(save_joined_pathfind(prep, segments, output_dir))
+        except Exception as e:
+            print(f"join_segments failed: {e}")
+            results.append((f"path (joined) -- failed: {e}", None))
+    return results
 
+
+def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:
+    """Saves each segment's own point cloud as its own .ply, no GPU, no
+    fitting/joining. Returns [(label, ply_path), ...] previews."""
     os.makedirs(output_dir, exist_ok=True)
     results = []
     for i, (pts, cols, path_edges, date, reached, node_positions) in enumerate(segments):
@@ -234,18 +249,19 @@ def run_prepared_pathfind(prep: dict, output_dir,
         label = f"path (date {date}, {len(path_edges)} hops, {status})"
         ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_{i}.ply"))
         results.append((label, ply))
-
-    if len(segments) > 1:
-        try:
-            from street_builder.reconstruction.join_segments import join_segments
-            pts, cols = join_segments(segments, prep["node_entries"])
-            ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
-            results.append((f"path (joined, {len(segments)} segments)", ply))
-        except Exception as e:
-            print(f"join_segments failed: {e}")
-            results.append((f"path (joined) -- failed: {e}", None))
-
     return results
+
+
+def save_joined_pathfind(prep: dict, segments, output_dir) -> tuple[str, str]:
+    """Fits + merges every segment (see join_segments.join_segments), saves
+    the result, returns one (label, ply_path). No GPU -- pure linear
+    algebra, safe to call repeatedly against the same already-computed
+    segments while tuning the join step."""
+    from street_builder.reconstruction.join_segments import join_segments
+    os.makedirs(output_dir, exist_ok=True)
+    pts, cols = join_segments(segments, prep["node_entries"])
+    ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
+    return f"path (joined, {len(segments)} segments)", ply
 
 
 def run_prepared_pathfind_segments(prep: dict, step_degrees: int = BEST4_STEP_DEGREES):
