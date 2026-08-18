@@ -22,7 +22,7 @@ import gradio as gr
 
 import viewers
 from paths import SPLATS_DIR
-from services.geo import extract_lat_lon, haversine_m
+from services.geo import extract_lat_lon
 from street_builder.map_selection import candidates as candidates_mod
 from street_builder.map_selection import map_ui
 from street_builder.reconstruction import best4, filter_sweep, generate, greedy, walk_graph, windowed
@@ -56,7 +56,7 @@ window.addEventListener('message', function(ev) {{
 
 
 def _empty_state():
-    return {"lat": None, "lon": None, "nodes": [], "edges": [], "selected": [], "view": None}
+    return {"lat": None, "lon": None, "nodes": [], "edges": [], "selected": [], "selected_edges": [], "view": None}
 
 
 def _nodes_by_key(state):
@@ -65,26 +65,26 @@ def _nodes_by_key(state):
 
 def _summary_markdown(state):
     if not state["selected"]:
-        return "_Load an area to set the start node, then click markers to extend the chain._"
+        return "_Load an area to set the start node, then click markers to extend the graph._"
     by_key = _nodes_by_key(state)
-    lines = []
-    prev = None
+    n_nodes = len(state["selected"])
+    n_edges = len(state.get("selected_edges", []))
+    lines = [f"**{n_nodes} node(s), {n_edges} edge(s) selected**", ""]
     for i, key in enumerate(state["selected"]):
         n = by_key.get(key)
         if not n:
             continue
         label = "Start" if i == 0 else f"#{i + 1}"
-        gap = f" · {haversine_m(prev['lat'], prev['lon'], n['lat'], n['lon']):.0f}m from previous" if prev else ""
-        lines.append(f"{label}. `{n['id']}`{gap}")
-        prev = n
+        lines.append(f"{label}. `{n['id']}`")
     return "\n".join(lines)
 
 
 def _map_html(state, zoom=19):
     if state["lat"] is None:
-        return map_ui.build_picker_map(0, 0, [], [], [], zoom=2)
+        return map_ui.build_picker_map(0, 0, [], [], [], [], zoom=2)
     return map_ui.build_picker_map(
-        state["lat"], state["lon"], state["nodes"], state["edges"], state["selected"],
+        state["lat"], state["lon"], state["nodes"], state["edges"],
+        state["selected"], state.get("selected_edges", []),
         zoom=zoom, view=state.get("view"),
     )
 
@@ -100,9 +100,12 @@ def handle_load_area(area_input, state):
         raise gr.Error("No Street View coverage found near that location.")
 
     # nodes is already distance-sorted, so the nearest one to the input
-    # coordinate is the chain's fixed start node.
+    # coordinate is the graph's fixed start node.
     start_key = nodes[0]["key"]
-    state = {"lat": lat, "lon": lon, "nodes": nodes, "edges": edges, "selected": [start_key], "view": None}
+    state = {
+        "lat": lat, "lon": lon, "nodes": nodes, "edges": edges,
+        "selected": [start_key], "selected_edges": [], "view": None,
+    }
     return _map_html(state), _summary_markdown(state), state
 
 
@@ -124,31 +127,54 @@ def handle_bridge_message(payload_str, state):
     if not key:
         return _map_html(state), _summary_markdown(state), state, ""
 
-    # Singly linked chain, fixed start: a click only ever extends the tail
-    # (append) or undoes the most recent link (click the current tail again
-    # to pop it). Clicking any other already-selected node is a no-op --
-    # removing a middle node would break the chain.
+    # Graph selection, fixed start: a click only ever adds a node/edge that's
+    # a REAL edge (Street View's own pano.links, sourced in candidates.py) to
+    # something already selected -- never guessed from click proximity. This
+    # is what lets a branch (two clicks off the same node) or a loop-closing
+    # click (a "next" node that happens to already be selected via a
+    # different branch) just fall out naturally, instead of needing special
+    # handling: any real edge between the clicked node and an already-
+    # selected node gets recorded, whether or not the node itself is new.
     selected = list(state["selected"])
-    if selected and key == selected[-1]:
-        if len(selected) > 1:  # never pop the fixed start node
-            selected.pop()
-    elif key not in selected:
+    selected_set = set(selected)
+    selected_edges = list(state.get("selected_edges", []))
+    confirmed = {frozenset(e) for e in selected_edges}
+    edge_set = {frozenset(e) for e in state["edges"]}
+
+    is_new = key not in selected_set
+    if is_new:
+        has_real_link = any(frozenset((s, key)) in edge_set for s in selected_set)
+        if selected_set and not has_real_link:
+            # Not a real neighbor of anything selected -- ignore. The map only
+            # ever shows real frontier nodes as clickable, so this shouldn't
+            # normally happen; guards against a stale/late click after a
+            # rebuild changed what's selected.
+            return _map_html(state), _summary_markdown(state), state, ""
         selected.append(key)
+        selected_set.add(key)
+
+    for s in selected_set:
+        if s == key:
+            continue
+        fe = frozenset((s, key))
+        if fe in edge_set and fe not in confirmed:
+            selected_edges.append((s, key))
+            confirmed.add(fe)
 
     # Carry through whatever pan/zoom the map was at when clicked, so the
     # rebuilt iframe reopens there instead of snapping back to the load center.
     view = payload.get("view")
     new_view = (view["lat"], view["lon"], view["zoom"]) if view else state.get("view")
 
-    state = {**state, "selected": selected, "view": new_view}
+    state = {**state, "selected": selected, "selected_edges": selected_edges, "view": new_view}
     return _map_html(state), _summary_markdown(state), state, ""
 
 
 def handle_clear(state):
-    # "Clear" resets the chain back to just the fixed start node, not to
+    # "Clear" resets the graph back to just the fixed start node, not to
     # nothing -- the start node comes from the load-area input, not a click.
     start = [state["nodes"][0]["key"]] if state.get("nodes") else []
-    state = {**state, "selected": start}
+    state = {**state, "selected": start, "selected_edges": []}
     return _map_html(state), _summary_markdown(state), state
 
 
@@ -272,26 +298,40 @@ def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
 
 
 def handle_pathfind(state, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button: auto-path along the clicked chain's route shape.
-    Your full chain traces the corridor (not just a bounding circle around
-    start/end) -- walk_graph gathers every Google + Apple pano near that
-    traced route, builds a same-date candidate graph, and best-first
-    searches start -> end with real DA3 tests. It's still free to use more,
-    fewer, or different stops than you clicked -- the chain shapes *where*
-    to look, not which exact photos to use. See walk_graph.reconstruct_pathfind."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes tracing the route (start to end).")
+    """Experimental button: auto-path along the clicked graph's real shape --
+    branches and loops included, since the selection graph (state["selected"]
+    + state["selected_edges"]) is only ever built from real Street View
+    edges (see handle_bridge_message), not guessed from click order. The
+    fixed start node stays the search's start; every other selected node is
+    a goal -- the search doesn't stop at the first one reached, it keeps
+    growing toward whatever's still outstanding. walk_graph gathers every
+    Google + Apple pano near the traced route, builds a same-date candidate
+    graph, and best-first searches with real DA3 tests. Still free to use
+    more, fewer, or different stops than you clicked -- the selection shapes
+    *where* to look, not which exact photos to use. See
+    walk_graph.reconstruct_pathfind."""
+    selected = state.get("selected", [])
+    selected_edges = state.get("selected_edges", [])
+    if len(selected) < 2 or not selected_edges:
+        raise gr.Error("Select at least 2 connected nodes tracing the route (start to a goal).")
 
     yield viewers.SPLAT_PLACEHOLDER
 
     by_key = _nodes_by_key(state)
-    ordered = [by_key[k] for k in state["selected"] if k in by_key]
-    waypoints = [(n["lat"], n["lon"]) for n in ordered]
+    start_node = by_key.get(selected[0])
+    if not start_node:
+        raise gr.Error("Start node not found.")
+    start = (start_node["lat"], start_node["lon"])
+    goals = [(by_key[k]["lat"], by_key[k]["lon"]) for k in selected[1:] if k in by_key]
+    corridor_edges = [
+        ((by_key[a]["lat"], by_key[a]["lon"]), (by_key[b]["lat"], by_key[b]["lon"]))
+        for a, b in selected_edges if a in by_key and b in by_key
+    ]
 
     output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc="Gathering + auto-pathing the street...")
+    progress(0, desc="Gathering + auto-pathing the street graph...")
     try:
-        results = walk_graph.reconstruct_pathfind(waypoints, output_dir)
+        results = walk_graph.reconstruct_pathfind(start, goals, corridor_edges, output_dir)
     except Exception as e:
         raise gr.Error(f"Auto-path failed: {e}")
 

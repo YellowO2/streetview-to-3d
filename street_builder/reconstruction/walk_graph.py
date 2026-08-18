@@ -1,27 +1,26 @@
-"""Search build_graph's candidate graph start -> end, reconstruct the path.
+"""Search build_graph's candidate graph start -> goals, reconstruct the path.
 
 Client half of the pathfinding flow:
-- build the candidate graph (build_graph, no GPU)
+- build the candidate graph (build_graph, no GPU) from the real click-graph
+  edges (map_selection/tab.py's handle_bridge_message) -- not inferred from
+  click order or proximity, since the selection can branch or loop
 - download the top-N-date candidates (network, cached; the GPU call can't
   fetch, so this has to happen before it -- see _local_batch)
-- hand nodes + edges to run_pathfind_reconstruction in ONE GPU call: the
-  real best-first search + DA3 tests + stitching live there
+- hand nodes + edges + goals to run_pathfind_reconstruction in ONE GPU
+  call: the real multi-goal best-first search + DA3 tests + stitching +
+  multi-segment retry all live there
 
 One GPU call, not two: an earlier version fell back to a second call
 (download everything, retry) if the first didn't reach the end. That's
 exactly the pattern that causes 'Expired ZeroGPU proxy token' -- each
 @spaces.GPU call requests a fresh session credential, and a second
 request can arrive after the first one's already aged out. The top-N
-date filter already keeps the single download bounded (64 images on a
-real 8-node/~70m test street), so there's no real need for a fallback
-call -- if the top-N dates can't reach the end, that's the honest
-result, not something worth risking a second GPU acquisition for.
-
-v1: single date, single segment. See run_pathfind_reconstruction.
+date filter already keeps the single download bounded, so there's no real
+need for a fallback call.
 """
 import os
 
-from services.geo import haversine_m, order_points_by_chain
+from services.geo import haversine_m
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
@@ -62,11 +61,13 @@ def _covered_indices(candidates, points, max_dist_m):
     return covered
 
 
-def _date_connects(date_nodes, edges, start_lat, start_lon, end_lat, end_lon):
+def _date_connects(date_nodes, edges, start_lat, start_lon, goals):
     """Whether this date's own same-date edges can reach from a start-zone
-    root to a goal-zone node at all -- a structural check (graph
+    root to at least one goal-zone at all -- a structural check (graph
     reachability), not a real DA3 test. Dates that fail this can't connect
-    no matter what, so there's no point downloading or GPU-testing them."""
+    anything no matter what, so there's no point downloading or GPU-testing
+    them. Doesn't need to reach EVERY goal to be worth trying -- the
+    multi-goal search itself handles a date covering only some of them."""
     by_key = {n["key"]: n for n in date_nodes}
     roots = [k for k, n in by_key.items()
              if haversine_m(n["lat"], n["lon"], start_lat, start_lon) <= START_ZONE_M]
@@ -77,7 +78,7 @@ def _date_connects(date_nodes, edges, start_lat, start_lon, end_lat, end_lon):
     while stack:
         key = stack.pop()
         n = by_key[key]
-        if haversine_m(n["lat"], n["lon"], end_lat, end_lon) <= GOAL_TOLERANCE_M:
+        if any(haversine_m(n["lat"], n["lon"], g[0], g[1]) <= GOAL_TOLERANCE_M for g in goals):
             return True
         for other_key, _ in edges.get(key, []):
             if other_key in by_key and other_key not in seen:
@@ -98,12 +99,12 @@ def _rank_dates(by_date, points, max_dist_m, top_n):
     return [date for date, _, _ in scored[:top_n]]
 
 
-def _local_batch(nodes, edges, points, start_lat, start_lon, end_lat, end_lon):
+def _local_batch(nodes, edges, points, start_lat, start_lon, goals):
     """Keep every already-gathered candidate whose date both (a) structurally
-    connects start-zone to goal-zone via its own same-date edges, and (b)
-    ranks in the top-N by coverage span among the dates that pass (a).
-    This is the whole download batch (single GPU call, see module docstring
-    for why there's no second-pass fallback).
+    connects start-zone to at least one goal-zone via its own same-date
+    edges, and (b) ranks in the top-N by coverage span among the dates that
+    pass (a). This is the whole download batch (single GPU call, see module
+    docstring for why there's no second-pass fallback).
 
     Returns (keys, top_dates) -- keys as a list (not a set) specifically so
     the caller can preserve top_dates' rank order downstream. A set's
@@ -116,10 +117,10 @@ def _local_batch(nodes, edges, points, start_lat, start_lon, end_lat, end_lon):
         by_date.setdefault(n["date"], []).append(n)
 
     connectable = {date: ns for date, ns in by_date.items()
-                   if _date_connects(ns, edges, start_lat, start_lon, end_lat, end_lon)}
+                   if _date_connects(ns, edges, start_lat, start_lon, goals)}
     dropped = len(by_date) - len(connectable)
     if dropped:
-        print(f"Dropped {dropped}/{len(by_date)} dates: no same-date edge path from start to end.")
+        print(f"Dropped {dropped}/{len(by_date)} dates: no same-date edge path from start toward any goal.")
 
     top_dates = _rank_dates(connectable, points, POINT_MAX_DIST_M, DATE_TOP_N)
     print(f"Top dates by coverage span: {top_dates}")
@@ -147,45 +148,53 @@ def _download_and_filter(keys, by_key, edges):
     return entries, filtered
 
 
-def reconstruct_pathfind(waypoints, output_dir,
+def reconstruct_pathfind(start, goals, corridor_edges, output_dir,
                          step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str]]:
-    """Auto-path a street along the user's clicked chain. waypoints: ordered
-    [(lat, lon), ...] -- the full chain traces the route shape (see
-    fetch_corridor_nodes); only the first/last are used as the search's
-    start/end goal. Returns [(label, ply_path), ...].
+    """Auto-path a street graph from start to every point in goals.
 
-    Reordered by real spatial adjacency before use, not trusted in click
-    order -- so clicking the chain out of order still traces the route
-    correctly and picks the real start/end (see order_points_by_chain).
-    This only affects which nodes get gathered and what counts as
-    start/end; graph building and the search itself are unchanged."""
-    if len(waypoints) < 2:
-        raise ValueError("Need at least 2 selected nodes (start and end).")
-    waypoints = order_points_by_chain(waypoints)
-    (start_lat, start_lon), (end_lat, end_lon) = waypoints[0], waypoints[-1]
+    start: (lat, lon) -- the fixed start node's real position.
+    goals: [(lat, lon), ...] -- every other selected node; the search
+    doesn't stop at the first one reached, it keeps going until all are
+    covered or it genuinely can't progress further (see
+    run_pathfind_reconstruction).
+    corridor_edges: [((lat1, lon1), (lat2, lon2)), ...] -- the REAL,
+    already-confirmed edges of the clicked selection graph (from Street
+    View's own pano.links, see map_selection/candidates.py and
+    map_selection/tab.py's handle_bridge_message) -- not inferred from
+    click order or proximity, since these can branch or loop. Used only to
+    shape *where* to sample candidate panos (fetch_corridor_nodes); the
+    search is still free to use different nodes than exactly these.
 
-    nodes, edges, points = build_corridor_graph(waypoints)
+    Returns [(label, ply_path), ...], one per segment (see
+    run_pathfind_reconstruction for what a "segment" is)."""
+    if not goals:
+        raise ValueError("Need at least one goal (a second selected node).")
+    if not corridor_edges:
+        raise ValueError("Need at least one confirmed edge tracing the route.")
+    start_lat, start_lon = start
+
+    nodes, edges, points = build_corridor_graph(corridor_edges)
     nodes = [n for n in nodes if edges.get(n["key"])]  # drop isolated (never testable)
     if len(nodes) < 2:
         raise ValueError("Not enough connected candidates along this street.")
     by_key = {n["key"]: n for n in nodes}
 
-    batch_keys, top_dates = _local_batch(nodes, edges, points, start_lat, start_lon, end_lat, end_lon)
+    batch_keys, top_dates = _local_batch(nodes, edges, points, start_lat, start_lon, goals)
     print(f"Downloading {len(batch_keys)}/{len(nodes)} top-date candidates...")
     node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
 
     segments = run_pathfind_reconstruction_gpu(
-        node_entries, batch_edges, start_lat, start_lon, [(end_lat, end_lon)],
+        node_entries, batch_edges, start_lat, start_lon, goals,
         step_degrees=step_degrees, date_order=top_dates,
     )
 
     if not segments:
-        raise RuntimeError("No connected path found between start and end.")
+        raise RuntimeError("No connected path found from start toward any goal.")
 
     os.makedirs(output_dir, exist_ok=True)
     results = []
     for i, (pts, cols, path_edges, date, reached) in enumerate(segments):
-        status = "reached end" if reached else "partial (didn't reach end)"
+        status = "reached all goals" if reached else "partial"
         label = f"path (date {date}, {len(path_edges)} hops, {status})"
         ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_{i}.ply"))
         results.append((label, ply))

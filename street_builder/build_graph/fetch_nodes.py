@@ -14,11 +14,18 @@ POINT_SPACING_M = 5.0
 POINT_MAX_DIST_M = 8.0
 
 
-def interpolate_points(waypoints, spacing_m: float = POINT_SPACING_M) -> list[tuple[float, float]]:
-    """Evenly-spaced (lat, lon) points along the waypoint polyline, one
-    segment (consecutive waypoint pair) at a time."""
-    points = [waypoints[0]]
-    for (lat1, lon1), (lat2, lon2) in zip(waypoints, waypoints[1:]):
+def interpolate_points(edges, spacing_m: float = POINT_SPACING_M) -> list[tuple[float, float]]:
+    """Evenly-spaced (lat, lon) points along each given edge -- edges: list
+    of ((lat1, lon1), (lat2, lon2)) pairs, each a straight line between two
+    real, already-connected points. Not a single ordered polyline: the
+    corridor can branch or loop, so each edge is sampled independently
+    rather than assuming consecutive list order traces one path."""
+    points = []
+    seen_starts = set()
+    for (lat1, lon1), (lat2, lon2) in edges:
+        if (lat1, lon1) not in seen_starts:
+            points.append((lat1, lon1))
+            seen_starts.add((lat1, lon1))
         seg_len = haversine_m(lat1, lon1, lat2, lon2)
         n_steps = max(1, round(seg_len / spacing_m))
         for i in range(1, n_steps + 1):
@@ -27,9 +34,9 @@ def interpolate_points(waypoints, spacing_m: float = POINT_SPACING_M) -> list[tu
     return points
 
 
-def fetch_corridor_nodes(waypoints, max_dist_m: float = POINT_MAX_DIST_M):
+def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
     """Every Google + Apple pano within max_dist_m of any interpolated
-    point along the waypoint polyline (see interpolate_points).
+    point along the given edges (see interpolate_points).
 
     - For each point: nearby_nodes (Google stops) + apple_tile_panos
       (Apple), both metadata only. A newly-seen Google stop gets one extra
@@ -40,7 +47,7 @@ def fetch_corridor_nodes(waypoints, max_dist_m: float = POINT_MAX_DIST_M):
     date} list; points is the interpolated point list (needed by
     walk_graph.py for date-coverage ranking).
     """
-    points = interpolate_points(waypoints)
+    points = interpolate_points(edges)
 
     nodes = []
     seen_google_ids = set()

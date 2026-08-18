@@ -13,16 +13,17 @@ EDGE_MAX_DIST_M = 18.0
 MAX_EDGES_PER_NODE = 20
 
 
-def build_corridor_graph(waypoints):
+def build_corridor_graph(corridor_edges):
     """Build a candidate graph: nodes = every panorama along the corridor
-    traced by waypoints (see fetch_corridor_nodes), edges = same-date pairs
+    traced by corridor_edges (see fetch_corridor_nodes -- real, already-
+    connected edges, not an assumed-linear list), edges = same-date pairs
     within EDGE_MAX_DIST_M, capped at MAX_EDGES_PER_NODE nearest per node.
     Edges are untested candidates -- walk_graph.py runs the real DA3 check.
 
     Returns (nodes, edges, points). edges: {key -> [(other_key, dist_m), ...]},
     sorted nearest-first. points: the interpolated spine (see fetch_corridor_nodes).
     """
-    nodes, points = fetch_corridor_nodes(waypoints)
+    nodes, points = fetch_corridor_nodes(corridor_edges)
 
     by_date = {}
     for n in nodes:

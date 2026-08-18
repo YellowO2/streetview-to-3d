@@ -23,11 +23,15 @@ _EDGE_COLOR = "#9aa0a6"
 _MESSAGE_TYPE = "street_builder_node_click"
 
 
-def build_picker_map(lat, lon, nodes, edges, selected_keys, zoom=17, view=None):
+def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom=17, view=None):
     """nodes: list of {key, source, id, lat, lon, heading} for the whole loaded
     area (only the relevant subset -- see module docstring -- actually gets
     rendered). edges: list of (key_a, key_b) pairs from Street View's coverage
-    graph. selected_keys: ordered list of node keys forming the chain so far.
+    graph. selected_keys: node keys selected so far (a graph, not necessarily
+    a simple chain -- branches and loops are both possible). selected_edges:
+    (key_a, key_b) pairs actually confirmed by a click, drawn as the
+    highlighted graph instead of assuming selected_keys' list order traces a
+    single path (it doesn't, once branches exist).
     view: optional (lat, lon, zoom) to open the map at instead of (lat, lon, zoom)
     above -- used to restore whatever pan/zoom the map was at before a click
     triggered a rebuild, since Gradio replaces the iframe wholesale on every
@@ -54,6 +58,7 @@ def build_picker_map(lat, lon, nodes, edges, selected_keys, zoom=17, view=None):
     nodes_json = json.dumps(visible_nodes)
     edges_json = json.dumps(visible_edges)
     selected_json = json.dumps(selected_keys)
+    selected_edges_json = json.dumps(selected_edges)
 
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -71,6 +76,7 @@ background:rgba(0,0,0,.75);color:#fff;font:12px sans-serif;padding:4px 10px;bord
 var NODES = {nodes_json};
 var EDGES = {edges_json};
 var SELECTED = {selected_json};
+var SELECTED_EDGES = {selected_edges_json};
 var SUGGESTED_COLOR = {json.dumps(_SUGGESTED_COLOR)};
 var SELECTED_COLOR = {json.dumps(_SELECTED_COLOR)};
 var EDGE_COLOR = {json.dumps(_EDGE_COLOR)};
@@ -126,10 +132,14 @@ NODES.forEach(function(n) {{
   }});
 }});
 
-if (SELECTED.length > 1) {{
-  var pts = SELECTED.map(function(k) {{ return byKey[k]; }}).filter(Boolean).map(function(n) {{ return [n.lat, n.lon]; }});
-  if (pts.length > 1) L.polyline(pts, {{color: SELECTED_COLOR, weight: 4}}).addTo(m);
-}}
+// Confirmed edges drawn individually (not one polyline through SELECTED's
+// list order) -- correct for a branching or loop-closing graph, where
+// list order doesn't trace a single path.
+SELECTED_EDGES.forEach(function(e) {{
+  var a = byKey[e[0]], b = byKey[e[1]];
+  if (!a || !b) return;
+  L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {{color: SELECTED_COLOR, weight: 4}}).addTo(m);
+}});
 </script>
 </body></html>"""
     return _iframe(doc)
