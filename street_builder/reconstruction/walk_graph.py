@@ -18,6 +18,7 @@ request can arrive after the first one's already aged out. The top-N
 date filter already keeps the single download bounded, so there's no real
 need for a fallback call.
 """
+import asyncio
 import os
 
 from services.geo import haversine_m
@@ -40,16 +41,35 @@ DATE_TOP_N = 8
 START_ZONE_M = 5.0
 GOAL_TOLERANCE_M = 15.0
 
+# How many panos download at once. Downloads used to run one at a time
+# (each its own fresh event loop) -- for a large batch (100+ candidates on
+# a real branching selection) that alone can take long enough to let the
+# ZeroGPU proxy token expire before the GPU call ever fires, since the
+# token's lifetime is wall-clock, not "how many GPU calls made". Bounded
+# rather than unlimited for the same reason download_panorama_image caps
+# its own per-pano tile connections -- don't burst past what Google's rate
+# limiter tolerates.
+DOWNLOAD_CONCURRENCY = 10
 
-def _download(node):
+
+async def _download_one(node, sem):
     """Download a node's equirectangular image at DA3-only res, return path (None on failure)."""
-    try:
-        if node["source"] == "apple":
-            return download_lookaround(node["_pano"], zoom=DA3_ONLY_APPLE_ZOOM)
-        return run_async(download_pano_by_id(node["id"], zoom=DA3_ONLY_ZOOM))
-    except Exception as e:
-        print(f"Download failed for {node['key']}: {e}")
-        return None
+    async with sem:
+        try:
+            if node["source"] == "apple":
+                # download_lookaround is a blocking call (unlike the Google
+                # path) -- off the event loop so it doesn't stall the other
+                # concurrent downloads while it runs.
+                return await asyncio.to_thread(download_lookaround, node["_pano"], DA3_ONLY_APPLE_ZOOM)
+            return await download_pano_by_id(node["id"], zoom=DA3_ONLY_ZOOM)
+        except Exception as e:
+            print(f"Download failed for {node['key']}: {e}")
+            return None
+
+
+async def _download_all(nodes):
+    sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+    return await asyncio.gather(*[_download_one(n, sem) for n in nodes])
 
 
 def _covered_indices(candidates, points, max_dist_m):
@@ -130,17 +150,17 @@ def _local_batch(nodes, edges, points, start_lat, start_lon, goals):
 
 
 def _download_and_filter(keys, by_key, edges):
-    """Download this batch, return (node_entries, edges restricted to what downloaded).
-    keys must be a list (or otherwise order-preserving) -- node_entries'
-    order is what determines the pathfind date-try order downstream."""
+    """Download this batch (concurrently, DOWNLOAD_CONCURRENCY at a time),
+    return (node_entries, edges restricted to what downloaded). keys must
+    be a list (or otherwise order-preserving) -- node_entries' order is
+    what determines the pathfind date-try order downstream, and dict.fromkeys
+    (not a set) is what dedupes it while preserving that order."""
+    unique_keys = list(dict.fromkeys(keys))
+    nodes = [by_key[k] for k in unique_keys]
+    paths = run_async(_download_all(nodes))
+
     entries = []
-    seen = set()
-    for key in keys:
-        if key in seen:
-            continue
-        seen.add(key)
-        n = by_key[key]
-        path = _download(n)
+    for key, n, path in zip(unique_keys, nodes, paths):
         if path:
             entries.append((key, path, n["lat"], n["lon"], n["date"]))
     have = {e[0] for e in entries}
