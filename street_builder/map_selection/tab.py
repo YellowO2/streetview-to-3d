@@ -25,7 +25,7 @@ from paths import SPLATS_DIR
 from services.geo import extract_lat_lon, haversine_m
 from street_builder.map_selection import candidates as candidates_mod
 from street_builder.map_selection import map_ui
-from street_builder.reconstruction import best4, filter_sweep, generate, greedy, walk_graph, windowed
+from street_builder.reconstruction import best4, filter_sweep, generate, greedy, hop2_isolated_test, walk_graph, windowed
 
 BRIDGE_ELEM_ID = "street_builder_bridge"
 
@@ -299,6 +299,20 @@ def handle_pathfind(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.filter_sweep_links(results)
 
 
+def handle_hop2_isolated_test(state, progress=gr.Progress(track_tqdm=True)):
+    """One-off diagnostic button: feed exactly WbqrDtjmbGNqHBZC3U2ZxA and
+    tBKrnz8UAtdMmhkmgePciw into DA3 alone (ignores current map selection),
+    to check whether DA3's relative placement of just this one pair is
+    visibly wrong on its own, not just when chained with other hops.
+    Delete once the question's answered. See hop2_isolated_test.py."""
+    yield "<p>Running isolated pairwise DA3 test...</p>"
+    try:
+        ply = hop2_isolated_test.run_hop2_isolated_test()
+    except Exception as e:
+        raise gr.Error(f"Isolated pair test failed: {e}")
+    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply))
+
+
 def build_tab():
     state = gr.State(_empty_state())
 
@@ -341,6 +355,9 @@ def build_tab():
             # with real DA3 tests -- picks its own nodes, not the clicked
             # ones. Not part of the normal Generate flow.
             pathfind_btn = gr.Button("Auto-path (start → end, experimental)")
+            # One-off diagnostic: two hardcoded panos, one DA3 call, no
+            # chaining -- ignores current map selection. Delete once done.
+            hop2_test_btn = gr.Button("Test: isolated pair WbqrDtj+tBKrnz8 (debug)")
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -406,6 +423,14 @@ def build_tab():
 
     pathfind_btn.click(
         fn=handle_pathfind,
+        inputs=[state],
+        outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    hop2_test_btn.click(
+        fn=handle_hop2_isolated_test,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",
