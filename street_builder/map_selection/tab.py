@@ -23,6 +23,7 @@ import gradio as gr
 import viewers
 from paths import SPLATS_DIR
 from services.geo import extract_lat_lon
+from services.streetview_fetch import fetch_pano_by_id, run_async
 from street_builder.map_selection import candidates as candidates_mod
 from street_builder.map_selection import map_ui
 from street_builder.reconstruction import best4, filter_sweep, generate, greedy, walk_graph, windowed
@@ -89,6 +90,57 @@ def _map_html(state, zoom=19):
     )
 
 
+def _augment_real_links(state, key):
+    """Fetch this node's own real links directly (Street View's per-pano
+    metadata, same as fetch_pano_by_id uses elsewhere) and merge any new
+    nodes/edges into state.
+
+    Why this is needed even though nodes/edges already came from
+    candidates.nearby_nodes(): that fetch sources positions from Street
+    View's TILE coverage listing, which is a different endpoint than
+    per-pano links and can genuinely omit a pano that a real link points
+    to -- confirmed directly (a specific node's linked neighbor was simply
+    absent from the tile listing even when queried centered right on that
+    node, not just a radius/max_nodes cutoff issue). nearby_nodes also only
+    ever runs once, centered on the original "Load area" point, so a click
+    far from that point can be missing edges just from being out of range.
+    This fixes both: always goes straight to the accurate per-node source
+    for whichever node was actually clicked, regardless of how far it is
+    from the original load point or what the bulk tile listing happened to
+    include."""
+    if not key.startswith("google:"):
+        return state  # only Google exposes real link data; Apple has none
+    pano_id = key.split(":", 1)[1]
+    try:
+        meta = run_async(fetch_pano_by_id(pano_id))
+    except Exception as e:
+        print(f"Link fetch failed for {pano_id}: {e}")
+        return state
+    if not meta:
+        return state
+
+    nodes = list(state["nodes"])
+    edges = list(state["edges"])
+    by_key = {n["key"]: n for n in nodes}
+    edge_set = {frozenset(e) for e in edges}
+
+    for n in meta["neighbors"]:
+        other_key = candidates_mod.node_key("google", n["id"])
+        if other_key not in by_key:
+            new_node = {
+                "key": other_key, "source": "google", "id": n["id"],
+                "lat": n["lat"], "lon": n["lon"], "heading": None,
+            }
+            nodes.append(new_node)
+            by_key[other_key] = new_node
+        fe = frozenset((key, other_key))
+        if fe not in edge_set:
+            edges.append((key, other_key))
+            edge_set.add(fe)
+
+    return {**state, "nodes": nodes, "edges": edges}
+
+
 def handle_load_area(area_input, state):
     try:
         lat, lon = extract_lat_lon(area_input)
@@ -106,6 +158,7 @@ def handle_load_area(area_input, state):
         "lat": lat, "lon": lon, "nodes": nodes, "edges": edges,
         "selected": [start_key], "selected_edges": [], "view": None,
     }
+    state = _augment_real_links(state, start_key)
     return _map_html(state), _summary_markdown(state), state
 
 
@@ -126,6 +179,11 @@ def handle_bridge_message(payload_str, state):
     key = payload.get("key")
     if not key:
         return _map_html(state), _summary_markdown(state), state, ""
+
+    # Always refresh this node's real links before validating the click --
+    # see _augment_real_links for why nodes/edges from the initial bulk
+    # fetch alone aren't reliable enough to gate frontier expansion on.
+    state = _augment_real_links(state, key)
 
     # Graph selection, fixed start: a click only ever adds a node/edge that's
     # a REAL edge (Street View's own pano.links, sourced in candidates.py) to
