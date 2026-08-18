@@ -21,7 +21,7 @@ v1: single date, single segment. See run_pathfind_reconstruction.
 """
 import os
 
-from services.geo import haversine_m
+from services.geo import haversine_m, order_points_by_chain
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
@@ -101,9 +101,16 @@ def reconstruct_pathfind(waypoints, output_dir,
     """Auto-path a street along the user's clicked chain. waypoints: ordered
     [(lat, lon), ...] -- the full chain traces the route shape (see
     fetch_corridor_nodes); only the first/last are used as the search's
-    start/end goal. Returns [(label, ply_path), ...]."""
+    start/end goal. Returns [(label, ply_path), ...].
+
+    Reordered by real spatial adjacency before use, not trusted in click
+    order -- so clicking the chain out of order still traces the route
+    correctly and picks the real start/end (see order_points_by_chain).
+    This only affects which nodes get gathered and what counts as
+    start/end; graph building and the search itself are unchanged."""
     if len(waypoints) < 2:
         raise ValueError("Need at least 2 selected nodes (start and end).")
+    waypoints = order_points_by_chain(waypoints)
     (start_lat, start_lon), (end_lat, end_lon) = waypoints[0], waypoints[-1]
 
     nodes, edges, points = build_corridor_graph(waypoints)
