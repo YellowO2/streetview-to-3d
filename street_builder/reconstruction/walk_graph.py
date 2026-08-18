@@ -221,8 +221,10 @@ def run_prepared_pathfind(prep: dict, output_dir,
     but this call happens first, so the GPU-scheduling request goes out as
     close as possible to whatever button click triggered it.
 
-    Returns [(label, ply_path), ...], one per segment (see
-    run_pathfind_reconstruction for what a "segment" is)."""
+    Returns [(label, ply_path), ...] -- one per segment (see
+    run_pathfind_reconstruction for what a "segment" is), plus one more
+    "joined" entry (see join_segments.join_segments) when there's more
+    than one segment to actually combine."""
     segments = run_prepared_pathfind_segments(prep, step_degrees=step_degrees)
 
     os.makedirs(output_dir, exist_ok=True)
@@ -232,6 +234,17 @@ def run_prepared_pathfind(prep: dict, output_dir,
         label = f"path (date {date}, {len(path_edges)} hops, {status})"
         ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_{i}.ply"))
         results.append((label, ply))
+
+    if len(segments) > 1:
+        try:
+            from street_builder.reconstruction.join_segments import join_segments
+            pts, cols = join_segments(segments, prep["node_entries"])
+            ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
+            results.append((f"path (joined, {len(segments)} segments)", ply))
+        except Exception as e:
+            print(f"join_segments failed: {e}")
+            results.append((f"path (joined) -- failed: {e}", None))
+
     return results
 
 
