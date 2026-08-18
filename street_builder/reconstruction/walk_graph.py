@@ -103,7 +103,14 @@ def _local_batch(nodes, edges, points, start_lat, start_lon, end_lat, end_lon):
     connects start-zone to goal-zone via its own same-date edges, and (b)
     ranks in the top-N by coverage span among the dates that pass (a).
     This is the whole download batch (single GPU call, see module docstring
-    for why there's no second-pass fallback)."""
+    for why there's no second-pass fallback).
+
+    Returns (keys, top_dates) -- keys as a list (not a set) specifically so
+    the caller can preserve top_dates' rank order downstream. A set's
+    iteration order depends on Python's per-process string hash seed, which
+    was silently discarding this ranking (and making the whole pathfind
+    result non-reproducible run to run) even though top_dates itself is a
+    real, deterministic ranking."""
     by_date = {}
     for n in nodes:
         by_date.setdefault(n["date"], []).append(n)
@@ -117,13 +124,20 @@ def _local_batch(nodes, edges, points, start_lat, start_lon, end_lat, end_lon):
     top_dates = _rank_dates(connectable, points, POINT_MAX_DIST_M, DATE_TOP_N)
     print(f"Top dates by coverage span: {top_dates}")
 
-    return {n["key"] for n in nodes if n["date"] in top_dates}
+    keys = [n["key"] for n in nodes if n["date"] in top_dates]
+    return keys, top_dates
 
 
 def _download_and_filter(keys, by_key, edges):
-    """Download this batch, return (node_entries, edges restricted to what downloaded)."""
+    """Download this batch, return (node_entries, edges restricted to what downloaded).
+    keys must be a list (or otherwise order-preserving) -- node_entries'
+    order is what determines the pathfind date-try order downstream."""
     entries = []
+    seen = set()
     for key in keys:
+        if key in seen:
+            continue
+        seen.add(key)
         n = by_key[key]
         path = _download(n)
         if path:
@@ -156,12 +170,13 @@ def reconstruct_pathfind(waypoints, output_dir,
         raise ValueError("Not enough connected candidates along this street.")
     by_key = {n["key"]: n for n in nodes}
 
-    batch_keys = _local_batch(nodes, edges, points, start_lat, start_lon, end_lat, end_lon)
+    batch_keys, top_dates = _local_batch(nodes, edges, points, start_lat, start_lon, end_lat, end_lon)
     print(f"Downloading {len(batch_keys)}/{len(nodes)} top-date candidates...")
     node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
 
     segments = run_pathfind_reconstruction_gpu(
-        node_entries, batch_edges, start_lat, start_lon, end_lat, end_lon, step_degrees=step_degrees,
+        node_entries, batch_edges, start_lat, start_lon, end_lat, end_lon,
+        step_degrees=step_degrees, date_order=top_dates,
     )
 
     if not segments:
