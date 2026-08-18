@@ -83,7 +83,7 @@ var EDGE_COLOR = {json.dumps(_EDGE_COLOR)};
 
 var m = L.map('map').setView([{view_lat},{view_lon}], {view_zoom});
 L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
-    {{maxZoom:19,attribution:'© OpenStreetMap'}}).addTo(m);
+    {{maxZoom:22,maxNativeZoom:19,attribution:'© OpenStreetMap'}}).addTo(m);
 
 if (NODES.length === 0) {{
   var empty = document.createElement('div');

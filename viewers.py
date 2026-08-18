@@ -47,7 +47,7 @@ def build_map(lat: float, lon: float) -> str:
 <script>
 var m = L.map('map').setView([{lat},{lon}], 18);
 L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
-    {{maxZoom:19,attribution:'© OpenStreetMap'}}).addTo(m);
+    {{maxZoom:22,maxNativeZoom:19,attribution:'© OpenStreetMap'}}).addTo(m);
 L.circleMarker([{lat},{lon}],{{radius:9,color:'crimson',fillColor:'crimson',fillOpacity:0.9,weight:2}}).addTo(m);
 </script></body></html>"""
     return iframe(doc)
