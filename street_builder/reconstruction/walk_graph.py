@@ -223,20 +223,28 @@ def run_prepared_pathfind(prep: dict, output_dir,
 
     Returns [(label, ply_path), ...], one per segment (see
     run_pathfind_reconstruction for what a "segment" is)."""
-    start_lat, start_lon = prep["start"]
-    segments = run_pathfind_reconstruction_gpu(
-        prep["node_entries"], prep["batch_edges"], start_lat, start_lon, prep["goals"],
-        step_degrees=step_degrees, date_order=prep["top_dates"],
-    )
-
-    if not segments:
-        raise RuntimeError("No connected path found from start toward any goal.")
+    segments = run_prepared_pathfind_segments(prep, step_degrees=step_degrees)
 
     os.makedirs(output_dir, exist_ok=True)
     results = []
-    for i, (pts, cols, path_edges, date, reached) in enumerate(segments):
+    for i, (pts, cols, path_edges, date, reached, node_positions) in enumerate(segments):
         status = "reached all goals" if reached else "partial"
         label = f"path (date {date}, {len(path_edges)} hops, {status})"
         ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_{i}.ply"))
         results.append((label, ply))
     return results
+
+
+def run_prepared_pathfind_segments(prep: dict, step_degrees: int = BEST4_STEP_DEGREES):
+    """Same GPU call as run_prepared_pathfind, but returns the raw segment
+    list (pts, cols, path_edges, date, reached, node_positions per segment)
+    instead of saved .ply paths -- what join_segments.py needs to fit and
+    merge segments, rather than just preview them individually."""
+    start_lat, start_lon = prep["start"]
+    segments = run_pathfind_reconstruction_gpu(
+        prep["node_entries"], prep["batch_edges"], start_lat, start_lon, prep["goals"],
+        step_degrees=step_degrees, date_order=prep["top_dates"],
+    )
+    if not segments:
+        raise RuntimeError("No connected path found from start toward any goal.")
+    return segments

@@ -12,6 +12,18 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def latlon_to_local_m(lat, lon, origin_lat, origin_lon):
+    """(lat, lon) -> local ENU meters (east, north) relative to an origin --
+    flat-earth approximation, fine over the scale of one reconstruction
+    (hundreds of meters, not kilometers). Used to fit a segment's DA3-frame
+    node positions against their real-world positions."""
+    m_per_lat = 111320.0
+    m_per_lon = 111320.0 * math.cos(math.radians(origin_lat))
+    east = (lon - origin_lon) * m_per_lon
+    north = (lat - origin_lat) * m_per_lat
+    return east, north
+
+
 def extract_lat_lon(raw: str):
     """Parse a Google Maps URL (.../@lat,lon,...) or a plain "lat,lon" string."""
     raw = raw.strip()
