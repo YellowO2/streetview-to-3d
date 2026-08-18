@@ -1,10 +1,11 @@
 """Turn fetch_nodes' candidate list into a graph (no GPU, no validation)."""
 from services.geo import haversine_m
-from street_builder.map_selection.candidates import APPLE_CANDIDATE_MAX_DIST_M
 from street_builder.build_graph.fetch_nodes import fetch_corridor_nodes
 
 # Max distance between two same-date candidates to count as a valid hop.
-EDGE_MAX_DIST_M = APPLE_CANDIDATE_MAX_DIST_M
+# Independent of APPLE_CANDIDATE_MAX_DIST_M (a different concept -- matching
+# an Apple candidate to a Google node's position, not a graph edge cap).
+EDGE_MAX_DIST_M = 18.0
 
 # Cap per node -- Apple can be ~1.2m between frames, so one node can have
 # 100+ same-date neighbors within EDGE_MAX_DIST_M. Keeps every node's own
