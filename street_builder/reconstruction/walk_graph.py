@@ -168,15 +168,18 @@ def _download_and_filter(keys, by_key, edges):
     return entries, filtered
 
 
-def reconstruct_pathfind(start, goals, corridor_edges, output_dir,
-                         step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str]]:
-    """Auto-path a street graph from start to every point in goals.
+def prepare_pathfind(start, goals, corridor_edges) -> dict:
+    """CPU/network only, no GPU -- gathers candidates along the corridor and
+    downloads the top-date batch. Split out from the GPU step specifically
+    so the GPU-triggering click (run_prepared_pathfind) can happen as its
+    own fresh, minimal-latency user interaction right before the
+    @spaces.GPU call, instead of that call being buried at the end of a
+    long download inside one combined request -- the ZeroGPU proxy token's
+    validity is wall-clock, and a long blocking step ahead of it is exactly
+    what can let it go stale before schedule() is ever reached.
 
     start: (lat, lon) -- the fixed start node's real position.
-    goals: [(lat, lon), ...] -- every other selected node; the search
-    doesn't stop at the first one reached, it keeps going until all are
-    covered or it genuinely can't progress further (see
-    run_pathfind_reconstruction).
+    goals: [(lat, lon), ...] -- every other selected node.
     corridor_edges: [((lat1, lon1), (lat2, lon2)), ...] -- the REAL,
     already-confirmed edges of the clicked selection graph (from Street
     View's own pano.links, see map_selection/candidates.py and
@@ -185,8 +188,7 @@ def reconstruct_pathfind(start, goals, corridor_edges, output_dir,
     shape *where* to sample candidate panos (fetch_corridor_nodes); the
     search is still free to use different nodes than exactly these.
 
-    Returns [(label, ply_path), ...], one per segment (see
-    run_pathfind_reconstruction for what a "segment" is)."""
+    Returns a dict to pass straight to run_prepared_pathfind."""
     if not goals:
         raise ValueError("Need at least one goal (a second selected node).")
     if not corridor_edges:
@@ -203,9 +205,28 @@ def reconstruct_pathfind(start, goals, corridor_edges, output_dir,
     print(f"Downloading {len(batch_keys)}/{len(nodes)} top-date candidates...")
     node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
 
+    return {
+        "node_entries": node_entries,
+        "batch_edges": batch_edges,
+        "start": start,
+        "goals": goals,
+        "top_dates": top_dates,
+    }
+
+
+def run_prepared_pathfind(prep: dict, output_dir,
+                          step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str]]:
+    """GPU step: takes prepare_pathfind's output and runs the real
+    multi-goal best-first search (see run_pathfind_reconstruction). Nothing
+    but this call happens first, so the GPU-scheduling request goes out as
+    close as possible to whatever button click triggered it.
+
+    Returns [(label, ply_path), ...], one per segment (see
+    run_pathfind_reconstruction for what a "segment" is)."""
+    start_lat, start_lon = prep["start"]
     segments = run_pathfind_reconstruction_gpu(
-        node_entries, batch_edges, start_lat, start_lon, goals,
-        step_degrees=step_degrees, date_order=top_dates,
+        prep["node_entries"], prep["batch_edges"], start_lat, start_lon, prep["goals"],
+        step_degrees=step_degrees, date_order=prep["top_dates"],
     )
 
     if not segments:

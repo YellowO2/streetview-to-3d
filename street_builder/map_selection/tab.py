@@ -297,25 +297,19 @@ def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.filter_sweep_links(results)
 
 
-def handle_pathfind(state, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button: auto-path along the clicked graph's real shape --
-    branches and loops included, since the selection graph (state["selected"]
-    + state["selected_edges"]) is only ever built from real Street View
-    edges (see handle_bridge_message), not guessed from click order. The
-    fixed start node stays the search's start; every other selected node is
-    a goal -- the search doesn't stop at the first one reached, it keeps
-    growing toward whatever's still outstanding. walk_graph gathers every
-    Google + Apple pano near the traced route, builds a same-date candidate
-    graph, and best-first searches with real DA3 tests. Still free to use
-    more, fewer, or different stops than you clicked -- the selection shapes
-    *where* to look, not which exact photos to use. See
-    walk_graph.reconstruct_pathfind."""
+def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
+    """Experimental button, step 1 of 2: gathers every Google + Apple pano
+    near the clicked graph's real shape -- branches and loops included,
+    since the selection graph (state["selected"] + state["selected_edges"])
+    is only ever built from real Street View edges (see
+    handle_bridge_message), not guessed from click order -- and downloads
+    the top-date candidate batch. No GPU here; see handle_pathfind_run for
+    why this is its own separate step instead of one combined button.
+    See walk_graph.prepare_pathfind."""
     selected = state.get("selected", [])
     selected_edges = state.get("selected_edges", [])
     if len(selected) < 2 or not selected_edges:
         raise gr.Error("Select at least 2 connected nodes tracing the route (start to a goal).")
-
-    yield viewers.SPLAT_PLACEHOLDER
 
     by_key = _nodes_by_key(state)
     start_node = by_key.get(selected[0])
@@ -328,14 +322,41 @@ def handle_pathfind(state, progress=gr.Progress(track_tqdm=True)):
         for a, b in selected_edges if a in by_key and b in by_key
     ]
 
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc="Gathering + auto-pathing the street graph...")
+    progress(0, desc="Gathering + downloading candidates...")
     try:
-        results = walk_graph.reconstruct_pathfind(start, goals, corridor_edges, output_dir)
+        prep = walk_graph.prepare_pathfind(start, goals, corridor_edges)
+    except Exception as e:
+        raise gr.Error(f"Prepare failed: {e}")
+
+    progress(1.0, desc="Done!")
+    n = len(prep["node_entries"])
+    return prep, f"<p>Prepared {n} candidate(s) across {len(prep['top_dates'])} date(s). Ready — press \"Run Auto-path\".</p>"
+
+
+def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
+    """Experimental button, step 2 of 2: runs the real multi-goal best-first
+    search over whatever handle_pathfind_prepare already downloaded -- the
+    fixed start node stays the search's start; every other selected node is
+    a goal, and the search doesn't stop at the first one reached, it keeps
+    growing toward whatever's still outstanding.
+
+    Split from the prepare step specifically so this GPU-triggering click
+    is its own fresh, minimal-latency interaction -- the ZeroGPU proxy
+    token's validity is wall-clock, and a long download sitting ahead of
+    the @spaces.GPU call (as one combined button used to do) is exactly
+    what can let it go stale before the schedule request is ever sent.
+    See walk_graph.run_prepared_pathfind."""
+    if not prep:
+        raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
+
+    yield viewers.SPLAT_PLACEHOLDER
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    try:
+        results = walk_graph.run_prepared_pathfind(prep, output_dir)
     except Exception as e:
         raise gr.Error(f"Auto-path failed: {e}")
 
-    progress(1.0, desc="Done!")
     yield viewers.filter_sweep_links(results)
 
 
@@ -376,11 +397,18 @@ def build_tab():
             # multiple disconnected segments. Not part of the normal
             # Generate flow.
             greedy_btn = gr.Button("Reconstruct (greedy same-pass, experimental)")
-            # Experimental: auto-path start -> end. Gathers every pano along
-            # the street, builds a same-date graph, best-first searches it
-            # with real DA3 tests -- picks its own nodes, not the clicked
-            # ones. Not part of the normal Generate flow.
-            pathfind_btn = gr.Button("Auto-path (start → end, experimental)")
+            # Experimental: auto-path across the whole clicked graph
+            # (branches/loops included). Split into two steps -- prepare
+            # (gather + download, no GPU) then run (the actual GPU search)
+            # -- so the GPU-triggering click is its own fresh interaction
+            # instead of following a long download inside one combined
+            # request; see handle_pathfind_run's docstring for why. Not
+            # part of the normal Generate flow.
+            pathfind_prepare_btn = gr.Button("1. Prepare auto-path (experimental)")
+            pathfind_run_btn = gr.Button("2. Run auto-path")
+
+    pathfind_status = gr.HTML()
+    pathfind_prep_state = gr.State(None)
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -444,9 +472,17 @@ def build_tab():
         show_progress_on=[reconstruct_view],
     )
 
-    pathfind_btn.click(
-        fn=handle_pathfind,
+    pathfind_prepare_btn.click(
+        fn=handle_pathfind_prepare,
         inputs=[state],
+        outputs=[pathfind_prep_state, pathfind_status],
+        show_progress="minimal",
+        show_progress_on=[pathfind_status],
+    )
+
+    pathfind_run_btn.click(
+        fn=handle_pathfind_run,
+        inputs=[pathfind_prep_state],
         outputs=[reconstruct_view],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
