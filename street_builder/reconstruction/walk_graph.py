@@ -264,6 +264,30 @@ def save_joined_pathfind(prep: dict, segments, output_dir) -> tuple[str, str]:
     return f"path (joined, {len(segments)} segments)", ply
 
 
+def save_segments_bundle(prep: dict, segments, output_dir) -> str:
+    """Serializes prep + segments (everything Join needs) to one file, so
+    Join can be re-run later -- a different session, or after tweaking
+    join_segments.py -- without re-running Prepare or the expensive GPU
+    search. Plain pickle: numpy arrays, tuples, dicts all round-trip
+    natively, and this file is only ever produced and consumed by this
+    same codebase, not a public interchange format."""
+    import pickle
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, "pathfind_segments.pkl")
+    with open(path, "wb") as f:
+        pickle.dump({"prep": prep, "segments": segments}, f)
+    return path
+
+
+def load_segments_bundle(path: str) -> tuple[dict, list]:
+    """Inverse of save_segments_bundle. Returns (prep, segments), ready to
+    feed straight into save_joined_pathfind (or save_pathfind_segments)."""
+    import pickle
+    with open(path, "rb") as f:
+        bundle = pickle.load(f)
+    return bundle["prep"], bundle["segments"]
+
+
 def run_prepared_pathfind_segments(prep: dict, step_degrees: int = BEST4_STEP_DEGREES):
     """Same GPU call as run_prepared_pathfind, but returns the raw segment
     list (pts, cols, path_edges, date, reached, node_positions per segment)

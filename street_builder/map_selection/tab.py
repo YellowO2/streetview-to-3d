@@ -354,17 +354,33 @@ def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
-    yield viewers.SPLAT_PLACEHOLDER, None
+    yield viewers.SPLAT_PLACEHOLDER, None, None
 
     try:
         segments = walk_graph.run_prepared_pathfind_segments(prep)
         output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
         results = walk_graph.save_pathfind_segments(segments, output_dir)
+        bundle_path = walk_graph.save_segments_bundle(prep, segments, output_dir)
     except Exception as e:
         raise gr.Error(f"Auto-path failed: {e}")
 
     note = "" if len(segments) > 1 else "<p>Single segment -- nothing to join.</p>"
-    yield viewers.filter_sweep_links(results) + note, segments
+    yield viewers.filter_sweep_links(results) + note, segments, bundle_path
+
+
+def handle_pathfind_load_segments(file_path):
+    """Loads a previously downloaded segments bundle (see the "Download
+    segments" file handle_pathfind_run produces), so Join can run
+    immediately without re-running Prepare or the expensive GPU search --
+    a different session, or after tweaking join_segments.py. See
+    walk_graph.load_segments_bundle."""
+    if not file_path:
+        raise gr.Error("Choose a segments file first.")
+    try:
+        prep, segments = walk_graph.load_segments_bundle(file_path)
+    except Exception as e:
+        raise gr.Error(f"Load failed: {e}")
+    return prep, segments, f"<p>Loaded {len(segments)} segment(s) from file. Ready — press \"Join segments\".</p>"
 
 
 def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
@@ -444,6 +460,16 @@ def build_tab():
     pathfind_prep_state = gr.State(None)
     pathfind_segments_state = gr.State(None)
 
+    with gr.Row(equal_height=True):
+        # Produced by Run -- everything Join needs (prep + segments),
+        # pickled to one file. Download it to skip Prepare/Run entirely
+        # next time (a later session, or after tweaking join_segments.py):
+        # just re-upload it below and press "Load segments".
+        pathfind_segments_file = gr.File(label="Segments file (from Run, for Join later)", interactive=False)
+        with gr.Column():
+            pathfind_segments_upload = gr.File(label="...or load a previously downloaded segments file", file_types=[".pkl"], type="filepath")
+            pathfind_load_btn = gr.Button("Load segments")
+
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
     reconstruct_view = gr.HTML(viewers.build_pointcloud_viewer())
@@ -517,9 +543,17 @@ def build_tab():
     pathfind_run_btn.click(
         fn=handle_pathfind_run,
         inputs=[pathfind_prep_state],
-        outputs=[reconstruct_view, pathfind_segments_state],
+        outputs=[reconstruct_view, pathfind_segments_state, pathfind_segments_file],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
+    )
+
+    pathfind_load_btn.click(
+        fn=handle_pathfind_load_segments,
+        inputs=[pathfind_segments_upload],
+        outputs=[pathfind_prep_state, pathfind_segments_state, pathfind_status],
+        show_progress="minimal",
+        show_progress_on=[pathfind_status],
     )
 
     pathfind_join_btn.click(
