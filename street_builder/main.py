@@ -261,10 +261,10 @@ DEBUG_NODE_IDS = [
     "A-qJINmQuveuZjkfGWt22A", "cSZ1RgE0puHs8fldOqvUjA", "aUG1My3j2n0sZl9S_cOwTg", "XeZFUZK6aeLyoMOG7Z1bSA",
 ]
 DEBUG_DATE = "2026-06-16"
-# Trimmed from all 6 available adjacent multi-candidate pairs down to 2 --
-# still two separate locations with real score spread (4x3 and 3x3), at
-# less than half the GPU cost (34 calls vs 72): 13 solo-score + 21 pairwise.
-DEBUG_ADJACENT_PAIRS = [(0, 1), (5, 6)]
+# Trimmed from all 6 available adjacent multi-candidate pairs down to 3 --
+# three separate locations with real score spread (4x3, 3x3, 2x3), well
+# under the full GPU cost (42 calls vs 72): 15 solo-score + 27 pairwise.
+DEBUG_ADJACENT_PAIRS = [(0, 1), (5, 6), (2, 5)]
 
 
 def run_debug_solo_score_experiment() -> str:

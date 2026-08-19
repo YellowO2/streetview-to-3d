@@ -176,6 +176,9 @@ def debug_solo_score_experiment(dot_pairs, step_degrees=20):
             for cands_a, cands_b in dot_pairs:
                 for key, path in cands_a + cands_b:
                     all_candidates[key] = path
+            n_solo = len(all_candidates)
+            n_pairwise = sum(len(a) * len(b) for a, b in dot_pairs)
+            print(f"[debug] plan: {n_solo} solo-score call(s), {n_pairwise} pairwise call(s), {n_solo + n_pairwise} total")
 
             for i, (key, path) in enumerate(all_candidates.items()):
                 t0 = time.monotonic()
@@ -185,7 +188,7 @@ def debug_solo_score_experiment(dot_pairs, step_degrees=20):
                 filtered_views, _ = da3.process_views(views, dist_thresh=0.2, angle_thresh=1)
                 elapsed = time.monotonic() - t0
                 scores[key] = (len(filtered_views), elapsed)
-                print(f"[debug] solo-score {key}: {len(filtered_views)}/{len(views)} kept, {elapsed:.2f}s")
+                print(f"[debug] solo-score {i + 1}/{n_solo}: {key}: {len(filtered_views)}/{len(views)} kept, {elapsed:.2f}s")
 
             test_id = 0
             for cands_a, cands_b in dot_pairs:
@@ -199,7 +202,7 @@ def debug_solo_score_experiment(dot_pairs, step_degrees=20):
                         ok = result is not None
                         score_a, _ = scores[key_a]
                         score_b, _ = scores[key_b]
-                        print(f"[debug] pairwise {key_a}(score={score_a}) x {key_b}(score={score_b}): "
+                        print(f"[debug] pairwise {test_id}/{n_pairwise}: {key_a}(score={score_a}) x {key_b}(score={score_b}): "
                               f"{'OK' if ok else 'FAIL'}, {elapsed:.2f}s")
                         results.append((key_a, key_b, score_a, score_b, ok, elapsed))
     finally:
