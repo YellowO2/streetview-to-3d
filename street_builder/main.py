@@ -305,14 +305,57 @@ def run_debug_solo_score_experiment() -> str:
         raise ValueError("Nothing downloaded successfully -- can't run experiment")
 
     result = debug_solo_score_experiment(dot_pairs, step_degrees=DEFAULT_STEP_DEGREES)
+    return _format_debug_solo_score_results(result)
 
-    lines = [
-        f"**DA3 model load: {result['load_time_s']:.2f}s**", "",
-        "**Solo scores:**", "", "| pano | kept views | time (s) |", "|---|---|---|",
+
+def _format_debug_solo_score_results(result: dict) -> str:
+    """TEMPORARY -- see module comment above. Rolls up result["scores"]/
+    result["results"] into a summary (timing aggregates + a direct
+    successes-vs-failures score comparison) so the hypothesis doesn't
+    have to be eyeballed out of a 50+ row table by hand."""
+    scores = result["scores"]
+    results = result["results"]
+    solo_times = [t for _, t in scores.values()]
+    pairwise_times = [r[5] for r in results]
+    successes = [r for r in results if r[4]]
+    failures = [r for r in results if not r[4]]
+
+    def _avg(xs):
+        return sum(xs) / len(xs) if xs else float("nan")
+
+    def _min_score(r):
+        return min(r[2], r[3])
+
+    def _sum_score(r):
+        return r[2] + r[3]
+
+    summary = [
+        "## Summary", "",
+        f"- DA3 model load: {result['load_time_s']:.2f}s",
     ]
-    for key, (kept, elapsed) in result["scores"].items():
+    if solo_times:
+        summary.append(f"- Solo-score calls: {len(solo_times)}, avg {_avg(solo_times):.2f}s "
+                        f"(min {min(solo_times):.2f}s, max {max(solo_times):.2f}s)")
+    if pairwise_times:
+        summary.append(f"- Pairwise calls: {len(pairwise_times)}, avg {_avg(pairwise_times):.2f}s "
+                        f"(min {min(pairwise_times):.2f}s, max {max(pairwise_times):.2f}s)")
+    summary.append(f"- Total experiment time: {result['load_time_s'] + sum(solo_times) + sum(pairwise_times):.2f}s")
+    summary.append("")
+    if results:
+        summary.append(f"- Pairwise success rate: {len(successes)}/{len(results)} "
+                        f"({100 * len(successes) / len(results):.0f}%)")
+    if successes and failures:
+        summary.append(f"- Avg weaker-side score (min of the pair) -- successes: {_avg([_min_score(r) for r in successes]):.1f}, "
+                        f"failures: {_avg([_min_score(r) for r in failures]):.1f}")
+        summary.append(f"- Avg combined score (sum of the pair) -- successes: {_avg([_sum_score(r) for r in successes]):.1f}, "
+                        f"failures: {_avg([_sum_score(r) for r in failures]):.1f}")
+    elif results:
+        summary.append("- (every pair had the same outcome -- can't compare successes vs failures)")
+
+    lines = summary + ["", "**Solo scores:**", "", "| pano | kept views | time (s) |", "|---|---|---|"]
+    for key, (kept, elapsed) in scores.items():
         lines.append(f"| {key} | {kept} | {elapsed:.2f} |")
     lines += ["", "**Pairwise results:**", "", "| pano A | score A | pano B | score B | result | time (s) |", "|---|---|---|---|---|---|"]
-    for key_a, key_b, score_a, score_b, ok, elapsed in result["results"]:
+    for key_a, key_b, score_a, score_b, ok, elapsed in results:
         lines.append(f"| {key_a} | {score_a} | {key_b} | {score_b} | {'OK' if ok else 'FAIL'} | {elapsed:.2f} |")
     return "\n".join(lines)
