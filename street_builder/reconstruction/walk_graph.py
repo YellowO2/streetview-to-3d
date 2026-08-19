@@ -208,6 +208,7 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
     return {
         "node_entries": node_entries,
         "batch_edges": batch_edges,
+        "points": points,
         "start": start,
         "goals": goals,
         "top_dates": top_dates,
@@ -245,7 +246,7 @@ def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:
     os.makedirs(output_dir, exist_ok=True)
     results = []
     for i, (pts, cols, path_edges, date, reached, node_positions) in enumerate(segments):
-        status = "reached all goals" if reached else "partial"
+        status = "full corridor covered" if reached else "partial"
         label = f"path (date {date}, {len(path_edges)} hops, {status})"
         ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_{i}.ply"))
         results.append((label, ply))
@@ -295,7 +296,7 @@ def run_prepared_pathfind_segments(prep: dict, step_degrees: int = BEST4_STEP_DE
     merge segments, rather than just preview them individually."""
     start_lat, start_lon = prep["start"]
     segments = run_pathfind_reconstruction_gpu(
-        prep["node_entries"], prep["batch_edges"], start_lat, start_lon, prep["goals"],
+        prep["node_entries"], prep["batch_edges"], prep["points"], start_lat, start_lon,
         step_degrees=step_degrees, date_order=prep["top_dates"],
     )
     if not segments:
