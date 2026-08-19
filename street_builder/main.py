@@ -28,7 +28,12 @@ from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_point
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
 from street_builder.build_graph.build_graph import build_corridor_graph
 from street_builder.build_graph.date_ranking import DATE_TOP_N, local_batch
-from street_builder.reconstruction.common import DEFAULT_STEP_DEGREES
+
+# Yaw step for DA3's view slicing. 30 (12 slices) is the tested middle
+# ground between DA3's own default 20 (18 slices) and the too-coarse 45
+# (8 slices, caused 2/4 winners to go from partial acceptance to fully
+# rejected in an earlier scoring experiment).
+DEFAULT_STEP_DEGREES = 30
 
 # How many panos download at once. Downloads used to run one at a time
 # (each its own fresh event loop) -- for a large batch (100+ candidates on
