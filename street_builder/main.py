@@ -304,7 +304,7 @@ def run_debug_solo_score_experiment() -> str:
     if not dot_pairs:
         raise ValueError("Nothing downloaded successfully -- can't run experiment")
 
-    result = debug_solo_score_experiment(dot_pairs)
+    result = debug_solo_score_experiment(dot_pairs, step_degrees=DEFAULT_STEP_DEGREES)
 
     lines = [
         f"**DA3 model load: {result['load_time_s']:.2f}s**", "",
