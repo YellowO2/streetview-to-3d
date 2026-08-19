@@ -20,6 +20,7 @@ need for a fallback call.
 """
 import asyncio
 import os
+import time
 
 from services.geo import haversine_m
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
@@ -189,6 +190,7 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
     search is still free to use different nodes than exactly these.
 
     Returns a dict to pass straight to run_prepared_pathfind."""
+    t0 = time.monotonic()
     if not goals:
         raise ValueError("Need at least one goal (a second selected node).")
     if not corridor_edges:
@@ -205,6 +207,7 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
     print(f"Downloading {len(batch_keys)}/{len(nodes)} top-date candidates...")
     node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
 
+    print(f"prepare_pathfind: done in {time.monotonic() - t0:.1f}s")
     return {
         "node_entries": node_entries,
         "batch_edges": batch_edges,
@@ -229,6 +232,7 @@ def run_prepared_pathfind(prep: dict, output_dir,
     run_pathfind_reconstruction for what a "segment" is), plus one more
     "joined" entry (see join_segments.join_segments) when there's more
     than one segment to actually combine."""
+    t0 = time.monotonic()
     segments = run_prepared_pathfind_segments(prep, step_degrees=step_degrees)
     results = save_pathfind_segments(segments, output_dir)
     if len(segments) > 1:
@@ -237,6 +241,7 @@ def run_prepared_pathfind(prep: dict, output_dir,
         except Exception as e:
             print(f"join_segments failed: {e}")
             results.append((f"path (joined) -- failed: {e}", None))
+    print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
     return results
 
 
@@ -259,9 +264,11 @@ def save_joined_pathfind(prep: dict, segments, output_dir) -> tuple[str, str]:
     algebra, safe to call repeatedly against the same already-computed
     segments while tuning the join step."""
     from street_builder.reconstruction.join_segments import join_segments
+    t0 = time.monotonic()
     os.makedirs(output_dir, exist_ok=True)
     pts, cols = join_segments(segments, prep["node_entries"])
     ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
+    print(f"save_joined_pathfind: done in {time.monotonic() - t0:.1f}s")
     return f"path (joined, {len(segments)} segments)", ply
 
 
@@ -294,11 +301,13 @@ def run_prepared_pathfind_segments(prep: dict, step_degrees: int = BEST4_STEP_DE
     list (pts, cols, path_edges, date, reached, node_positions per segment)
     instead of saved .ply paths -- what join_segments.py needs to fit and
     merge segments, rather than just preview them individually."""
+    t0 = time.monotonic()
     start_lat, start_lon = prep["start"]
     segments = run_pathfind_reconstruction_gpu(
         prep["node_entries"], prep["batch_edges"], prep["points"], start_lat, start_lon,
         step_degrees=step_degrees, date_order=prep["top_dates"],
     )
+    print(f"run_prepared_pathfind_segments: done in {time.monotonic() - t0:.1f}s")
     if not segments:
         raise RuntimeError("No connected path found from start toward any goal.")
     return segments
