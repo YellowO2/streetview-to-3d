@@ -138,10 +138,10 @@ def run_greedy_pass_reconstruction_gpu(
 
 
 @GPU_WINDOWED
-def run_pathfind_reconstruction_gpu(nodes, edges, points, start_lat, start_lon, step_degrees=20, date_order=None):
+def run_pathfind_reconstruction_gpu(nodes, edges, points, start_lat, start_lon, step_degrees=20, date_order=None, top_n_dates=5):
     pipeline = get_pipeline()
     return pipeline.run_pathfind_reconstruction(
-        nodes, edges, points, start_lat, start_lon, step_degrees=step_degrees, date_order=date_order
+        nodes, edges, points, start_lat, start_lon, step_degrees=step_degrees, date_order=date_order, top_n_dates=top_n_dates
     )
 
 

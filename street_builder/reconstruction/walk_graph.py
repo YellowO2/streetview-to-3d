@@ -1,4 +1,4 @@
-"""Search build_graph's candidate graph start -> goals, reconstruct the path.
+"""Given N date graphs, reconstruct a graph such that it is the most complete version while heaving the least segments
 
 Client half of the pathfinding flow:
 - build the candidate graph (build_graph, no GPU) from the real click-graph
@@ -30,10 +30,9 @@ from street_builder.build_graph.build_graph import build_corridor_graph
 from street_builder.build_graph.fetch_nodes import POINT_MAX_DIST_M
 from street_builder.reconstruction.best4 import BEST4_STEP_DEGREES
 
-# How many dates to keep, ranked by coverage span (does this date's
-# coverage reach from near-start to near-end at all) -- a date confined to
-# one stretch of the route can't connect it on its own.
-DATE_TOP_N = 8
+# Dates kept, ranked by coverage span. Single source of truth: also passed
+# as top_n_dates to the GPU call, so download count == dates actually used.
+DATE_TOP_N = 5
 
 # Mirrors run_pathfind_reconstruction's own start_zone_m/goal_tolerance_m
 # defaults -- used here only to pre-check whether a date's own same-date
@@ -305,7 +304,7 @@ def run_prepared_pathfind_segments(prep: dict, step_degrees: int = BEST4_STEP_DE
     start_lat, start_lon = prep["start"]
     segments = run_pathfind_reconstruction_gpu(
         prep["node_entries"], prep["batch_edges"], prep["points"], start_lat, start_lon,
-        step_degrees=step_degrees, date_order=prep["top_dates"],
+        step_degrees=step_degrees, date_order=prep["top_dates"], top_n_dates=DATE_TOP_N,
     )
     print(f"run_prepared_pathfind_segments: done in {time.monotonic() - t0:.1f}s")
     if not segments:
