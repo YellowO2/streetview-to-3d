@@ -1,4 +1,4 @@
-"""Given N date graphs, reconstruct a graph such that it is the most complete version while heaving the least segments
+"""Given N date graphs that build_graph builds, reconstruct a graph/street such that it is the most complete version while having the least segments
 
 Client half of the pathfinding flow:
 - build the candidate graph (build_graph, no GPU) from the real click-graph
@@ -107,15 +107,28 @@ def _date_connects(date_nodes, edges, start_lat, start_lon, goals):
     return False
 
 
+def _date_recency_key(date_str):
+    """date_str is format_date's output: "YYYY-MM" or "YYYY-MM-DD", zero-
+    padded so plain string comparison already sorts chronologically.
+    "unknown date" (format_date's fallback for a missing capture date)
+    isn't comparable to those -- sorts as oldest/worst rather than
+    crashing or landing in the middle by accident."""
+    return "" if date_str == "unknown date" else date_str
+
+
 def _rank_dates(by_date, points, max_dist_m, top_n):
     """Dates ranked by span (earliest to latest covered point -- does
-    coverage reach start to end) then total coverage count as tiebreaker."""
+    coverage reach start to end), then total coverage count, then recency
+    (newer wins) as the final tiebreaker -- without it, ties fall back to
+    insertion order, which happens to always favor Google over Apple since
+    fetch_corridor_nodes fetches Google first for every corridor point,
+    regardless of which source's coverage is actually better."""
     scored = []
     for date, candidates in by_date.items():
         covered = _covered_indices(candidates, points, max_dist_m)
         span = (max(covered) - min(covered)) if covered else 0
         scored.append((date, span, len(covered)))
-    scored.sort(key=lambda t: (t[1], t[2]), reverse=True)
+    scored.sort(key=lambda t: (t[1], t[2], _date_recency_key(t[0])), reverse=True)
     return [date for date, _, _ in scored[:top_n]]
 
 
