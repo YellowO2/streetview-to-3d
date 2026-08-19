@@ -87,9 +87,3 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
                 edges.add(tuple(sorted((key, other_key))))
 
     return nodes, sorted(edges)
-
-
-# Max distance a candidate can be from a node and still count as "at" it.
-# ~2.5x the measured ~10m real node spacing. Shared by
-# street_builder/build_graph/ and street_builder/reconstruction/.
-APPLE_CANDIDATE_MAX_DIST_M = 25.0

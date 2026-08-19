@@ -3,7 +3,7 @@ cloud generation, and the Flux image editor. Also owns the ZeroGPU/@spaces.GPU
 decorator setup, since that setup exists purely to wrap these calls.
 
 get_pipeline() is the single Pipeline singleton for this whole app -- both
-app.py's Gradio handlers and street_builder/reconstruct.py call through
+app.py's Gradio handlers and street_builder's own handlers call through
 here, rather than each loading a separate copy of the DA3/SHARP models.
 """
 import os
@@ -17,11 +17,11 @@ try:
     if ON_SPACES:
         GPU = spaces.GPU(duration=108)
         GPU_EDIT = spaces.GPU(duration=72)
-        # Longer budget for run_windowed_reconstruction_gpu: it does an
-        # entire multi-window chunk+connect job (scoring + reconstruction for
-        # every window) inside one GPU call, specifically to avoid the
-        # 'Expired ZeroGPU proxy token' failure hit when that was split into
-        # several small per-window calls instead.
+        # Longer budget for run_pathfind_reconstruction_gpu: it does the
+        # entire multi-date pathfind search (map_date/search_from/set_cover,
+        # potentially dozens of DA3 tests) inside one GPU call, specifically
+        # to avoid the 'Expired ZeroGPU proxy token' failure hit when that
+        # was split into several smaller calls instead.
         GPU_WINDOWED = spaces.GPU(duration=280)
     else:
         GPU = lambda fn: fn
@@ -89,20 +89,6 @@ def run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None, step_d
 
     ply = os.path.join(output_dir, "da3_pointcloud.ply")
     return ply if os.path.exists(ply) else None
-
-
-@GPU_WINDOWED
-def run_greedy_pass_reconstruction_gpu(
-    node_candidates, try_order, keep_rate_threshold=0.5, max_attempts_per_position=3, step_degrees=20
-):
-    pipeline = get_pipeline()
-    return pipeline.run_greedy_pass_reconstruction(
-        node_candidates,
-        try_order,
-        keep_rate_threshold=keep_rate_threshold,
-        max_attempts_per_position=max_attempts_per_position,
-        step_degrees=step_degrees,
-    )
 
 
 @GPU_WINDOWED

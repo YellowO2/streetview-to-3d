@@ -26,7 +26,7 @@ from services.geo import extract_lat_lon
 from services.streetview_fetch import fetch_pano_by_id, run_async
 from street_builder.map_selection import candidates as candidates_mod
 from street_builder.map_selection import map_ui
-from street_builder.reconstruction import generate, greedy
+from street_builder.reconstruction import generate
 from street_builder import main as street_main
 
 BRIDGE_ELEM_ID = "street_builder_bridge"
@@ -257,33 +257,6 @@ def handle_generate_chain(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
 
 
-def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button: greedy same-capture-pass sliding-window
-    reconstruction -- see greedy.reconstruct_chain_greedy. Grades every
-    2-node window with a real pairwise DA3 call (not solo score), preferring
-    whichever capture pass (Apple build_id / Google historical date) has the
-    best coverage, and can return multiple disconnected segments instead of
-    one merged cloud if no single pass covers the whole selection. Separate
-    from every other button -- doesn't touch or replace any of them."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Walking {len(ordered_nodes)} nodes by capture pass...")
-    try:
-        results = greedy.reconstruct_chain_greedy(ordered_nodes, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Greedy reconstruction failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.labeled_download_links(results)
-
-
 def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
     """Experimental button, step 1 of 3: gathers every Google + Apple pano
     near the clicked graph's real shape -- branches and loops included,
@@ -414,11 +387,6 @@ def build_tab():
         with gr.Column(scale=0, min_width=140):
             clear_btn = gr.Button("Clear selection")
             generate_btn = gr.Button("Generate", variant="primary")
-            # Experimental: greedy same-capture-pass sliding window, graded
-            # by real pairwise DA3 calls instead of solo score. Can return
-            # multiple disconnected segments. Not part of the normal
-            # Generate flow.
-            greedy_btn = gr.Button("Reconstruct (greedy same-pass, experimental)")
             # Experimental: auto-path across the whole clicked graph
             # (branches/loops included). Split into three steps -- prepare
             # (gather + download, no GPU), run (the actual GPU search), join
@@ -471,14 +439,6 @@ def build_tab():
 
     generate_btn.click(
         fn=handle_generate_chain,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    greedy_btn.click(
-        fn=handle_greedy,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",

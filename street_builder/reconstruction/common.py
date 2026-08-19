@@ -1,6 +1,5 @@
 """Shared helpers used by multiple reconstruction strategies."""
 import asyncio
-from collections import namedtuple
 
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, apple_candidates, download_lookaround
 from services.streetview_fetch import DA3_ONLY_ZOOM, download_images_for_nodes
@@ -8,12 +7,9 @@ from services.streetview_fetch import DA3_ONLY_ZOOM, download_images_for_nodes
 # street_builder is DA3-only everywhere (no SHARP splat generation), so
 # every download here uses the low-res DA3 zoom, not the SHARP default.
 
-Candidate = namedtuple("Candidate", ["label", "path", "lat", "lon"])
-
 # Per node, how many nearest Apple Look Around panos to pull in as extra
-# support context or scoring candidates.
+# support context.
 APPLE_SUPPORT_PER_NODE = 1
-CANDIDATE_POOL_APPLE_PER_NODE = 4
 
 # Yaw step for DA3's view slicing, shared default across the client-driven
 # reconstruction flows. 30 (12 slices) is the tested middle ground between
