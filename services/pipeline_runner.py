@@ -139,10 +139,32 @@ def run_greedy_pass_reconstruction_gpu(
 
 @GPU_WINDOWED
 def run_pathfind_reconstruction_gpu(nodes, edges, points, start_lat, start_lon, step_degrees=20, date_order=None, top_n_dates=5):
+    """The one @spaces.GPU call for the whole pathfind flow (see
+    street_builder/main.py's module docstring for why it's one call, not
+    several). This function's only job is to own the loaded DA3Model for
+    the session and hand the actual algorithm
+    (street_builder/reconstruction/walk_graph.py) a way to test one edge
+    -- it knows nothing about corridors, dates, or coverage itself."""
+    import tempfile
+
+    import torch
+    from panoramic_to_3dgs import DA3Model, test_edge_da3
+    from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
+
     pipeline = get_pipeline()
-    return pipeline.run_pathfind_reconstruction(
-        nodes, edges, points, start_lat, start_lon, step_degrees=step_degrees, date_order=date_order, top_n_dates=top_n_dates
-    )
+    da3 = DA3Model(pipeline.config.da3_model)
+    try:
+        with tempfile.TemporaryDirectory() as views_base:
+            def test_edge(path_a, path_b, test_id):
+                return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+
+            return run_pathfind_reconstruction(
+                nodes, edges, points, start_lat, start_lon, test_edge,
+                date_order=date_order, top_n_dates=top_n_dates,
+            )
+    finally:
+        del da3
+        torch.cuda.empty_cache()
 
 
 def save_pointcloud(points, colors, path):

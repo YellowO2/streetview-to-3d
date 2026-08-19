@@ -23,7 +23,13 @@ def build_corridor_graph(corridor_edges):
     Returns (nodes, edges, points). edges: {key -> [(other_key, dist_m), ...]},
     sorted nearest-first. points: the interpolated spine (see fetch_corridor_nodes).
     """
-    nodes, points = fetch_corridor_nodes(corridor_edges)
+    buckets, points = fetch_corridor_nodes(corridor_edges)
+    # Edges span dot boundaries (same-date pairs up to EDGE_MAX_DIST_M
+    # apart, not just within one dot's own bucket), so flatten back into
+    # one pool here -- each dot's own separate bucket is what
+    # fetch_corridor_nodes hands out, this is just where it gets merged
+    # for the graph-building step specifically.
+    nodes = [n for bucket in buckets.values() for n in bucket]
 
     by_date = {}
     for n in nodes:

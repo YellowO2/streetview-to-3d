@@ -26,7 +26,8 @@ from services.geo import extract_lat_lon
 from services.streetview_fetch import fetch_pano_by_id, run_async
 from street_builder.map_selection import candidates as candidates_mod
 from street_builder.map_selection import map_ui
-from street_builder.reconstruction import best4, filter_sweep, generate, greedy, walk_graph, windowed
+from street_builder.reconstruction import best4, filter_sweep, generate, greedy, windowed
+from street_builder import main as street_main
 
 BRIDGE_ELEM_ID = "street_builder_bridge"
 
@@ -363,7 +364,7 @@ def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
     handle_bridge_message), not guessed from click order -- and downloads
     the top-date candidate batch. No GPU here; see handle_pathfind_run for
     why this is its own separate step instead of one combined button.
-    See walk_graph.prepare_pathfind."""
+    See street_main.prepare_pathfind."""
     selected = state.get("selected", [])
     selected_edges = state.get("selected_edges", [])
     if len(selected) < 2 or not selected_edges:
@@ -382,7 +383,7 @@ def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
 
     progress(0, desc="Gathering + downloading candidates...")
     try:
-        prep = walk_graph.prepare_pathfind(start, goals, corridor_edges)
+        prep = street_main.prepare_pathfind(start, goals, corridor_edges)
     except Exception as e:
         raise gr.Error(f"Prepare failed: {e}")
 
@@ -408,17 +409,17 @@ def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
     handle_pathfind_join) is a separate button on purpose: it needs no GPU
     at all, so keeping it out of this call means re-testing/tuning the join
     step doesn't require re-running the expensive DA3 search each time.
-    See walk_graph.run_prepared_pathfind_segments/save_pathfind_segments."""
+    See street_main.run_prepared_pathfind_segments/save_pathfind_segments."""
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
     yield viewers.SPLAT_PLACEHOLDER, None, None
 
     try:
-        segments = walk_graph.run_prepared_pathfind_segments(prep)
+        segments = street_main.run_prepared_pathfind_segments(prep)
         output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-        results = walk_graph.save_pathfind_segments(segments, output_dir)
-        bundle_path = walk_graph.save_segments_bundle(prep, segments, output_dir)
+        results = street_main.save_pathfind_segments(segments, output_dir)
+        bundle_path = street_main.save_segments_bundle(prep, segments, output_dir)
     except Exception as e:
         raise gr.Error(f"Auto-path failed: {e}")
 
@@ -431,11 +432,11 @@ def handle_pathfind_load_segments(file_path):
     segments" file handle_pathfind_run produces), so Join can run
     immediately without re-running Prepare or the expensive GPU search --
     a different session, or after tweaking join_segments.py. See
-    walk_graph.load_segments_bundle."""
+    street_main.load_segments_bundle."""
     if not file_path:
         raise gr.Error("Choose a segments file first.")
     try:
-        prep, segments = walk_graph.load_segments_bundle(file_path)
+        prep, segments = street_main.load_segments_bundle(file_path)
     except Exception as e:
         raise gr.Error(f"Load failed: {e}")
     return prep, segments, f"<p>Loaded {len(segments)} segment(s) from file. Ready — press \"Join segments\".</p>"
@@ -446,7 +447,7 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
     against its own real GPS positions and merges them into one point cloud
     (see join_segments.join_segments). No GPU -- safe to press again after
     tweaking the join logic without re-running Run. See
-    walk_graph.save_joined_pathfind."""
+    street_main.save_joined_pathfind."""
     if not prep or not segments:
         raise gr.Error("Nothing to join yet -- press \"Run Auto-path\" first.")
     if len(segments) < 2:
@@ -456,7 +457,7 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
 
     try:
         output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-        label, ply = walk_graph.save_joined_pathfind(prep, segments, output_dir)
+        label, ply = street_main.save_joined_pathfind(prep, segments, output_dir)
     except Exception as e:
         raise gr.Error(f"Join failed: {e}")
 

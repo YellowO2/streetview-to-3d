@@ -1,325 +1,298 @@
-"""Given N date graphs that build_graph builds, reconstruct a graph/street such that it is the most complete version while having the least segments
+"""Given N date graphs, reconstruct a graph such that it is the most
+complete version while using the least segments.
 
-Client half of the pathfinding flow:
-- build the candidate graph (build_graph, no GPU) from the real click-graph
-  edges (map_selection/tab.py's handle_bridge_message) -- not inferred from
-  click order or proximity, since the selection can branch or loop
-- download the top-N-date candidates (network, cached; the GPU call can't
-  fetch, so this has to happen before it -- see _local_batch)
-- hand nodes + edges + goals to run_pathfind_reconstruction in ONE GPU
-  call: the real multi-goal best-first search + DA3 tests + stitching +
-  multi-segment retry all live there
-
-One GPU call, not two: an earlier version fell back to a second call
-(download everything, retry) if the first didn't reach the end. That's
-exactly the pattern that causes 'Expired ZeroGPU proxy token' -- each
-@spaces.GPU call requests a fresh session credential, and a second
-request can arrive after the first one's already aged out. The top-N
-date filter already keeps the single download bounded, so there's no real
-need for a fallback call.
+This module owns ONLY that algorithm -- no GPU, no dates/download
+orchestration, no candidate-gathering. It calls a test_edge(path_a,
+path_b, test_id) -> result-or-None callback for each candidate edge; the
+caller (services/pipeline_runner.py's @spaces.GPU-decorated function)
+owns the loaded DA3Model and builds that callback around
+panoramic_to_3dgs.test_edge_da3. This split exists because of ZeroGPU,
+not for its own sake: GPU access is only granted for the duration of one
+@spaces.GPU call, so the whole decision loop (which edge to try next,
+based on the previous edge's real result) has to run inside that one
+call -- but nothing about WHERE that decision code is defined matters to
+ZeroGPU, so it lives here, next to the rest of the corridor/date logic it
+actually reasons about, rather than inside the GPU package which has no
+business knowing what a "corridor" or "date" is.
 """
-import asyncio
-import os
-import time
+import heapq
+
+import numpy as np
 
 from services.geo import haversine_m
-from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
-from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
-from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
-from street_builder.build_graph.build_graph import build_corridor_graph
-from street_builder.build_graph.fetch_nodes import POINT_MAX_DIST_M
-from street_builder.reconstruction.best4 import BEST4_STEP_DEGREES
-
-# Dates kept, ranked by coverage span. Single source of truth: also passed
-# as top_n_dates to the GPU call, so download count == dates actually used.
-DATE_TOP_N = 5
-
-# Mirrors run_pathfind_reconstruction's own start_zone_m/goal_tolerance_m
-# defaults -- used here only to pre-check whether a date's own same-date
-# edges can even reach from a start-zone root to a goal-zone node, before
-# spending a download (let alone a GPU test) on it.
-START_ZONE_M = 5.0
-GOAL_TOLERANCE_M = 15.0
-
-# How many panos download at once. Downloads used to run one at a time
-# (each its own fresh event loop) -- for a large batch (100+ candidates on
-# a real branching selection) that alone can take long enough to let the
-# ZeroGPU proxy token expire before the GPU call ever fires, since the
-# token's lifetime is wall-clock, not "how many GPU calls made". Bounded
-# rather than unlimited for the same reason download_panorama_image caps
-# its own per-pano tile connections -- don't burst past what Google's rate
-# limiter tolerates.
-DOWNLOAD_CONCURRENCY = 10
 
 
-async def _download_one(node, sem):
-    """Download a node's equirectangular image at DA3-only res, return path (None on failure)."""
-    async with sem:
-        try:
-            if node["source"] == "apple":
-                # download_lookaround is a blocking call (unlike the Google
-                # path) -- off the event loop so it doesn't stall the other
-                # concurrent downloads while it runs.
-                return await asyncio.to_thread(download_lookaround, node["_pano"], DA3_ONLY_APPLE_ZOOM)
-            return await download_pano_by_id(node["id"], zoom=DA3_ONLY_ZOOM)
-        except Exception as e:
-            print(f"Download failed for {node['key']}: {e}")
-            return None
+def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: list[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray]:
+    """Average rigid transform (R, t) mapping the 'from' frame onto the
+    'to' frame, given 1+ shared anchor poses (center, rotation) expressed
+    in both. Rotation averaged via quaternion mean, translation directly.
+    Duplicated from panoramic_to_3dgs.rigid_align rather than imported --
+    that package's __init__ pulls in SplatGenerator/DA3Model/sharp at
+    import time (real GPU deps), which this module has no business paying
+    for just to reuse ~15 lines of pure numpy/scipy math.
+
+    r_from/r_to are world-to-pano rotations for the SAME physical anchor,
+    expressed in each call's own arbitrary world frame (v_pano = r @ v_world).
+    For a direction to agree either way it's expressed: r_from @ v_from ==
+    r_to @ v_to, and v_to = R @ v_from, so r_from = r_to @ R, i.e.
+    R = r_to^-1 @ r_from = r_to.T @ r_from (rotations are orthogonal)."""
+    from scipy.spatial.transform import Rotation
+
+    Rs, ts = [], []
+    for (c_from, r_from), (c_to, r_to) in zip(shared_from, shared_to):
+        R = r_to.T @ r_from
+        Rs.append(R)
+        ts.append(c_to - R @ c_from)
+    quats = np.array([Rotation.from_matrix(R).as_quat() for R in Rs])
+    quats *= np.sign(quats @ quats[0])[:, None]
+    return Rotation.from_quat(quats.mean(axis=0)).as_matrix(), np.mean(ts, axis=0)
 
 
-async def _download_all(nodes):
-    sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
-    return await asyncio.gather(*[_download_one(n, sem) for n in nodes])
+def run_pathfind_reconstruction(
+    nodes: list[tuple[str, str, float, float, str]],
+    edges: dict,
+    points: list[tuple[float, float]],
+    start_lat: float,
+    start_lon: float,
+    test_edge,
+    target_hop_m: float = 10.0,
+    hop_weight: float = 1.0,
+    start_zone_m: float = 5.0,
+    point_cover_tolerance_m: float = 15.0,
+    max_tests_per_date: int = 50,
+    date_order: list[str] | None = None,
+    top_n_dates: int = 5,
+    early_exit_segments: int = 4,
+) -> list[tuple]:
+    """Two-phase pathfind.
 
+    - Phase 1 (map_date): per date (top_n_dates, ranked by date_order),
+      best-first walk its own graph toward uncovered corridor points.
+      On dead end, restart from that date's own closest-confirmed node
+      across ALL its pieces so far. Produces N disconnected pieces per
+      date. Early-exits date exploration once pieces so far already
+      need < early_exit_segments to fully cover the corridor.
+    - Phase 2 (set_cover): greedy set cover over every piece from every
+      date mapped -- picks fewest pieces covering the most corridor.
 
-def _covered_indices(candidates, points, max_dist_m):
-    """Indices of sample points with >=1 candidate within max_dist_m."""
-    covered = set()
-    for i, (lat, lon) in enumerate(points):
-        if any(haversine_m(lat, lon, c["lat"], c["lon"]) <= max_dist_m for c in candidates):
-            covered.add(i)
-    return covered
+    Why not search toward goal points directly (earlier v1 design): one
+    walk only chases one branch at a time, so N disconnected branches
+    force N segments -- even when a single other date's own pieces
+    could've covered several branches at once. Not discoverable without
+    seeing the whole per-date picture first.
 
+    Inputs (pre-downloaded by caller, no network here):
+    - nodes: (key, path, lat, lon, date) per candidate pano.
+    - edges: {key: [(other_key, dist_m), ...]} untested same-date hops.
+    - points: corridor's traced spine -- shared, date-independent
+      coverage reference (dates never share real panos).
+    - test_edge(path_a, path_b, test_id) -> (pose_a, pose_b, pts, cols)
+      or None on failure. The only GPU-touching thing this function calls.
 
-def _date_connects(date_nodes, edges, start_lat, start_lon, goals):
-    """Whether this date's own same-date edges can reach from a start-zone
-    root to at least one goal-zone at all -- a structural check (graph
-    reachability), not a real DA3 test. Dates that fail this can't connect
-    anything no matter what, so there's no point downloading or GPU-testing
-    them. Doesn't need to reach EVERY goal to be worth trying -- the
-    multi-goal search itself handles a date covering only some of them."""
-    by_key = {n["key"]: n for n in date_nodes}
-    roots = [k for k, n in by_key.items()
-             if haversine_m(n["lat"], n["lon"], start_lat, start_lon) <= START_ZONE_M]
-    if not roots:
-        return False
-    seen = set(roots)
-    stack = list(roots)
-    while stack:
-        key = stack.pop()
-        n = by_key[key]
-        if any(haversine_m(n["lat"], n["lon"], g[0], g[1]) <= GOAL_TOLERANCE_M for g in goals):
-            return True
-        for other_key, _ in edges.get(key, []):
-            if other_key in by_key and other_key not in seen:
-                seen.add(other_key)
-                stack.append(other_key)
-    return False
+    Segments are NOT stitched together -- each is DA3's own arbitrary
+    frame; joining (GPS + ICP) is the caller's job.
 
+    Returns [(pts, cols, path_edges, date, reached_all, node_positions), ...],
+    phase 2's chosen pieces. reached_all: whole corridor covered.
+    node_positions: {key: np.ndarray(3,)}, DA3's placement in that
+    piece's own frame, for the caller's join step.
+    """
+    node_by_key = {key: (path, lat, lon, date) for key, path, lat, lon, date in nodes}
+    if not node_by_key or not points:
+        return []
 
-def _date_recency_key(date_str):
-    """date_str is format_date's output: "YYYY-MM" or "YYYY-MM-DD", zero-
-    padded so plain string comparison already sorts chronologically.
-    "unknown date" (format_date's fallback for a missing capture date)
-    isn't comparable to those -- sorts as oldest/worst rather than
-    crashing or landing in the middle by accident."""
-    return "" if date_str == "unknown date" else date_str
+    def pdist(lat, lon, pi):
+        return haversine_m(lat, lon, points[pi][0], points[pi][1])
 
+    def nearest_uncovered_dist(key, uncovered):
+        _, lat, lon, _ = node_by_key[key]
+        return min(pdist(lat, lon, pi) for pi in uncovered)
 
-def _rank_dates(by_date, points, max_dist_m, top_n):
-    """Dates ranked by span (earliest to latest covered point -- does
-    coverage reach start to end), then total coverage count, then recency
-    (newer wins) as the final tiebreaker -- without it, ties fall back to
-    insertion order, which happens to always favor Google over Apple since
-    fetch_corridor_nodes fetches Google first for every corridor point,
-    regardless of which source's coverage is actually better."""
-    scored = []
-    for date, candidates in by_date.items():
-        covered = _covered_indices(candidates, points, max_dist_m)
-        span = (max(covered) - min(covered)) if covered else 0
-        scored.append((date, span, len(covered)))
-    scored.sort(key=lambda t: (t[1], t[2], _date_recency_key(t[0])), reverse=True)
-    return [date for date, _, _ in scored[:top_n]]
+    def score(child_key, hop, uncovered):
+        return nearest_uncovered_dist(child_key, uncovered) + hop_weight * abs(hop - target_hop_m)
 
+    def roots_for_date(lat0, lon0, date):
+        return [key for key, (_, lat, lon, d) in node_by_key.items()
+                if d == date and haversine_m(lat, lon, lat0, lon0) <= start_zone_m]
 
-def _local_batch(nodes, edges, points, start_lat, start_lon, goals):
-    """Keep every already-gathered candidate whose date both (a) structurally
-    connects start-zone to at least one goal-zone via its own same-date
-    edges, and (b) ranks in the top-N by coverage span among the dates that
-    pass (a). This is the whole download batch (single GPU call, see module
-    docstring for why there's no second-pass fallback).
+    def covered_points(keys):
+        """Corridor point-indices within point_cover_tolerance_m of any
+        of the given confirmed nodes' real positions."""
+        covered = set()
+        for k in keys:
+            _, lat, lon, _ = node_by_key[k]
+            for pi in range(len(points)):
+                if pi not in covered and pdist(lat, lon, pi) <= point_cover_tolerance_m:
+                    covered.add(pi)
+        return covered
 
-    Returns (keys, top_dates) -- keys as a list (not a set) specifically so
-    the caller can preserve top_dates' rank order downstream. A set's
-    iteration order depends on Python's per-process string hash seed, which
-    was silently discarding this ranking (and making the whole pathfind
-    result non-reproducible run to run) even though top_dates itself is a
-    real, deterministic ranking."""
-    by_date = {}
-    for n in nodes:
-        by_date.setdefault(n["date"], []).append(n)
+    def search_from(date, root_keys, test_offset, uncovered, dead_edges, budget, confirmed, piece_data, next_piece_id):
+        """Best-first walk of ONE date's graph, scored toward uncovered
+        corridor points (mutated in place). Stops on full coverage, dead
+        frontier, or budget (the date's REMAINING test budget).
 
-    connectable = {date: ns for date, ns in by_date.items()
-                   if _date_connects(ns, edges, start_lat, start_lon, goals)}
-    dropped = len(by_date) - len(connectable)
-    if dropped:
-        print(f"Dropped {dropped}/{len(by_date)} dates: no same-date edge path from start toward any goal.")
+        confirmed, dead_edges, piece_data, next_piece_id are ALL owned
+        by map_date and persist across every search_from call for this
+        date (mutated in place here) -- a restart resumes growing the
+        same tree(s) instead of rebuilding them from scratch. Earlier
+        versions reset `confirmed` to {} per call, which meant a
+        restart near an already-fully-proven chain re-tested every
+        edge in it (paying for a real DA3 call each time) before
+        reaching the frontier's actual dead end again -- confirmed on
+        a real run where the same already-successful edge got
+        re-tested 100+ times, each one a wasted GPU call.
 
-    top_dates = _rank_dates(connectable, points, POINT_MAX_DIST_M, DATE_TOP_N)
-    print(f"Top dates by coverage span: {top_dates}")
+        confirmed[key] = {"seg_R", "seg_t", "pose", "piece_id"} --
+        piece_id groups nodes sharing one DA3 base frame (a genuine
+        disconnection boundary, not a restart boundary). piece_data[id]
+        accumulates that piece's own pts/cols/path_edges across
+        however many calls contributed to it.
 
-    keys = [n["key"] for n in nodes if n["date"] in top_dates]
-    return keys, top_dates
+        Returns tests_done (0 if nothing new got tested)."""
+        seed_keys = set(root_keys) | set(confirmed.keys())
+        frontier = []  # (score, seq, from_key, to_key, hop)
+        seq = 0
+        for root_key in seed_keys:
+            for other_key, hop in edges.get(root_key, []):
+                if (other_key in confirmed or node_by_key[other_key][3] != date
+                        or frozenset((root_key, other_key)) in dead_edges):
+                    continue
+                heapq.heappush(frontier, (score(other_key, hop, uncovered), seq, root_key, other_key, hop))
+                seq += 1
 
+        tests = 0
+        while frontier and tests < budget and uncovered:
+            _, _, from_key, to_key, hop = heapq.heappop(frontier)
+            if to_key in confirmed or frozenset((from_key, to_key)) in dead_edges:
+                continue
 
-def _download_and_filter(keys, by_key, edges):
-    """Download this batch (concurrently, DOWNLOAD_CONCURRENCY at a time),
-    return (node_entries, edges restricted to what downloaded). keys must
-    be a list (or otherwise order-preserving) -- node_entries' order is
-    what determines the pathfind date-try order downstream, and dict.fromkeys
-    (not a set) is what dedupes it while preserving that order."""
-    unique_keys = list(dict.fromkeys(keys))
-    nodes = [by_key[k] for k in unique_keys]
-    paths = run_async(_download_all(nodes))
+            path_a, path_b = node_by_key[from_key][0], node_by_key[to_key][0]
+            result = test_edge(path_a, path_b, f"{date}_{test_offset + tests}")
+            tests += 1
+            if result is None:
+                dead_edges.add(frozenset((from_key, to_key)))
+                print(f"[{date}] {from_key} -> {to_key}: FAIL")
+                continue
+            pose_a, pose_b, pts, cols = result
 
-    entries = []
-    for key, n, path in zip(unique_keys, nodes, paths):
-        if path:
-            entries.append((key, path, n["lat"], n["lon"], n["date"]))
-    have = {e[0] for e in entries}
-    filtered = {k: [(o, d) for o, d in v if o in have] for k, v in edges.items() if k in have}
-    return entries, filtered
+            if from_key not in confirmed:
+                # from_key is a brand-new root: this edge's frame becomes a new piece's base.
+                pid = next_piece_id[0]
+                next_piece_id[0] += 1
+                confirmed[from_key] = {"seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_a, "piece_id": pid}
+                piece_data[pid] = {"pts": pts, "cols": cols, "path_edges": []}
+            else:
+                # from_key already has a proven frame (this call or an earlier one) -- reuse it.
+                pf = confirmed[from_key]
+                pid = pf["piece_id"]
+                local_R, local_t = rigid_align([pose_a], [pf["pose"]])
+                seg_R = pf["seg_R"] @ local_R
+                seg_t = pf["seg_R"] @ local_t + pf["seg_t"]
+                pd = piece_data[pid]
+                pd["pts"] = np.concatenate([pd["pts"], pts @ seg_R.T + seg_t], axis=0)
+                pd["cols"] = np.concatenate([pd["cols"], cols], axis=0)
+                confirmed[to_key] = {"seg_R": seg_R, "seg_t": seg_t, "pose": pose_b, "piece_id": pid}
+                piece_data[pid]["path_edges"].append((from_key, to_key))
+                uncovered -= covered_points([to_key])
 
+            if to_key not in confirmed:
+                # from_key was the brand-new-root case above -- finish confirming to_key too.
+                confirmed[to_key] = {"seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_b, "piece_id": pid}
+                piece_data[pid]["path_edges"].append((from_key, to_key))
+                uncovered -= covered_points([from_key, to_key])
 
-def prepare_pathfind(start, goals, corridor_edges) -> dict:
-    """CPU/network only, no GPU -- gathers candidates along the corridor and
-    downloads the top-date batch. Split out from the GPU step specifically
-    so the GPU-triggering click (run_prepared_pathfind) can happen as its
-    own fresh, minimal-latency user interaction right before the
-    @spaces.GPU call, instead of that call being buried at the end of a
-    long download inside one combined request -- the ZeroGPU proxy token's
-    validity is wall-clock, and a long blocking step ahead of it is exactly
-    what can let it go stale before schedule() is ever reached.
+            print(f"[{date}] {from_key} -> {to_key}: OK ({len(uncovered)} pt(s) left)")
+            if not uncovered:
+                break  # this success just finished coverage -- score() needs a non-empty uncovered
+            for other_key, next_hop in edges.get(to_key, []):
+                if (other_key in confirmed or node_by_key[other_key][3] != date
+                        or frozenset((to_key, other_key)) in dead_edges):
+                    continue
+                heapq.heappush(frontier, (score(other_key, next_hop, uncovered), seq, to_key, other_key, next_hop))
+                seq += 1
 
-    start: (lat, lon) -- the fixed start node's real position.
-    goals: [(lat, lon), ...] -- every other selected node.
-    corridor_edges: [((lat1, lon1), (lat2, lon2)), ...] -- the REAL,
-    already-confirmed edges of the clicked selection graph (from Street
-    View's own pano.links, see map_selection/candidates.py and
-    map_selection/tab.py's handle_bridge_message) -- not inferred from
-    click order or proximity, since these can branch or loop. Used only to
-    shape *where* to sample candidate panos (fetch_corridor_nodes); the
-    search is still free to use different nodes than exactly these.
+        return tests
 
-    Returns a dict to pass straight to run_prepared_pathfind."""
-    t0 = time.monotonic()
-    if not goals:
-        raise ValueError("Need at least one goal (a second selected node).")
-    if not corridor_edges:
-        raise ValueError("Need at least one confirmed edge tracing the route.")
-    start_lat, start_lon = start
+    def map_date(date, test_offset, budget):
+        """Phase 1 for ONE date. See the module docstring. Returns
+        (pieces, tests_used); pieces: list of (pts, cols, path_edges,
+        node_positions, covered_point_indices)."""
+        tests_used = 0
+        uncovered = set(range(len(points)))
+        dead_edges = set()
+        confirmed = {}  # persists across every restart below -- see search_from
+        piece_data = {}
+        next_piece_id = [0]
+        cur_lat, cur_lon = start_lat, start_lon
 
-    nodes, edges, points = build_corridor_graph(corridor_edges)
-    nodes = [n for n in nodes if edges.get(n["key"])]  # drop isolated (never testable)
-    if len(nodes) < 2:
-        raise ValueError("Not enough connected candidates along this street.")
-    by_key = {n["key"]: n for n in nodes}
+        while uncovered and tests_used < budget:
+            roots = roots_for_date(cur_lat, cur_lon, date)
+            if not roots:
+                break
+            tests = search_from(date, roots, test_offset + tests_used, uncovered, dead_edges, budget - tests_used, confirmed, piece_data, next_piece_id)
+            tests_used += tests
+            if tests == 0 or not confirmed:
+                # tests == 0: frontier genuinely exhausted, nothing left to try.
+                # not confirmed: every attempt this date has made so far
+                # failed -- nothing to restart from (min() below would
+                # crash on an empty confirmed otherwise).
+                break
 
-    batch_keys, top_dates = _local_batch(nodes, edges, points, start_lat, start_lon, goals)
-    print(f"Downloading {len(batch_keys)}/{len(nodes)} top-date candidates...")
-    node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
+            if not uncovered:
+                break
+            next_key = min(confirmed, key=lambda k: nearest_uncovered_dist(k, uncovered))
+            _, cur_lat, cur_lon, _ = node_by_key[next_key]
 
-    print(f"prepare_pathfind: done in {time.monotonic() - t0:.1f}s")
-    return {
-        "node_entries": node_entries,
-        "batch_edges": batch_edges,
-        "points": points,
-        "start": start,
-        "goals": goals,
-        "top_dates": top_dates,
-    }
+        pieces = []
+        for pid, pd in piece_data.items():
+            keys = [k for k, c in confirmed.items() if c["piece_id"] == pid]
+            node_positions = {k: confirmed[k]["seg_R"] @ confirmed[k]["pose"][0] + confirmed[k]["seg_t"] for k in keys}
+            pieces.append((pd["pts"], pd["cols"], pd["path_edges"], node_positions, covered_points(keys)))
+        return pieces, tests_used
 
+    def set_cover(pieces, total_points):
+        """Phase 2: greedy set cover. Repeatedly take whichever piece
+        (from any date) covers the most still-uncovered corridor
+        points, until covered or nothing left adds anything new.
+        Returns (chosen, leftover_uncovered)."""
+        uncovered = set(range(total_points))
+        chosen = []
+        pool = list(pieces)
+        while uncovered and pool:
+            pool.sort(key=lambda p: len(p[4] & uncovered), reverse=True)
+            top = pool[0]
+            if not (top[4] & uncovered):
+                break
+            chosen.append(top)
+            uncovered -= top[4]
+            pool.pop(0)
+        return chosen, uncovered
 
-def run_prepared_pathfind(prep: dict, output_dir,
-                          step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str]]:
-    """Convenience one-shot: GPU search + save per-segment previews + join
-    (if there's more than one segment) in a single call. UI callers doing
-    the 3-step Prepare/Run/Join flow (see tab.py) should call
-    run_prepared_pathfind_segments, save_pathfind_segments, and
-    save_joined_pathfind separately instead -- join doesn't need the GPU at
-    all, so splitting it out means re-testing/tuning it doesn't require
-    re-running the expensive DA3 search each time.
+    dates_all = list(dict.fromkeys(date for _, _, _, date in node_by_key.values()))
+    dates_to_try = [d for d in date_order if d in dates_all] if date_order else dates_all
+    dates_to_try = dates_to_try[:top_n_dates]
 
-    Returns [(label, ply_path), ...] -- one per segment (see
-    run_pathfind_reconstruction for what a "segment" is), plus one more
-    "joined" entry (see join_segments.join_segments) when there's more
-    than one segment to actually combine."""
-    t0 = time.monotonic()
-    segments = run_prepared_pathfind_segments(prep, step_degrees=step_degrees)
-    results = save_pathfind_segments(segments, output_dir)
-    if len(segments) > 1:
-        try:
-            results.append(save_joined_pathfind(prep, segments, output_dir))
-        except Exception as e:
-            print(f"join_segments failed: {e}")
-            results.append((f"path (joined) -- failed: {e}", None))
-    print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
-    return results
+    all_pieces = []  # (pts, cols, path_edges, node_positions, covered, date)
+    total_tests = 0
 
+    for date in dates_to_try:
+        pieces, tests_used = map_date(date, total_tests, max_tests_per_date * 5)
+        total_tests += tests_used
+        for p in pieces:
+            all_pieces.append(p + (date,))
+        print(f"pathfind: date {date} mapped into {len(pieces)} piece(s), {total_tests} attempts so far")
 
-def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:
-    """Saves each segment's own point cloud as its own .ply, no GPU, no
-    fitting/joining. Returns [(label, ply_path), ...] previews."""
-    os.makedirs(output_dir, exist_ok=True)
-    results = []
-    for i, (pts, cols, path_edges, date, reached, node_positions) in enumerate(segments):
-        status = "full corridor covered" if reached else "partial"
-        label = f"path (date {date}, {len(path_edges)} hops, {status})"
-        ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_{i}.ply"))
-        results.append((label, ply))
-    return results
+        chosen_so_far, uncovered_so_far = set_cover(all_pieces, len(points))
+        if chosen_so_far and not uncovered_so_far and len(chosen_so_far) < early_exit_segments:
+            print(f"pathfind: {len(chosen_so_far)} segment(s) already cover everything -- stopping date exploration")
+            break
 
+    chosen, leftover_uncovered = set_cover(all_pieces, len(points))
 
-def save_joined_pathfind(prep: dict, segments, output_dir) -> tuple[str, str]:
-    """Fits + merges every segment (see join_segments.join_segments), saves
-    the result, returns one (label, ply_path). No GPU -- pure linear
-    algebra, safe to call repeatedly against the same already-computed
-    segments while tuning the join step."""
-    from street_builder.reconstruction.join_segments import join_segments
-    t0 = time.monotonic()
-    os.makedirs(output_dir, exist_ok=True)
-    pts, cols = join_segments(segments, prep["node_entries"])
-    ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
-    print(f"save_joined_pathfind: done in {time.monotonic() - t0:.1f}s")
-    return f"path (joined, {len(segments)} segments)", ply
-
-
-def save_segments_bundle(prep: dict, segments, output_dir) -> str:
-    """Serializes prep + segments (everything Join needs) to one file, so
-    Join can be re-run later -- a different session, or after tweaking
-    join_segments.py -- without re-running Prepare or the expensive GPU
-    search. Plain pickle: numpy arrays, tuples, dicts all round-trip
-    natively, and this file is only ever produced and consumed by this
-    same codebase, not a public interchange format."""
-    import pickle
-    os.makedirs(output_dir, exist_ok=True)
-    path = os.path.join(output_dir, "pathfind_segments.pkl")
-    with open(path, "wb") as f:
-        pickle.dump({"prep": prep, "segments": segments}, f)
-    return path
-
-
-def load_segments_bundle(path: str) -> tuple[dict, list]:
-    """Inverse of save_segments_bundle. Returns (prep, segments), ready to
-    feed straight into save_joined_pathfind (or save_pathfind_segments)."""
-    import pickle
-    with open(path, "rb") as f:
-        bundle = pickle.load(f)
-    return bundle["prep"], bundle["segments"]
-
-
-def run_prepared_pathfind_segments(prep: dict, step_degrees: int = BEST4_STEP_DEGREES):
-    """Same GPU call as run_prepared_pathfind, but returns the raw segment
-    list (pts, cols, path_edges, date, reached, node_positions per segment)
-    instead of saved .ply paths -- what join_segments.py needs to fit and
-    merge segments, rather than just preview them individually."""
-    t0 = time.monotonic()
-    start_lat, start_lon = prep["start"]
-    segments = run_pathfind_reconstruction_gpu(
-        prep["node_entries"], prep["batch_edges"], prep["points"], start_lat, start_lon,
-        step_degrees=step_degrees, date_order=prep["top_dates"], top_n_dates=DATE_TOP_N,
-    )
-    print(f"run_prepared_pathfind_segments: done in {time.monotonic() - t0:.1f}s")
-    if not segments:
-        raise RuntimeError("No connected path found from start toward any goal.")
+    reached_all = not leftover_uncovered
+    segments = [
+        (pts, cols, path_edges, date, reached_all, node_positions)
+        for pts, cols, path_edges, node_positions, covered, date in chosen
+    ]
+    print(f"pathfind: {total_tests} attempts total, {len(dates_to_try)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")
     return segments
