@@ -104,17 +104,21 @@ def main():
     goals = [(metas[pid]["lat"], metas[pid]["lon"]) for pid in NODE_IDS[1:]]
 
     print(f"\n=== building isolated per-date graphs (network calls to Google/Apple) ===")
-    date_graphs, points = build_corridor_graphs(corridor_edges, start[0], start[1], goals)
+    date_graphs, points, adjacency = build_corridor_graphs(corridor_edges, start[0], start[1], goals)
+    n_candidates_by_date = {g["date"]: sum(len(b) for b in g["dot_candidates"].values()) for g in date_graphs}
     print(f"{len(points)} corridor spine point(s), {len(date_graphs)} date graph(s) built:")
     for i, g in enumerate(date_graphs, 1):
-        print(f"  {i}. {g['date']} ({len(g['nodes'])} candidate(s))")
+        print(f"  {i}. {g['date']} ({n_candidates_by_date[g['date']]} candidate(s))")
 
     # Real download step, skipped here (no GPU/network image fetch needed
     # for this mock) -- fake paths keyed by real pano id, same shape
     # main.py's _download_date_graphs would produce.
     fake_date_graphs = [
-        {"date": g["date"], "edges": g["edges"],
-         "nodes": [(n["key"], f"/fake/{n['key']}", n["lat"], n["lon"]) for n in g["nodes"]]}
+        {"date": g["date"],
+         "dot_candidates": {
+             dot_idx: [(n["key"], f"/fake/{n['key']}", n["lat"], n["lon"]) for n in bucket]
+             for dot_idx, bucket in g["dot_candidates"].items()
+         }}
         for g in date_graphs
     ]
 
@@ -129,7 +133,7 @@ def main():
         test_edge = make_fake_test_edge(test_log, tested_pairs)
         print(f"\n=== running pathfind (test_edge mocked, FAIL_IDS={FAIL_IDS or 'none -- everything succeeds'}) ===")
 
-    segments = run_pathfind_reconstruction(fake_date_graphs, points, start[0], start[1], test_edge)
+    segments = run_pathfind_reconstruction(fake_date_graphs, points, adjacency, start[0], start[1], test_edge)
 
     print(f"\n=== RESULT ===")
     print(f"{len(test_log)} test call(s), {len(segments)} segment(s)")

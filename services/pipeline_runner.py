@@ -92,7 +92,7 @@ def run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None, step_d
 
 
 @GPU_WINDOWED
-def run_pathfind_reconstruction_gpu(date_graphs, points, start_lat, start_lon, step_degrees=20):
+def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20):
     """The one @spaces.GPU call for the whole pathfind flow (see
     street_builder/main.py's module docstring for why it's one call, not
     several). This function's only job is to own the loaded DA3Model for
@@ -100,8 +100,10 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, start_lat, start_lon, s
     (street_builder/reconstruction/walk_graph.py) a way to test one edge
     -- it knows nothing about corridors, dates, or coverage itself.
 
-    date_graphs: already ranked/capped/isolated per date -- see
-    street_builder/build_graph/build_graph.py's build_corridor_graphs."""
+    date_graphs: already ranked/capped/isolated per date, dot_candidates
+    shape -- see street_builder/build_graph/build_graph.py's
+    build_corridor_graphs. adjacency: the corridor's shared dot-to-dot
+    structural graph, same source."""
     import tempfile
 
     import torch
@@ -115,7 +117,7 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, start_lat, start_lon, s
             def test_edge(path_a, path_b, test_id):
                 return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            return run_pathfind_reconstruction(date_graphs, points, start_lat, start_lon, test_edge)
+            return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge)
     finally:
         del da3
         torch.cuda.empty_cache()

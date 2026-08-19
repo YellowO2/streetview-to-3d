@@ -11,11 +11,17 @@ from services.geo import haversine_m
 DATE_TOP_N = 5
 
 # Mirrors the pathfind algorithm's own start_zone_m/point_cover_tolerance_m
-# defaults -- used here only to pre-check whether a date's own same-date
-# edges can even reach from a start-zone root to a goal-zone node, before
-# spending a download (let alone a GPU test) on it.
+# defaults -- used here only to pre-check whether a date's own dots can
+# even reach from a start-zone dot to a goal-zone dot, before spending a
+# download (let alone a GPU test) on it.
 START_ZONE_M = 5.0
 GOAL_TOLERANCE_M = 15.0
+
+# A candidate real edge between two dots' own panos is only plausible if
+# they're within this real distance -- used here (and by the algorithm's
+# own skip-one-dot fallback, see walk_graph.py) to decide whether hopping
+# PAST an empty dot to the one after it is even structurally reasonable.
+EDGE_MAX_DIST_M = 18.0
 
 
 def _date_recency_key(date_str):
@@ -56,31 +62,68 @@ def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
     return [date for date, _, _ in scored]
 
 
-def date_connects(nodes, edges, start_lat, start_lon, goals):
-    """Whether this date's own same-date edges can reach from a start-zone
-    root to at least one goal-zone at all -- a structural check (graph
-    reachability), not a real DA3 test. Dates that fail this can't connect
-    anything no matter what, so there's no point downloading or GPU-testing
-    them. Doesn't need to reach EVERY goal to be worth trying -- the
-    algorithm itself handles a date covering only some of them.
+def date_connects(dot_candidates, adjacency, points, start_lat, start_lon, goals):
+    """Whether this date's own dots can structurally reach from near the
+    start toward at least one goal, walking dot-to-dot -- a direct move to
+    an adjacent dot that has a candidate, or a flood past however many
+    empty dots in a row (structurally, through adjacency), as long as
+    that stays within real EDGE_MAX_DIST_M of where the flood started.
+    Any gap width, not a fixed hop count -- the real constraint was
+    always "close enough to plausibly connect," never "exactly one empty
+    dot in between." Mirrors the algorithm's own movement rule exactly
+    (see walk_graph.py's visit()) -- not a real DA3 test, just "could
+    this date's coverage even physically connect," so a date that fails
+    here truly can't work no matter what gets tested. Doesn't need to
+    reach EVERY goal to be worth trying -- the algorithm itself handles a
+    date covering only some of them.
 
-    nodes/edges: ALREADY isolated to one date (see
-    build_graph.build_corridor_graphs) -- no date field to check here,
-    every node given IS that date."""
-    by_key = {n["key"]: n for n in nodes}
-    roots = [k for k, n in by_key.items()
-             if haversine_m(n["lat"], n["lon"], start_lat, start_lon) <= START_ZONE_M]
-    if not roots:
+    dot_candidates: {dot_index: [panos]} for non-empty dots of this date
+    ONLY (see build_graph.build_corridor_graphs). adjacency: the
+    structural dot-to-dot graph (see fetch_nodes.interpolate_points).
+    points: every dot's real (lat, lon), for the flood distance check.
+    """
+    non_empty = set(dot_candidates.keys())
+    if not non_empty:
         return False
-    seen = set(roots)
-    stack = list(roots)
+
+    starts = [i for i in non_empty
+              if haversine_m(points[i][0], points[i][1], start_lat, start_lon) <= START_ZONE_M]
+    if not starts:
+        # Nothing of this date sits exactly in the start zone -- fall back
+        # to whichever non-empty dot is closest, mirroring how the
+        # algorithm itself has to bootstrap from SOMEWHERE nearby.
+        starts = [min(non_empty, key=lambda i: haversine_m(points[i][0], points[i][1], start_lat, start_lon))]
+
+    seen = set(starts)
+    stack = list(starts)
     while stack:
-        key = stack.pop()
-        n = by_key[key]
-        if any(haversine_m(n["lat"], n["lon"], g[0], g[1]) <= GOAL_TOLERANCE_M for g in goals):
+        i = stack.pop()
+        lat_i, lon_i = points[i]
+        if any(haversine_m(lat_i, lon_i, g[0], g[1]) <= GOAL_TOLERANCE_M for g in goals):
             return True
-        for other_key, _ in edges.get(key, []):
-            if other_key in by_key and other_key not in seen:
-                seen.add(other_key)
-                stack.append(other_key)
+        for j in adjacency.get(i, []):
+            if j in seen:
+                continue
+            if j in non_empty:
+                seen.add(j)
+                stack.append(j)
+                continue
+            # j is empty -- flood through it (and further empty dots)
+            # within real EDGE_MAX_DIST_M of i, same rule as the
+            # algorithm's own flood fallback.
+            sub_seen = {i, j}
+            sub_frontier = [j]
+            while sub_frontier:
+                d = sub_frontier.pop()
+                if haversine_m(lat_i, lon_i, points[d][0], points[d][1]) > EDGE_MAX_DIST_M:
+                    continue
+                if d in non_empty:
+                    if d not in seen:
+                        seen.add(d)
+                        stack.append(d)
+                    continue
+                for k in adjacency.get(d, []):
+                    if k not in sub_seen:
+                        sub_seen.add(k)
+                        sub_frontier.append(k)
     return False

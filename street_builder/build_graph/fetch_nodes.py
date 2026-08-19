@@ -17,24 +17,58 @@ POINT_SPACING_M = 5.0
 POINT_MAX_DIST_M = 2.5
 
 
-def interpolate_points(edges, spacing_m: float = POINT_SPACING_M) -> list[tuple[float, float]]:
+def interpolate_points(edges, spacing_m: float = POINT_SPACING_M) -> tuple[list[tuple[float, float]], dict[int, list[int]]]:
     """Evenly-spaced (lat, lon) points along each given edge -- edges: list
     of ((lat1, lon1), (lat2, lon2)) pairs, each a straight line between two
     real, already-connected points. Not a single ordered polyline: the
     corridor can branch or loop, so each edge is sampled independently
-    rather than assuming consecutive list order traces one path."""
-    points = []
-    seen_starts = set()
+    rather than assuming consecutive list order traces one path.
+
+    Two points from DIFFERENT corridor edges that share the exact same
+    (lat, lon) -- a branch point, where two real clicked edges meet at the
+    same node -- collapse into the SAME dot, so the corridor's own branch
+    structure carries through into the dot graph rather than each edge
+    getting a disconnected copy of that point.
+
+    Returns (points, adjacency). adjacency: {dot_index: [neighbor_dot_index,
+    ...]} -- structural "this dot comes right after that dot" facts along
+    the corridor spine, independent of which real panos end up at either
+    dot. This is what the pathfind algorithm walks dot-by-dot over (see
+    street_builder/reconstruction/walk_graph.py) -- a different thing from
+    "which panos are close enough to test together", which is a real-
+    distance question the algorithm now only asks dynamically, for its
+    skip-one-dot fallback.
+    """
+    points: list[tuple[float, float]] = []
+    adjacency: dict[int, list[int]] = {}
+    index_by_latlon: dict[tuple[float, float], int] = {}
+
+    def dot_for(latlon):
+        idx = index_by_latlon.get(latlon)
+        if idx is None:
+            idx = len(points)
+            points.append(latlon)
+            adjacency[idx] = []
+            index_by_latlon[latlon] = idx
+        return idx
+
+    def connect(i, j):
+        if j not in adjacency[i]:
+            adjacency[i].append(j)
+        if i not in adjacency[j]:
+            adjacency[j].append(i)
+
     for (lat1, lon1), (lat2, lon2) in edges:
-        if (lat1, lon1) not in seen_starts:
-            points.append((lat1, lon1))
-            seen_starts.add((lat1, lon1))
+        prev_idx = dot_for((lat1, lon1))
         seg_len = haversine_m(lat1, lon1, lat2, lon2)
         n_steps = max(1, round(seg_len / spacing_m))
         for i in range(1, n_steps + 1):
             t = i / n_steps
-            points.append((lat1 + (lat2 - lat1) * t, lon1 + (lon2 - lon1) * t))
-    return points
+            idx = dot_for((lat1 + (lat2 - lat1) * t, lon1 + (lon2 - lon1) * t))
+            connect(prev_idx, idx)
+            prev_idx = idx
+
+    return points, adjacency
 
 
 def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
@@ -54,11 +88,13 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
     of two dots at once), but the "first dot wins" rule still resolves the
     rare boundary case cleanly.
 
-    Returns (buckets, points): buckets is {point_index: [{key, source, id,
-    lat, lon, date}, ...]} -- each dot's own separate set of panos, not one
-    shared pool. points is the interpolated point list itself.
+    Returns (buckets, points, adjacency): buckets is {point_index: [{key,
+    source, id, lat, lon, date}, ...]} -- each dot's own separate set of
+    panos, not one shared pool. points is the interpolated point list
+    itself. adjacency is the dot-to-dot structural graph (see
+    interpolate_points).
     """
-    points = interpolate_points(edges)
+    points, adjacency = interpolate_points(edges)
 
     buckets = {i: [] for i in range(len(points))}
     seen_google_ids = set()
@@ -104,4 +140,4 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
                 "_pano": p,  # kept for download_lookaround (needs the object, not just the id)
             })
 
-    return buckets, points
+    return buckets, points, adjacency

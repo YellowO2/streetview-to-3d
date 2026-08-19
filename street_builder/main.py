@@ -65,16 +65,18 @@ async def _download_all(nodes):
 
 
 def _download_date_graphs(date_graphs):
-    """Download every node referenced by any of the given date graphs, in
-    one combined batch (concurrently, DOWNLOAD_CONCURRENCY at a time --
-    node keys are unique across graphs, since each graph only ever holds
-    its own date's own real panos). Returns (ready_graphs, node_entries):
-    ready_graphs -- each date graph with "nodes" replaced by (key, path,
-    lat, lon) tuples for whatever actually downloaded, and "edges"
-    restricted to reference only those; node_entries -- flat (key, path,
-    lat, lon, date) list across ALL graphs, for join_segments' GPS lookup
-    (see join_segments.join_segments)."""
-    all_nodes = [n for g in date_graphs for n in g["nodes"]]
+    """Download every node referenced by any of the given date graphs' dot
+    buckets, in one combined batch (concurrently, DOWNLOAD_CONCURRENCY at a
+    time -- node keys are unique across graphs, since each graph only ever
+    holds its own date's own real panos). Returns (ready_graphs,
+    node_entries): ready_graphs -- each date graph with dot_candidates
+    values replaced by (key, path, lat, lon) tuples for whatever actually
+    downloaded (a dot that loses every candidate to a failed download is
+    dropped entirely -- the walk algorithm treats it exactly like a dot
+    that was never populated, same skip-one handling either way);
+    node_entries -- flat (key, path, lat, lon, date) list across ALL
+    graphs, for join_segments' GPS lookup (see join_segments.join_segments)."""
+    all_nodes = [n for g in date_graphs for bucket in g["dot_candidates"].values() for n in bucket]
     keys = [n["key"] for n in all_nodes]
     paths = run_async(_download_all(all_nodes))
     path_by_key = {key: path for key, path in zip(keys, paths) if path}
@@ -82,14 +84,15 @@ def _download_date_graphs(date_graphs):
     ready_graphs = []
     node_entries = []
     for g in date_graphs:
-        entries = [(n["key"], path_by_key[n["key"]], n["lat"], n["lon"])
-                   for n in g["nodes"] if n["key"] in path_by_key]
-        if len(entries) < 2:
-            continue
-        have = {e[0] for e in entries}
-        edges = {k: [(o, d) for o, d in v if o in have] for k, v in g["edges"].items() if k in have}
-        ready_graphs.append({"date": g["date"], "nodes": entries, "edges": edges})
-        node_entries.extend((key, path, lat, lon, g["date"]) for key, path, lat, lon in entries)
+        dot_candidates = {}
+        for dot_idx, bucket in g["dot_candidates"].items():
+            entries = [(n["key"], path_by_key[n["key"]], n["lat"], n["lon"])
+                       for n in bucket if n["key"] in path_by_key]
+            if entries:
+                dot_candidates[dot_idx] = entries
+                node_entries.extend((key, path, lat, lon, g["date"]) for key, path, lat, lon in entries)
+        if dot_candidates:
+            ready_graphs.append({"date": g["date"], "dot_candidates": dot_candidates})
 
     return ready_graphs, node_entries
 
@@ -123,11 +126,11 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
         raise ValueError("Need at least one confirmed edge tracing the route.")
     start_lat, start_lon = start
 
-    date_graphs, points = build_corridor_graphs(corridor_edges, start_lat, start_lon, goals)
+    date_graphs, points, adjacency = build_corridor_graphs(corridor_edges, start_lat, start_lon, goals)
     if not date_graphs:
         raise ValueError("No date reaches from the start toward any goal -- not enough connected candidates.")
 
-    n_candidates = sum(len(g["nodes"]) for g in date_graphs)
+    n_candidates = sum(len(bucket) for g in date_graphs for bucket in g["dot_candidates"].values())
     print(f"Downloading {n_candidates} candidate(s) across {len(date_graphs)} date graph(s): "
           f"{[g['date'] for g in date_graphs]}")
     ready_graphs, node_entries = _download_date_graphs(date_graphs)
@@ -139,6 +142,7 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
         "date_graphs": ready_graphs,
         "node_entries": node_entries,
         "points": points,
+        "adjacency": adjacency,
         "start": start,
         "goals": goals,
         "top_dates": [g["date"] for g in ready_graphs],
@@ -231,7 +235,7 @@ def run_prepared_pathfind_segments(prep: dict, step_degrees: int = DEFAULT_STEP_
     t0 = time.monotonic()
     start_lat, start_lon = prep["start"]
     segments = run_pathfind_reconstruction_gpu(
-        prep["date_graphs"], prep["points"], start_lat, start_lon, step_degrees=step_degrees,
+        prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon, step_degrees=step_degrees,
     )
     print(f"run_prepared_pathfind_segments: done in {time.monotonic() - t0:.1f}s")
     if not segments:
