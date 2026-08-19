@@ -66,7 +66,7 @@ def join_segments(segments, node_entries) -> tuple[np.ndarray, np.ndarray]:
     # arbitrary choice (first segment's first confirmed node), just needs
     # to be the SAME point for all of them so they land in one frame.
     first_key = next(iter(segments[0][5]))
-    _, origin_lat, origin_lon, _ = by_key[first_key]
+    _, _, origin_lat, origin_lon, _ = by_key[first_key]
 
     all_pts, all_cols = [], []
     for seg_i, (pts, cols, path_edges, date, reached, node_positions) in enumerate(segments):
@@ -78,7 +78,7 @@ def join_segments(segments, node_entries) -> tuple[np.ndarray, np.ndarray]:
         da3_xz = np.array([[node_positions[k][0], node_positions[k][2]] for k in keys])
         real_en = []
         for k in keys:
-            _, lat, lon, _ = by_key[k]
+            _, _, lat, lon, _ = by_key[k]
             e, n = latlon_to_local_m(lat, lon, origin_lat, origin_lon)
             real_en.append([e, n])
         real_en = np.array(real_en)
