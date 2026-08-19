@@ -91,38 +91,6 @@ def run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None, step_d
     return ply if os.path.exists(ply) else None
 
 
-@GPU
-def run_pointcloud_sweep_gpu(target_depth_path, output_dir, threshold_levels, support_paths=None):
-    """Debug helper: one DA3 inference pass, one point cloud saved per
-    (dist_thresh, angle_thresh) in threshold_levels. See
-    Pipeline.run_da3_pointcloud_sweep for why this doesn't cost a GPU
-    forward pass per level."""
-    pipeline = get_pipeline()
-    os.makedirs(output_dir, exist_ok=True)
-    return pipeline.run_da3_pointcloud_sweep(
-        target_depth_path=target_depth_path,
-        output_dir=output_dir,
-        threshold_levels=threshold_levels,
-        support_paths=support_paths,
-    )
-
-
-@GPU
-def score_candidates_gpu(candidate_paths, dist_thresh=0.2, angle_thresh=1, step_degrees=20):
-    pipeline = get_pipeline()
-    return pipeline.score_candidates(
-        candidate_paths, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees
-    )
-
-
-@GPU_WINDOWED
-def run_windowed_reconstruction_gpu(windows, boundary_coords, final_count=4, forced_overlap=2):
-    pipeline = get_pipeline()
-    return pipeline.run_windowed_reconstruction(
-        windows, boundary_coords, final_count=final_count, forced_overlap=forced_overlap
-    )
-
-
 @GPU_WINDOWED
 def run_greedy_pass_reconstruction_gpu(
     node_candidates, try_order, keep_rate_threshold=0.5, max_attempts_per_position=3, step_degrees=20

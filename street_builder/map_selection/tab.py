@@ -26,7 +26,7 @@ from services.geo import extract_lat_lon
 from services.streetview_fetch import fetch_pano_by_id, run_async
 from street_builder.map_selection import candidates as candidates_mod
 from street_builder.map_selection import map_ui
-from street_builder.reconstruction import best4, filter_sweep, generate, greedy, windowed
+from street_builder.reconstruction import generate, greedy
 from street_builder import main as street_main
 
 BRIDGE_ELEM_ID = "street_builder_bridge"
@@ -257,78 +257,6 @@ def handle_generate_chain(state, progress=gr.Progress(track_tqdm=True)):
     yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
 
 
-def handle_filter_sweep(state, progress=gr.Progress(track_tqdm=True)):
-    """Debug button: runs DA3 inference once and produces one point cloud per
-    FILTER_SWEEP_LEVELS threshold, to check how much the consensus filter is
-    actually doing. Separate from handle_generate_chain -- doesn't touch or
-    replace the normal Generate output."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Running filter sweep over {len(ordered_nodes)} nodes...")
-    try:
-        results = filter_sweep.reconstruct_chain_filter_sweep(ordered_nodes, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Filter sweep failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.filter_sweep_links(results)
-
-
-def handle_best4(state, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button: instead of trusting the chain's own Google nodes,
-    scores a wider candidate pool (chain nodes + nearby Apple panos) solo
-    through DA3 and reconstructs using only the top BEST4_FINAL_COUNT
-    scorers. Separate from handle_generate_chain -- doesn't touch or replace
-    the normal Generate output."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Scoring candidates near {len(ordered_nodes)} nodes...")
-    try:
-        ply_path = best4.reconstruct_chain_best4(ordered_nodes, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Best-4 reconstruction failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
-
-
-def handle_windowed(state, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button: chunk+connect for chains longer than one DA3 call
-    can handle -- see windowed.reconstruct_chain_windowed. Separate from
-    handle_generate_chain and handle_best4 -- doesn't touch or replace either."""
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Chunking + reconstructing {len(ordered_nodes)} nodes...")
-    try:
-        ply_path = windowed.reconstruct_chain_windowed(ordered_nodes, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Windowed reconstruction failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
-
-
 def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
     """Experimental button: greedy same-capture-pass sliding-window
     reconstruction -- see greedy.reconstruct_chain_greedy. Grades every
@@ -353,7 +281,7 @@ def handle_greedy(state, progress=gr.Progress(track_tqdm=True)):
         raise gr.Error(f"Greedy reconstruction failed: {e}")
 
     progress(1.0, desc="Done!")
-    yield viewers.filter_sweep_links(results)
+    yield viewers.labeled_download_links(results)
 
 
 def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
@@ -424,7 +352,7 @@ def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
         raise gr.Error(f"Auto-path failed: {e}")
 
     note = "" if len(segments) > 1 else "<p>Single segment -- nothing to join.</p>"
-    yield viewers.filter_sweep_links(results) + note, segments, bundle_path
+    yield viewers.labeled_download_links(results) + note, segments, bundle_path
 
 
 def handle_pathfind_load_segments(file_path):
@@ -461,7 +389,7 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
     except Exception as e:
         raise gr.Error(f"Join failed: {e}")
 
-    yield viewers.filter_sweep_links([(label, ply)])
+    yield viewers.labeled_download_links([(label, ply)])
 
 
 def build_tab():
@@ -486,16 +414,6 @@ def build_tab():
         with gr.Column(scale=0, min_width=140):
             clear_btn = gr.Button("Clear selection")
             generate_btn = gr.Button("Generate", variant="primary")
-            # Debug: compares consensus-filter strictness levels from one
-            # DA3 inference call. Not part of the normal Generate flow.
-            filter_sweep_btn = gr.Button("Test filter levels (debug)")
-            # Experimental: solo-scores a wider candidate pool and
-            # reconstructs with only the top 4. Not part of the normal
-            # Generate flow.
-            best4_btn = gr.Button("Reconstruct (best-4, experimental)")
-            # Experimental: chunk+connect for chains longer than one DA3
-            # call can handle. Not part of the normal Generate flow.
-            windowed_btn = gr.Button("Reconstruct (windowed, experimental)")
             # Experimental: greedy same-capture-pass sliding window, graded
             # by real pairwise DA3 calls instead of solo score. Can return
             # multiple disconnected segments. Not part of the normal
@@ -553,30 +471,6 @@ def build_tab():
 
     generate_btn.click(
         fn=handle_generate_chain,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    filter_sweep_btn.click(
-        fn=handle_filter_sweep,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    best4_btn.click(
-        fn=handle_best4,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    windowed_btn.click(
-        fn=handle_windowed,
         inputs=[state],
         outputs=[reconstruct_view],
         show_progress="minimal",

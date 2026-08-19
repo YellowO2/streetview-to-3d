@@ -1,8 +1,8 @@
 """Greedy same-date sliding-window reconstruction: walks the street
 node-by-node preferring whichever capture date (Apple or Google) has the
 best contiguous coverage, and grades each 2-node window with a real
-pairwise DA3 call (not solo score -- unlike best4.py, this session found
-solo score doesn't reliably predict either direction).
+pairwise DA3 call (not a solo per-candidate score -- this session found
+solo scoring doesn't reliably predict either direction).
 
 Can return MULTIPLE disconnected point clouds ("segments") instead of one
 merged result -- a street with no single pass covering it end-to-end
@@ -17,8 +17,7 @@ from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, apple_candidates, dow
 from services.pipeline_runner import run_greedy_pass_reconstruction_gpu, save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, format_date
 from street_builder.map_selection.candidates import APPLE_CANDIDATE_MAX_DIST_M
-from street_builder.reconstruction.best4 import BEST4_STEP_DEGREES
-from street_builder.reconstruction.common import CANDIDATE_POOL_APPLE_PER_NODE, Candidate
+from street_builder.reconstruction.common import CANDIDATE_POOL_APPLE_PER_NODE, Candidate, DEFAULT_STEP_DEGREES
 
 # How many of a node's most-recent Google historical dates to try (every
 # option here gets downloaded eagerly, so this bounds download cost).
@@ -33,7 +32,7 @@ GREEDY_KEEP_RATE_THRESHOLD = 0.5
 # How many candidate passes to try at a position before giving up on it.
 GREEDY_MAX_ATTEMPTS_PER_POSITION = 3
 
-GREEDY_STEP_DEGREES = BEST4_STEP_DEGREES
+GREEDY_STEP_DEGREES = DEFAULT_STEP_DEGREES
 
 
 def _pass_options(nodes: list[dict]) -> list[dict[str, object]]:

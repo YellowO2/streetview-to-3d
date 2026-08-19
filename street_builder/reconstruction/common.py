@@ -1,24 +1,26 @@
 """Shared helpers used by multiple reconstruction strategies."""
 import asyncio
-import os
 from collections import namedtuple
 
-from services.geo import haversine_m
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, apple_candidates, download_lookaround
 from services.streetview_fetch import DA3_ONLY_ZOOM, download_images_for_nodes
-from street_builder.map_selection.candidates import APPLE_CANDIDATE_MAX_DIST_M
 
 # street_builder is DA3-only everywhere (no SHARP splat generation), so
 # every download here uses the low-res DA3 zoom, not the SHARP default.
 
-# lat/lon needed to pick which of a window's winners are closest to a
-# window boundary (windowed.py); best4.py only uses label/path.
 Candidate = namedtuple("Candidate", ["label", "path", "lat", "lon"])
 
 # Per node, how many nearest Apple Look Around panos to pull in as extra
 # support context or scoring candidates.
 APPLE_SUPPORT_PER_NODE = 1
 CANDIDATE_POOL_APPLE_PER_NODE = 4
+
+# Yaw step for DA3's view slicing, shared default across the client-driven
+# reconstruction flows. 30 (12 slices) is the tested middle ground between
+# DA3's own default 20 (18 slices) and the too-coarse 45 (8 slices, caused
+# 2/4 winners to go from partial acceptance to fully rejected in an
+# earlier scoring experiment).
+DEFAULT_STEP_DEGREES = 30
 
 
 def gather_apple_support(nodes: list[dict]) -> list[str]:
@@ -46,49 +48,3 @@ def download_chain_and_support(nodes: list[dict]) -> tuple[str, list[str]]:
     return image_paths[0], support_paths
 
 
-def gather_candidate_pool(nodes: list[dict]) -> list[Candidate]:
-    """Candidates for every given node's own Google image plus nearby Apple
-    candidates. The nodes only mark where to search; they compete in this
-    pool and aren't guaranteed a spot in the final reconstruction."""
-    pool = []
-    seen_paths = set()
-
-    image_paths = asyncio.run(download_images_for_nodes(nodes, zoom=DA3_ONLY_ZOOM))
-    for node, path in zip(nodes, image_paths):
-        if path not in seen_paths:
-            pool.append(Candidate(f"google:{node['id']}", path, node["lat"], node["lon"]))
-            seen_paths.add(path)
-
-    for node in nodes:
-        try:
-            candidates = apple_candidates(node["lat"], node["lon"], k=CANDIDATE_POOL_APPLE_PER_NODE)
-        except Exception as e:
-            print(f"Apple candidate lookup failed for node {node['id']}: {e}")
-            continue
-        for pano in candidates:
-            dist = haversine_m(node["lat"], node["lon"], pano.lat, pano.lon)
-            if dist > APPLE_CANDIDATE_MAX_DIST_M:
-                print(f"Apple candidate {pano.id} skipped: {dist:.1f}m from node {node['id']} (> {APPLE_CANDIDATE_MAX_DIST_M}m cap)")
-                continue
-            try:
-                path = download_lookaround(pano, zoom=DA3_ONLY_APPLE_ZOOM)
-            except Exception as e:
-                print(f"Apple candidate download failed for {pano.id}: {e}")
-                continue
-            if path not in seen_paths:
-                pool.append(Candidate(f"apple:{pano.id}", path, pano.lat, pano.lon))
-                seen_paths.add(path)
-
-    return pool
-
-
-def labeled_alias(candidate: Candidate, alias_dir: str) -> str:
-    """Symlink to candidate.path named by source + lat/lon instead of its
-    opaque pano ID. panoramic-to-3dgs's DA3 log identifies a pano by
-    os.path.basename(path), so this is what actually shows up there."""
-    source = candidate.label.split(":", 1)[0]
-    ext = os.path.splitext(candidate.path)[1]
-    alias_path = os.path.join(alias_dir, f"{source}_lat{candidate.lat:.6f}_lon{candidate.lon:.6f}{ext}")
-    if not os.path.exists(alias_path):
-        os.symlink(os.path.abspath(candidate.path), alias_path)
-    return alias_path

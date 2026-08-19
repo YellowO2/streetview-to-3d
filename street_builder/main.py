@@ -28,7 +28,7 @@ from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_point
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
 from street_builder.build_graph.build_graph import build_corridor_graph
 from street_builder.build_graph.date_ranking import DATE_TOP_N, local_batch
-from street_builder.reconstruction.best4 import BEST4_STEP_DEGREES
+from street_builder.reconstruction.common import DEFAULT_STEP_DEGREES
 
 # How many panos download at once. Downloads used to run one at a time
 # (each its own fresh event loop) -- for a large batch (100+ candidates on
@@ -130,7 +130,7 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
 
 
 def run_prepared_pathfind(prep: dict, output_dir,
-                          step_degrees: int = BEST4_STEP_DEGREES) -> list[tuple[str, str]]:
+                          step_degrees: int = DEFAULT_STEP_DEGREES) -> list[tuple[str, str]]:
     """Convenience one-shot: GPU search + save per-segment previews + join
     (if there's more than one segment) in a single call. UI callers doing
     the 3-step Prepare/Run/Join flow (see tab.py) should call
@@ -207,7 +207,7 @@ def load_segments_bundle(path: str) -> tuple[dict, list]:
     return bundle["prep"], bundle["segments"]
 
 
-def run_prepared_pathfind_segments(prep: dict, step_degrees: int = BEST4_STEP_DEGREES):
+def run_prepared_pathfind_segments(prep: dict, step_degrees: int = DEFAULT_STEP_DEGREES):
     """Same GPU call as run_prepared_pathfind, but returns the raw segment
     list (pts, cols, path_edges, date, reached, node_positions per segment)
     instead of saved .ply paths -- what join_segments.py needs to fit and
