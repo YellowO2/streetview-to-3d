@@ -15,6 +15,7 @@ ZeroGPU, so it lives here, next to the rest of the corridor/date logic it
 actually reasons about, rather than inside the GPU package which has no
 business knowing what a "corridor" or "date" is.
 """
+import time
 from collections import deque
 
 import numpy as np
@@ -48,6 +49,14 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
     return Rotation.from_quat(quats.mean(axis=0)).as_matrix(), np.mean(ts, axis=0)
 
 
+# Rough real DA3 pairwise-test cost, padded from an observed ~3.2s/test on
+# a real production run (27 tests in 86.5s). Scales the search's own time
+# budget to corridor size -- see run_pathfind_reconstruction's deadline
+# calc -- instead of every corridor getting the same flat allowance
+# regardless of how much (or little) there is to walk.
+SECONDS_PER_DOT_ESTIMATE = 5.0
+
+
 def run_pathfind_reconstruction(
     date_graphs: list[dict],
     points: list[tuple[float, float]],
@@ -58,7 +67,7 @@ def run_pathfind_reconstruction(
     start_zone_m: float = 5.0,
     point_cover_tolerance_m: float = 15.0,
     edge_max_dist_m: float = 18.0,
-    max_tests_per_date: int = 200,
+    max_time_budget_s: float = 220.0,
     early_exit_segments: int = 4,
 ) -> list[tuple]:
     """Two-phase pathfind.
@@ -79,6 +88,19 @@ def run_pathfind_reconstruction(
       nearest still-uncovered corridor point. Produces N disconnected
       pieces per date. Early-exits date exploration once pieces so far
       already need < early_exit_segments to fully cover the corridor.
+
+      Bounded by ONE shared wall-clock deadline across ALL dates combined,
+      not a per-date call count -- this call runs inside a single
+      @spaces.GPU window with a real, fixed wall-clock duration (ZeroGPU
+      kills the call outright once it's up, regardless of what's
+      mid-flight), so the real constraint was always time, not "how many
+      tests." A call-count budget was only ever an approximation of that,
+      and a bad one once calls stop being uniform cost (e.g. a future
+      solo-pano scoring pass alongside the pairwise tests). The deadline
+      itself scales with corridor size (len(points) * SECONDS_PER_DOT_ESTIMATE)
+      so a short street doesn't wait around for a budget sized for a long
+      one, capped at max_time_budget_s -- the caller's own real GPU window,
+      margined for model load/teardown (see pipeline_runner.py).
     - Phase 2 (set_cover): greedy set cover over every piece from every
       date mapped -- picks fewest pieces covering the most corridor.
 
@@ -114,10 +136,12 @@ def run_pathfind_reconstruction(
     def pdist(lat, lon, pi):
         return haversine_m(lat, lon, points[pi][0], points[pi][1])
 
-    def map_date(date, dot_candidates, test_offset, budget):
+    def map_date(date, dot_candidates, test_offset, deadline):
         """Phase 1 for ONE date's own dot_candidates. Returns (pieces,
         tests_used); pieces: list of (pts, cols, path_edges,
-        node_positions, covered_point_indices)."""
+        node_positions, covered_point_indices). deadline: shared
+        time.monotonic() cutoff across every date in this call, not a
+        per-date allowance."""
         confirmed = {}  # dot_index -> {key, path, lat, lon, seg_R, seg_t, pose, piece_id}
         piece_data = {}  # piece_id -> {pts, cols, path_edges}
         next_piece_id = [0]
@@ -139,7 +163,7 @@ def run_pathfind_reconstruction(
             single test_edge call already returns both poses in one
             shared frame, so the founding edge of a piece needs no
             rigid_align at all, only later extensions do)."""
-            if tests_used[0] >= budget:
+            if time.monotonic() >= deadline:
                 return False
             result = test_edge(from_path, to_path, f"{date}_{test_offset + tests_used[0]}")
             tests_used[0] += 1
@@ -274,7 +298,7 @@ def run_pathfind_reconstruction(
                 return min(pool, key=lambda d: haversine_m(points[d][0], points[d][1], start_lat, start_lon))
             return min(candidates, key=lambda d: min(pdist(points[d][0], points[d][1], pi) for pi in uncovered))
 
-        while tests_used[0] < budget:
+        while time.monotonic() < deadline:
             uncovered = set(range(len(points))) - covered_points(confirmed.keys())
             if not uncovered:
                 break
@@ -315,10 +339,17 @@ def run_pathfind_reconstruction(
 
     all_pieces = []  # (pts, cols, path_edges, node_positions, covered, date)
     total_tests = 0
+    time_budget_s = min(len(points) * SECONDS_PER_DOT_ESTIMATE, max_time_budget_s)
+    deadline = time.monotonic() + time_budget_s
+    print(f"pathfind: time budget {time_budget_s:.0f}s ({len(points)} dot(s) x {SECONDS_PER_DOT_ESTIMATE}s, capped at {max_time_budget_s:.0f}s)")
 
     for date_graph in date_graphs:
+        if time.monotonic() >= deadline:
+            print("pathfind: time budget exhausted -- stopping date exploration")
+            break
+
         date, dot_candidates = date_graph["date"], date_graph["dot_candidates"]
-        pieces, tests_used = map_date(date, dot_candidates, total_tests, max_tests_per_date)
+        pieces, tests_used = map_date(date, dot_candidates, total_tests, deadline)
         total_tests += tests_used
         for p in pieces:
             all_pieces.append(p + (date,))

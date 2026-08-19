@@ -241,3 +241,78 @@ def run_prepared_pathfind_segments(prep: dict, step_degrees: int = DEFAULT_STEP_
     if not segments:
         raise RuntimeError("No connected path found from start toward any goal.")
     return segments
+
+
+# ---- TEMPORARY DEBUG EXPERIMENT -- DELETE after use ------------------
+# Verifies whether solo DA3 self-consistency score predicts pairwise DA3
+# success, and measures real per-call timing (model load, one solo-score
+# call, one pairwise call) -- see services/pipeline_runner.py's
+# debug_solo_score_experiment and map_selection/tab.py's debug button,
+# delete those too once this experiment's results are recorded.
+#
+# One real corridor (13 clicked nodes) known to have a dense Apple
+# LookAround date (2026-06-16) with genuine multi-candidate dots, and 6
+# real adjacent dot pairs among them (found by inspecting
+# build_corridor_graphs' own output for this corridor).
+DEBUG_NODE_IDS = [
+    "QauJOqDU81oP2gjvq7QU2w", "2bydvzQImenF9gtmHp5lXA", "6ji2HZUXlSPv3P10r1C5_Q",
+    "zl35LNRK_aJe4cGQ9-hTRQ", "PKxYVot6hYv2bCE_U44HWw", "ZEZ0GsFosASfXe1ZjVlYzQ",
+    "wqnEAA3J8vYGdz0hnN_raQ", "3kUzmNGgFgcUXgYoYFixhg", "BbUg0asjBBgWw4m2qtvV2w",
+    "A-qJINmQuveuZjkfGWt22A", "cSZ1RgE0puHs8fldOqvUjA", "aUG1My3j2n0sZl9S_cOwTg", "XeZFUZK6aeLyoMOG7Z1bSA",
+]
+DEBUG_DATE = "2026-06-16"
+DEBUG_ADJACENT_PAIRS = [(0, 1), (1, 2), (2, 5), (5, 6), (6, 7), (7, 8)]
+
+
+def run_debug_solo_score_experiment() -> str:
+    """TEMPORARY -- see module comment above. Returns a markdown results
+    table for display."""
+    from services.pipeline_runner import debug_solo_score_experiment
+    from services.streetview_fetch import fetch_pano_by_id
+
+    async def _fetch_all():
+        return {pid: await fetch_pano_by_id(pid) for pid in DEBUG_NODE_IDS}
+    metas = run_async(_fetch_all())
+
+    neighbor_ids = {pid: {n["id"] for n in metas[pid]["neighbors"]} for pid in DEBUG_NODE_IDS}
+    edges = []
+    for i, a in enumerate(DEBUG_NODE_IDS):
+        for b in DEBUG_NODE_IDS[i + 1:]:
+            if b in neighbor_ids[a] or a in neighbor_ids[b]:
+                edges.append(((metas[a]["lat"], metas[a]["lon"]), (metas[b]["lat"], metas[b]["lon"])))
+
+    start = (metas[DEBUG_NODE_IDS[0]]["lat"], metas[DEBUG_NODE_IDS[0]]["lon"])
+    goals = [(metas[pid]["lat"], metas[pid]["lon"]) for pid in DEBUG_NODE_IDS[1:]]
+
+    date_graphs, points, adjacency = build_corridor_graphs(edges, start[0], start[1], goals)
+    date_graph = next((g for g in date_graphs if g["date"] == DEBUG_DATE), None)
+    if date_graph is None:
+        raise ValueError(f"date {DEBUG_DATE} not found among this corridor's top dates -- corridor data may have changed")
+    dot_candidates = date_graph["dot_candidates"]
+
+    dots_needed = {d for pair in DEBUG_ADJACENT_PAIRS for d in pair}
+    all_nodes = [n for d in dots_needed for n in dot_candidates.get(d, [])]
+    paths = run_async(_download_all(all_nodes))
+    path_by_key = {n["key"]: p for n, p in zip(all_nodes, paths) if p}
+
+    dot_pairs = []
+    for a, b in DEBUG_ADJACENT_PAIRS:
+        cands_a = [(n["key"], path_by_key[n["key"]]) for n in dot_candidates.get(a, []) if n["key"] in path_by_key]
+        cands_b = [(n["key"], path_by_key[n["key"]]) for n in dot_candidates.get(b, []) if n["key"] in path_by_key]
+        if cands_a and cands_b:
+            dot_pairs.append((cands_a, cands_b))
+    if not dot_pairs:
+        raise ValueError("Nothing downloaded successfully -- can't run experiment")
+
+    result = debug_solo_score_experiment(dot_pairs)
+
+    lines = [
+        f"**DA3 model load: {result['load_time_s']:.2f}s**", "",
+        "**Solo scores:**", "", "| pano | kept views | time (s) |", "|---|---|---|",
+    ]
+    for key, (kept, elapsed) in result["scores"].items():
+        lines.append(f"| {key} | {kept} | {elapsed:.2f} |")
+    lines += ["", "**Pairwise results:**", "", "| pano A | score A | pano B | score B | result | time (s) |", "|---|---|---|---|---|---|"]
+    for key_a, key_b, score_a, score_b, ok, elapsed in result["results"]:
+        lines.append(f"| {key_a} | {score_a} | {key_b} | {score_b} | {'OK' if ok else 'FAIL'} | {elapsed:.2f} |")
+    return "\n".join(lines)

@@ -14,15 +14,22 @@ try:
     # spaces is also installed locally via requirements.txt, so gate on SPACE_ID
     # which HF Spaces always sets but local machines don't have.
     ON_SPACES = bool(os.getenv("SPACE_ID"))
+    # Longer budget for run_pathfind_reconstruction_gpu: it does the entire
+    # multi-date pathfind search (map_date/set_cover, potentially dozens of
+    # DA3 tests) inside one GPU call, specifically to avoid the 'Expired
+    # ZeroGPU proxy token' failure hit when that was split into several
+    # smaller calls instead. PATHFIND_MAX_TIME_BUDGET_S is a CEILING passed
+    # to run_pathfind_reconstruction, not its actual deadline -- the
+    # algorithm scales its own deadline to corridor size and only caps at
+    # this. Kept well under GPU_WINDOWED_DURATION_S to leave real margin
+    # for model load (before the search even starts) and save/teardown after.
+    GPU_WINDOWED_DURATION_S = 280
+    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 60
+
     if ON_SPACES:
         GPU = spaces.GPU(duration=108)
         GPU_EDIT = spaces.GPU(duration=72)
-        # Longer budget for run_pathfind_reconstruction_gpu: it does the
-        # entire multi-date pathfind search (map_date/search_from/set_cover,
-        # potentially dozens of DA3 tests) inside one GPU call, specifically
-        # to avoid the 'Expired ZeroGPU proxy token' failure hit when that
-        # was split into several smaller calls instead.
-        GPU_WINDOWED = spaces.GPU(duration=280)
+        GPU_WINDOWED = spaces.GPU(duration=GPU_WINDOWED_DURATION_S)
     else:
         GPU = lambda fn: fn
         GPU_EDIT = lambda fn: fn
@@ -32,6 +39,8 @@ except ImportError:
     GPU_EDIT = lambda fn: fn
     GPU_WINDOWED = lambda fn: fn
     ON_SPACES = False
+    GPU_WINDOWED_DURATION_S = 280
+    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 60
 
 _pipeline = None
 _flux_editor = None
@@ -117,10 +126,87 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
             def test_edge(path_a, path_b, test_id):
                 return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge)
+            return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
     finally:
         del da3
         torch.cuda.empty_cache()
+
+
+@GPU_WINDOWED
+def debug_solo_score_experiment(dot_pairs, step_degrees=20):
+    """TEMPORARY DEBUG EXPERIMENT -- DELETE after the run is done and
+    results are recorded (see street_builder/main.py's
+    run_debug_solo_score_experiment and map_selection/tab.py's debug
+    button, delete those too).
+
+    Verifies whether a candidate's solo DA3 self-consistency score
+    predicts pairwise DA3 success (does good x good actually beat bad x
+    bad), and measures real per-call timing (model load, one solo-score
+    call, one pairwise call) -- used to replace guessed constants in
+    walk_graph.py's SECONDS_PER_DOT_ESTIMATE and the dynamic GPU
+    duration this experiment is itself in service of.
+
+    dot_pairs: [([(key, path), ...], [(key, path), ...]), ...] -- each
+    tuple is one real adjacent dot pair's own candidate lists (already
+    downloaded). Every candidate in every pair gets solo-scored once;
+    every (a, b) combination within each pair gets a real pairwise test.
+
+    Returns {"load_time_s": float, "scores": {key: (kept_views, time_s)},
+    "results": [(key_a, key_b, score_a, score_b, ok, time_s), ...]}."""
+    import os
+    import tempfile
+    import time
+
+    import torch
+    from components.ViewExtractor.ViewExtractor import extract_views_for_da3
+    from panoramic_to_3dgs import DA3Model, test_edge_da3
+
+    pipeline = get_pipeline()
+    t0 = time.monotonic()
+    da3 = DA3Model(pipeline.config.da3_model)
+    load_time_s = time.monotonic() - t0
+    print(f"[debug] DA3Model load: {load_time_s:.2f}s")
+
+    scores = {}
+    results = []
+    try:
+        with tempfile.TemporaryDirectory() as views_base:
+            all_candidates = {}
+            for cands_a, cands_b in dot_pairs:
+                for key, path in cands_a + cands_b:
+                    all_candidates[key] = path
+
+            for i, (key, path) in enumerate(all_candidates.items()):
+                t0 = time.monotonic()
+                da3_dir = os.path.join(views_base, f"score_{i}")
+                os.makedirs(da3_dir, exist_ok=True)
+                views = extract_views_for_da3(path, da3_dir, prefix=f"score_{i}_", pano_id=0)
+                filtered_views, _ = da3.process_views(views, dist_thresh=0.2, angle_thresh=1)
+                elapsed = time.monotonic() - t0
+                scores[key] = (len(filtered_views), elapsed)
+                print(f"[debug] solo-score {key}: {len(filtered_views)}/{len(views)} kept, {elapsed:.2f}s")
+
+            test_id = 0
+            for cands_a, cands_b in dot_pairs:
+                for key_a, path_a in cands_a:
+                    for key_b, path_b in cands_b:
+                        t0 = time.monotonic()
+                        result = test_edge_da3(path_a, path_b, pipeline.config, views_base, da3,
+                                                test_id=f"debug_{test_id}", step_degrees=step_degrees)
+                        elapsed = time.monotonic() - t0
+                        test_id += 1
+                        ok = result is not None
+                        score_a, _ = scores[key_a]
+                        score_b, _ = scores[key_b]
+                        print(f"[debug] pairwise {key_a}(score={score_a}) x {key_b}(score={score_b}): "
+                              f"{'OK' if ok else 'FAIL'}, {elapsed:.2f}s")
+                        results.append((key_a, key_b, score_a, score_b, ok, elapsed))
+    finally:
+        del da3
+        torch.cuda.empty_cache()
+
+    return {"load_time_s": load_time_s, "scores": scores, "results": results}
 
 
 def save_pointcloud(points, colors, path):
