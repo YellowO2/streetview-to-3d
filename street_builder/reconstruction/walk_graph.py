@@ -49,12 +49,19 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
     return Rotation.from_quat(quats.mean(axis=0)).as_matrix(), np.mean(ts, axis=0)
 
 
-# Rough real DA3 pairwise-test cost, padded from an observed ~3.2s/test on
-# a real production run (27 tests in 86.5s). Scales the search's own time
-# budget to corridor size -- see run_pathfind_reconstruction's deadline
-# calc -- instead of every corridor getting the same flat allowance
-# regardless of how much (or little) there is to walk.
-SECONDS_PER_DOT_ESTIMATE = 5.0
+# Rough real DA3 pairwise-test cost x ~2 tests/dot (most dots succeed on
+# the first candidate; occasional floods/restarts need more) -- scales
+# the search's own time budget to corridor size (see
+# run_pathfind_reconstruction's deadline calc) instead of every corridor
+# getting the same flat allowance regardless of how much there is to walk.
+#
+# Calibrated from two real measurements (see tests/debug_solo_score_experiment.py
+# for the full methodology/results): a real production pathfind run
+# averaged ~3.2s/pairwise-test (27 tests in 86.5s, includes rigid_align +
+# point-cloud merge overhead), while an isolated experiment doing only
+# raw DA3 pairwise calls averaged ~2.0s/test (no merge overhead). ~3.0s
+# padded per test x ~2 tests/dot -> 6.0s/dot.
+SECONDS_PER_DOT_ESTIMATE = 6.0
 
 
 def run_pathfind_reconstruction(

@@ -365,17 +365,6 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
     yield viewers.labeled_download_links([(label, ply)])
 
 
-# ---- TEMPORARY DEBUG EXPERIMENT -- DELETE after use ------------------
-# See street_builder/main.py's run_debug_solo_score_experiment and
-# services/pipeline_runner.py's debug_solo_score_experiment -- delete
-# this handler + its button in build_tab() together with those.
-def handle_debug_solo_score(progress=gr.Progress(track_tqdm=True)):
-    try:
-        return street_main.run_debug_solo_score_experiment()
-    except Exception as e:
-        raise gr.Error(f"Debug experiment failed: {e}")
-
-
 def build_tab():
     state = gr.State(_empty_state())
 
@@ -411,15 +400,10 @@ def build_tab():
             pathfind_prepare_btn = gr.Button("1. Prepare auto-path (experimental)")
             pathfind_run_btn = gr.Button("2. Run auto-path")
             pathfind_join_btn = gr.Button("3. Join segments")
-            # TEMPORARY DEBUG EXPERIMENT -- DELETE after use (see
-            # handle_debug_solo_score above, main.py, pipeline_runner.py)
-            debug_solo_score_btn = gr.Button("[debug] solo-score experiment")
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
     pathfind_segments_state = gr.State(None)
-    # TEMPORARY DEBUG EXPERIMENT -- DELETE after use
-    debug_solo_score_output = gr.Markdown()
 
     with gr.Row(equal_height=True):
         # Produced by Run -- everything Join needs (prep + segments),
@@ -491,13 +475,4 @@ def build_tab():
         outputs=[reconstruct_view],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
-    )
-
-    # TEMPORARY DEBUG EXPERIMENT -- DELETE after use
-    debug_solo_score_btn.click(
-        fn=handle_debug_solo_score,
-        inputs=[],
-        outputs=[debug_solo_score_output],
-        show_progress="minimal",
-        show_progress_on=[debug_solo_score_output],
     )
