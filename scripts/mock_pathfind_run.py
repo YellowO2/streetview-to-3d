@@ -1,5 +1,5 @@
 """One-shot real-data pathfind test: fetch real metadata for a list of
-clicked pano IDs, build the real corridor graph (same functions
+clicked pano IDs, build the real isolated per-date graphs (same functions
 prepare_pathfind uses), then run the real pathfind algorithm
 (street_builder/reconstruction/walk_graph.py) with a fake test_edge
 callback (no GPU needed -- the algorithm has zero GPU dependency) and
@@ -20,8 +20,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from street_builder.build_graph.build_graph import build_corridor_graph
-from street_builder.build_graph.date_ranking import local_batch
+from street_builder.build_graph.build_graph import build_corridor_graphs
 from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
 # ---- edit these for a new run -----------------------------------------
@@ -40,7 +39,6 @@ NODE_IDS = [
 FAIL_IDS: set[frozenset] = set()  # e.g. {frozenset({"zF8...", "H1fii..."})}
 RANDOM_FAIL_RATE = None  # e.g. 0.4 for a randomized run instead of FAIL_IDS
 RANDOM_SEED = 0
-TOP_N_DATES = 5
 # -------------------------------------------------------------------------
 
 
@@ -102,26 +100,23 @@ def main():
     if not corridor_edges:
         raise RuntimeError("No real edges found among these nodes -- can't build a corridor.")
 
-    print(f"\n=== building real corridor graph (network calls to Google/Apple) ===")
-    nodes, edges, points = build_corridor_graph(corridor_edges)
-    by_date = {}
-    for n in nodes:
-        by_date.setdefault(n["date"], []).append(n)
-    print(f"{len(nodes)} candidate pano(s) fetched, {len(points)} corridor spine point(s), {len(by_date)} distinct date(s)")
-
     start = (metas[NODE_IDS[0]]["lat"], metas[NODE_IDS[0]]["lon"])
     goals = [(metas[pid]["lat"], metas[pid]["lon"]) for pid in NODE_IDS[1:]]
-    batch_keys, top_dates = local_batch(nodes, edges, points, start[0], start[1], goals)
-    print(f"\n=== top {len(top_dates)} dates (client ranking) ===")
-    for i, d in enumerate(top_dates, 1):
-        n = sum(1 for k in dict.fromkeys(batch_keys) if next(x for x in nodes if x["key"] == k)["date"] == d)
-        print(f"  {i}. {d} ({n} candidate(s))")
 
-    by_key = {n["key"]: n for n in nodes}
-    node_entries = [(k, f"/fake/{k}", by_key[k]["lat"], by_key[k]["lon"], by_key[k]["date"])
-                    for k in dict.fromkeys(batch_keys)]
-    have = {e[0] for e in node_entries}
-    batch_edges = {k: [(o, dd) for o, dd in v if o in have] for k, v in edges.items() if k in have}
+    print(f"\n=== building isolated per-date graphs (network calls to Google/Apple) ===")
+    date_graphs, points = build_corridor_graphs(corridor_edges, start[0], start[1], goals)
+    print(f"{len(points)} corridor spine point(s), {len(date_graphs)} date graph(s) built:")
+    for i, g in enumerate(date_graphs, 1):
+        print(f"  {i}. {g['date']} ({len(g['nodes'])} candidate(s))")
+
+    # Real download step, skipped here (no GPU/network image fetch needed
+    # for this mock) -- fake paths keyed by real pano id, same shape
+    # main.py's _download_date_graphs would produce.
+    fake_date_graphs = [
+        {"date": g["date"], "edges": g["edges"],
+         "nodes": [(n["key"], f"/fake/{n['key']}", n["lat"], n["lon"]) for n in g["nodes"]]}
+        for g in date_graphs
+    ]
 
     test_log = []
     tested_pairs = {}
@@ -134,10 +129,7 @@ def main():
         test_edge = make_fake_test_edge(test_log, tested_pairs)
         print(f"\n=== running pathfind (test_edge mocked, FAIL_IDS={FAIL_IDS or 'none -- everything succeeds'}) ===")
 
-    segments = run_pathfind_reconstruction(
-        node_entries, batch_edges, points, start[0], start[1], test_edge,
-        date_order=top_dates, top_n_dates=TOP_N_DATES,
-    )
+    segments = run_pathfind_reconstruction(fake_date_graphs, points, start[0], start[1], test_edge)
 
     print(f"\n=== RESULT ===")
     print(f"{len(test_log)} test call(s), {len(segments)} segment(s)")

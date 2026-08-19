@@ -49,8 +49,7 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
 
 
 def run_pathfind_reconstruction(
-    nodes: list[tuple[str, str, float, float, str]],
-    edges: dict,
+    date_graphs: list[dict],
     points: list[tuple[float, float]],
     start_lat: float,
     start_lon: float,
@@ -60,18 +59,18 @@ def run_pathfind_reconstruction(
     start_zone_m: float = 5.0,
     point_cover_tolerance_m: float = 15.0,
     max_tests_per_date: int = 50,
-    date_order: list[str] | None = None,
-    top_n_dates: int = 5,
     early_exit_segments: int = 4,
 ) -> list[tuple]:
     """Two-phase pathfind.
 
-    - Phase 1 (map_date): per date (top_n_dates, ranked by date_order),
-      best-first walk its own graph toward uncovered corridor points.
-      On dead end, restart from that date's own closest-confirmed node
-      across ALL its pieces so far. Produces N disconnected pieces per
-      date. Early-exits date exploration once pieces so far already
-      need < early_exit_segments to fully cover the corridor.
+    - Phase 1 (map_date): per date graph, best-first walk its OWN already-
+      isolated graph (see street_builder/build_graph/build_graph.py --
+      each graph only ever contains that one date's own nodes/edges, so
+      there's no cross-date filtering left to do here) toward uncovered
+      corridor points. On dead end, restart from that date's own closest-
+      confirmed node across ALL its pieces so far. Produces N disconnected
+      pieces per date. Early-exits date exploration once pieces so far
+      already need < early_exit_segments to fully cover the corridor.
     - Phase 2 (set_cover): greedy set cover over every piece from every
       date mapped -- picks fewest pieces covering the most corridor.
 
@@ -82,8 +81,11 @@ def run_pathfind_reconstruction(
     seeing the whole per-date picture first.
 
     Inputs (pre-downloaded by caller, no network here):
-    - nodes: (key, path, lat, lon, date) per candidate pano.
-    - edges: {key: [(other_key, dist_m), ...]} untested same-date hops.
+    - date_graphs: [{"date": str, "nodes": [(key, path, lat, lon), ...],
+      "edges": {key: [(other_key, dist_m), ...]}}, ...], ranked best
+      first, already capped/isolated per date (see build_corridor_graphs)
+      -- this function tries them in the given order and stops once
+      early_exit_segments is satisfied, it doesn't re-rank them.
     - points: corridor's traced spine -- shared, date-independent
       coverage reference (dates never share real panos).
     - test_edge(path_a, path_b, test_id) -> (pose_a, pose_b, pts, cols)
@@ -97,126 +99,126 @@ def run_pathfind_reconstruction(
     node_positions: {key: np.ndarray(3,)}, DA3's placement in that
     piece's own frame, for the caller's join step.
     """
-    node_by_key = {key: (path, lat, lon, date) for key, path, lat, lon, date in nodes}
-    if not node_by_key or not points:
+    if not date_graphs or not points:
         return []
 
     def pdist(lat, lon, pi):
         return haversine_m(lat, lon, points[pi][0], points[pi][1])
 
-    def nearest_uncovered_dist(key, uncovered):
-        _, lat, lon, _ = node_by_key[key]
-        return min(pdist(lat, lon, pi) for pi in uncovered)
-
-    def score(child_key, hop, uncovered):
-        return nearest_uncovered_dist(child_key, uncovered) + hop_weight * abs(hop - target_hop_m)
-
-    def roots_for_date(lat0, lon0, date):
-        return [key for key, (_, lat, lon, d) in node_by_key.items()
-                if d == date and haversine_m(lat, lon, lat0, lon0) <= start_zone_m]
-
-    def covered_points(keys):
-        """Corridor point-indices within point_cover_tolerance_m of any
-        of the given confirmed nodes' real positions."""
-        covered = set()
-        for k in keys:
-            _, lat, lon, _ = node_by_key[k]
-            for pi in range(len(points)):
-                if pi not in covered and pdist(lat, lon, pi) <= point_cover_tolerance_m:
-                    covered.add(pi)
-        return covered
-
-    def search_from(date, root_keys, test_offset, uncovered, dead_edges, budget, confirmed, piece_data, next_piece_id):
-        """Best-first walk of ONE date's graph, scored toward uncovered
-        corridor points (mutated in place). Stops on full coverage, dead
-        frontier, or budget (the date's REMAINING test budget).
-
-        confirmed, dead_edges, piece_data, next_piece_id are ALL owned
-        by map_date and persist across every search_from call for this
-        date (mutated in place here) -- a restart resumes growing the
-        same tree(s) instead of rebuilding them from scratch. Earlier
-        versions reset `confirmed` to {} per call, which meant a
-        restart near an already-fully-proven chain re-tested every
-        edge in it (paying for a real DA3 call each time) before
-        reaching the frontier's actual dead end again -- confirmed on
-        a real run where the same already-successful edge got
-        re-tested 100+ times, each one a wasted GPU call.
-
-        confirmed[key] = {"seg_R", "seg_t", "pose", "piece_id"} --
-        piece_id groups nodes sharing one DA3 base frame (a genuine
-        disconnection boundary, not a restart boundary). piece_data[id]
-        accumulates that piece's own pts/cols/path_edges across
-        however many calls contributed to it.
-
-        Returns tests_done (0 if nothing new got tested)."""
-        seed_keys = set(root_keys) | set(confirmed.keys())
-        frontier = []  # (score, seq, from_key, to_key, hop)
-        seq = 0
-        for root_key in seed_keys:
-            for other_key, hop in edges.get(root_key, []):
-                if (other_key in confirmed or node_by_key[other_key][3] != date
-                        or frozenset((root_key, other_key)) in dead_edges):
-                    continue
-                heapq.heappush(frontier, (score(other_key, hop, uncovered), seq, root_key, other_key, hop))
-                seq += 1
-
-        tests = 0
-        while frontier and tests < budget and uncovered:
-            _, _, from_key, to_key, hop = heapq.heappop(frontier)
-            if to_key in confirmed or frozenset((from_key, to_key)) in dead_edges:
-                continue
-
-            path_a, path_b = node_by_key[from_key][0], node_by_key[to_key][0]
-            result = test_edge(path_a, path_b, f"{date}_{test_offset + tests}")
-            tests += 1
-            if result is None:
-                dead_edges.add(frozenset((from_key, to_key)))
-                print(f"[{date}] {from_key} -> {to_key}: FAIL")
-                continue
-            pose_a, pose_b, pts, cols = result
-
-            if from_key not in confirmed:
-                # from_key is a brand-new root: this edge's frame becomes a new piece's base.
-                pid = next_piece_id[0]
-                next_piece_id[0] += 1
-                confirmed[from_key] = {"seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_a, "piece_id": pid}
-                piece_data[pid] = {"pts": pts, "cols": cols, "path_edges": []}
-            else:
-                # from_key already has a proven frame (this call or an earlier one) -- reuse it.
-                pf = confirmed[from_key]
-                pid = pf["piece_id"]
-                local_R, local_t = rigid_align([pose_a], [pf["pose"]])
-                seg_R = pf["seg_R"] @ local_R
-                seg_t = pf["seg_R"] @ local_t + pf["seg_t"]
-                pd = piece_data[pid]
-                pd["pts"] = np.concatenate([pd["pts"], pts @ seg_R.T + seg_t], axis=0)
-                pd["cols"] = np.concatenate([pd["cols"], cols], axis=0)
-                confirmed[to_key] = {"seg_R": seg_R, "seg_t": seg_t, "pose": pose_b, "piece_id": pid}
-                piece_data[pid]["path_edges"].append((from_key, to_key))
-                uncovered -= covered_points([to_key])
-
-            if to_key not in confirmed:
-                # from_key was the brand-new-root case above -- finish confirming to_key too.
-                confirmed[to_key] = {"seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_b, "piece_id": pid}
-                piece_data[pid]["path_edges"].append((from_key, to_key))
-                uncovered -= covered_points([from_key, to_key])
-
-            print(f"[{date}] {from_key} -> {to_key}: OK ({len(uncovered)} pt(s) left)")
-            if not uncovered:
-                break  # this success just finished coverage -- score() needs a non-empty uncovered
-            for other_key, next_hop in edges.get(to_key, []):
-                if (other_key in confirmed or node_by_key[other_key][3] != date
-                        or frozenset((to_key, other_key)) in dead_edges):
-                    continue
-                heapq.heappush(frontier, (score(other_key, next_hop, uncovered), seq, to_key, other_key, next_hop))
-                seq += 1
-
-        return tests
-
-    def map_date(date, test_offset, budget):
-        """Phase 1 for ONE date. See the module docstring. Returns
+    def map_date(date, nodes, edges, test_offset, budget):
+        """Phase 1 for ONE date's own already-isolated graph. Returns
         (pieces, tests_used); pieces: list of (pts, cols, path_edges,
         node_positions, covered_point_indices)."""
+        node_by_key = {key: (path, lat, lon) for key, path, lat, lon in nodes}
+
+        def nearest_uncovered_dist(key, uncovered):
+            _, lat, lon = node_by_key[key]
+            return min(pdist(lat, lon, pi) for pi in uncovered)
+
+        def score(child_key, hop, uncovered):
+            return nearest_uncovered_dist(child_key, uncovered) + hop_weight * abs(hop - target_hop_m)
+
+        def roots_near(lat0, lon0):
+            return [key for key, (_, lat, lon) in node_by_key.items()
+                    if haversine_m(lat, lon, lat0, lon0) <= start_zone_m]
+
+        def covered_points(keys):
+            """Corridor point-indices within point_cover_tolerance_m of any
+            of the given confirmed nodes' real positions."""
+            covered = set()
+            for k in keys:
+                _, lat, lon = node_by_key[k]
+                for pi in range(len(points)):
+                    if pi not in covered and pdist(lat, lon, pi) <= point_cover_tolerance_m:
+                        covered.add(pi)
+            return covered
+
+        def search_from(root_keys, test_offset, uncovered, dead_edges, budget, confirmed, piece_data, next_piece_id):
+            """Best-first walk of this date's graph, scored toward
+            uncovered corridor points (mutated in place). Stops on full
+            coverage, dead frontier, or budget (the date's REMAINING test
+            budget).
+
+            confirmed, dead_edges, piece_data, next_piece_id are ALL owned
+            by map_date and persist across every search_from call for this
+            date (mutated in place here) -- a restart resumes growing the
+            same tree(s) instead of rebuilding them from scratch. Earlier
+            versions reset `confirmed` to {} per call, which meant a
+            restart near an already-fully-proven chain re-tested every
+            edge in it (paying for a real DA3 call each time) before
+            reaching the frontier's actual dead end again -- confirmed on
+            a real run where the same already-successful edge got
+            re-tested 100+ times, each one a wasted GPU call.
+
+            confirmed[key] = {"seg_R", "seg_t", "pose", "piece_id"} --
+            piece_id groups nodes sharing one DA3 base frame (a genuine
+            disconnection boundary, not a restart boundary). piece_data[id]
+            accumulates that piece's own pts/cols/path_edges across
+            however many calls contributed to it.
+
+            Returns tests_done (0 if nothing new got tested)."""
+            seed_keys = set(root_keys) | set(confirmed.keys())
+            frontier = []  # (score, seq, from_key, to_key, hop)
+            seq = 0
+            for root_key in seed_keys:
+                for other_key, hop in edges.get(root_key, []):
+                    if other_key in confirmed or frozenset((root_key, other_key)) in dead_edges:
+                        continue
+                    heapq.heappush(frontier, (score(other_key, hop, uncovered), seq, root_key, other_key, hop))
+                    seq += 1
+
+            tests = 0
+            while frontier and tests < budget and uncovered:
+                _, _, from_key, to_key, hop = heapq.heappop(frontier)
+                if to_key in confirmed or frozenset((from_key, to_key)) in dead_edges:
+                    continue
+
+                path_a, path_b = node_by_key[from_key][0], node_by_key[to_key][0]
+                result = test_edge(path_a, path_b, f"{date}_{test_offset + tests}")
+                tests += 1
+                if result is None:
+                    dead_edges.add(frozenset((from_key, to_key)))
+                    print(f"[{date}] {from_key} -> {to_key}: FAIL")
+                    continue
+                pose_a, pose_b, pts, cols = result
+
+                if from_key not in confirmed:
+                    # from_key is a brand-new root: this edge's frame becomes a new piece's base.
+                    pid = next_piece_id[0]
+                    next_piece_id[0] += 1
+                    confirmed[from_key] = {"seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_a, "piece_id": pid}
+                    piece_data[pid] = {"pts": pts, "cols": cols, "path_edges": []}
+                else:
+                    # from_key already has a proven frame (this call or an earlier one) -- reuse it.
+                    pf = confirmed[from_key]
+                    pid = pf["piece_id"]
+                    local_R, local_t = rigid_align([pose_a], [pf["pose"]])
+                    seg_R = pf["seg_R"] @ local_R
+                    seg_t = pf["seg_R"] @ local_t + pf["seg_t"]
+                    pd = piece_data[pid]
+                    pd["pts"] = np.concatenate([pd["pts"], pts @ seg_R.T + seg_t], axis=0)
+                    pd["cols"] = np.concatenate([pd["cols"], cols], axis=0)
+                    confirmed[to_key] = {"seg_R": seg_R, "seg_t": seg_t, "pose": pose_b, "piece_id": pid}
+                    piece_data[pid]["path_edges"].append((from_key, to_key))
+                    uncovered -= covered_points([to_key])
+
+                if to_key not in confirmed:
+                    # from_key was the brand-new-root case above -- finish confirming to_key too.
+                    confirmed[to_key] = {"seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_b, "piece_id": pid}
+                    piece_data[pid]["path_edges"].append((from_key, to_key))
+                    uncovered -= covered_points([from_key, to_key])
+
+                print(f"[{date}] {from_key} -> {to_key}: OK ({len(uncovered)} pt(s) left)")
+                if not uncovered:
+                    break  # this success just finished coverage -- score() needs a non-empty uncovered
+                for other_key, next_hop in edges.get(to_key, []):
+                    if other_key in confirmed or frozenset((to_key, other_key)) in dead_edges:
+                        continue
+                    heapq.heappush(frontier, (score(other_key, next_hop, uncovered), seq, to_key, other_key, next_hop))
+                    seq += 1
+
+            return tests
+
         tests_used = 0
         uncovered = set(range(len(points)))
         dead_edges = set()
@@ -226,10 +228,10 @@ def run_pathfind_reconstruction(
         cur_lat, cur_lon = start_lat, start_lon
 
         while uncovered and tests_used < budget:
-            roots = roots_for_date(cur_lat, cur_lon, date)
+            roots = roots_near(cur_lat, cur_lon)
             if not roots:
                 break
-            tests = search_from(date, roots, test_offset + tests_used, uncovered, dead_edges, budget - tests_used, confirmed, piece_data, next_piece_id)
+            tests = search_from(roots, test_offset + tests_used, uncovered, dead_edges, budget - tests_used, confirmed, piece_data, next_piece_id)
             tests_used += tests
             if tests == 0 or not confirmed:
                 # tests == 0: frontier genuinely exhausted, nothing left to try.
@@ -241,7 +243,7 @@ def run_pathfind_reconstruction(
             if not uncovered:
                 break
             next_key = min(confirmed, key=lambda k: nearest_uncovered_dist(k, uncovered))
-            _, cur_lat, cur_lon, _ = node_by_key[next_key]
+            _, cur_lat, cur_lon = node_by_key[next_key]
 
         pieces = []
         for pid, pd in piece_data.items():
@@ -268,15 +270,12 @@ def run_pathfind_reconstruction(
             pool.pop(0)
         return chosen, uncovered
 
-    dates_all = list(dict.fromkeys(date for _, _, _, date in node_by_key.values()))
-    dates_to_try = [d for d in date_order if d in dates_all] if date_order else dates_all
-    dates_to_try = dates_to_try[:top_n_dates]
-
     all_pieces = []  # (pts, cols, path_edges, node_positions, covered, date)
     total_tests = 0
 
-    for date in dates_to_try:
-        pieces, tests_used = map_date(date, total_tests, max_tests_per_date * 5)
+    for date_graph in date_graphs:
+        date, nodes, edges = date_graph["date"], date_graph["nodes"], date_graph["edges"]
+        pieces, tests_used = map_date(date, nodes, edges, total_tests, max_tests_per_date * 5)
         total_tests += tests_used
         for p in pieces:
             all_pieces.append(p + (date,))
@@ -294,5 +293,5 @@ def run_pathfind_reconstruction(
         (pts, cols, path_edges, date, reached_all, node_positions)
         for pts, cols, path_edges, node_positions, covered, date in chosen
     ]
-    print(f"pathfind: {total_tests} attempts total, {len(dates_to_try)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")
+    print(f"pathfind: {total_tests} attempts total, {len(date_graphs)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")
     return segments

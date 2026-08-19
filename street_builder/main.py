@@ -1,14 +1,13 @@
 """Orchestrator for the pathfind flow -- wires the pipeline stages
 together for the UI (map_selection/tab.py calls into this):
 
-1. build_graph.build_corridor_graph: gather candidate panos along the
-   real click-graph (no GPU) -- see street_builder/build_graph/.
-2. build_graph.date_ranking.local_batch: decide which dates are worth
-   downloading/testing (no GPU) -- see street_builder/build_graph/.
-3. Download the batch (network, cached).
-4. run_pathfind_reconstruction_gpu: ONE GPU call -- the actual algorithm
+1. build_graph.build_corridor_graphs: gather candidate panos along the
+   real click-graph and split into up to DATE_TOP_N isolated, capped
+   per-date graphs (no GPU) -- see street_builder/build_graph/.
+2. Download every node referenced by any of those graphs (network, cached).
+3. run_pathfind_reconstruction_gpu: ONE GPU call -- the actual algorithm
    (street_builder/reconstruction/walk_graph.py) runs entirely inside it.
-5. Join segments into one final point cloud (no GPU) -- see
+4. Join segments into one final point cloud (no GPU) -- see
    street_builder/reconstruction/join_segments.py.
 
 One GPU call, not two: an earlier version fell back to a second call
@@ -26,8 +25,7 @@ import time
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
-from street_builder.build_graph.build_graph import build_corridor_graph
-from street_builder.build_graph.date_ranking import DATE_TOP_N, local_batch
+from street_builder.build_graph.build_graph import build_corridor_graphs
 
 # Yaw step for DA3's view slicing. 30 (12 slices) is the tested middle
 # ground between DA3's own default 20 (18 slices) and the too-coarse 45
@@ -66,29 +64,41 @@ async def _download_all(nodes):
     return await asyncio.gather(*[_download_one(n, sem) for n in nodes])
 
 
-def _download_and_filter(keys, by_key, edges):
-    """Download this batch (concurrently, DOWNLOAD_CONCURRENCY at a time),
-    return (node_entries, edges restricted to what downloaded). keys must
-    be a list (or otherwise order-preserving) -- node_entries' order is
-    what determines the pathfind date-try order downstream, and dict.fromkeys
-    (not a set) is what dedupes it while preserving that order."""
-    unique_keys = list(dict.fromkeys(keys))
-    nodes = [by_key[k] for k in unique_keys]
-    paths = run_async(_download_all(nodes))
+def _download_date_graphs(date_graphs):
+    """Download every node referenced by any of the given date graphs, in
+    one combined batch (concurrently, DOWNLOAD_CONCURRENCY at a time --
+    node keys are unique across graphs, since each graph only ever holds
+    its own date's own real panos). Returns (ready_graphs, node_entries):
+    ready_graphs -- each date graph with "nodes" replaced by (key, path,
+    lat, lon) tuples for whatever actually downloaded, and "edges"
+    restricted to reference only those; node_entries -- flat (key, path,
+    lat, lon, date) list across ALL graphs, for join_segments' GPS lookup
+    (see join_segments.join_segments)."""
+    all_nodes = [n for g in date_graphs for n in g["nodes"]]
+    keys = [n["key"] for n in all_nodes]
+    paths = run_async(_download_all(all_nodes))
+    path_by_key = {key: path for key, path in zip(keys, paths) if path}
 
-    entries = []
-    for key, n, path in zip(unique_keys, nodes, paths):
-        if path:
-            entries.append((key, path, n["lat"], n["lon"], n["date"]))
-    have = {e[0] for e in entries}
-    filtered = {k: [(o, d) for o, d in v if o in have] for k, v in edges.items() if k in have}
-    return entries, filtered
+    ready_graphs = []
+    node_entries = []
+    for g in date_graphs:
+        entries = [(n["key"], path_by_key[n["key"]], n["lat"], n["lon"])
+                   for n in g["nodes"] if n["key"] in path_by_key]
+        if len(entries) < 2:
+            continue
+        have = {e[0] for e in entries}
+        edges = {k: [(o, d) for o, d in v if o in have] for k, v in g["edges"].items() if k in have}
+        ready_graphs.append({"date": g["date"], "nodes": entries, "edges": edges})
+        node_entries.extend((key, path, lat, lon, g["date"]) for key, path, lat, lon in entries)
+
+    return ready_graphs, node_entries
 
 
 def prepare_pathfind(start, goals, corridor_edges) -> dict:
-    """CPU/network only, no GPU -- gathers candidates along the corridor and
-    downloads the top-date batch. Split out from the GPU step specifically
-    so the GPU-triggering click (run_prepared_pathfind) can happen as its
+    """CPU/network only, no GPU -- gathers candidates along the corridor,
+    splits them into isolated per-date graphs, and downloads every node
+    any of them reference. Split out from the GPU step specifically so
+    the GPU-triggering click (run_prepared_pathfind) can happen as its
     own fresh, minimal-latency user interaction right before the
     @spaces.GPU call, instead of that call being buried at the end of a
     long download inside one combined request -- the ZeroGPU proxy token's
@@ -113,24 +123,25 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
         raise ValueError("Need at least one confirmed edge tracing the route.")
     start_lat, start_lon = start
 
-    nodes, edges, points = build_corridor_graph(corridor_edges)
-    nodes = [n for n in nodes if edges.get(n["key"])]  # drop isolated (never testable)
-    if len(nodes) < 2:
-        raise ValueError("Not enough connected candidates along this street.")
-    by_key = {n["key"]: n for n in nodes}
+    date_graphs, points = build_corridor_graphs(corridor_edges, start_lat, start_lon, goals)
+    if not date_graphs:
+        raise ValueError("No date reaches from the start toward any goal -- not enough connected candidates.")
 
-    batch_keys, top_dates = local_batch(nodes, edges, points, start_lat, start_lon, goals)
-    print(f"Downloading {len(batch_keys)}/{len(nodes)} top-date candidates...")
-    node_entries, batch_edges = _download_and_filter(batch_keys, by_key, edges)
+    n_candidates = sum(len(g["nodes"]) for g in date_graphs)
+    print(f"Downloading {n_candidates} candidate(s) across {len(date_graphs)} date graph(s): "
+          f"{[g['date'] for g in date_graphs]}")
+    ready_graphs, node_entries = _download_date_graphs(date_graphs)
+    if not ready_graphs:
+        raise ValueError("Nothing downloaded successfully -- can't reconstruct.")
 
     print(f"prepare_pathfind: done in {time.monotonic() - t0:.1f}s")
     return {
+        "date_graphs": ready_graphs,
         "node_entries": node_entries,
-        "batch_edges": batch_edges,
         "points": points,
         "start": start,
         "goals": goals,
-        "top_dates": top_dates,
+        "top_dates": [g["date"] for g in ready_graphs],
     }
 
 
@@ -220,8 +231,7 @@ def run_prepared_pathfind_segments(prep: dict, step_degrees: int = DEFAULT_STEP_
     t0 = time.monotonic()
     start_lat, start_lon = prep["start"]
     segments = run_pathfind_reconstruction_gpu(
-        prep["node_entries"], prep["batch_edges"], prep["points"], start_lat, start_lon,
-        step_degrees=step_degrees, date_order=prep["top_dates"], top_n_dates=DATE_TOP_N,
+        prep["date_graphs"], prep["points"], start_lat, start_lon, step_degrees=step_degrees,
     )
     print(f"run_prepared_pathfind_segments: done in {time.monotonic() - t0:.1f}s")
     if not segments:

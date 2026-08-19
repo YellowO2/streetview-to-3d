@@ -26,13 +26,30 @@ def latlon(offset_m):
     return (1.0 + offset_m / M_PER_DEG_LAT, 103.0)
 
 
+def build_date_graphs(node_specs, edge_specs):
+    """node_specs: {key: (offset_m, date)}. edge_specs: {key: [(other_key,
+    dist_m), ...]} -- same shape build_corridor_graphs would hand the
+    algorithm, just pre-isolated per date here since test fixtures are
+    already written one date at a time. Returns [{"date", "nodes", "edges"}, ...],
+    nodes as (key, path, lat, lon) tuples."""
+    by_date: dict[str, list[str]] = {}
+    for key, (off, date) in node_specs.items():
+        by_date.setdefault(date, []).append(key)
+
+    date_graphs = []
+    for date, keys in by_date.items():
+        key_set = set(keys)
+        nodes = [(k, f"/fake/{k}", *latlon(node_specs[k][0])) for k in keys]
+        edges = {k: [(o, d) for o, d in edge_specs.get(k, []) if o in key_set] for k in keys}
+        date_graphs.append({"date": date, "nodes": nodes, "edges": edges})
+    return date_graphs
+
+
 def run_scenario(name, node_specs, edge_specs, point_offsets, fail_pairs, start_offset=0, **kwargs):
-    """node_specs: {key: (offset_m, date)}. edge_specs: {key: [(other_key, dist_m), ...]}.
-    point_offsets: [offset_m, ...] -- corridor spine. fail_pairs: set of
+    """point_offsets: [offset_m, ...] -- corridor spine. fail_pairs: set of
     frozenset({key_a, key_b}) that should always fail.
     Returns (segments, test_log)."""
-    nodes = [(key, f"/fake/{key}", *latlon(off), date)
-             for key, (off, date) in node_specs.items()]
+    date_graphs = build_date_graphs(node_specs, edge_specs)
     points = [latlon(off) for off in point_offsets]
     test_log = []
 
@@ -49,7 +66,7 @@ def run_scenario(name, node_specs, edge_specs, point_offsets, fail_pairs, start_
 
     print(f"\n{'=' * 60}\nScenario: {name}\n{'=' * 60}")
     segments = run_pathfind_reconstruction(
-        nodes, edge_specs, points, start_lat, start_lon, fake_test_edge, **kwargs,
+        date_graphs, points, start_lat, start_lon, fake_test_edge, **kwargs,
     )
     print(f"-> {len(test_log)} test call(s): {test_log}")
     print(f"-> {len(segments)} segment(s): " +
@@ -137,26 +154,27 @@ def run_fuzz(seed, fail_rate, n_dates=3, nodes_per_date=6, spacing_m=15.0):
     import random
     rng = random.Random(seed)
 
-    node_specs = {}
-    edge_specs = {}
+    date_graphs = []
+    all_offsets = []
     for d in range(n_dates):
         date = f"date{d}"
         offsets = sorted(rng.uniform(0, (nodes_per_date - 1) * spacing_m) for _ in range(nodes_per_date))
+        all_offsets.extend(offsets)
         keys = [f"d{d}n{i}" for i in range(nodes_per_date)]
-        for k, off in zip(keys, offsets):
-            node_specs[k] = (off, date)
-            edge_specs[k] = []
+        nodes = [(k, f"/fake/{k}", *latlon(off)) for k, off in zip(keys, offsets)]
+        edges = {k: [] for k in keys}
         for i in range(nodes_per_date - 1):
             dist = offsets[i + 1] - offsets[i]
-            edge_specs[keys[i]].append((keys[i + 1], dist))
-            edge_specs[keys[i + 1]].append((keys[i], dist))
+            edges[keys[i]].append((keys[i + 1], dist))
+            edges[keys[i + 1]].append((keys[i], dist))
         for _ in range(nodes_per_date // 2):
             i, j = rng.sample(range(nodes_per_date), 2)
             dist = abs(offsets[i] - offsets[j])
-            edge_specs[keys[i]].append((keys[j], dist))
-            edge_specs[keys[j]].append((keys[i], dist))
+            edges[keys[i]].append((keys[j], dist))
+            edges[keys[j]].append((keys[i], dist))
+        date_graphs.append({"date": date, "nodes": nodes, "edges": edges})
 
-    point_offsets = sorted(off for off, _ in node_specs.values())
+    point_offsets = sorted(all_offsets)
 
     tested_pairs = {}
     test_log = []
@@ -171,12 +189,11 @@ def run_fuzz(seed, fail_rate, n_dates=3, nodes_per_date=6, spacing_m=15.0):
             return None
         return (np.zeros(3), np.eye(3)), (np.zeros(3), np.eye(3)), np.zeros((2, 3)), np.zeros((2, 3))
 
-    nodes = [(key, f"/fake/{key}", *latlon(off), date) for key, (off, date) in node_specs.items()]
     points = [latlon(off) for off in point_offsets]
     start_lat, start_lon = latlon(point_offsets[0])
 
     segments = run_pathfind_reconstruction(
-        nodes, edge_specs, points, start_lat, start_lon, fake_test_edge, top_n_dates=n_dates,
+        date_graphs, points, start_lat, start_lon, fake_test_edge,
     )
     return segments, test_log, tested_pairs
 
@@ -189,7 +206,7 @@ if __name__ == "__main__":
     for sc in SCENARIOS:
         segs, log = run_scenario(
             sc["name"], sc["node_specs"], sc["edge_specs"], sc["point_offsets"], sc["fail_pairs"],
-            top_n_dates=5, early_exit_segments=4,
+            early_exit_segments=4,
         )
         ok, msg = sc["check"](segs, log)
         status = "PASS" if ok else "FAIL"
