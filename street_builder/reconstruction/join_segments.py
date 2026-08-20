@@ -1,32 +1,26 @@
 """Combine independently-reconstructed pathfind segments into one merged
-point cloud.
+point cloud using real DA3 tests -- no GPS placement (see tests/gps.py
+for the old GPS-anchoring approach, kept only for reference, no longer
+used: nothing here needs the result oriented to true north/real-world
+coordinates, only internally consistent).
 
-Two stages:
-1. bridge_pieces (optional, needs a GPU-touching bridge_test_edge
-   callback -- see services/pipeline_runner.py's join_segments_gpu):
-   tries to replace independent GPS placement between geographically
-   close pieces with a real DA3-verified transform. ANY real DA3
-   estimate, however weak, is trusted over independent GPS placement --
-   GPS is never used to reconcile two pieces against each other, only
-   ever (in stage 2) to anchor the final result to real-world
-   coordinates. Runs its OWN GPU session, separate from the corridor
-   search's (run_pathfind_reconstruction_gpu) -- bridging only needs
-   each piece's own already-confirmed nodes (no candidate pool, no
-   date/corridor data), so it doesn't need to share that call at all,
-   and keeping it separate means bridging behavior can be iterated on
-   without re-paying for the whole (much more expensive) corridor search
-   each time.
-2. join_segments: whatever's still separate after bridging (or all of
-   it, if bridge_test_edge wasn't given) gets independently fit against
-   real GPS using its own confirmed nodes, landing every piece in one
-   shared real-world-meters frame to concatenate. No GPU needed -- plain
-   linear algebra (2D Kabsch/Procrustes).
+Each pair of segments known (or suspected, in the no-known-adjacency
+case) to touch gets bridged via _try_bridge: real lat/lon (already
+carried per-node in frame_poses) picks which node pairs are worth a
+real DA3 test, then the actual merge uses the DA3-derived relative
+transform between the two segments' own local frames.
+
+Since our chunking guarantees any pair this module is actually asked to
+bridge came from a real, previously-confirmed graph edge, two touching
+segments should always have SOME node pair within edge_max_dist_m of
+each other -- if not, that's treated as a bug upstream (bad chunking,
+a lost/corrupted node) and raises loudly.
 """
 import time
 
 import numpy as np
 
-from services.geo import haversine_m, latlon_to_local_m
+from services.geo import haversine_m
 from street_builder.reconstruction.walk_graph import rigid_align
 
 # Relaxed keep-rate vs. the main walk's 0.6 -- bridging only needs SOME
@@ -44,15 +38,20 @@ BRIDGE_RIDICULOUS_DEV_M = 2.0
 # regardless of how many (Ax, By) node pairs qualify by distance.
 BRIDGE_MAX_ATTEMPTS = 10
 # Real-world distance a candidate node pair must be within to even
-# attempt bridging. Temporarily bumped to 30m (from 18m, the main walk's
-# own edge_max_dist_m default) to diagnose a real run where bridging
-# reported "0 candidate pairs within 18m" between pieces the user
-# expected to be close -- see the closest-real-pair distance now logged
-# alongside that message for the actual number once this runs again.
+# attempt bridging.
 BRIDGE_MAX_DIST_M = 30.0
 
 
-def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id):
+class NoBridgeCandidatesError(RuntimeError):
+    """Raised when two segments that should be adjacent (per the caller's
+    own chunking/graph data) have zero real node pairs within
+    edge_max_dist_m of each other. Since our chunk boundaries always come
+    from a real, previously-confirmed graph edge, this means something
+    upstream is wrong (bad chunking, a node that failed to download, a
+    corrupted position) -- not a normal outcome to silently work around."""
+
+
+def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, expected_adjacent):
     """One pair's worth of bridge search: every (Ax, By) node pair within
     edge_max_dist_m, same-date-first then closest-first, up to
     BRIDGE_MAX_ATTEMPTS real tests. ALWAYS merges using whichever attempt
@@ -60,10 +59,19 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     BRIDGE_KEEP_RATE on both sides, no bad-consensus red flag) stops the
     search early; otherwise every attempt is ranked and the best one
     wins once the attempt budget/deadline is hit.
-    Returns (merged_segment, next_bridge_test_id) or (None,
-    next_bridge_test_id) only if there were no (Ax, By) pairs within
-    range to try at all -- the one remaining case the GPS fit still has
-    to cover, since there's no real signal to use in the first place."""
+    Returns (merged_segment, next_bridge_test_id), or (None,
+    next_bridge_test_id) if real candidates existed but every DA3 attempt
+    on them came back unusable (a genuine per-attempt failure, distinct
+    from NoBridgeCandidatesError below) -- or if there were zero
+    candidates AND expected_adjacent is False (a normal miss in a blind
+    all-pairs scan, not an error).
+    expected_adjacent: True when this pair was selected via a DECLARED
+    adjacency (known_adjacent_chunk_pairs) -- zero candidates then means
+    something upstream is wrong (bad chunking, a lost/corrupted node),
+    so this raises NoBridgeCandidatesError instead of returning None.
+    False in the blind O(n^2) scan (no known_adjacent_chunk_pairs given),
+    where most pairs are legitimately unrelated and zero candidates is
+    expected, not a bug."""
     a_pts, a_cols, a_edges, a_date, a_reached, a_positions, a_frame_poses = a
     b_pts, b_cols, b_edges, b_date, b_reached, b_positions, b_frame_poses = b
 
@@ -83,6 +91,12 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
                 pairs.append((a_date != b_date, dist, a_key, b_key))
     if not pairs:
         closest_desc = f"closest real pair was {closest[1]} <-> {closest[2]} at {closest[0]:.1f}m" if closest else "no nodes on either side at all"
+        if expected_adjacent:
+            raise NoBridgeCandidatesError(
+                f"{a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
+                f"0 candidate pair(s) within {edge_max_dist_m:.0f}m ({closest_desc}) -- "
+                f"these were declared adjacent, so this points to a bug upstream, not a normal miss."
+            )
         print(f"[bridge] {a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
               f"0 candidate pair(s) within {edge_max_dist_m:.0f}m -- skipped ({closest_desc})")
         return None, bridge_test_id
@@ -148,12 +162,15 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
 
 def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=None,
                    chunk_ids=None, known_adjacent_chunk_pairs=None):
-    """Try to replace independent GPS placement between geographically
-    close segments with a real DA3-verified transform (see this module's
-    own docstring for the full design). Greedily merges pairs until
-    nothing more merges or the deadline hits. Returns a new list of
-    (possibly merged) segments, same 7-tuple shape as `segments` (see
-    run_pathfind_reconstruction's return docs).
+    """Try to merge geographically/structurally adjacent segments via real
+    DA3-verified transforms. Greedily merges pairs until nothing more
+    merges or the deadline hits. Returns a new list of (possibly merged)
+    segments, same 7-tuple shape as `segments` (see
+    run_pathfind_reconstruction's return docs). Multiple pieces coming
+    back is expected whenever parts of the input are genuinely not meant
+    to connect (e.g. two unrelated regions with no declared adjacency) --
+    not an error; see NoBridgeCandidatesError for the actual error case
+    (a declared-adjacent pair with zero real candidates).
 
     chunk_ids: optional, same length/order as segments -- an identifying
     label per segment (e.g. which chunk of a large-scale corridor it
@@ -196,7 +213,8 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
     while changed and len(pieces) > 1 and time.monotonic() < deadline:
         changed = False
         for i, j in candidate_pairs():
-            merged, bridge_test_id = _try_bridge(pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id)
+            merged, bridge_test_id = _try_bridge(pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id,
+                                                  expected_adjacent=adjacency_set is not None)
             if merged is not None:
                 merged_ids = id_sets[i] | id_sets[j]
                 pieces = [p for k, p in enumerate(pieces) if k not in (i, j)] + [merged]
@@ -206,122 +224,39 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
     return pieces
 
 
-def _fit_rigid_2d(src: np.ndarray, dst: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Least-squares rigid transform (2x2 rotation + 2D translation) mapping
-    src onto dst, given Nx2 arrays matched row-by-row (N >= 2). Standard
-    Kabsch algorithm restricted to 2D -- no scale, since DA3's own metric
-    scale isn't being second-guessed here, only its horizontal position and
-    heading against real GPS."""
-    src_mean = src.mean(axis=0)
-    dst_mean = dst.mean(axis=0)
-    src_c = src - src_mean
-    dst_c = dst - dst_mean
-    H = src_c.T @ dst_c
-    U, _, Vt = np.linalg.svd(H)
-    d = np.sign(np.linalg.det(Vt.T @ U.T))
-    D = np.diag([1.0, d])
-    R = Vt.T @ D @ U.T
-    t = dst_mean - R @ src_mean
-    return R, t
-
-
-def join_segments(segments, node_entries, bridge_test_edge=None, edge_max_dist_m=BRIDGE_MAX_DIST_M,
+def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
                    max_time_budget_s: float = 200.0, chunk_ids=None, known_adjacent_chunk_pairs=None):
-    """segments: run_pathfind_reconstruction's output -- list of (pts,
-    cols, path_edges, date, reached, node_positions, frame_poses),
-    node_positions being {key: np.ndarray(3,)} for that segment's own
-    confirmed nodes. node_entries: prep['node_entries'] -- (key, path,
-    lat, lon, date) tuples, giving real lat/lon for every node key
-    referenced anywhere.
+    """Bridges segments together via real DA3 tests (see bridge_pieces),
+    then returns each remaining piece as-is -- no GPS fit, no shared
+    coordinate frame across pieces that never bridged. Each returned
+    piece stays in whichever local DA3 frame its own bridge chain
+    anchored to.
 
-    bridge_test_edge: optional, see this module's own docstring --
-    when given, segments are bridged (real DA3 connections between
-    geographically close pieces) before the GPS fit below runs, so only
-    whatever's genuinely disconnected still needs it. chunk_ids/
-    known_adjacent_chunk_pairs: passed straight through to bridge_pieces
-    -- see its own docstring.
+    segments: run_pathfind_reconstruction's output -- list of (pts, cols,
+    path_edges, date, reached, node_positions, frame_poses). frame_poses
+    already carries each node's real lat/lon (see bridge_pieces), so no
+    separate node_entries/GPS lookup is needed here.
 
-    For each (post-bridging) segment: fit rotation (about the vertical
-    axis only -- GPS has no elevation data to fit against, so the
-    vertical axis is left alone rather than risk an unconstrained tilt)
-    + horizontal translation from that segment's own DA3-frame node
-    positions onto their real GPS positions (converted to local meters,
-    one shared origin for every segment). Vertical placement uses a
-    simple heuristic instead -- shifting each segment's own average node
-    height to a shared baseline, since GPS can't fit that axis and
-    street-level camera heights should be roughly comparable across
-    segments anyway.
+    chunk_ids/known_adjacent_chunk_pairs: passed straight through to
+    bridge_pieces -- see its own docstring.
 
-    Returns (points, colors, metadata): points/colors are one merged
-    point cloud, all segments in the same real-world-meters frame.
-    metadata is {key: {"lat", "lon", "date", "world_position": [x, y,
-    z]}} for every node that contributed -- world_position is that
-    node's own placement in the SAME joined frame as points/colors
-    (using the same fitted transform, not its raw DA3-local center),
-    letting a later process know which real pano/location produced
-    which region of the cloud without storing the images themselves
-    (always re-fetchable from source; key/lat/lon/date is enough) --
-    e.g. re-running with cleaned-up images later, or roughly re-
-    splitting an already-finished reconstruction by node position.
-    """
+    Returns a list of (points, colors, metadata) -- one per final piece
+    still separate after bridging. metadata is {key: {"lat", "lon",
+    "date"}} for every node in that piece, letting a later process know
+    which real pano/location produced which piece without storing the
+    images themselves (always re-fetchable from source by key)."""
     if not segments:
         raise ValueError("No segments to join.")
 
-    if bridge_test_edge is not None:
-        n_before = len(segments)
-        deadline = time.monotonic() + max_time_budget_s
-        segments = bridge_pieces(segments, bridge_test_edge, edge_max_dist_m, deadline,
-                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
-        print(f"join: bridge_pieces: {n_before} piece(s) in, {len(segments)} piece(s) out "
-              f"({n_before - len(segments)} merge(s))")
+    deadline = time.monotonic() + max_time_budget_s
+    pieces = bridge_pieces(segments, bridge_test_edge, edge_max_dist_m, deadline,
+                            chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
+    print(f"join: bridge_pieces: {len(segments)} piece(s) in, {len(pieces)} piece(s) out "
+          f"({len(segments) - len(pieces)} merge(s))")
 
-    by_key = {e[0]: e for e in node_entries}
-
-    # Shared origin for every segment's lat/lon -> local-meters conversion --
-    # arbitrary choice (first segment's first confirmed node), just needs
-    # to be the SAME point for all of them so they land in one frame.
-    first_key = next(iter(segments[0][5]))
-    _, _, origin_lat, origin_lon, _ = by_key[first_key]
-
-    all_pts, all_cols = [], []
-    metadata = {}
-    for seg_i, (pts, cols, path_edges, date, reached, node_positions, frame_poses) in enumerate(segments):
-        keys = list(node_positions.keys())
-        if len(keys) < 2:
-            print(f"join: segment {seg_i} ({date}) has <2 confirmed nodes -- skipping, can't fit a rotation")
-            continue
-
-        da3_xz = np.array([[node_positions[k][0], node_positions[k][2]] for k in keys])
-        real_en = []
-        for k in keys:
-            _, _, lat, lon, _ = by_key[k]
-            e, n = latlon_to_local_m(lat, lon, origin_lat, origin_lon)
-            real_en.append([e, n])
-        real_en = np.array(real_en)
-
-        R, t = _fit_rigid_2d(da3_xz, real_en)
-        avg_y = float(np.mean([node_positions[k][1] for k in keys]))
-
-        xz = pts[:, [0, 2]] @ R.T + t
-        y = pts[:, 1] - avg_y
-        transformed = np.column_stack([xz[:, 0], y, xz[:, 1]])
-
-        heading = np.degrees(np.arctan2(R[1, 0], R[0, 0]))
-        print(f"join: segment {seg_i} ({date}) fit against {len(keys)} node(s), rotation={heading:.1f}deg")
-
-        all_pts.append(transformed)
-        all_cols.append(cols)
-
-        node_xz = da3_xz @ R.T + t
-        node_y = np.array([node_positions[k][1] for k in keys]) - avg_y
-        for idx, k in enumerate(keys):
-            _, _, lat, lon, node_date = by_key[k]
-            metadata[k] = {
-                "lat": lat, "lon": lon, "date": node_date,
-                "world_position": [float(node_xz[idx, 0]), float(node_y[idx]), float(node_xz[idx, 1])],
-            }
-
-    if not all_pts:
-        raise ValueError("No segment had enough confirmed nodes to fit.")
-
-    return np.concatenate(all_pts, axis=0), np.concatenate(all_cols, axis=0), metadata
+    results = []
+    for pts, cols, path_edges, date, reached, node_positions, frame_poses in pieces:
+        metadata = {k: {"lat": lat, "lon": lon, "date": date}
+                    for k, (pos, rot, path, lat, lon) in frame_poses.items()}
+        results.append((pts, cols, metadata))
+    return results

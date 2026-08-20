@@ -173,27 +173,27 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
     Returns (results, segments, bundle_path): results is [(label,
     ply_path), ...] -- one per segment (see
     street_builder/reconstruction/walk_graph.py for what a "segment" is),
-    plus one more "joined" entry (see join_segments.join_segments) when
-    there's more than one segment to actually combine. segments/
-    bundle_path are the same as save_segments_bundle produces, still
-    saved here so join/bridging can be re-tuned later (via the separate
-    Join button) without redoing this whole call."""
+    plus one "joined" entry per still-separate piece (see
+    join_segments.join_segments -- multiple pieces means bridging left
+    some genuinely unconnected, not an error) when there's more than one
+    segment to actually combine. segments/bundle_path are the same as
+    save_segments_bundle produces, still saved here so join/bridging can
+    be re-tuned later (via the separate Join button) without redoing
+    this whole call."""
     from services.pipeline_runner import run_pathfind_and_join_gpu
     t0 = time.monotonic()
     start_lat, start_lon = prep["start"]
-    segments, pts, cols, metadata = run_pathfind_and_join_gpu(
-        prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon, prep["node_entries"],
+    segments, pieces = run_pathfind_and_join_gpu(
+        prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon,
         step_degrees=step_degrees,
     )
     if not segments:
         raise RuntimeError("No connected path found from start toward any goal.")
 
     results = save_pathfind_segments(segments, output_dir)
-    bundle_path = save_segments_bundle(prep, segments, output_dir)
-    if pts is not None:
-        ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
-        results.append((f"path (joined, {len(segments)} segments)", ply))
-        save_reconstruction_metadata(metadata, output_dir)
+    bundle_path = save_segments_bundle(segments, output_dir)
+    if pieces is not None:
+        results.extend(_save_joined_pieces(pieces, output_dir))
     print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
     return results, segments, bundle_path
 
@@ -211,14 +211,16 @@ def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:
     return results
 
 
-def save_joined_pathfind(prep: dict, segments, output_dir, chunk_ids=None, known_adjacent_chunk_pairs=None) -> tuple[str, str]:
-    """Bridges (real DA3 tests between segment boundaries) + fits/merges
-    whatever's left (see join_segments.py), saves the result plus a
-    metadata JSON alongside it (see save_reconstruction_metadata),
-    returns one (label, ply_path). Its own GPU call (join_segments_gpu),
-    separate from the corridor search's -- safe to call repeatedly
-    against the same already-computed segments while tuning the
-    join/bridging step, without re-running the corridor search.
+def save_joined_pathfind(segments, output_dir, chunk_ids=None, known_adjacent_chunk_pairs=None) -> list[tuple[str, str]]:
+    """Bridges (real DA3 tests between segment boundaries) via join_segments.py,
+    saves each still-separate piece plus a metadata JSON alongside it
+    (see save_reconstruction_metadata), returns [(label, ply_path), ...]
+    -- one entry per piece (usually 1, more if bridging genuinely
+    couldn't connect everything -- see join_segments.join_segments). Its
+    own GPU call (join_segments_gpu), separate from the corridor
+    search's -- safe to call repeatedly against the same already-computed
+    segments while tuning the join/bridging step, without re-running the
+    corridor search.
 
     chunk_ids/known_adjacent_chunk_pairs: passed straight through to
     join_segments_gpu -- see its own docstring. For a large-scale multi-
@@ -228,60 +230,74 @@ def save_joined_pathfind(prep: dict, segments, output_dir, chunk_ids=None, known
     from services.pipeline_runner import join_segments_gpu
     t0 = time.monotonic()
     os.makedirs(output_dir, exist_ok=True)
-    pts, cols, metadata = join_segments_gpu(segments, prep["node_entries"],
-                                             chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
-    ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
-    save_reconstruction_metadata(metadata, output_dir)
+    pieces = join_segments_gpu(segments, chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
+    results = _save_joined_pieces(pieces, output_dir)
     print(f"save_joined_pathfind: done in {time.monotonic() - t0:.1f}s")
-    return f"path (joined, {len(segments)} segments)", ply
+    return results
 
 
-def save_reconstruction_metadata(metadata: dict, output_dir) -> str:
-    """Saves join_segments' per-node metadata (real lat/lon/date + each
-    node's placement in the final joined frame) as a small JSON file
-    alongside the point cloud -- enough to know which real pano/location
-    produced which region of the reconstruction without storing the
-    images themselves (always re-fetchable from source by key). Useful
-    later for e.g. re-running with cleaned-up images, or roughly
-    re-splitting an already-finished reconstruction by node position."""
+def _save_joined_pieces(pieces, output_dir) -> list[tuple[str, str]]:
+    """Saves each (points, colors, metadata) piece from join_segments as
+    its own .ply + metadata JSON. Usually one piece (everything bridged
+    into one connected result); more than one means bridging left some
+    genuinely unconnected regions separate -- each still gets its own
+    valid, independently-placed output rather than being forced together."""
+    os.makedirs(output_dir, exist_ok=True)
+    results = []
+    for i, (pts, cols, metadata) in enumerate(pieces):
+        suffix = "" if len(pieces) == 1 else f"_{i}"
+        ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_joined{suffix}.ply"))
+        save_reconstruction_metadata(metadata, output_dir, suffix=suffix)
+        results.append((f"path (joined piece {i}, {len(metadata)} nodes)" if len(pieces) > 1
+                         else f"path (joined, {len(metadata)} nodes)", ply))
+    return results
+
+
+def save_reconstruction_metadata(metadata: dict, output_dir, suffix: str = "") -> str:
+    """Saves join_segments' per-node metadata (real lat/lon/date) as a
+    small JSON file alongside the point cloud -- enough to know which
+    real pano/location produced which region of the reconstruction
+    without storing the images themselves (always re-fetchable from
+    source by key). suffix: distinguishes multiple still-separate pieces
+    from one join_segments call (see _save_joined_pieces) -- empty for
+    the common single-piece case."""
     import json
     os.makedirs(output_dir, exist_ok=True)
-    path = os.path.join(output_dir, "pathfind_metadata.json")
+    path = os.path.join(output_dir, f"pathfind_metadata{suffix}.json")
     with open(path, "w") as f:
         json.dump(metadata, f, indent=2)
     return path
 
 
-def save_segments_bundle(prep: dict, segments, output_dir) -> str:
-    """Serializes only what Join actually needs (prep['node_entries'] +
-    segments) to one file, so Join can be re-run later -- a different
-    session, or after tweaking join_segments.py -- without re-running
-    Prepare or the expensive GPU search. Deliberately drops the rest of
-    prep (date_graphs especially -- the full downloaded candidate pool
-    across every date considered, unused by Join and by far the biggest
-    part of prep) since it's dead weight for this file's one purpose;
-    Prepare/Run themselves are cheap enough to redo from scratch if ever
-    needed, so there's no reason to pay to store or re-download it.
-    Plain pickle: numpy arrays, tuples, dicts all round-trip natively,
-    and this file is only ever produced and consumed by this same
-    codebase, not a public interchange format."""
+def save_segments_bundle(segments, output_dir) -> str:
+    """Serializes only what Join actually needs (segments -- frame_poses
+    already carries each node's own lat/lon, see join_segments.py) to one
+    file, so Join can be re-run later -- a different session, or after
+    tweaking join_segments.py -- without re-running Prepare or the
+    expensive GPU search. Deliberately drops the rest of prep
+    (date_graphs especially -- the full downloaded candidate pool across
+    every date considered, unused by Join and by far the biggest part of
+    prep) since it's dead weight for this file's one purpose; Prepare/Run
+    themselves are cheap enough to redo from scratch if ever needed, so
+    there's no reason to pay to store or re-download it. Plain pickle:
+    numpy arrays, tuples, dicts all round-trip natively, and this file is
+    only ever produced and consumed by this same codebase, not a public
+    interchange format."""
     import pickle
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, "pathfind_segments.pkl")
     with open(path, "wb") as f:
-        pickle.dump({"node_entries": prep["node_entries"], "segments": segments}, f)
+        pickle.dump({"segments": segments}, f)
     return path
 
 
-def load_segments_bundle(path: str) -> tuple[dict, list]:
-    """Inverse of save_segments_bundle. Returns (prep, segments), ready to
-    feed straight into save_joined_pathfind (or save_pathfind_segments)
-    -- prep only carries node_entries (all Join ever needs from it), not
-    the full dict save_segments_bundle was originally given."""
+def load_segments_bundle(path: str) -> list:
+    """Inverse of save_segments_bundle. Returns segments, ready to feed
+    straight into save_joined_pathfind (or save_pathfind_segments)."""
     import pickle
     with open(path, "rb") as f:
         bundle = pickle.load(f)
-    return {"node_entries": bundle["node_entries"]}, bundle["segments"]
+    return bundle["segments"]
 
 
 def run_prepared_pathfind_segments(prep: dict, step_degrees: int = DEFAULT_STEP_DEGREES):

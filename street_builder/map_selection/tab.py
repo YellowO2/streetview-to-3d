@@ -382,7 +382,7 @@ def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
         segments = street_main.run_prepared_pathfind_segments(prep)
         output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
         results = street_main.save_pathfind_segments(segments, output_dir)
-        bundle_path = street_main.save_segments_bundle(prep, segments, output_dir)
+        bundle_path = street_main.save_segments_bundle(segments, output_dir)
     except Exception as e:
         raise gr.Error(f"Auto-path failed: {e}")
 
@@ -421,19 +421,24 @@ def handle_pathfind_load_segments(file_path):
     if not file_path:
         raise gr.Error("Choose a segments file first.")
     try:
-        prep, segments = street_main.load_segments_bundle(file_path)
+        segments = street_main.load_segments_bundle(file_path)
     except Exception as e:
         raise gr.Error(f"Load failed: {e}")
-    return prep, segments, f"<p>Loaded {len(segments)} segment(s) from file. Ready — press \"Join segments\".</p>"
+    # Join no longer needs anything from prep (frame_poses in segments
+    # already carries each node's lat/lon) -- this placeholder just keeps
+    # the "something's ready" gate other handlers check (e.g.
+    # handle_pathfind_join's `if not prep or not segments`) true.
+    return True, segments, f"<p>Loaded {len(segments)} segment(s) from file. Ready — press \"Join segments\".</p>"
 
 
 def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
     """Experimental button, step 3 of 3: bridges segments together with
-    real DA3 tests where possible, then GPS-fits + merges whatever's
-    still separate into one point cloud (see join_segments.join_segments).
-    Its own separate GPU call from Run's -- safe to press again after
-    tweaking the join/bridging logic without re-running Run. See
-    street_main.save_joined_pathfind."""
+    real DA3 tests (see join_segments.join_segments) -- no GPS placement;
+    a segment pair known/expected to be adjacent with zero real
+    candidates in range is treated as an upstream bug and raises, rather
+    than silently falling back to GPS. Its own separate GPU call from
+    Run's -- safe to press again after tweaking the join/bridging logic
+    without re-running Run. See street_main.save_joined_pathfind."""
     if not prep or not segments:
         raise gr.Error("Nothing to join yet -- press \"Run Auto-path\" first.")
     if len(segments) < 2:
@@ -443,11 +448,11 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
 
     try:
         output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-        label, ply = street_main.save_joined_pathfind(prep, segments, output_dir)
+        results = street_main.save_joined_pathfind(segments, output_dir)
     except Exception as e:
         raise gr.Error(f"Join failed: {e}")
 
-    yield viewers.labeled_download_links([(label, ply)])
+    yield viewers.labeled_download_links(results)
 
 
 def build_tab():
