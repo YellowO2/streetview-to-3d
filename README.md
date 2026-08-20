@@ -66,6 +66,26 @@ Models (Sharp, DA3, and FLUX) are downloaded from the Hugging Face Hub on first 
 - Pairwise call: avg **1.99s**
 - Used to calibrate `SECONDS_PER_DOT_ESTIMATE = 6.0` in `street_builder/reconstruction/walk_graph.py`.
 
+## Planned
+
+**Car/people removal pass** (not started): a later cleanup pipeline that
+re-does the reconstruction using cleaned-up source images instead of the
+raw panoramas.
+
+- After a reconstruction finishes, also export a small JSON of the basic
+  metadata needed to re-fetch every pano actually used (source, id/key,
+  lat/lon, date) -- enough to reconstruct the same corridor's input set
+  without re-running Prepare/Run.
+- A separate later pass: fetch those panos, clean them (remove cars/
+  people), then re-run just the join/reconstruction step
+  (`street_builder/reconstruction/join_segments.py`) against the cleaned
+  images.
+- Possible head start: this repo already has a Flux-based object-removal
+  editor (`editors/flux_editor.py`, `flux-2-klein-4B-object-remove-lora`
+  in Acknowledgments below) wired up for other editing use -- worth
+  checking whether it's directly reusable for this instead of building
+  a new cleanup step from scratch.
+
 ## Acknowledgments
 
 This project relies on:

@@ -163,6 +163,36 @@ def handle_load_area(area_input, state):
     return _map_html(state), _summary_markdown(state), state
 
 
+def handle_expand_area(area_input, radius_input, state, progress=gr.Progress(track_tqdm=True)):
+    """Experimental: auto-discover the real Street View graph within a
+    radius of the given area (see candidates.expand_area) instead of
+    clicking node by node -- sets the WHOLE discovered graph as already
+    selected, ready to press "Prepare auto-path" directly. Reuses the
+    exact same geocoding handle_load_area uses for the center point."""
+    try:
+        lat, lon = extract_lat_lon(area_input)
+    except ValueError as e:
+        raise gr.Error(str(e))
+    try:
+        radius_m = float(radius_input)
+    except (TypeError, ValueError):
+        raise gr.Error("Enter a valid radius in meters.")
+    if radius_m <= 0:
+        raise gr.Error("Radius must be positive.")
+
+    progress(0, desc="Auto-expanding area...")
+    nodes, edges = candidates_mod.expand_area(lat, lon, radius_m)
+    if not nodes:
+        raise gr.Error("No Street View coverage found in that area.")
+
+    state = {
+        "lat": lat, "lon": lon, "nodes": nodes, "edges": edges,
+        "selected": [n["key"] for n in nodes], "selected_edges": list(edges), "view": None,
+    }
+    progress(1.0, desc="Done!")
+    return _map_html(state), _summary_markdown(state), state
+
+
 def handle_bridge_message(payload_str, state):
     # Printed server-side (visible in the terminal running `python app.py`,
     # not the browser console) -- confirms whether Gradio's .change() ever
@@ -401,6 +431,15 @@ def build_tab():
         )
         load_btn = gr.Button("Load area", variant="primary", scale=1, min_width=100)
 
+    with gr.Row(equal_height=True):
+        expand_radius_input = gr.Textbox(
+            placeholder="Auto-expand radius in meters (e.g. 500) -- uses the same location above",
+            show_label=False,
+            container=False,
+            scale=5,
+        )
+        expand_btn = gr.Button("Auto-expand area (experimental)", scale=1, min_width=100)
+
     map_view = gr.HTML(_map_html(_empty_state()), elem_classes="no-pad")
     # visible=True + CSS hiding (BRIDGE_CSS), not visible=False -- see the
     # comment above BRIDGE_CSS for why.
@@ -448,6 +487,14 @@ def build_tab():
         fn=handle_load_area,
         inputs=[area_input, state],
         outputs=[map_view, selection_view, state],
+    )
+
+    expand_btn.click(
+        fn=handle_expand_area,
+        inputs=[area_input, expand_radius_input, state],
+        outputs=[map_view, selection_view, state],
+        show_progress="minimal",
+        show_progress_on=[selection_view],
     )
 
     bridge.change(
