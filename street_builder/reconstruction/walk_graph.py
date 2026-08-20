@@ -452,7 +452,11 @@ def run_pathfind_reconstruction(
                 if dist <= edge_max_dist_m:
                     pairs.append((a_date != b_date, dist, a_key, b_key))
         if not pairs:
+            print(f"[bridge] {a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
+                  f"0 candidate pair(s) within {edge_max_dist_m:.0f}m -- skipped")
             return None, bridge_test_id
+        print(f"[bridge] {a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
+              f"{len(pairs)} candidate pair(s) within {edge_max_dist_m:.0f}m, trying up to {BRIDGE_MAX_ATTEMPTS}")
         pairs.sort()
 
         best = None  # (rank_key, result, a_key, b_key)
@@ -564,9 +568,12 @@ def run_pathfind_reconstruction(
     chosen, leftover_uncovered = set_cover(all_pieces, len(points))
 
     n_before_bridge = len(chosen)
-    chosen = bridge_pieces(chosen, deadline)
-    if len(chosen) != n_before_bridge:
-        print(f"pathfind: bridge_pieces merged {n_before_bridge} piece(s) into {len(chosen)}")
+    if bridge_test_edge is None:
+        print("pathfind: bridge_pieces skipped (no bridge_test_edge configured)")
+    else:
+        chosen = bridge_pieces(chosen, deadline)
+        print(f"pathfind: bridge_pieces: {n_before_bridge} piece(s) in, {len(chosen)} piece(s) out "
+              f"({n_before_bridge - len(chosen)} merge(s))")
 
     reached_all = not leftover_uncovered
     segments = [
