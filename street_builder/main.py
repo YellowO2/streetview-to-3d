@@ -216,27 +216,35 @@ def save_joined_pathfind(prep: dict, segments, output_dir) -> tuple[str, str]:
 
 
 def save_segments_bundle(prep: dict, segments, output_dir) -> str:
-    """Serializes prep + segments (everything Join needs) to one file, so
-    Join can be re-run later -- a different session, or after tweaking
-    join_segments.py -- without re-running Prepare or the expensive GPU
-    search. Plain pickle: numpy arrays, tuples, dicts all round-trip
-    natively, and this file is only ever produced and consumed by this
-    same codebase, not a public interchange format."""
+    """Serializes only what Join actually needs (prep['node_entries'] +
+    segments) to one file, so Join can be re-run later -- a different
+    session, or after tweaking join_segments.py -- without re-running
+    Prepare or the expensive GPU search. Deliberately drops the rest of
+    prep (date_graphs especially -- the full downloaded candidate pool
+    across every date considered, unused by Join and by far the biggest
+    part of prep) since it's dead weight for this file's one purpose;
+    Prepare/Run themselves are cheap enough to redo from scratch if ever
+    needed, so there's no reason to pay to store or re-download it.
+    Plain pickle: numpy arrays, tuples, dicts all round-trip natively,
+    and this file is only ever produced and consumed by this same
+    codebase, not a public interchange format."""
     import pickle
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, "pathfind_segments.pkl")
     with open(path, "wb") as f:
-        pickle.dump({"prep": prep, "segments": segments}, f)
+        pickle.dump({"node_entries": prep["node_entries"], "segments": segments}, f)
     return path
 
 
 def load_segments_bundle(path: str) -> tuple[dict, list]:
     """Inverse of save_segments_bundle. Returns (prep, segments), ready to
-    feed straight into save_joined_pathfind (or save_pathfind_segments)."""
+    feed straight into save_joined_pathfind (or save_pathfind_segments)
+    -- prep only carries node_entries (all Join ever needs from it), not
+    the full dict save_segments_bundle was originally given."""
     import pickle
     with open(path, "rb") as f:
         bundle = pickle.load(f)
-    return bundle["prep"], bundle["segments"]
+    return {"node_entries": bundle["node_entries"]}, bundle["segments"]
 
 
 def run_prepared_pathfind_segments(prep: dict, step_degrees: int = DEFAULT_STEP_DEGREES):

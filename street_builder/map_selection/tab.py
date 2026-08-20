@@ -344,10 +344,11 @@ def handle_pathfind_load_segments(file_path):
 
 
 def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button, step 3 of 3: fits each segment from the last Run
-    against its own real GPS positions and merges them into one point cloud
-    (see join_segments.join_segments). No GPU -- safe to press again after
-    tweaking the join logic without re-running Run. See
+    """Experimental button, step 3 of 3: bridges segments together with
+    real DA3 tests where possible, then GPS-fits + merges whatever's
+    still separate into one point cloud (see join_segments.join_segments).
+    Its own separate GPU call from Run's -- safe to press again after
+    tweaking the join/bridging logic without re-running Run. See
     street_main.save_joined_pathfind."""
     if not prep or not segments:
         raise gr.Error("Nothing to join yet -- press \"Run Auto-path\" first.")
