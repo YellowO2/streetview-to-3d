@@ -140,7 +140,8 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
 
 
 @GPU_WINDOWED
-def join_segments_gpu(segments, node_entries, edge_max_dist_m=None, step_degrees=20):
+def join_segments_gpu(segments, node_entries, edge_max_dist_m=None, step_degrees=20,
+                       chunk_ids=None, known_adjacent_chunk_pairs=None):
     """The GPU call for the join step's bridging search (see
     street_builder/reconstruction/join_segments.py) -- its own separate
     session from run_pathfind_reconstruction_gpu's, since bridging only
@@ -152,7 +153,14 @@ def join_segments_gpu(segments, node_entries, edge_max_dist_m=None, step_degrees
 
     edge_max_dist_m: None (default) defers to join_segments.py's own
     BRIDGE_MAX_DIST_M -- kept as a single source of truth instead of a
-    second hardcoded default here, so the two can't silently drift apart."""
+    second hardcoded default here, so the two can't silently drift apart.
+    chunk_ids/known_adjacent_chunk_pairs: passed straight through to
+    join_segments -- see its own docstring (restricts bridging to known-
+    adjacent chunk pairs instead of a blind all-pairs scan, for a large-
+    scale multi-chunk reconstruction where the caller already knows
+    which pieces are meant to connect).
+
+    Returns (points, colors, metadata) -- see join_segments."""
     import tempfile
 
     import torch
@@ -169,7 +177,8 @@ def join_segments_gpu(segments, node_entries, edge_max_dist_m=None, step_degrees
             def bridge_test_edge(path_a, path_b, test_id):
                 return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            return join_segments(segments, node_entries, bridge_test_edge=bridge_test_edge, edge_max_dist_m=edge_max_dist_m)
+            return join_segments(segments, node_entries, bridge_test_edge=bridge_test_edge, edge_max_dist_m=edge_max_dist_m,
+                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
     finally:
         del da3
         torch.cuda.empty_cache()
@@ -193,8 +202,9 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
     join/bridging) rather than each phase getting its own full budget --
     they're sharing one real wall-clock window here, not two.
 
-    Returns (segments, pts, cols) -- pts/cols are None if there was only
-    ever one segment (nothing to join)."""
+    Returns (segments, pts, cols, metadata) -- pts/cols/metadata are None
+    if there was only ever one segment (nothing to join). See
+    join_segments for what metadata contains."""
     import itertools
     import tempfile
     import time
@@ -228,12 +238,12 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
             segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
                                                     score_pano=score_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
             if not segments or len(segments) < 2:
-                return segments, None, None
+                return segments, None, None, None
 
             remaining_s = max(10.0, overall_deadline - time.monotonic())
-            pts, cols = join_segments(segments, node_entries, bridge_test_edge=bridge_test_edge,
-                                       edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s)
-            return segments, pts, cols
+            pts, cols, metadata = join_segments(segments, node_entries, bridge_test_edge=bridge_test_edge,
+                                                 edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s)
+            return segments, pts, cols, metadata
     finally:
         del da3
         torch.cuda.empty_cache()

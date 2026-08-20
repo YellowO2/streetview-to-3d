@@ -181,7 +181,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
     from services.pipeline_runner import run_pathfind_and_join_gpu
     t0 = time.monotonic()
     start_lat, start_lon = prep["start"]
-    segments, pts, cols = run_pathfind_and_join_gpu(
+    segments, pts, cols, metadata = run_pathfind_and_join_gpu(
         prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon, prep["node_entries"],
         step_degrees=step_degrees,
     )
@@ -193,6 +193,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
     if pts is not None:
         ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
         results.append((f"path (joined, {len(segments)} segments)", ply))
+        save_reconstruction_metadata(metadata, output_dir)
     print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
     return results, segments, bundle_path
 
@@ -210,20 +211,45 @@ def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:
     return results
 
 
-def save_joined_pathfind(prep: dict, segments, output_dir) -> tuple[str, str]:
+def save_joined_pathfind(prep: dict, segments, output_dir, chunk_ids=None, known_adjacent_chunk_pairs=None) -> tuple[str, str]:
     """Bridges (real DA3 tests between segment boundaries) + fits/merges
-    whatever's left (see join_segments.py), saves the result, returns
-    one (label, ply_path). Its own GPU call (join_segments_gpu),
+    whatever's left (see join_segments.py), saves the result plus a
+    metadata JSON alongside it (see save_reconstruction_metadata),
+    returns one (label, ply_path). Its own GPU call (join_segments_gpu),
     separate from the corridor search's -- safe to call repeatedly
     against the same already-computed segments while tuning the
-    join/bridging step, without re-running the corridor search."""
+    join/bridging step, without re-running the corridor search.
+
+    chunk_ids/known_adjacent_chunk_pairs: passed straight through to
+    join_segments_gpu -- see its own docstring. For a large-scale multi-
+    chunk reconstruction (many segments, one per chunk), pass these so
+    bridging only attempts pairs known to be structurally adjacent
+    instead of a blind O(n^2) scan over every segment."""
     from services.pipeline_runner import join_segments_gpu
     t0 = time.monotonic()
     os.makedirs(output_dir, exist_ok=True)
-    pts, cols = join_segments_gpu(segments, prep["node_entries"])
+    pts, cols, metadata = join_segments_gpu(segments, prep["node_entries"],
+                                             chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
     ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
+    save_reconstruction_metadata(metadata, output_dir)
     print(f"save_joined_pathfind: done in {time.monotonic() - t0:.1f}s")
     return f"path (joined, {len(segments)} segments)", ply
+
+
+def save_reconstruction_metadata(metadata: dict, output_dir) -> str:
+    """Saves join_segments' per-node metadata (real lat/lon/date + each
+    node's placement in the final joined frame) as a small JSON file
+    alongside the point cloud -- enough to know which real pano/location
+    produced which region of the reconstruction without storing the
+    images themselves (always re-fetchable from source by key). Useful
+    later for e.g. re-running with cleaned-up images, or roughly
+    re-splitting an already-finished reconstruction by node position."""
+    import json
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, "pathfind_metadata.json")
+    with open(path, "w") as f:
+        json.dump(metadata, f, indent=2)
+    return path
 
 
 def save_segments_bundle(prep: dict, segments, output_dir) -> str:

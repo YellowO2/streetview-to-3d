@@ -146,34 +146,63 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     return merged, bridge_test_id
 
 
-def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=None):
+def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=None,
+                   chunk_ids=None, known_adjacent_chunk_pairs=None):
     """Try to replace independent GPS placement between geographically
     close segments with a real DA3-verified transform (see this module's
     own docstring for the full design). Greedily merges pairs until
     nothing more merges or the deadline hits. Returns a new list of
     (possibly merged) segments, same 7-tuple shape as `segments` (see
-    run_pathfind_reconstruction's return docs)."""
+    run_pathfind_reconstruction's return docs).
+
+    chunk_ids: optional, same length/order as segments -- an identifying
+    label per segment (e.g. which chunk of a large-scale corridor it
+    came from). known_adjacent_chunk_pairs: optional [(id_a, id_b), ...]
+    -- when given (needs chunk_ids too), ONLY segment pairs whose chunk
+    id(s) appear together in this list are ever attempted, skipping the
+    blind O(n^2) all-pairs scan entirely. Use when the caller already
+    knows which pieces are structurally meant to connect (e.g.
+    deliberately-chunked corridor segments) -- far cheaper once there
+    are many segments, and avoids wrongly bridging two segments that
+    just happen to be geographically close but aren't actually adjacent
+    (different floor, opposite side of a loop, etc.). As pieces merge, a
+    merged piece inherits the union of its ingredients' chunk ids, so it
+    stays matchable against anything adjacent to either original chunk."""
     if bridge_test_edge is None or len(segments) < 2:
         return segments
     if deadline is None:
         deadline = time.monotonic() + 200.0
 
     pieces = list(segments)
+    if chunk_ids is not None:
+        id_sets = [frozenset({cid}) for cid in chunk_ids]
+    else:
+        id_sets = [frozenset({i}) for i in range(len(pieces))]
+    adjacency_set = ({frozenset(pair) for pair in known_adjacent_chunk_pairs}
+                      if known_adjacent_chunk_pairs is not None else None)
+
+    def candidate_pairs():
+        for i in range(len(pieces)):
+            for j in range(len(pieces)):
+                if i == j:
+                    continue
+                if adjacency_set is not None:
+                    if not any(frozenset((x, y)) in adjacency_set for x in id_sets[i] for y in id_sets[j]):
+                        continue
+                yield i, j
+
     bridge_test_id = 0
     changed = True
     while changed and len(pieces) > 1 and time.monotonic() < deadline:
         changed = False
-        for i in range(len(pieces)):
-            if changed:
+        for i, j in candidate_pairs():
+            merged, bridge_test_id = _try_bridge(pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id)
+            if merged is not None:
+                merged_ids = id_sets[i] | id_sets[j]
+                pieces = [p for k, p in enumerate(pieces) if k not in (i, j)] + [merged]
+                id_sets = [s for k, s in enumerate(id_sets) if k not in (i, j)] + [merged_ids]
+                changed = True
                 break
-            for j in range(len(pieces)):
-                if i == j:
-                    continue
-                merged, bridge_test_id = _try_bridge(pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id)
-                if merged is not None:
-                    pieces = [p for k, p in enumerate(pieces) if k not in (i, j)] + [merged]
-                    changed = True
-                    break
     return pieces
 
 
@@ -197,7 +226,7 @@ def _fit_rigid_2d(src: np.ndarray, dst: np.ndarray) -> tuple[np.ndarray, np.ndar
 
 
 def join_segments(segments, node_entries, bridge_test_edge=None, edge_max_dist_m=BRIDGE_MAX_DIST_M,
-                   max_time_budget_s: float = 200.0) -> tuple[np.ndarray, np.ndarray]:
+                   max_time_budget_s: float = 200.0, chunk_ids=None, known_adjacent_chunk_pairs=None):
     """segments: run_pathfind_reconstruction's output -- list of (pts,
     cols, path_edges, date, reached, node_positions, frame_poses),
     node_positions being {key: np.ndarray(3,)} for that segment's own
@@ -208,7 +237,9 @@ def join_segments(segments, node_entries, bridge_test_edge=None, edge_max_dist_m
     bridge_test_edge: optional, see this module's own docstring --
     when given, segments are bridged (real DA3 connections between
     geographically close pieces) before the GPS fit below runs, so only
-    whatever's genuinely disconnected still needs it.
+    whatever's genuinely disconnected still needs it. chunk_ids/
+    known_adjacent_chunk_pairs: passed straight through to bridge_pieces
+    -- see its own docstring.
 
     For each (post-bridging) segment: fit rotation (about the vertical
     axis only -- GPS has no elevation data to fit against, so the
@@ -221,8 +252,17 @@ def join_segments(segments, node_entries, bridge_test_edge=None, edge_max_dist_m
     street-level camera heights should be roughly comparable across
     segments anyway.
 
-    Returns (points, colors) -- one merged point cloud, all segments in
-    the same real-world-meters frame.
+    Returns (points, colors, metadata): points/colors are one merged
+    point cloud, all segments in the same real-world-meters frame.
+    metadata is {key: {"lat", "lon", "date", "world_position": [x, y,
+    z]}} for every node that contributed -- world_position is that
+    node's own placement in the SAME joined frame as points/colors
+    (using the same fitted transform, not its raw DA3-local center),
+    letting a later process know which real pano/location produced
+    which region of the cloud without storing the images themselves
+    (always re-fetchable from source; key/lat/lon/date is enough) --
+    e.g. re-running with cleaned-up images later, or roughly re-
+    splitting an already-finished reconstruction by node position.
     """
     if not segments:
         raise ValueError("No segments to join.")
@@ -230,7 +270,8 @@ def join_segments(segments, node_entries, bridge_test_edge=None, edge_max_dist_m
     if bridge_test_edge is not None:
         n_before = len(segments)
         deadline = time.monotonic() + max_time_budget_s
-        segments = bridge_pieces(segments, bridge_test_edge, edge_max_dist_m, deadline)
+        segments = bridge_pieces(segments, bridge_test_edge, edge_max_dist_m, deadline,
+                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
         print(f"join: bridge_pieces: {n_before} piece(s) in, {len(segments)} piece(s) out "
               f"({n_before - len(segments)} merge(s))")
 
@@ -243,6 +284,7 @@ def join_segments(segments, node_entries, bridge_test_edge=None, edge_max_dist_m
     _, _, origin_lat, origin_lon, _ = by_key[first_key]
 
     all_pts, all_cols = [], []
+    metadata = {}
     for seg_i, (pts, cols, path_edges, date, reached, node_positions, frame_poses) in enumerate(segments):
         keys = list(node_positions.keys())
         if len(keys) < 2:
@@ -270,7 +312,16 @@ def join_segments(segments, node_entries, bridge_test_edge=None, edge_max_dist_m
         all_pts.append(transformed)
         all_cols.append(cols)
 
+        node_xz = da3_xz @ R.T + t
+        node_y = np.array([node_positions[k][1] for k in keys]) - avg_y
+        for idx, k in enumerate(keys):
+            _, _, lat, lon, node_date = by_key[k]
+            metadata[k] = {
+                "lat": lat, "lon": lon, "date": node_date,
+                "world_position": [float(node_xz[idx, 0]), float(node_y[idx]), float(node_xz[idx, 1])],
+            }
+
     if not all_pts:
         raise ValueError("No segment had enough confirmed nodes to fit.")
 
-    return np.concatenate(all_pts, axis=0), np.concatenate(all_cols, axis=0)
+    return np.concatenate(all_pts, axis=0), np.concatenate(all_cols, axis=0), metadata
