@@ -19,11 +19,12 @@ from viewers import iframe as _iframe
 _SUGGESTED_COLOR = "#ff9800"
 _SELECTED_COLOR = "#00c853"
 _EDGE_COLOR = "#9aa0a6"
+_RADIUS_COLOR = "#2979ff"
 
 _MESSAGE_TYPE = "street_builder_node_click"
 
 
-def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom=17, view=None):
+def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom=17, view=None, radius_m=None):
     """nodes: list of {key, source, id, lat, lon, heading} for the whole loaded
     area (only the relevant subset -- see module docstring -- actually gets
     rendered). edges: list of (key_a, key_b) pairs from Street View's coverage
@@ -36,6 +37,9 @@ def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom
     above -- used to restore whatever pan/zoom the map was at before a click
     triggered a rebuild, since Gradio replaces the iframe wholesale on every
     update and a fresh Leaflet map otherwise has no memory of that.
+    radius_m: optional -- draws a blue circle of this radius (meters) around
+    (lat, lon), so the auto-expand radius can be sanity-checked visually
+    before/after running it, same center expand_area itself uses.
     """
     view_lat, view_lon, view_zoom = view if view else (lat, lon, zoom)
 
@@ -59,6 +63,7 @@ def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom
     edges_json = json.dumps(visible_edges)
     selected_json = json.dumps(selected_keys)
     selected_edges_json = json.dumps(selected_edges)
+    radius_json = json.dumps(radius_m)
 
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -80,10 +85,19 @@ var SELECTED_EDGES = {selected_edges_json};
 var SUGGESTED_COLOR = {json.dumps(_SUGGESTED_COLOR)};
 var SELECTED_COLOR = {json.dumps(_SELECTED_COLOR)};
 var EDGE_COLOR = {json.dumps(_EDGE_COLOR)};
+var RADIUS_COLOR = {json.dumps(_RADIUS_COLOR)};
+var RADIUS_M = {radius_json};
 
 var m = L.map('map').setView([{view_lat},{view_lon}], {view_zoom});
 L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
     {{maxZoom:22,maxNativeZoom:19,attribution:'© OpenStreetMap'}}).addTo(m);
+
+if (RADIUS_M) {{
+  L.circle([{lat},{lon}], {{
+    radius: RADIUS_M, color: RADIUS_COLOR, weight: 2,
+    fillColor: RADIUS_COLOR, fillOpacity: 0.06, dashArray: '6,6',
+  }}).addTo(m);
+}}
 
 if (NODES.length === 0) {{
   var empty = document.createElement('div');

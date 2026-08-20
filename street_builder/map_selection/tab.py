@@ -58,7 +58,8 @@ window.addEventListener('message', function(ev) {{
 
 
 def _empty_state():
-    return {"lat": None, "lon": None, "nodes": [], "edges": [], "selected": [], "selected_edges": [], "view": None}
+    return {"lat": None, "lon": None, "nodes": [], "edges": [], "selected": [], "selected_edges": [], "view": None,
+            "radius_m": None, "preview_center": None}
 
 
 def _nodes_by_key(state):
@@ -82,12 +83,16 @@ def _summary_markdown(state):
 
 
 def _map_html(state, zoom=19):
+    radius_m = state.get("radius_m")
     if state["lat"] is None:
+        preview = state.get("preview_center")
+        if preview:
+            return map_ui.build_picker_map(preview[0], preview[1], [], [], [], [], zoom=zoom, radius_m=radius_m)
         return map_ui.build_picker_map(0, 0, [], [], [], [], zoom=2)
     return map_ui.build_picker_map(
         state["lat"], state["lon"], state["nodes"], state["edges"],
         state["selected"], state.get("selected_edges", []),
-        zoom=zoom, view=state.get("view"),
+        zoom=zoom, view=state.get("view"), radius_m=radius_m,
     )
 
 
@@ -188,9 +193,35 @@ def handle_expand_area(area_input, radius_input, state, progress=gr.Progress(tra
     state = {
         "lat": lat, "lon": lon, "nodes": nodes, "edges": edges,
         "selected": [n["key"] for n in nodes], "selected_edges": list(edges), "view": None,
+        "radius_m": radius_m, "preview_center": None,
     }
     progress(1.0, desc="Done!")
     return _map_html(state), _summary_markdown(state), state
+
+
+def handle_preview_radius(area_input, radius_input, state):
+    """Draws the blue radius circle live as the radius (or location) is
+    typed, without running the actual (network-heavy) expand_area walk --
+    so the radius can be sanity-checked visually before committing to it.
+    Only ever touches radius_m/preview_center, never nodes/edges/selected,
+    so it's always safe to fire on every keystroke without disturbing an
+    already-loaded graph."""
+    try:
+        lat, lon = extract_lat_lon(area_input)
+    except ValueError:
+        lat, lon = state.get("lat"), state.get("lon")
+    if lat is None:
+        return _map_html(state), state
+
+    try:
+        radius_m = float(radius_input)
+        if radius_m <= 0:
+            radius_m = None
+    except (TypeError, ValueError):
+        radius_m = None
+
+    state = {**state, "radius_m": radius_m, "preview_center": (lat, lon)}
+    return _map_html(state), state
 
 
 def handle_bridge_message(payload_str, state):
@@ -495,6 +526,17 @@ def build_tab():
         outputs=[map_view, selection_view, state],
         show_progress="minimal",
         show_progress_on=[selection_view],
+    )
+
+    expand_radius_input.change(
+        fn=handle_preview_radius,
+        inputs=[area_input, expand_radius_input, state],
+        outputs=[map_view, state],
+    )
+    area_input.change(
+        fn=handle_preview_radius,
+        inputs=[area_input, expand_radius_input, state],
+        outputs=[map_view, state],
     )
 
     bridge.change(
