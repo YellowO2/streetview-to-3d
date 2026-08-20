@@ -158,32 +158,43 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
     }
 
 
-def run_prepared_pathfind(prep: dict, output_dir,
-                          step_degrees: int = DEFAULT_STEP_DEGREES) -> list[tuple[str, str]]:
-    """Convenience one-shot: GPU search + save per-segment previews + join
-    (if there's more than one segment) in a single call. UI callers doing
-    the 3-step Prepare/Run/Join flow (see tab.py) should call
-    run_prepared_pathfind_segments, save_pathfind_segments, and
-    save_joined_pathfind separately instead -- join is its own separate
-    GPU call (join_segments_gpu), so splitting it out means re-testing/
-    tuning it doesn't require re-running the much more expensive corridor
-    search each time.
+def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_STEP_DEGREES):
+    """Convenience one-shot: corridor search + join/bridging in ONE GPU
+    session (see pipeline_runner.run_pathfind_and_join_gpu) -- avoids
+    paying for two separate DA3 model loads when you just want the final
+    result end-to-end and don't care about re-testing join/bridging
+    separately. UI callers doing the 3-step Prepare/Run/Join flow (see
+    tab.py) should call run_prepared_pathfind_segments,
+    save_pathfind_segments, and save_joined_pathfind instead -- that
+    split lets join/bridging be re-tested without re-running the much
+    more expensive corridor search each time; this one-shot call always
+    redoes both together.
 
-    Returns [(label, ply_path), ...] -- one per segment (see
+    Returns (results, segments, bundle_path): results is [(label,
+    ply_path), ...] -- one per segment (see
     street_builder/reconstruction/walk_graph.py for what a "segment" is),
     plus one more "joined" entry (see join_segments.join_segments) when
-    there's more than one segment to actually combine."""
+    there's more than one segment to actually combine. segments/
+    bundle_path are the same as save_segments_bundle produces, still
+    saved here so join/bridging can be re-tuned later (via the separate
+    Join button) without redoing this whole call."""
+    from services.pipeline_runner import run_pathfind_and_join_gpu
     t0 = time.monotonic()
-    segments = run_prepared_pathfind_segments(prep, step_degrees=step_degrees)
+    start_lat, start_lon = prep["start"]
+    segments, pts, cols = run_pathfind_and_join_gpu(
+        prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon, prep["node_entries"],
+        step_degrees=step_degrees,
+    )
+    if not segments:
+        raise RuntimeError("No connected path found from start toward any goal.")
+
     results = save_pathfind_segments(segments, output_dir)
-    if len(segments) > 1:
-        try:
-            results.append(save_joined_pathfind(prep, segments, output_dir))
-        except Exception as e:
-            print(f"join_segments failed: {e}")
-            results.append((f"path (joined) -- failed: {e}", None))
+    bundle_path = save_segments_bundle(prep, segments, output_dir)
+    if pts is not None:
+        ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
+        results.append((f"path (joined, {len(segments)} segments)", ply))
     print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
-    return results
+    return results, segments, bundle_path
 
 
 def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:

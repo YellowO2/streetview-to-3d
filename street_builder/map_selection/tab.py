@@ -307,9 +307,10 @@ def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
     what can let it go stale before the schedule request is ever sent.
 
     Only saves each segment's own preview here -- joining them (step 3,
-    handle_pathfind_join) is a separate button on purpose: it needs no GPU
-    at all, so keeping it out of this call means re-testing/tuning the join
-    step doesn't require re-running the expensive DA3 search each time.
+    handle_pathfind_join) is a separate button on purpose: it's its own
+    separate GPU call, so keeping it out of this call means re-testing/
+    tuning join/bridging doesn't require re-running the expensive
+    corridor search each time.
     See street_main.run_prepared_pathfind_segments/save_pathfind_segments."""
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -326,6 +327,28 @@ def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
 
     note = "" if len(segments) > 1 else "<p>Single segment -- nothing to join.</p>"
     yield viewers.labeled_download_links(results) + note, segments, bundle_path
+
+
+def handle_pathfind_run_and_join(prep, progress=gr.Progress(track_tqdm=True)):
+    """Experimental button, combined 2+3: corridor search + join/bridging
+    in ONE GPU session (see street_main.run_prepared_pathfind), instead
+    of the separate Run then Join buttons -- avoids paying for two
+    separate DA3 model loads when you just want the final result end-
+    to-end and don't need to re-test join/bridging separately afterward.
+    Still saves a segments bundle (same as handle_pathfind_run), so Join
+    can be re-run alone later against this same result if needed."""
+    if not prep:
+        raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
+
+    yield viewers.SPLAT_PLACEHOLDER, None, None
+
+    try:
+        output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+        results, segments, bundle_path = street_main.run_prepared_pathfind(prep, output_dir)
+    except Exception as e:
+        raise gr.Error(f"Run + Join failed: {e}")
+
+    yield viewers.labeled_download_links(results), segments, bundle_path
 
 
 def handle_pathfind_load_segments(file_path):
@@ -401,6 +424,7 @@ def build_tab():
             pathfind_prepare_btn = gr.Button("1. Prepare auto-path (experimental)")
             pathfind_run_btn = gr.Button("2. Run auto-path")
             pathfind_join_btn = gr.Button("3. Join segments")
+            pathfind_run_join_btn = gr.Button("2+3. Run + Join (one GPU call)")
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
@@ -474,6 +498,14 @@ def build_tab():
         fn=handle_pathfind_join,
         inputs=[pathfind_prep_state, pathfind_segments_state],
         outputs=[reconstruct_view],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    pathfind_run_join_btn.click(
+        fn=handle_pathfind_run_and_join,
+        inputs=[pathfind_prep_state],
+        outputs=[reconstruct_view, pathfind_segments_state, pathfind_segments_file],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
     )

@@ -175,6 +175,70 @@ def join_segments_gpu(segments, node_entries, edge_max_dist_m=None, step_degrees
         torch.cuda.empty_cache()
 
 
+@GPU_WINDOWED
+def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_lon, node_entries,
+                               edge_max_dist_m=None, step_degrees=20):
+    """Convenience combined call: corridor search (run_pathfind_reconstruction)
+    AND join/bridging (join_segments) in ONE GPU session, sharing a single
+    loaded DA3Model instead of two separate ZeroGPU calls each paying
+    their own model-load cost. Use when you just want the final result
+    end-to-end and don't need to iterate on join/bridging separately --
+    run_pathfind_reconstruction_gpu/join_segments_gpu (split) are still
+    the right choice for re-testing Join alone against an already-saved
+    segments bundle, without redoing the whole (much more expensive)
+    corridor search.
+
+    Splits the one GPU_WINDOWED time budget between the two phases
+    sequentially (corridor search first, then whatever's left over for
+    join/bridging) rather than each phase getting its own full budget --
+    they're sharing one real wall-clock window here, not two.
+
+    Returns (segments, pts, cols) -- pts/cols are None if there was only
+    ever one segment (nothing to join)."""
+    import itertools
+    import tempfile
+    import time
+
+    import torch
+    from panoramic_to_3dgs import DA3Model, score_pano_da3, test_edge_da3, test_edge_da3_bridge
+    from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
+    from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
+
+    if edge_max_dist_m is None:
+        edge_max_dist_m = BRIDGE_MAX_DIST_M
+
+    t0 = time.monotonic()
+    overall_deadline = t0 + PATHFIND_MAX_TIME_BUDGET_S
+
+    pipeline = get_pipeline()
+    da3 = DA3Model(pipeline.config.da3_model)
+    try:
+        with tempfile.TemporaryDirectory() as views_base:
+            def test_edge(path_a, path_b, test_id):
+                return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+
+            score_ids = itertools.count()
+
+            def score_pano(path):
+                return score_pano_da3(path, pipeline.config, views_base, da3, score_id=next(score_ids), step_degrees=step_degrees)
+
+            def bridge_test_edge(path_a, path_b, test_id):
+                return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+
+            segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                    score_pano=score_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+            if not segments or len(segments) < 2:
+                return segments, None, None
+
+            remaining_s = max(10.0, overall_deadline - time.monotonic())
+            pts, cols = join_segments(segments, node_entries, bridge_test_edge=bridge_test_edge,
+                                       edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s)
+            return segments, pts, cols
+    finally:
+        del da3
+        torch.cuda.empty_cache()
+
+
 def save_pointcloud(points, colors, path):
     """Not GPU-wrapped -- pure disk I/O (open3d write), no CUDA involved.
     Lazy import to match get_pipeline()'s pattern, so this module still
