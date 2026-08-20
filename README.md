@@ -52,6 +52,20 @@ python app.py
 
 Models (Sharp, DA3, and FLUX) are downloaded from the Hugging Face Hub on first run and cached under `~/.cache/huggingface/`.
 
+## Dev notes
+
+**Solo-score vs. pairwise DA3 experiment** (2026-08-19, real data, see `tests/debug_solo_score_experiment.py`):
+
+- Hypothesis confirmed: a candidate's solo DA3 self-consistency score predicts pairwise success likelihood.
+  - min-score 6 → 33% pairwise success
+  - min-score 8 → 67%
+  - min-score 11 → 67%
+  - min-score 13+ → 100%
+- DA3 model load: **8.93s**
+- Solo-score call: avg **1.36s**
+- Pairwise call: avg **1.99s**
+- Used to calibrate `SECONDS_PER_DOT_ESTIMATE = 6.0` in `street_builder/reconstruction/walk_graph.py`.
+
 ## Acknowledgments
 
 This project relies on:

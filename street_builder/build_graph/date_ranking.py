@@ -7,8 +7,11 @@ street_builder/reconstruction/walk_graph.py for the actual algorithm).
 from services.geo import haversine_m
 
 # Dates kept, ranked by coverage span. Single source of truth for how many
-# isolated per-date graphs build_corridor_graphs ever builds.
-DATE_TOP_N = 5
+# isolated per-date graphs build_corridor_graphs ever builds. Capped at 3
+# (not 5) to save compute -- each extra date graph costs a full download
+# batch plus its own share of the pathfind search's GPU time budget, and
+# the top-ranked dates already capture the corridor's best coverage.
+DATE_TOP_N = 3
 
 # Mirrors the pathfind algorithm's own start_zone_m/point_cover_tolerance_m
 # defaults -- used here only to pre-check whether a date's own dots can

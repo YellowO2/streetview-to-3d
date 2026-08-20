@@ -113,10 +113,11 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
     shape -- see street_builder/build_graph/build_graph.py's
     build_corridor_graphs. adjacency: the corridor's shared dot-to-dot
     structural graph, same source."""
+    import itertools
     import tempfile
 
     import torch
-    from panoramic_to_3dgs import DA3Model, test_edge_da3
+    from panoramic_to_3dgs import DA3Model, score_pano_da3, test_edge_da3, test_edge_da3_bridge
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
     pipeline = get_pipeline()
@@ -126,7 +127,16 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
             def test_edge(path_a, path_b, test_id):
                 return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
+            score_ids = itertools.count()
+
+            def score_pano(path):
+                return score_pano_da3(path, pipeline.config, views_base, da3, score_id=next(score_ids), step_degrees=step_degrees)
+
+            def bridge_test_edge(path_a, path_b, test_id):
+                return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+
             return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                score_pano=score_pano, bridge_test_edge=bridge_test_edge,
                                                 max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
     finally:
         del da3

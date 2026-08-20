@@ -63,6 +63,20 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
 # padded per test x ~2 tests/dot -> 6.0s/dot.
 SECONDS_PER_DOT_ESTIMATE = 6.0
 
+# Phase 3 (bridge_pieces) constants. Relaxed keep-rate vs. the main walk's
+# 0.6 -- bridging only needs SOME real signal, not a fully confident
+# reconstruction, and any real DA3 result beats blind GPS placement.
+BRIDGE_KEEP_RATE = 0.5
+# An average deviation-among-kept-views this large (not a single outlier
+# -- those get filtered out already, see test_edge_da3_bridge) means the
+# surviving views still don't agree with each other, a real sign the pair
+# is bad -- disqualifies a result from even the weak-signal fallback,
+# regardless of its raw keep-rate.
+BRIDGE_RIDICULOUS_DEV_M = 2.0
+# Real DA3 calls spent trying to bridge one pair of pieces, capped
+# regardless of how many (Ax, By) node pairs qualify by distance.
+BRIDGE_MAX_ATTEMPTS = 10
+
 
 def run_pathfind_reconstruction(
     date_graphs: list[dict],
@@ -71,6 +85,8 @@ def run_pathfind_reconstruction(
     start_lat: float,
     start_lon: float,
     test_edge,
+    score_pano=None,
+    bridge_test_edge=None,
     start_zone_m: float = 5.0,
     point_cover_tolerance_m: float = 15.0,
     edge_max_dist_m: float = 18.0,
@@ -127,13 +143,32 @@ def run_pathfind_reconstruction(
       structural graph (see fetch_nodes.interpolate_points) -- dates
       never share real panos, but they all walk the same structure.
     - test_edge(path_a, path_b, test_id) -> (pose_a, pose_b, pts, cols)
-      or None on failure. The only GPU-touching thing this function calls.
+      or None on failure. The only GPU-touching thing this function calls
+      for real connectivity.
+    - score_pano(path) -> int, optional. A candidate's solo DA3 self-
+      consistency score (higher = more internally coherent, correlates
+      with real pairwise success -- see tests/debug_solo_score_experiment.py
+      for the real-data validation: 33% success at score 6 up to 100% at
+      score 13+). When given, a dot's own candidates get scored lazily --
+      only the first time the walk actually reaches that dot, never
+      upfront for dots that end up skipped entirely -- and tried
+      best-scored-first instead of in whatever order dot_candidates gave
+      them. None (default) skips scoring, preserving the given order.
+    - bridge_test_edge(path_a, path_b, test_id) -> dict | None, optional.
+      Diagnostic pairwise test for Phase 3 (bridge_pieces) -- see
+      panoramic_to_3dgs.test_edge_da3_bridge. Unlike test_edge, never
+      gates pass/fail itself; returns raw keep-rate/deviation data so
+      bridge_pieces can apply its own relaxed accept bar. None (default)
+      skips Phase 3 entirely -- pieces are returned exactly as Phase 2's
+      set_cover chose them, independent GPS-only placement is the
+      caller's (join_segments.py's) job, unchanged from before.
 
-    Segments are NOT stitched together -- each is DA3's own arbitrary
-    frame; joining (GPS + ICP) is the caller's job.
+    Segments are NOT fully stitched together even with bridging enabled
+    -- only pieces bridge_pieces actually managed to connect share a
+    frame; joining whatever's left (GPS + ICP) is still the caller's job.
 
     Returns [(pts, cols, path_edges, date, reached_all, node_positions), ...],
-    phase 2's chosen pieces. reached_all: whole corridor covered.
+    phase 3's (post-bridging) pieces. reached_all: whole corridor covered.
     node_positions: {key: np.ndarray(3,)}, DA3's placement in that
     piece's own frame, for the caller's join step.
     """
@@ -154,6 +189,25 @@ def run_pathfind_reconstruction(
         next_piece_id = [0]
         visited = set()  # dot indices already given their one chance (confirmed or genuinely failed)
         tests_used = [0]
+        score_cache = {}  # pano key -> solo score, so a candidate never gets re-scored twice
+
+        def score_sorted(candidates):
+            """Best-solo-score-first ordering of a dot's own candidates,
+            computed lazily right here (only for a dot the walk actually
+            reached) -- never upfront for the whole corridor. No-op
+            (original order) with no scorer configured, nothing to
+            reorder, or the deadline's already passed (graceful degrade,
+            not a wasted call)."""
+            if score_pano is None or len(candidates) <= 1 or time.monotonic() >= deadline:
+                return candidates
+            scored = []
+            for c in candidates:
+                key = c[0]
+                if key not in score_cache:
+                    score_cache[key] = score_pano(c[1])
+                scored.append((score_cache[key], c))
+            scored.sort(key=lambda sc: sc[0], reverse=True)
+            return [c for _, c in scored]
 
         def covered_points(dots):
             covered = set()
@@ -207,18 +261,21 @@ def run_pathfind_reconstruction(
             return True
 
         def try_target(from_dot, to_dot, to_candidates):
-            """Try to_candidates against from_dot's one confirmed pano;
-            if from_dot itself isn't confirmed yet (bootstrap), try each
-            of ITS OWN candidates in turn as the 'from' side instead.
+            """Try to_candidates (best solo-score first) against from_dot's
+            one confirmed pano; if from_dot itself isn't confirmed yet
+            (bootstrap), also score-sort ITS OWN candidates and try
+            best-from x best-to first, falling back down each list.
             First success wins."""
             if from_dot in confirmed:
                 c = confirmed[from_dot]
-                for key, path, lat, lon in to_candidates:
+                for key, path, lat, lon in score_sorted(to_candidates):
                     if test_and_confirm(from_dot, c["key"], c["path"], c["lat"], c["lon"], to_dot, key, path, lat, lon):
                         return True
                 return False
-            for fk, fpath, flat, flon in dot_candidates.get(from_dot, []):
-                for key, path, lat, lon in to_candidates:
+            from_candidates = score_sorted(dot_candidates.get(from_dot, []))
+            to_candidates_sorted = score_sorted(to_candidates)
+            for fk, fpath, flat, flon in from_candidates:
+                for key, path, lat, lon in to_candidates_sorted:
                     if test_and_confirm(from_dot, fk, fpath, flat, flon, to_dot, key, path, lat, lon):
                         return True
             return False
@@ -323,7 +380,20 @@ def run_pathfind_reconstruction(
         for pid, pd in piece_data.items():
             dots = [d for d, c in confirmed.items() if c["piece_id"] == pid]
             node_positions = {confirmed[d]["key"]: confirmed[d]["seg_R"] @ confirmed[d]["pose"][0] + confirmed[d]["seg_t"] for d in dots}
-            pieces.append((pd["pts"], pd["cols"], pd["path_edges"], node_positions, covered_points(dots)))
+            # Each node's own (center, rotation, path, real lat, real lon)
+            # re-expressed in the piece's shared frame (path/lat/lon are
+            # unchanged, just carried along) -- node_positions alone is
+            # enough for GPS-fitting (join_segments.py), but bridging two
+            # pieces together (see bridge_pieces) needs the full pose +
+            # path to run a NEW real test and chain rigid_align onto this
+            # piece's existing frame, and REAL lat/lon (not the DA3-frame
+            # position, which is meaningless to compare across two
+            # different pieces' unrelated local coordinate frames) to
+            # decide which node pairs are even worth attempting.
+            # Internal-only: never leaves run_pathfind_reconstruction.
+            frame_poses = {confirmed[d]["key"]: (node_positions[confirmed[d]["key"]], confirmed[d]["pose"][1] @ confirmed[d]["seg_R"].T,
+                                                   confirmed[d]["path"], confirmed[d]["lat"], confirmed[d]["lon"]) for d in dots}
+            pieces.append((pd["pts"], pd["cols"], pd["path_edges"], node_positions, covered_points(dots), frame_poses))
         return pieces, tests_used[0]
 
     def set_cover(pieces, total_points):
@@ -344,7 +414,120 @@ def run_pathfind_reconstruction(
             pool.pop(0)
         return chosen, uncovered
 
-    all_pieces = []  # (pts, cols, path_edges, node_positions, covered, date)
+    def try_bridge(a, b, deadline, bridge_test_id):
+        """One pair's worth of Phase 3 search: every (Ax, By) node pair
+        within edge_max_dist_m, same-date-first then closest-first, up to
+        BRIDGE_MAX_ATTEMPTS real tests. First pair clearing BRIDGE_KEEP_RATE
+        wins outright; otherwise falls back to whichever attempted pair's
+        kept views still agree with each other well (low avg deviation,
+        not just a single outlier already filtered out) and has the best
+        keep-rate.
+        Returns (merged_piece, next_bridge_test_id) or (None, next_bridge_test_id)
+        if nothing usable came out of any attempt."""
+        a_pts, a_cols, a_edges, a_positions, a_covered, a_frame_poses, a_date = a
+        b_pts, b_cols, b_edges, b_positions, b_covered, b_frame_poses, b_date = b
+
+        pairs = []
+        for a_key, (_, _, _, a_lat, a_lon) in a_frame_poses.items():
+            for b_key, (_, _, _, b_lat, b_lon) in b_frame_poses.items():
+                # REAL geographic distance, not DA3-frame position -- the
+                # two pieces' DA3 frames are unrelated coordinate systems
+                # (different scale/origin/orientation each), comparing
+                # positions across them is meaningless. lat/lon is the
+                # only thing both pieces agree on.
+                dist = haversine_m(a_lat, a_lon, b_lat, b_lon)
+                if dist <= edge_max_dist_m:
+                    pairs.append((a_date != b_date, dist, a_key, b_key))
+        if not pairs:
+            return None, bridge_test_id
+        pairs.sort()
+
+        winner = None  # (result, a_key, b_key)
+        best_fallback = None
+        best_fallback_quality = -1.0
+        attempts = 0
+        for _, _, a_key, b_key in pairs:
+            if attempts >= BRIDGE_MAX_ATTEMPTS or time.monotonic() >= deadline:
+                break
+            _, _, a_path, _, _ = a_frame_poses[a_key]
+            _, _, b_path, _, _ = b_frame_poses[b_key]
+            result = bridge_test_edge(a_path, b_path, f"bridge_{bridge_test_id}")
+            bridge_test_id += 1
+            attempts += 1
+            if result is None:
+                continue
+            ka, ta = result["keep_a"]
+            kb, tb = result["keep_b"]
+            keep_a_ratio = ka / ta if ta else 0.0
+            keep_b_ratio = kb / tb if tb else 0.0
+            sane = result["avg_dev_a"] < BRIDGE_RIDICULOUS_DEV_M and result["avg_dev_b"] < BRIDGE_RIDICULOUS_DEV_M
+            passed = keep_a_ratio >= BRIDGE_KEEP_RATE and keep_b_ratio >= BRIDGE_KEEP_RATE
+            print(f"[bridge] {a_key} -> {b_key}: keep={ka}/{ta},{kb}/{tb} avg_dev={result['avg_dev_a']:.2f}m,{result['avg_dev_b']:.2f}m "
+                  f"{'OK' if passed and sane else ('weak' if sane else 'DISCARD (bad consensus)')}")
+            if passed and sane:
+                winner = (result, a_key, b_key)
+                break
+            if sane:
+                quality = min(keep_a_ratio, keep_b_ratio)
+                if quality > best_fallback_quality:
+                    best_fallback_quality = quality
+                    best_fallback = (result, a_key, b_key)
+
+        chosen_result = winner or best_fallback
+        if chosen_result is None:
+            return None, bridge_test_id
+
+        result, a_key, b_key = chosen_result
+        a_center, a_rot, _, _, _ = a_frame_poses[a_key]
+        local_R, local_t = rigid_align([result["pose_a"]], [(a_center, a_rot)])
+        bridge_pts_in_a = result["pts"] @ local_R.T + local_t
+        b_key_center_in_a = local_R @ result["pose_b"][0] + local_t
+        b_key_rot_in_a = result["pose_b"][1] @ local_R.T
+
+        b_own_center, b_own_rot, _, _, _ = b_frame_poses[b_key]
+        b_to_a_R, b_to_a_t = rigid_align([(b_own_center, b_own_rot)], [(b_key_center_in_a, b_key_rot_in_a)])
+
+        merged_pts = np.concatenate([a_pts, bridge_pts_in_a, b_pts @ b_to_a_R.T + b_to_a_t], axis=0)
+        merged_cols = np.concatenate([a_cols, result["cols"], b_cols], axis=0)
+        merged_edges = a_edges + [(a_key, b_key)] + b_edges
+        merged_positions = {**a_positions, **{k: b_to_a_R @ p + b_to_a_t for k, p in b_positions.items()}}
+        merged_frame_poses = {**a_frame_poses,
+                               **{k: (b_to_a_R @ p + b_to_a_t, r @ b_to_a_R.T, path, lat, lon)
+                                  for k, (p, r, path, lat, lon) in b_frame_poses.items()}}
+        merged_covered = a_covered | b_covered
+        tag = "bridged" if winner else "bridged (weak signal)"
+        print(f"[bridge] {a_date}+{b_date}: merged via {a_key} -> {b_key} ({tag})")
+        return (merged_pts, merged_cols, merged_edges, merged_positions, merged_covered, merged_frame_poses, a_date), bridge_test_id
+
+    def bridge_pieces(chosen, deadline):
+        """Phase 3: try to replace independent GPS placement between
+        geographically close pieces with a real DA3-verified transform
+        (see run_pathfind_reconstruction's own docstring for the full
+        design). Greedily merges pairs until nothing more merges or the
+        deadline hits. Returns a new list of (possibly merged) pieces,
+        same 7-tuple shape as `chosen`."""
+        if bridge_test_edge is None or len(chosen) < 2:
+            return chosen
+
+        pieces = list(chosen)
+        bridge_test_id = 0
+        changed = True
+        while changed and len(pieces) > 1 and time.monotonic() < deadline:
+            changed = False
+            for i in range(len(pieces)):
+                if changed:
+                    break
+                for j in range(len(pieces)):
+                    if i == j:
+                        continue
+                    merged, bridge_test_id = try_bridge(pieces[i], pieces[j], deadline, bridge_test_id)
+                    if merged is not None:
+                        pieces = [p for k, p in enumerate(pieces) if k not in (i, j)] + [merged]
+                        changed = True
+                        break
+        return pieces
+
+    all_pieces = []  # (pts, cols, path_edges, node_positions, covered, frame_poses, date)
     total_tests = 0
     time_budget_s = min(len(points) * SECONDS_PER_DOT_ESTIMATE, max_time_budget_s)
     deadline = time.monotonic() + time_budget_s
@@ -369,10 +552,15 @@ def run_pathfind_reconstruction(
 
     chosen, leftover_uncovered = set_cover(all_pieces, len(points))
 
+    n_before_bridge = len(chosen)
+    chosen = bridge_pieces(chosen, deadline)
+    if len(chosen) != n_before_bridge:
+        print(f"pathfind: bridge_pieces merged {n_before_bridge} piece(s) into {len(chosen)}")
+
     reached_all = not leftover_uncovered
     segments = [
         (pts, cols, path_edges, date, reached_all, node_positions)
-        for pts, cols, path_edges, node_positions, covered, date in chosen
+        for pts, cols, path_edges, node_positions, covered, frame_poses, date in chosen
     ]
     print(f"pathfind: {total_tests} attempts total, {len(date_graphs)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")
     return segments
