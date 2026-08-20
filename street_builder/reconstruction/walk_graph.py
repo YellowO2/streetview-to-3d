@@ -63,15 +63,20 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
 # padded per test x ~2 tests/dot -> 6.0s/dot.
 SECONDS_PER_DOT_ESTIMATE = 6.0
 
-# Phase 3 (bridge_pieces) constants. Relaxed keep-rate vs. the main walk's
-# 0.6 -- bridging only needs SOME real signal, not a fully confident
-# reconstruction, and any real DA3 result beats blind GPS placement.
+# Phase 3 (bridge_pieces) constants. Bridging never falls back to GPS
+# between two pieces -- ANY real DA3 estimate, however weak, is trusted
+# over independent GPS placement (GPS only ever anchors the final
+# combined result to real-world coordinates once, at the very end, not
+# used to reconcile pieces against each other). These two constants only
+# decide when a match is confident enough to stop searching early vs.
+# needing to rank every attempt tried and take the best -- they never
+# disqualify a result from being used at all.
 BRIDGE_KEEP_RATE = 0.5
 # An average deviation-among-kept-views this large (not a single outlier
 # -- those get filtered out already, see test_edge_da3_bridge) means the
 # surviving views still don't agree with each other, a real sign the pair
-# is bad -- disqualifies a result from even the weak-signal fallback,
-# regardless of its raw keep-rate.
+# is worse than usual -- only used to break ties when ranking attempts,
+# never to discard a result outright.
 BRIDGE_RIDICULOUS_DEV_M = 2.0
 # Real DA3 calls spent trying to bridge one pair of pieces, capped
 # regardless of how many (Ax, By) node pairs qualify by distance.
@@ -158,10 +163,13 @@ def run_pathfind_reconstruction(
       Diagnostic pairwise test for Phase 3 (bridge_pieces) -- see
       panoramic_to_3dgs.test_edge_da3_bridge. Unlike test_edge, never
       gates pass/fail itself; returns raw keep-rate/deviation data so
-      bridge_pieces can apply its own relaxed accept bar. None (default)
-      skips Phase 3 entirely -- pieces are returned exactly as Phase 2's
-      set_cover chose them, independent GPS-only placement is the
-      caller's (join_segments.py's) job, unchanged from before.
+      bridge_pieces can rank several attempts and ALWAYS use the best
+      one found, however weak -- a real DA3 estimate is trusted over
+      independent GPS placement between two pieces, full stop, no
+      fallback. None (default) skips Phase 3 entirely -- pieces are
+      returned exactly as Phase 2's set_cover chose them, independent
+      GPS-only placement is the caller's (join_segments.py's) job,
+      unchanged from before.
 
     Segments are NOT fully stitched together even with bridging enabled
     -- only pieces bridge_pieces actually managed to connect share a
@@ -417,13 +425,18 @@ def run_pathfind_reconstruction(
     def try_bridge(a, b, deadline, bridge_test_id):
         """One pair's worth of Phase 3 search: every (Ax, By) node pair
         within edge_max_dist_m, same-date-first then closest-first, up to
-        BRIDGE_MAX_ATTEMPTS real tests. First pair clearing BRIDGE_KEEP_RATE
-        wins outright; otherwise falls back to whichever attempted pair's
-        kept views still agree with each other well (low avg deviation,
-        not just a single outlier already filtered out) and has the best
-        keep-rate.
+        BRIDGE_MAX_ATTEMPTS real tests. ALWAYS merges using whichever
+        attempt came out best, however weak -- even a poor DA3 estimate
+        beats independent GPS placement between two pieces, and GPS is
+        never used for that (see run_pathfind_reconstruction's own
+        docstring). A clearly confident match (clears BRIDGE_KEEP_RATE on
+        both sides and no bad-consensus red flag) stops the search early;
+        otherwise every attempt is ranked and the best one wins once the
+        attempt budget/deadline is hit.
         Returns (merged_piece, next_bridge_test_id) or (None, next_bridge_test_id)
-        if nothing usable came out of any attempt."""
+        only if there were no (Ax, By) pairs within range to try at all --
+        the one remaining case join_segments.py's GPS fit still has to
+        cover, since there's no real signal to use in the first place."""
         a_pts, a_cols, a_edges, a_positions, a_covered, a_frame_poses, a_date = a
         b_pts, b_cols, b_edges, b_positions, b_covered, b_frame_poses, b_date = b
 
@@ -442,9 +455,7 @@ def run_pathfind_reconstruction(
             return None, bridge_test_id
         pairs.sort()
 
-        winner = None  # (result, a_key, b_key)
-        best_fallback = None
-        best_fallback_quality = -1.0
+        best = None  # (rank_key, result, a_key, b_key)
         attempts = 0
         for _, _, a_key, b_key in pairs:
             if attempts >= BRIDGE_MAX_ATTEMPTS or time.monotonic() >= deadline:
@@ -462,22 +473,23 @@ def run_pathfind_reconstruction(
             keep_b_ratio = kb / tb if tb else 0.0
             sane = result["avg_dev_a"] < BRIDGE_RIDICULOUS_DEV_M and result["avg_dev_b"] < BRIDGE_RIDICULOUS_DEV_M
             passed = keep_a_ratio >= BRIDGE_KEEP_RATE and keep_b_ratio >= BRIDGE_KEEP_RATE
+            # (confident?, sane?, min keep-rate, -combined avg_dev) --
+            # ranks a genuinely good match first, then prefers a sane
+            # result over a flagged one, then the best of what's left by
+            # keep-rate/deviation. Never disqualifies outright -- there's
+            # always a best available, and it's always used.
+            rank_key = (passed and sane, sane, min(keep_a_ratio, keep_b_ratio), -(result["avg_dev_a"] + result["avg_dev_b"]))
             print(f"[bridge] {a_key} -> {b_key}: keep={ka}/{ta},{kb}/{tb} avg_dev={result['avg_dev_a']:.2f}m,{result['avg_dev_b']:.2f}m "
-                  f"{'OK' if passed and sane else ('weak' if sane else 'DISCARD (bad consensus)')}")
+                  f"{'OK' if passed and sane else ('weak' if sane else 'poor consensus')}")
+            if best is None or rank_key > best[0]:
+                best = (rank_key, result, a_key, b_key)
             if passed and sane:
-                winner = (result, a_key, b_key)
                 break
-            if sane:
-                quality = min(keep_a_ratio, keep_b_ratio)
-                if quality > best_fallback_quality:
-                    best_fallback_quality = quality
-                    best_fallback = (result, a_key, b_key)
 
-        chosen_result = winner or best_fallback
-        if chosen_result is None:
+        if best is None:
             return None, bridge_test_id
 
-        result, a_key, b_key = chosen_result
+        _, result, a_key, b_key = best
         a_center, a_rot, _, _, _ = a_frame_poses[a_key]
         local_R, local_t = rigid_align([result["pose_a"]], [(a_center, a_rot)])
         bridge_pts_in_a = result["pts"] @ local_R.T + local_t
@@ -495,8 +507,7 @@ def run_pathfind_reconstruction(
                                **{k: (b_to_a_R @ p + b_to_a_t, r @ b_to_a_R.T, path, lat, lon)
                                   for k, (p, r, path, lat, lon) in b_frame_poses.items()}}
         merged_covered = a_covered | b_covered
-        tag = "bridged" if winner else "bridged (weak signal)"
-        print(f"[bridge] {a_date}+{b_date}: merged via {a_key} -> {b_key} ({tag})")
+        print(f"[bridge] {a_date}+{b_date}: merged via {a_key} -> {b_key} (keep={result['keep_a']},{result['keep_b']})")
         return (merged_pts, merged_cols, merged_edges, merged_positions, merged_covered, merged_frame_poses, a_date), bridge_test_id
 
     def bridge_pieces(chosen, deadline):
