@@ -99,15 +99,30 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
     every node by hand -- feed the result straight in as corridor_edges,
     same shape a manually-built selection already produces.
 
-    nearby_nodes alone isn't enough for this: it only ever queries the
-    3x3 tile neighborhood around ONE point, so nodes genuinely radius_m
-    away (for any real radius bigger than that neighborhood) are never
-    found no matter how large radius_m is set. Real per-pano link data
-    (fetch_pano_by_id) is what actually reaches further, one hop at a
-    time -- so this seeds from nearby_nodes, then walks outward via real
-    links, only ever expanding FROM a node that's still within radius_m
-    (anything found just past the boundary stays a leaf, never itself
-    expanded further).
+    This is a PURE single-source BFS: nearby_nodes is used only to locate
+    the one real pano nearest to the center point (a geometric tile scan
+    can't tell us that without first knowing a real pano id to start
+    from), and every other node in the result is discovered strictly by
+    walking real per-pano links (fetch_pano_by_id) outward from that one
+    seed. A node only ever gets ADDED because it was found as a real-link
+    neighbor of an already-visited, in-radius node -- never because it
+    happened to be geometrically nearby. That guarantees the whole
+    output is one connected component by construction, exactly like
+    a person standing at the seed and clicking outward one linked node
+    at a time, radius_m capping how far they walk.
+
+    This matters: dumping every geometrically-nearby node in as extra
+    seeds (the earlier version of this function did) can silently return
+    MULTIPLE disconnected components -- e.g. a center point sitting in
+    the middle of a triangular block, equidistant from 3 unconnected
+    streets, would have a tile scan grab panos from all 3 (all within
+    radius) even though they share no real link. A pure BFS from one
+    start node instead correctly returns just the one street the start
+    node actually belongs to.
+
+    Only ever expanding FROM a node that's still within radius_m --
+    anything found just past the boundary is kept as a leaf in the
+    result but never itself expanded further.
 
     Apple has no real link data (same limitation _augment_real_links
     documents) -- this only ever discovers Google coverage. Not a
@@ -119,25 +134,27 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
     Returns (nodes, edges) -- same shape nearby_nodes/tab.py's
     state["nodes"]/state["edges"] already use.
     """
-    seed_nodes, seed_edges = nearby_nodes(center_lat, center_lon, radius_m=min(radius_m, DEFAULT_RADIUS_M))
-    if not seed_nodes:
-        return [], []
+    seed_nodes, _ = nearby_nodes(center_lat, center_lon, radius_m=min(radius_m, DEFAULT_RADIUS_M))
+    google_seeds = [n for n in seed_nodes if n["key"].startswith("google:")]
+    if not google_seeds:
+        # Nothing to walk real links from -- either nothing nearby at
+        # all, or only Apple coverage nearby (no real link data to BFS).
+        return (seed_nodes[:1], []) if seed_nodes else ([], [])
 
-    nodes = list(seed_nodes)
-    edges = list(seed_edges)
-    by_key = {n["key"]: n for n in nodes}
-    edge_set = {frozenset(e) for e in edges}
+    start_node = min(google_seeds, key=lambda n: _haversine_m(center_lat, center_lon, n["lat"], n["lon"]))
 
-    start_key = min(nodes, key=lambda n: _haversine_m(center_lat, center_lon, n["lat"], n["lon"]))["key"]
+    nodes = [start_node]
+    edges = []
+    by_key = {start_node["key"]: start_node}
+    edge_set = set()
+
     visited = set()
-    queue = [start_key]
+    queue = [start_node["key"]]
     while queue and len(nodes) < max_nodes:
         key = queue.pop(0)
         if key in visited:
             continue
         visited.add(key)
-        if not key.startswith("google:"):
-            continue  # only Google exposes real per-pano link data
 
         pano_id = key.split(":", 1)[1]
         try:
@@ -164,3 +181,132 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
                 queue.append(other_key)
 
     return nodes, edges
+
+
+DEFAULT_CHUNK_SIZE = 30
+
+
+def split_into_chunks(nodes, edges, chunk_size=DEFAULT_CHUNK_SIZE):
+    """Split a node/edge graph (e.g. expand_area's output) into connected
+    chunks of roughly chunk_size nodes each -- so a large-scale
+    selection (a whole campus) can be processed as many independent,
+    GPU-call-sized pieces (see street_builder.main.prepare_pathfind)
+    instead of one huge corridor that would blow past a single GPU
+    call's own constraints.
+
+    Each chunk is grown via its OWN local BFS (seeded from whichever
+    unassigned node comes first, restricted to only-still-unassigned
+    neighbors) rather than slicing one global traversal order -- that
+    distinction matters: a flat slice of a whole-graph BFS order can
+    easily contain nodes that aren't actually connected to each other at
+    all (two leaves from different branches, visited back-to-back by
+    coincidence of queue timing). Growing each chunk from its own seed,
+    only ever stepping to neighbors that are still unclaimed, guarantees
+    every chunk is a genuinely connected subgraph -- reachable from its
+    own seed via real edges that are themselves entirely within that
+    chunk. Naturally handles disconnected components and dead-ends too:
+    a chunk just ends up smaller than chunk_size if its local
+    unassigned neighborhood runs out first.
+
+    Returns (chunks, known_adjacent_chunk_pairs). chunks: [{"chunk_id":
+    str, "nodes": [...], "corridor_edges": [...], "start": (lat, lon),
+    "goals": [(lat, lon), ...]}, ...] -- each chunk's own start/goals/
+    corridor_edges are exactly what
+    street_builder.main.prepare_pathfind(start, goals, corridor_edges)
+    needs. known_adjacent_chunk_pairs: [(chunk_id_a, chunk_id_b), ...]
+    -- every pair of chunks connected by at least one real edge in the
+    original graph (see join_segments.bridge_pieces, which this feeds
+    directly) -- usually just consecutive chunks, but a branch or loop
+    can connect a chunk to more than one other.
+    """
+    by_key = {n["key"]: n for n in nodes}
+    adjacency: dict[str, list[str]] = {n["key"]: [] for n in nodes}
+    for a, b in edges:
+        if a in adjacency and b in adjacency:
+            adjacency[a].append(b)
+            adjacency[b].append(a)
+
+    unassigned = {n["key"] for n in nodes}
+    raw_chunks: list[list[str]] = []
+    for n in nodes:
+        while n["key"] in unassigned:
+            # Only reachable here for the FIRST node of a new chunk --
+            # subsequent iterations of the outer for-loop hit nodes
+            # already claimed by an earlier chunk's own BFS and skip
+            # straight past (the `while` condition catches that).
+            seed = n["key"]
+            chunk_keys = []
+            queue = [seed]
+            queued = {seed}
+            while queue and len(chunk_keys) < chunk_size:
+                key = queue.pop(0)
+                if key not in unassigned:
+                    continue
+                chunk_keys.append(key)
+                unassigned.discard(key)
+                for other in adjacency[key]:
+                    if other in unassigned and other not in queued:
+                        queued.add(other)
+                        queue.append(other)
+            if chunk_keys:
+                raw_chunks.append(chunk_keys)
+            break  # this node is now assigned (or was never reachable) -- move on
+
+    # A chunk with <2 nodes can't stand alone (prepare_pathfind needs a
+    # start + at least 1 goal) -- fold it into any chunk it shares a
+    # real edge with. Rare (only ever an isolated leftover fragment or a
+    # single unconnected node); if truly isolated (no real edge to
+    # anything), it's dropped with a warning -- not useful for a
+    # corridor reconstruction on its own either way.
+    key_to_chunk_idx = {k: i for i, keys in enumerate(raw_chunks) for k in keys}
+    for i, keys in enumerate(raw_chunks):
+        if len(keys) >= 2 or not keys:
+            continue
+        target = None
+        for k in keys:
+            for other in adjacency[k]:
+                j = key_to_chunk_idx.get(other)
+                if j is not None and j != i:
+                    target = j
+                    break
+            if target is not None:
+                break
+        if target is not None:
+            raw_chunks[target].extend(keys)
+            for k in keys:
+                key_to_chunk_idx[k] = target
+            raw_chunks[i] = []
+        else:
+            print(f"split_into_chunks: dropping isolated node(s) with no real edge to anything: {keys}")
+            raw_chunks[i] = []
+    raw_chunks = [keys for keys in raw_chunks if keys]
+
+    key_to_chunk_id = {}
+    for i, keys in enumerate(raw_chunks):
+        chunk_id = f"chunk{i}"
+        for k in keys:
+            key_to_chunk_id[k] = chunk_id
+
+    chunks = []
+    for i, keys in enumerate(raw_chunks):
+        chunk_id = f"chunk{i}"
+        chunk_nodes = [by_key[k] for k in keys]
+        chunk_edges = [(a, b) for a, b in edges
+                       if key_to_chunk_id.get(a) == chunk_id and key_to_chunk_id.get(b) == chunk_id]
+        chunks.append({
+            "chunk_id": chunk_id,
+            "nodes": chunk_nodes,
+            "corridor_edges": [((by_key[a]["lat"], by_key[a]["lon"]), (by_key[b]["lat"], by_key[b]["lon"]))
+                                for a, b in chunk_edges],
+            "start": (chunk_nodes[0]["lat"], chunk_nodes[0]["lon"]),
+            "goals": [(n["lat"], n["lon"]) for n in chunk_nodes[1:]],
+        })
+
+    adjacent_pairs = set()
+    for a, b in edges:
+        ca, cb = key_to_chunk_id.get(a), key_to_chunk_id.get(b)
+        if ca and cb and ca != cb:
+            adjacent_pairs.add(frozenset((ca, cb)))
+    known_adjacent_chunk_pairs = [tuple(sorted(pair)) for pair in adjacent_pairs]
+
+    return chunks, known_adjacent_chunk_pairs
