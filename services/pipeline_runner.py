@@ -140,7 +140,7 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
 
 
 @GPU_WINDOWED
-def join_segments_gpu(segments, node_entries, edge_max_dist_m=18.0, step_degrees=20):
+def join_segments_gpu(segments, node_entries, edge_max_dist_m=None, step_degrees=20):
     """The GPU call for the join step's bridging search (see
     street_builder/reconstruction/join_segments.py) -- its own separate
     session from run_pathfind_reconstruction_gpu's, since bridging only
@@ -148,12 +148,19 @@ def join_segments_gpu(segments, node_entries, edge_max_dist_m=18.0, step_degrees
     no corridor/date data), not anything from the corridor search's own
     call. Keeping it separate means bridging behavior can be iterated on
     (or Join re-run on a saved segments bundle) without re-paying for
-    the whole corridor search each time."""
+    the whole corridor search each time.
+
+    edge_max_dist_m: None (default) defers to join_segments.py's own
+    BRIDGE_MAX_DIST_M -- kept as a single source of truth instead of a
+    second hardcoded default here, so the two can't silently drift apart."""
     import tempfile
 
     import torch
     from panoramic_to_3dgs import DA3Model, test_edge_da3_bridge
-    from street_builder.reconstruction.join_segments import join_segments
+    from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
+
+    if edge_max_dist_m is None:
+        edge_max_dist_m = BRIDGE_MAX_DIST_M
 
     pipeline = get_pipeline()
     da3 = DA3Model(pipeline.config.da3_model)

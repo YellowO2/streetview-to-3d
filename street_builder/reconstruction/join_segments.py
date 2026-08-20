@@ -44,11 +44,12 @@ BRIDGE_RIDICULOUS_DEV_M = 2.0
 # regardless of how many (Ax, By) node pairs qualify by distance.
 BRIDGE_MAX_ATTEMPTS = 10
 # Real-world distance a candidate node pair must be within to even
-# attempt bridging -- reused as-is from the main walk's own
-# edge_max_dist_m default (street_builder/reconstruction/walk_graph.py),
-# since "plausibly close enough to connect" is the same real-world
-# judgment call either place.
-BRIDGE_MAX_DIST_M = 18.0
+# attempt bridging. Temporarily bumped to 30m (from 18m, the main walk's
+# own edge_max_dist_m default) to diagnose a real run where bridging
+# reported "0 candidate pairs within 18m" between pieces the user
+# expected to be close -- see the closest-real-pair distance now logged
+# alongside that message for the actual number once this runs again.
+BRIDGE_MAX_DIST_M = 30.0
 
 
 def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id):
@@ -67,6 +68,7 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     b_pts, b_cols, b_edges, b_date, b_reached, b_positions, b_frame_poses = b
 
     pairs = []
+    closest = None  # (dist, a_key, b_key) -- tracked even when nothing qualifies, for diagnostics
     for a_key, (_, _, _, a_lat, a_lon) in a_frame_poses.items():
         for b_key, (_, _, _, b_lat, b_lon) in b_frame_poses.items():
             # REAL geographic distance, not DA3-frame position -- the two
@@ -75,11 +77,14 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
             # positions across them is meaningless. lat/lon is the only
             # thing both pieces agree on.
             dist = haversine_m(a_lat, a_lon, b_lat, b_lon)
+            if closest is None or dist < closest[0]:
+                closest = (dist, a_key, b_key)
             if dist <= edge_max_dist_m:
                 pairs.append((a_date != b_date, dist, a_key, b_key))
     if not pairs:
+        closest_desc = f"closest real pair was {closest[1]} <-> {closest[2]} at {closest[0]:.1f}m" if closest else "no nodes on either side at all"
         print(f"[bridge] {a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
-              f"0 candidate pair(s) within {edge_max_dist_m:.0f}m -- skipped")
+              f"0 candidate pair(s) within {edge_max_dist_m:.0f}m -- skipped ({closest_desc})")
         return None, bridge_test_id
     print(f"[bridge] {a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
           f"{len(pairs)} candidate pair(s) within {edge_max_dist_m:.0f}m, trying up to {BRIDGE_MAX_ATTEMPTS}")
