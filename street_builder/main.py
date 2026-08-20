@@ -5,18 +5,27 @@ together for the UI (map_selection/tab.py calls into this):
    real click-graph and split into up to DATE_TOP_N isolated, capped
    per-date graphs (no GPU) -- see street_builder/build_graph/.
 2. Download every node referenced by any of those graphs (network, cached).
-3. run_pathfind_reconstruction_gpu: ONE GPU call -- the actual algorithm
-   (street_builder/reconstruction/walk_graph.py) runs entirely inside it.
-4. Join segments into one final point cloud (no GPU) -- see
-   street_builder/reconstruction/join_segments.py.
+3. run_pathfind_reconstruction_gpu: ONE GPU call -- the corridor-search
+   algorithm (street_builder/reconstruction/walk_graph.py) runs entirely
+   inside it, producing possibly-several disconnected segments.
+4. join_segments_gpu: a SEPARATE GPU call -- bridges segments together
+   with real DA3 tests where possible, then GPS-fits + merges whatever's
+   still separate into one final point cloud (see
+   street_builder/reconstruction/join_segments.py). Split from step 3
+   deliberately: bridging only needs each segment's own already-
+   confirmed nodes, nothing from the corridor search itself, so keeping
+   it separate lets Join (and bridging behavior) be re-run/re-tuned
+   against an already-computed step 3 result without re-paying for the
+   whole corridor search each time.
 
-One GPU call, not two: an earlier version fell back to a second call
-(download everything, retry) if the first didn't reach the end. That's
-exactly the pattern that causes 'Expired ZeroGPU proxy token' -- each
-@spaces.GPU call requests a fresh session credential, and a second
-request can arrive after the first one's already aged out. The top-N
-date filter already keeps the single download bounded, so there's no real
-need for a fallback call.
+Each of steps 3 and 4 is its own single GPU call, not split further: an
+earlier version fell back to a second call within one step (download
+everything, retry) if the first didn't reach the end. That's exactly the
+pattern that causes 'Expired ZeroGPU proxy token' -- each @spaces.GPU
+call requests a fresh session credential, and a second request can
+arrive after the first one's already aged out. The top-N date filter
+already keeps each step's own work bounded, so there's no real need for
+a fallback call within either one.
 """
 import asyncio
 import os
@@ -155,9 +164,10 @@ def run_prepared_pathfind(prep: dict, output_dir,
     (if there's more than one segment) in a single call. UI callers doing
     the 3-step Prepare/Run/Join flow (see tab.py) should call
     run_prepared_pathfind_segments, save_pathfind_segments, and
-    save_joined_pathfind separately instead -- join doesn't need the GPU at
-    all, so splitting it out means re-testing/tuning it doesn't require
-    re-running the expensive DA3 search each time.
+    save_joined_pathfind separately instead -- join is its own separate
+    GPU call (join_segments_gpu), so splitting it out means re-testing/
+    tuning it doesn't require re-running the much more expensive corridor
+    search each time.
 
     Returns [(label, ply_path), ...] -- one per segment (see
     street_builder/reconstruction/walk_graph.py for what a "segment" is),
@@ -181,7 +191,7 @@ def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:
     fitting/joining. Returns [(label, ply_path), ...] previews."""
     os.makedirs(output_dir, exist_ok=True)
     results = []
-    for i, (pts, cols, path_edges, date, reached, node_positions) in enumerate(segments):
+    for i, (pts, cols, path_edges, date, reached, node_positions, frame_poses) in enumerate(segments):
         status = "full corridor covered" if reached else "partial"
         label = f"path (date {date}, {len(path_edges)} hops, {status})"
         ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_{i}.ply"))
@@ -190,14 +200,16 @@ def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:
 
 
 def save_joined_pathfind(prep: dict, segments, output_dir) -> tuple[str, str]:
-    """Fits + merges every segment (see join_segments.join_segments), saves
-    the result, returns one (label, ply_path). No GPU -- pure linear
-    algebra, safe to call repeatedly against the same already-computed
-    segments while tuning the join step."""
-    from street_builder.reconstruction.join_segments import join_segments
+    """Bridges (real DA3 tests between segment boundaries) + fits/merges
+    whatever's left (see join_segments.py), saves the result, returns
+    one (label, ply_path). Its own GPU call (join_segments_gpu),
+    separate from the corridor search's -- safe to call repeatedly
+    against the same already-computed segments while tuning the
+    join/bridging step, without re-running the corridor search."""
+    from services.pipeline_runner import join_segments_gpu
     t0 = time.monotonic()
     os.makedirs(output_dir, exist_ok=True)
-    pts, cols = join_segments(segments, prep["node_entries"])
+    pts, cols = join_segments_gpu(segments, prep["node_entries"])
     ply = save_pointcloud(pts, cols, os.path.join(output_dir, "pathfind_joined.ply"))
     print(f"save_joined_pathfind: done in {time.monotonic() - t0:.1f}s")
     return f"path (joined, {len(segments)} segments)", ply

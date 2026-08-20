@@ -77,7 +77,7 @@ def run_scenario(name, node_specs, dot_specs, dot_edges, fail_pairs, start_dot=0
     )
     print(f"-> {len(test_log)} test call(s): {test_log}")
     print(f"-> {len(segments)} segment(s): " +
-          ", ".join(f"{d}({len(pe)} hops, {'full' if ra else 'partial'})" for _, _, pe, d, ra, _ in segments))
+          ", ".join(f"{d}({len(pe)} hops, {'full' if ra else 'partial'})" for _, _, pe, d, ra, _, _ in segments))
     return segments, test_log
 
 

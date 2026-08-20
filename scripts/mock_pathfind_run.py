@@ -137,7 +137,7 @@ def main():
 
     print(f"\n=== RESULT ===")
     print(f"{len(test_log)} test call(s), {len(segments)} segment(s)")
-    for pts, cols, path_edges, date, reached_all, node_positions in segments:
+    for pts, cols, path_edges, date, reached_all, node_positions, frame_poses in segments:
         print(f"  date={date}: {len(path_edges)} hop(s), {'FULL' if reached_all else 'partial'} coverage")
         for a, b in path_edges:
             print(f"    {a} -> {b}")

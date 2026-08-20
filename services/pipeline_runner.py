@@ -117,7 +117,7 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
     import tempfile
 
     import torch
-    from panoramic_to_3dgs import DA3Model, score_pano_da3, test_edge_da3, test_edge_da3_bridge
+    from panoramic_to_3dgs import DA3Model, score_pano_da3, test_edge_da3
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
     pipeline = get_pipeline()
@@ -132,12 +132,37 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
             def score_pano(path):
                 return score_pano_da3(path, pipeline.config, views_base, da3, score_id=next(score_ids), step_degrees=step_degrees)
 
+            return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                score_pano=score_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+    finally:
+        del da3
+        torch.cuda.empty_cache()
+
+
+@GPU_WINDOWED
+def join_segments_gpu(segments, node_entries, edge_max_dist_m=18.0, step_degrees=20):
+    """The GPU call for the join step's bridging search (see
+    street_builder/reconstruction/join_segments.py) -- its own separate
+    session from run_pathfind_reconstruction_gpu's, since bridging only
+    needs each segment's own already-confirmed nodes (no candidate pool,
+    no corridor/date data), not anything from the corridor search's own
+    call. Keeping it separate means bridging behavior can be iterated on
+    (or Join re-run on a saved segments bundle) without re-paying for
+    the whole corridor search each time."""
+    import tempfile
+
+    import torch
+    from panoramic_to_3dgs import DA3Model, test_edge_da3_bridge
+    from street_builder.reconstruction.join_segments import join_segments
+
+    pipeline = get_pipeline()
+    da3 = DA3Model(pipeline.config.da3_model)
+    try:
+        with tempfile.TemporaryDirectory() as views_base:
             def bridge_test_edge(path_a, path_b, test_id):
                 return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                score_pano=score_pano, bridge_test_edge=bridge_test_edge,
-                                                max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+            return join_segments(segments, node_entries, bridge_test_edge=bridge_test_edge, edge_max_dist_m=edge_max_dist_m)
     finally:
         del da3
         torch.cuda.empty_cache()
