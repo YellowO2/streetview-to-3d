@@ -59,16 +59,28 @@ def get_pipeline():
     return _pipeline
 
 
-if ON_SPACES:
-    # Loaded ONCE at module level, not inside any @spaces.GPU function --
-    # ZeroGPU expects models to be placed on 'cuda' at import time so its
-    # own packing/warm-worker mechanism can manage residency across
-    # calls. Loading (and deleting) a fresh DA3Model inside every
-    # GPU-decorated call instead -- the old pattern here -- fights that
-    # mechanism and was the real cause of GPU calls reliably breaking
-    # right after the first one on a given worker.
-    from panoramic_to_3dgs import DA3Model
-    _da3 = DA3Model(get_pipeline().config.da3_model)
+def get_da3():
+    """Lazily built on first real use, INSIDE a @spaces.GPU call -- not at
+    module level. HF's own guidance says load models at module level so
+    ZeroGPU's packing/warm-worker mechanism can manage residency, and
+    that's right for a pure-PyTorch .to('cuda') -- spaces emulates that
+    safely even outside a real GPU-attached call. But DA3Model's own
+    load path touches pycolmap, a separate native extension that makes
+    its OWN raw CUDA driver calls (cudaGetDevice, cuCtxGetDevice_v2),
+    completely bypassing spaces' emulation (which only patches PyTorch's
+    own .to()/.cuda()). Building DA3Model before any @spaces.GPU call has
+    ever attached a real GPU makes pycolmap's raw calls segfault
+    (confirmed empirically -- moving construction to module level made
+    the crash happen on the very FIRST call instead of fixing anything).
+    So: build it here, on first call, once a real GPU genuinely exists --
+    then cache it and never delete it (no del/empty_cache() per call,
+    which WAS the actual bug -- see git history), so every call after the
+    first reuses the same instance instead of tearing it down each time."""
+    global _da3
+    if _da3 is None:
+        from panoramic_to_3dgs import DA3Model
+        _da3 = DA3Model(get_pipeline().config.da3_model)
+    return _da3
 
 
 @GPU_EDIT
@@ -119,7 +131,7 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
     street_builder/main.py's module docstring for why it's one call, not
     several). This function's only job is to hand the actual algorithm
     (street_builder/reconstruction/walk_graph.py) a way to test one edge,
-    using the module-level _da3 model -- it knows nothing about
+    using the shared cached DA3 model (see get_da3) -- it knows nothing about
     corridors, dates, or coverage itself.
 
     date_graphs: already ranked/capped/isolated per date, dot_candidates
@@ -133,14 +145,15 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
     pipeline = get_pipeline()
+    da3 = get_da3()
     with tempfile.TemporaryDirectory() as views_base:
         def test_edge(path_a, path_b, test_id):
-            return test_edge_da3(path_a, path_b, pipeline.config, views_base, _da3, test_id=test_id, step_degrees=step_degrees)
+            return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
         rate_ids = itertools.count()
 
         def rate_pano(path):
-            return rate_pano_da3(path, pipeline.config, views_base, _da3, rate_id=next(rate_ids), step_degrees=step_degrees)
+            return rate_pano_da3(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
         return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
                                             rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
@@ -197,9 +210,10 @@ def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
             return None
 
     pipeline = get_pipeline()
+    da3 = get_da3()
     with tempfile.TemporaryDirectory() as views_base:
         def bridge_test_edge(path_a, path_b, test_id):
-            return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, _da3, test_id=test_id, step_degrees=step_degrees)
+            return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
         return join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m,
                               chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
@@ -245,17 +259,18 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
     overall_deadline = t0 + PATHFIND_MAX_TIME_BUDGET_S
 
     pipeline = get_pipeline()
+    da3 = get_da3()
     with tempfile.TemporaryDirectory() as views_base:
         def test_edge(path_a, path_b, test_id):
-            return test_edge_da3(path_a, path_b, pipeline.config, views_base, _da3, test_id=test_id, step_degrees=step_degrees)
+            return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
         rate_ids = itertools.count()
 
         def rate_pano(path):
-            return rate_pano_da3(path, pipeline.config, views_base, _da3, rate_id=next(rate_ids), step_degrees=step_degrees)
+            return rate_pano_da3(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
         def bridge_test_edge(path_a, path_b, test_id):
-            return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, _da3, test_id=test_id, step_degrees=step_degrees)
+            return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
         segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
                                                 rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
