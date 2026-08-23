@@ -160,15 +160,35 @@ def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
     scale multi-chunk reconstruction where the caller already knows
     which pieces are meant to connect).
 
-    Returns a list of (points, colors, metadata) -- see join_segments."""
+    Returns a list of (points, colors, metadata) -- see join_segments.
+
+    Re-fetches each candidate pano fresh (by key) right before testing it,
+    rather than trusting frame_poses' stored path -- this call is its own
+    separate ZeroGPU session, possibly a different worker/container than
+    whichever one produced `segments`, so the ORIGINAL downloaded image
+    files aren't guaranteed to still exist here (see refetch_path in
+    join_segments.py's _try_bridge). Google-only for now -- Apple has no
+    fetch-by-id-alone helper yet, so an Apple node's pair attempts are
+    skipped like a normal per-attempt failure rather than erroring."""
     import tempfile
 
     import torch
     from panoramic_to_3dgs import DA3Model, test_edge_da3_bridge
+    from services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
     from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
 
     if edge_max_dist_m is None:
         edge_max_dist_m = BRIDGE_MAX_DIST_M
+
+    def refetch_path(key):
+        source, pano_id = key.split(":", 1)
+        if source != "google":
+            return None
+        try:
+            return run_async(download_pano_by_id(pano_id, zoom=DA3_ONLY_ZOOM))
+        except Exception as e:
+            print(f"[bridge] refetch failed for {key}: {e}")
+            return None
 
     pipeline = get_pipeline()
     da3 = DA3Model(pipeline.config.da3_model)
@@ -178,7 +198,8 @@ def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
                 return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
             return join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m,
-                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
+                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
+                                  refetch_path=refetch_path)
     finally:
         del da3
         torch.cuda.empty_cache()

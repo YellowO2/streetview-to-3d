@@ -51,7 +51,7 @@ class NoBridgeCandidatesError(RuntimeError):
     corrupted position) -- not a normal outcome to silently work around."""
 
 
-def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, expected_adjacent):
+def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, expected_adjacent, refetch_path=None):
     """One pair's worth of bridge search: every (Ax, By) node pair within
     edge_max_dist_m, same-date-first then closest-first, up to
     BRIDGE_MAX_ATTEMPTS real tests. ALWAYS merges using whichever attempt
@@ -71,7 +71,17 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     so this raises NoBridgeCandidatesError instead of returning None.
     False in the blind O(n^2) scan (no known_adjacent_chunk_pairs given),
     where most pairs are legitimately unrelated and zero candidates is
-    expected, not a bug."""
+    expected, not a bug.
+    refetch_path: optional key -> path (or None on failure) callback.
+    frame_poses' own path field points at wherever the image lived in the
+    ORIGINAL segment-producing GPU session's ephemeral disk -- a separate
+    Join call (a different ZeroGPU worker/container) has no guarantee
+    that file still exists. When given, refetch_path re-downloads each
+    candidate pano fresh right before testing it instead of trusting the
+    stored path; a pair where either side fails to refetch is skipped
+    like any other per-attempt failure, not an error. None (default)
+    trusts the stored path as-is, for callers that know they're still in
+    the same session that produced it (e.g. run_pathfind_and_join_gpu)."""
     a_pts, a_cols, a_edges, a_date, a_reached, a_positions, a_frame_poses = a
     b_pts, b_cols, b_edges, b_date, b_reached, b_positions, b_frame_poses = b
 
@@ -111,6 +121,13 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
             break
         _, _, a_path, _, _, _, _ = a_frame_poses[a_key]
         _, _, b_path, _, _, _, _ = b_frame_poses[b_key]
+        if refetch_path is not None:
+            fresh_a, fresh_b = refetch_path(a_key), refetch_path(b_key)
+            if fresh_a is None or fresh_b is None:
+                print(f"[bridge] {a_key} -> {b_key}: refetch failed, skipping")
+                attempts += 1
+                continue
+            a_path, b_path = fresh_a, fresh_b
         result = bridge_test_edge(a_path, b_path, f"bridge_{bridge_test_id}")
         bridge_test_id += 1
         attempts += 1
@@ -161,7 +178,7 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
 
 
 def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=None,
-                   chunk_ids=None, known_adjacent_chunk_pairs=None):
+                   chunk_ids=None, known_adjacent_chunk_pairs=None, refetch_path=None):
     """Try to merge geographically/structurally adjacent segments via real
     DA3-verified transforms. Greedily merges pairs until nothing more
     merges or the deadline hits. Returns a new list of (possibly merged)
@@ -214,7 +231,7 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
         changed = False
         for i, j in candidate_pairs():
             merged, bridge_test_id = _try_bridge(pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id,
-                                                  expected_adjacent=adjacency_set is not None)
+                                                  expected_adjacent=adjacency_set is not None, refetch_path=refetch_path)
             if merged is not None:
                 merged_ids = id_sets[i] | id_sets[j]
                 pieces = [p for k, p in enumerate(pieces) if k not in (i, j)] + [merged]
@@ -225,7 +242,8 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
 
 
 def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
-                   max_time_budget_s: float = 200.0, chunk_ids=None, known_adjacent_chunk_pairs=None):
+                   max_time_budget_s: float = 200.0, chunk_ids=None, known_adjacent_chunk_pairs=None,
+                   refetch_path=None):
     """Bridges segments together via real DA3 tests (see bridge_pieces),
     then returns each remaining piece as-is -- no GPS fit, no shared
     coordinate frame across pieces that never bridged. Each returned
@@ -237,8 +255,8 @@ def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
     already carries each node's real lat/lon (see bridge_pieces), so no
     separate node_entries/GPS lookup is needed here.
 
-    chunk_ids/known_adjacent_chunk_pairs: passed straight through to
-    bridge_pieces -- see its own docstring.
+    chunk_ids/known_adjacent_chunk_pairs/refetch_path: passed straight
+    through to bridge_pieces/_try_bridge -- see their own docstrings.
 
     Returns a list of (points, colors, metadata) -- one per final piece
     still separate after bridging. metadata is {key: {"lat", "lon", "date",
@@ -253,7 +271,8 @@ def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
 
     deadline = time.monotonic() + max_time_budget_s
     pieces = bridge_pieces(segments, bridge_test_edge, edge_max_dist_m, deadline,
-                            chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
+                            chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
+                            refetch_path=refetch_path)
     print(f"join: bridge_pieces: {len(segments)} piece(s) in, {len(pieces)} piece(s) out "
           f"({len(segments) - len(pieces)} merge(s))")
 
