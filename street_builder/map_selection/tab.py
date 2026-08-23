@@ -355,21 +355,16 @@ def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
-    yield viewers.SPLAT_PLACEHOLDER, None, None
-
     try:
         segments = street_main.run_prepared_pathfind_segments(prep)
-        print("[checkpoint] GPU call returned successfully")
         output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
         results = street_main.save_pathfind_segments(segments, output_dir)
-        print("[checkpoint] save_pathfind_segments done")
         bundle_path = street_main.save_segments_bundle(segments, output_dir)
-        print("[checkpoint] save_segments_bundle done")
     except Exception as e:
         raise gr.Error(f"Auto-path failed: {e}")
 
     note = "" if len(segments) > 1 else "<p>Single segment -- nothing to join.</p>"
-    yield viewers.labeled_download_links(results) + note, segments, bundle_path
+    return viewers.labeled_download_links(results) + note, segments, bundle_path
 
 
 def handle_pathfind_run_and_join(prep, progress=gr.Progress(track_tqdm=True)):
@@ -383,15 +378,13 @@ def handle_pathfind_run_and_join(prep, progress=gr.Progress(track_tqdm=True)):
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
-    yield viewers.SPLAT_PLACEHOLDER, None, None
-
     try:
         output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
         results, segments, bundle_path = street_main.run_prepared_pathfind(prep, output_dir)
     except Exception as e:
         raise gr.Error(f"Run + Join failed: {e}")
 
-    yield viewers.labeled_download_links(results), segments, bundle_path
+    return viewers.labeled_download_links(results), segments, bundle_path
 
 
 def handle_pathfind_load_segments(file_path):
@@ -426,15 +419,13 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
     if len(segments) < 2:
         raise gr.Error("Only one segment -- nothing to join.")
 
-    yield viewers.SPLAT_PLACEHOLDER
-
     try:
         output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
         results = street_main.save_joined_pathfind(segments, output_dir)
     except Exception as e:
         raise gr.Error(f"Join failed: {e}")
 
-    yield viewers.labeled_download_links(results)
+    return viewers.labeled_download_links(results)
 
 
 def build_tab():
