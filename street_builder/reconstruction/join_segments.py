@@ -29,7 +29,7 @@ from street_builder.reconstruction.walk_graph import rigid_align
 # to stop searching early; never disqualifies a result from being used.
 BRIDGE_KEEP_RATE = 0.5
 # An average deviation-among-kept-views this large (not a single outlier
-# -- those get filtered out already, see test_edge_da3_bridge) means the
+# -- those get filtered out already, see services.da3_ops.bridge_test_edge) means the
 # surviving views still don't agree with each other, a real sign the
 # pair is worse than usual -- only used to break ties when ranking
 # attempts, never to discard a result outright.

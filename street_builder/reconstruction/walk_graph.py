@@ -6,7 +6,7 @@ orchestration, no candidate-gathering. It calls a test_edge(path_a,
 path_b, test_id) -> result-or-None callback for each candidate edge; the
 caller (services/pipeline_runner.py's @spaces.GPU-decorated function)
 owns the loaded DA3Model and builds that callback around
-panoramic_to_3dgs.test_edge_da3. This split exists because of ZeroGPU,
+services.da3_ops.test_edge. This split exists because of ZeroGPU,
 not for its own sake: GPU access is only granted for the duration of one
 @spaces.GPU call, so the whole decision loop (which edge to try next,
 based on the previous edge's real result) has to run inside that one
@@ -176,7 +176,7 @@ def run_pathfind_reconstruction(
     n_views_total)} -- the fuller per-node data join_segments.py's
     bridge_pieces needs to chain a NEW rigid_align onto this piece's frame
     and gate candidate pairs by real distance, plus view-count diagnostics
-    (see rate_pano_da3/test_edge_da3 -- whichever DA3 call actually
+    (see services.da3_ops.rate_pano/test_edge -- whichever DA3 call actually
     produced this node's current points); node_positions is just
     frame_poses' own center field, kept separate since it's all the
     simpler GPS-fit path needs.

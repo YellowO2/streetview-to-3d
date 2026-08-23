@@ -65,7 +65,8 @@ def debug_solo_score_experiment_gpu(dot_pairs, step_degrees=DEFAULT_STEP_DEGREES
 
     import torch
     from components.ViewExtractor.ViewExtractor import extract_views_for_da3
-    from panoramic_to_3dgs import DA3Model, test_edge_da3
+    from panoramic_to_3dgs import DA3Model
+    from services.da3_ops import test_edge as da3_test_edge
 
     pipeline = get_pipeline()
     t0 = time.monotonic()
@@ -100,7 +101,7 @@ def debug_solo_score_experiment_gpu(dot_pairs, step_degrees=DEFAULT_STEP_DEGREES
                 for key_a, path_a in cands_a:
                     for key_b, path_b in cands_b:
                         t0 = time.monotonic()
-                        result = test_edge_da3(path_a, path_b, pipeline.config, views_base, da3,
+                        result = da3_test_edge(path_a, path_b, pipeline.config, views_base, da3,
                                                 test_id=f"debug_{test_id}", step_degrees=step_degrees)
                         elapsed = time.monotonic() - t0
                         test_id += 1

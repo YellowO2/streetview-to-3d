@@ -138,7 +138,7 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
     import tempfile
 
     import torch
-    from panoramic_to_3dgs import rate_pano_da3, test_edge_da3
+    from services.da3_ops import rate_pano as da3_rate_pano, test_edge as da3_test_edge
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
     pipeline = get_pipeline()
@@ -146,12 +146,12 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
     try:
         with tempfile.TemporaryDirectory() as views_base:
             def test_edge(path_a, path_b, test_id):
-                return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+                return da3_test_edge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
             rate_ids = itertools.count()
 
             def rate_pano(path):
-                return rate_pano_da3(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
+                return da3_rate_pano(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
             return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
                                                 rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
@@ -197,7 +197,7 @@ def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
     import tempfile
 
     import torch
-    from panoramic_to_3dgs import test_edge_da3_bridge
+    from services.da3_ops import bridge_test_edge as da3_bridge_test_edge
     from services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
     from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
 
@@ -219,7 +219,7 @@ def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
     try:
         with tempfile.TemporaryDirectory() as views_base:
             def bridge_test_edge(path_a, path_b, test_id):
-                return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+                return da3_bridge_test_edge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
             return join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m,
                                   chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
@@ -257,7 +257,7 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
     import time
 
     import torch
-    from panoramic_to_3dgs import rate_pano_da3, test_edge_da3, test_edge_da3_bridge
+    from services.da3_ops import bridge_test_edge as da3_bridge_test_edge, rate_pano as da3_rate_pano, test_edge as da3_test_edge
     from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
@@ -272,15 +272,15 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
     try:
         with tempfile.TemporaryDirectory() as views_base:
             def test_edge(path_a, path_b, test_id):
-                return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+                return da3_test_edge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
             rate_ids = itertools.count()
 
             def rate_pano(path):
-                return rate_pano_da3(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
+                return da3_rate_pano(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
             def bridge_test_edge(path_a, path_b, test_id):
-                return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+                return da3_bridge_test_edge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
             segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
                                                     rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
