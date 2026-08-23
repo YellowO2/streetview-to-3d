@@ -69,7 +69,8 @@ def run_scenario(name, node_specs, dot_specs, dot_edges, fail_pairs, start_dot=0
         pose_b = (np.zeros(3), np.eye(3))
         per_pano_pts = {id_a: np.zeros((1, 3)), id_b: np.zeros((1, 3))}
         per_pano_cols = {id_a: np.zeros((1, 3)), id_b: np.zeros((1, 3))}
-        return pose_a, pose_b, np.zeros((2, 3)), np.zeros((2, 3)), per_pano_pts, per_pano_cols
+        per_pano_views = {id_a: (1, 1), id_b: (1, 1)}
+        return pose_a, pose_b, np.zeros((2, 3)), np.zeros((2, 3)), per_pano_pts, per_pano_cols, per_pano_views
 
     start_lat, start_lon = points[start_dot]
 
@@ -184,7 +185,8 @@ def run_fuzz(seed, fail_rate, n_dates=3, dots_per_date=6, spacing_m=20.0):
             return None
         per_pano_pts = {id_a: np.zeros((1, 3)), id_b: np.zeros((1, 3))}
         per_pano_cols = {id_a: np.zeros((1, 3)), id_b: np.zeros((1, 3))}
-        return (np.zeros(3), np.eye(3)), (np.zeros(3), np.eye(3)), np.zeros((2, 3)), np.zeros((2, 3)), per_pano_pts, per_pano_cols
+        per_pano_views = {id_a: (1, 1), id_b: (1, 1)}
+        return (np.zeros(3), np.eye(3)), (np.zeros(3), np.eye(3)), np.zeros((2, 3)), np.zeros((2, 3)), per_pano_pts, per_pano_cols, per_pano_views
 
     start_lat, start_lon = points[0]
 

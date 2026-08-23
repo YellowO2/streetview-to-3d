@@ -77,8 +77,8 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
 
     pairs = []
     closest = None  # (dist, a_key, b_key) -- tracked even when nothing qualifies, for diagnostics
-    for a_key, (_, _, _, a_lat, a_lon) in a_frame_poses.items():
-        for b_key, (_, _, _, b_lat, b_lon) in b_frame_poses.items():
+    for a_key, (_, _, _, a_lat, a_lon, _, _) in a_frame_poses.items():
+        for b_key, (_, _, _, b_lat, b_lon, _, _) in b_frame_poses.items():
             # REAL geographic distance, not DA3-frame position -- the two
             # pieces' DA3 frames are unrelated coordinate systems
             # (different scale/origin/orientation each), comparing
@@ -109,8 +109,8 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     for _, _, a_key, b_key in pairs:
         if attempts >= BRIDGE_MAX_ATTEMPTS or time.monotonic() >= deadline:
             break
-        _, _, a_path, _, _ = a_frame_poses[a_key]
-        _, _, b_path, _, _ = b_frame_poses[b_key]
+        _, _, a_path, _, _, _, _ = a_frame_poses[a_key]
+        _, _, b_path, _, _, _, _ = b_frame_poses[b_key]
         result = bridge_test_edge(a_path, b_path, f"bridge_{bridge_test_id}")
         bridge_test_id += 1
         attempts += 1
@@ -139,13 +139,13 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
         return None, bridge_test_id
 
     _, result, a_key, b_key = best
-    a_center, a_rot, _, _, _ = a_frame_poses[a_key]
+    a_center, a_rot, _, _, _, _, _ = a_frame_poses[a_key]
     local_R, local_t = rigid_align([result["pose_a"]], [(a_center, a_rot)])
     bridge_pts_in_a = result["pts"] @ local_R.T + local_t
     b_key_center_in_a = local_R @ result["pose_b"][0] + local_t
     b_key_rot_in_a = result["pose_b"][1] @ local_R.T
 
-    b_own_center, b_own_rot, _, _, _ = b_frame_poses[b_key]
+    b_own_center, b_own_rot, _, _, _, _, _ = b_frame_poses[b_key]
     b_to_a_R, b_to_a_t = rigid_align([(b_own_center, b_own_rot)], [(b_key_center_in_a, b_key_rot_in_a)])
 
     merged_pts = np.concatenate([a_pts, bridge_pts_in_a, b_pts @ b_to_a_R.T + b_to_a_t], axis=0)
@@ -153,8 +153,8 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     merged_edges = a_edges + [(a_key, b_key)] + b_edges
     merged_positions = {**a_positions, **{k: b_to_a_R @ p + b_to_a_t for k, p in b_positions.items()}}
     merged_frame_poses = {**a_frame_poses,
-                           **{k: (b_to_a_R @ p + b_to_a_t, r @ b_to_a_R.T, path, lat, lon)
-                              for k, (p, r, path, lat, lon) in b_frame_poses.items()}}
+                           **{k: (b_to_a_R @ p + b_to_a_t, r @ b_to_a_R.T, path, lat, lon, n_kept, n_total)
+                              for k, (p, r, path, lat, lon, n_kept, n_total) in b_frame_poses.items()}}
     print(f"[bridge] {a_date}+{b_date}: merged via {a_key} -> {b_key} (keep={result['keep_a']},{result['keep_b']})")
     merged = (merged_pts, merged_cols, merged_edges, a_date, a_reached, merged_positions, merged_frame_poses)
     return merged, bridge_test_id
@@ -241,10 +241,13 @@ def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
     bridge_pieces -- see its own docstring.
 
     Returns a list of (points, colors, metadata) -- one per final piece
-    still separate after bridging. metadata is {key: {"lat", "lon",
-    "date"}} for every node in that piece, letting a later process know
-    which real pano/location produced which piece without storing the
-    images themselves (always re-fetchable from source by key)."""
+    still separate after bridging. metadata is {key: {"lat", "lon", "date",
+    "position", "n_views_kept", "n_views_total"}} for every node in that
+    piece: lat/lon/date/view-counts let a later process know which real
+    pano/location produced which piece without storing the images
+    themselves (always re-fetchable from source by key); "position" is
+    that node's own center in this piece's point cloud (pts/cols), same
+    local frame -- lets you locate a node directly within the output."""
     if not segments:
         raise ValueError("No segments to join.")
 
@@ -256,7 +259,8 @@ def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
 
     results = []
     for pts, cols, path_edges, date, reached, node_positions, frame_poses in pieces:
-        metadata = {k: {"lat": lat, "lon": lon, "date": date}
-                    for k, (pos, rot, path, lat, lon) in frame_poses.items()}
+        metadata = {k: {"lat": lat, "lon": lon, "date": date, "position": pos.tolist(),
+                         "n_views_kept": n_kept, "n_views_total": n_total}
+                    for k, (pos, rot, path, lat, lon, n_kept, n_total) in frame_poses.items()}
         results.append((pts, cols, metadata))
     return results

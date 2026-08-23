@@ -172,11 +172,14 @@ def run_pathfind_reconstruction(
     frame_poses), ...], phase 2's (set_cover's) chosen pieces.
     reached_all: whole corridor covered. node_positions: {key:
     np.ndarray(3,)}, DA3's placement in that piece's own frame.
-    frame_poses: {key: (center, rotation, path, lat, lon)} -- the fuller
-    per-node data join_segments.py's bridge_pieces needs to chain a NEW
-    rigid_align onto this piece's frame and gate candidate pairs by real
-    distance; node_positions is just frame_poses' own center field,
-    kept separate since it's all the simpler GPS-fit path needs.
+    frame_poses: {key: (center, rotation, path, lat, lon, n_views_kept,
+    n_views_total)} -- the fuller per-node data join_segments.py's
+    bridge_pieces needs to chain a NEW rigid_align onto this piece's frame
+    and gate candidate pairs by real distance, plus view-count diagnostics
+    (see rate_pano_da3/test_edge_da3 -- whichever DA3 call actually
+    produced this node's current points); node_positions is just
+    frame_poses' own center field, kept separate since it's all the
+    simpler GPS-fit path needs.
     """
     if not date_graphs or not points:
         return []
@@ -236,13 +239,14 @@ def run_pathfind_reconstruction(
             if not candidates:
                 return
             key, path, lat, lon = candidates[0]
-            score, pose, pts, cols = rate_one((key, path, lat, lon))
+            score, pose, pts, cols, n_kept, n_total = rate_one((key, path, lat, lon))
             if pose is None:
                 return
             pid = next_piece_id[0]
             next_piece_id[0] += 1
             confirmed[dot] = {"key": key, "path": path, "lat": lat, "lon": lon,
-                               "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose, "piece_id": pid}
+                               "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose, "piece_id": pid,
+                               "n_views_kept": n_kept, "n_views_total": n_total}
             piece_data[pid] = {"pts": pts, "cols": cols, "path_edges": []}
 
         def covered_points(dots):
@@ -283,10 +287,11 @@ def run_pathfind_reconstruction(
             if result is None:
                 print(f"[{date}] {from_key} -> {to_key}: FAIL")
                 return False
-            pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols = result
+            pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views = result
             to_id = os.path.basename(to_path)
             to_pts = per_pano_pts.get(to_id, np.zeros((0, 3)))
             to_cols = per_pano_cols.get(to_id, np.zeros((0, 3)))
+            to_kept, to_total = per_pano_views.get(to_id, (0, 0))
 
             if from_dot not in confirmed:
                 # Bootstrap: from_dot has no piece yet at all -- only
@@ -295,13 +300,17 @@ def run_pathfind_reconstruction(
                 # pairwise result founds the piece directly for BOTH
                 # sides, no rigid_align needed yet (both poses already
                 # share this call's own frame).
+                from_id = os.path.basename(from_path)
+                from_kept, from_total = per_pano_views.get(from_id, (0, 0))
                 pid = next_piece_id[0]
                 next_piece_id[0] += 1
                 confirmed[from_dot] = {"key": from_key, "path": from_path, "lat": from_lat, "lon": from_lon,
-                                        "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_a, "piece_id": pid}
+                                        "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_a, "piece_id": pid,
+                                        "n_views_kept": from_kept, "n_views_total": from_total}
                 piece_data[pid] = {"pts": pts, "cols": cols, "path_edges": []}
                 confirmed[to_dot] = {"key": to_key, "path": to_path, "lat": to_lat, "lon": to_lon,
-                                      "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_b, "piece_id": pid}
+                                      "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_b, "piece_id": pid,
+                                      "n_views_kept": to_kept, "n_views_total": to_total}
                 piece_data[pid]["path_edges"].append((from_key, to_key))
                 print(f"[{date}] {from_key} -> {to_key}: OK")
                 return True
@@ -326,7 +335,8 @@ def run_pathfind_reconstruction(
             pd["cols"] = np.concatenate([pd["cols"], to_cols], axis=0)
             pd["path_edges"].append((from_key, to_key))
             confirmed[to_dot] = {"key": to_key, "path": to_path, "lat": to_lat, "lon": to_lon,
-                                  "seg_R": seg_R, "seg_t": seg_t, "pose": pose_b, "piece_id": pid}
+                                  "seg_R": seg_R, "seg_t": seg_t, "pose": pose_b, "piece_id": pid,
+                                  "n_views_kept": to_kept, "n_views_total": to_total}
 
             print(f"[{date}] {from_key} -> {to_key}: OK")
             return True
@@ -469,7 +479,8 @@ def run_pathfind_reconstruction(
             # decide which node pairs are even worth attempting.
             # Internal-only: never leaves run_pathfind_reconstruction.
             frame_poses = {confirmed[d]["key"]: (node_positions[confirmed[d]["key"]], confirmed[d]["pose"][1] @ confirmed[d]["seg_R"].T,
-                                                   confirmed[d]["path"], confirmed[d]["lat"], confirmed[d]["lon"]) for d in dots}
+                                                   confirmed[d]["path"], confirmed[d]["lat"], confirmed[d]["lon"],
+                                                   confirmed[d]["n_views_kept"], confirmed[d]["n_views_total"]) for d in dots}
             pieces.append((pd["pts"], pd["cols"], pd["path_edges"], node_positions, covered_points(dots), frame_poses))
         return pieces, tests_used[0]
 
