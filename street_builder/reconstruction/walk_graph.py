@@ -465,8 +465,7 @@ def run_pathfind_reconstruction(
             if seed is None:
                 break
             visit(seed)
-            if seed not in confirmed:
-                visited.add(seed)
+            visited.add(seed)
 
         pieces = []
         for pid, pd in piece_data.items():
