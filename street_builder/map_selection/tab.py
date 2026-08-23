@@ -359,9 +359,12 @@ def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
 
     try:
         segments = street_main.run_prepared_pathfind_segments(prep)
+        print("[checkpoint] GPU call returned successfully")
         output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
         results = street_main.save_pathfind_segments(segments, output_dir)
+        print("[checkpoint] save_pathfind_segments done")
         bundle_path = street_main.save_segments_bundle(segments, output_dir)
+        print("[checkpoint] save_segments_bundle done")
     except Exception as e:
         raise gr.Error(f"Auto-path failed: {e}")
 
