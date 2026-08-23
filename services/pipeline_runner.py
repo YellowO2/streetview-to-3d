@@ -61,25 +61,21 @@ def get_pipeline():
 
 def get_da3():
     """Lazily built on first real use, INSIDE a @spaces.GPU call -- not at
-    module level. HF's own guidance says load models at module level so
-    ZeroGPU's packing/warm-worker mechanism can manage residency, and
-    that's right for a pure-PyTorch .to('cuda') -- spaces emulates that
-    safely even outside a real GPU-attached call. But DA3Model's own
-    load path touches pycolmap, a separate native extension that makes
-    its OWN raw CUDA driver calls (cudaGetDevice, cuCtxGetDevice_v2),
-    completely bypassing spaces' emulation (which only patches PyTorch's
-    own .to()/.cuda()). Building DA3Model before any @spaces.GPU call has
-    ever attached a real GPU makes pycolmap's raw calls segfault
-    (confirmed empirically -- moving construction to module level made
-    the crash happen on the very FIRST call instead of fixing anything).
-    So: build it here, on first call, once a real GPU genuinely exists --
-    then cache it and never delete it (no del/empty_cache() per call,
-    which WAS the actual bug -- see git history), so every call after the
-    first reuses the same instance instead of tearing it down each time."""
+    module level (building it before any @spaces.GPU call has attached a
+    real GPU segfaults on pycolmap's own raw CUDA calls, which bypass
+    spaces' PyTorch-only .to()/.cuda() emulation). Cached in a module-
+    level global and REUSED across calls -- matches DA3's own official
+    Space (depth_anything_3/app/modules/model_inference.py's
+    _MODEL_CACHE/initialize_model): never deleted, but re-checked and
+    re-attached to 'cuda' on every single call, not just the first, in
+    case it drifted back to CPU between calls (their own code does this
+    exact check every time, not just once)."""
     global _da3
     if _da3 is None:
         from panoramic_to_3dgs import DA3Model
         _da3 = DA3Model(get_pipeline().config.da3_model)
+    elif next(_da3.model.parameters()).device.type != "cuda":
+        _da3.model = _da3.model.to(device="cuda")
     return _da3
 
 
@@ -141,22 +137,30 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
     import itertools
     import tempfile
 
+    import torch
     from panoramic_to_3dgs import rate_pano_da3, test_edge_da3
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
     pipeline = get_pipeline()
     da3 = get_da3()
-    with tempfile.TemporaryDirectory() as views_base:
-        def test_edge(path_a, path_b, test_id):
-            return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+    try:
+        with tempfile.TemporaryDirectory() as views_base:
+            def test_edge(path_a, path_b, test_id):
+                return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-        rate_ids = itertools.count()
+            rate_ids = itertools.count()
 
-        def rate_pano(path):
-            return rate_pano_da3(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
+            def rate_pano(path):
+                return rate_pano_da3(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
-        return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                            rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+            return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+    finally:
+        # Release CACHED (unused) allocator memory, like DA3's own official
+        # Space does after every call -- NOT del da3, which would force a
+        # full reconstruction (and re-trigger the module-import segfault
+        # risk) next call. The model itself stays alive in get_da3()'s cache.
+        torch.cuda.empty_cache()
 
 
 @GPU_WINDOWED
@@ -192,6 +196,7 @@ def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
     skipped like a normal per-attempt failure rather than erroring."""
     import tempfile
 
+    import torch
     from panoramic_to_3dgs import test_edge_da3_bridge
     from services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
     from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
@@ -211,13 +216,16 @@ def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
 
     pipeline = get_pipeline()
     da3 = get_da3()
-    with tempfile.TemporaryDirectory() as views_base:
-        def bridge_test_edge(path_a, path_b, test_id):
-            return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+    try:
+        with tempfile.TemporaryDirectory() as views_base:
+            def bridge_test_edge(path_a, path_b, test_id):
+                return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-        return join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m,
-                              chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
-                              refetch_path=refetch_path)
+            return join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m,
+                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
+                                  refetch_path=refetch_path)
+    finally:
+        torch.cuda.empty_cache()
 
 
 @GPU_WINDOWED
@@ -248,6 +256,7 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
     import tempfile
     import time
 
+    import torch
     from panoramic_to_3dgs import rate_pano_da3, test_edge_da3, test_edge_da3_bridge
     from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
@@ -260,26 +269,29 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
 
     pipeline = get_pipeline()
     da3 = get_da3()
-    with tempfile.TemporaryDirectory() as views_base:
-        def test_edge(path_a, path_b, test_id):
-            return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+    try:
+        with tempfile.TemporaryDirectory() as views_base:
+            def test_edge(path_a, path_b, test_id):
+                return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-        rate_ids = itertools.count()
+            rate_ids = itertools.count()
 
-        def rate_pano(path):
-            return rate_pano_da3(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
+            def rate_pano(path):
+                return rate_pano_da3(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
-        def bridge_test_edge(path_a, path_b, test_id):
-            return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+            def bridge_test_edge(path_a, path_b, test_id):
+                return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-        segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
-        if not segments or len(segments) < 2:
-            return segments, None
+            segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                    rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+            if not segments or len(segments) < 2:
+                return segments, None
 
-        remaining_s = max(10.0, overall_deadline - time.monotonic())
-        pieces = join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s)
-        return segments, pieces
+            remaining_s = max(10.0, overall_deadline - time.monotonic())
+            pieces = join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s)
+            return segments, pieces
+    finally:
+        torch.cuda.empty_cache()
 
 
 def save_pointcloud(points, colors, path):
