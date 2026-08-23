@@ -235,11 +235,15 @@ def run_pathfind_reconstruction(
             produced no pose at all for the best candidate."""
             if dot in confirmed or rate_pano is None or time.monotonic() >= deadline:
                 return
-            candidates = rate_sorted(dot_candidates.get(dot, []))
+            t0 = time.monotonic()
+            raw_candidates = dot_candidates.get(dot, [])
+            candidates = rate_sorted(raw_candidates)
             if not candidates:
                 return
             key, path, lat, lon = candidates[0]
             score, pose, pts, cols, n_kept, n_total = rate_one((key, path, lat, lon))
+            print(f"[timing] ensure_piece(dot={dot}, {len(raw_candidates)} candidate(s) available): "
+                  f"{time.monotonic() - t0:.2f}s total, {deadline - time.monotonic():.1f}s left in budget")
             if pose is None:
                 return
             pid = next_piece_id[0]
@@ -282,10 +286,12 @@ def run_pathfind_reconstruction(
             edges touch it."""
             if time.monotonic() >= deadline:
                 return False
+            t0 = time.monotonic()
             result = test_edge(from_path, to_path, f"{date}_{test_offset + tests_used[0]}")
+            t_test = time.monotonic() - t0
             tests_used[0] += 1
             if result is None:
-                print(f"[{date}] {from_key} -> {to_key}: FAIL")
+                print(f"[{date}] {from_key} -> {to_key}: FAIL ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
                 return False
             pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views = result
             to_id = os.path.basename(to_path)
@@ -312,13 +318,13 @@ def run_pathfind_reconstruction(
                                       "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_b, "piece_id": pid,
                                       "n_views_kept": to_kept, "n_views_total": to_total}
                 piece_data[pid]["path_edges"].append((from_key, to_key))
-                print(f"[{date}] {from_key} -> {to_key}: OK")
+                print(f"[{date}] {from_key} -> {to_key}: OK ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
                 return True
 
             pf = confirmed[from_dot]
             pid = pf["piece_id"]
             if to_dot in confirmed and confirmed[to_dot]["piece_id"] == pid:
-                print(f"[{date}] {from_key} -> {to_key}: OK (already same piece)")
+                print(f"[{date}] {from_key} -> {to_key}: OK (already same piece, {t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
                 return True
             if to_dot in confirmed:
                 # to_dot already has its OWN separate piece (solo from
@@ -338,7 +344,7 @@ def run_pathfind_reconstruction(
                                   "seg_R": seg_R, "seg_t": seg_t, "pose": pose_b, "piece_id": pid,
                                   "n_views_kept": to_kept, "n_views_total": to_total}
 
-            print(f"[{date}] {from_key} -> {to_key}: OK")
+            print(f"[{date}] {from_key} -> {to_key}: OK ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
             return True
 
         def try_target(from_dot, to_dot, to_candidates):
@@ -384,6 +390,7 @@ def run_pathfind_reconstruction(
             between." Each dot is only ever tested once, ever, across
             this whole date -- nothing is ever retried, so no dead-edge
             tracking is needed."""
+            print(f"[timing] visit(dot={dot}): {deadline - time.monotonic():.1f}s left in budget")
             ensure_piece(dot)
             was_confirmed = dot in confirmed
             lat0, lon0 = points[dot]
