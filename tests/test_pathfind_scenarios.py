@@ -67,7 +67,9 @@ def run_scenario(name, node_specs, dot_specs, dot_edges, fail_pairs, start_dot=0
             return None
         pose_a = (np.zeros(3), np.eye(3))
         pose_b = (np.zeros(3), np.eye(3))
-        return pose_a, pose_b, np.zeros((2, 3)), np.zeros((2, 3))
+        per_pano_pts = {id_a: np.zeros((1, 3)), id_b: np.zeros((1, 3))}
+        per_pano_cols = {id_a: np.zeros((1, 3)), id_b: np.zeros((1, 3))}
+        return pose_a, pose_b, np.zeros((2, 3)), np.zeros((2, 3)), per_pano_pts, per_pano_cols
 
     start_lat, start_lon = points[start_dot]
 
@@ -180,7 +182,9 @@ def run_fuzz(seed, fail_rate, n_dates=3, dots_per_date=6, spacing_m=20.0):
             tested_pairs[pair] = rng.random() >= fail_rate
         if not tested_pairs[pair]:
             return None
-        return (np.zeros(3), np.eye(3)), (np.zeros(3), np.eye(3)), np.zeros((2, 3)), np.zeros((2, 3))
+        per_pano_pts = {id_a: np.zeros((1, 3)), id_b: np.zeros((1, 3))}
+        per_pano_cols = {id_a: np.zeros((1, 3)), id_b: np.zeros((1, 3))}
+        return (np.zeros(3), np.eye(3)), (np.zeros(3), np.eye(3)), np.zeros((2, 3)), np.zeros((2, 3)), per_pano_pts, per_pano_cols
 
     start_lat, start_lon = points[0]
 

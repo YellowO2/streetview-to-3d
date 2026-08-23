@@ -117,7 +117,7 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
     import tempfile
 
     import torch
-    from panoramic_to_3dgs import DA3Model, score_pano_da3, test_edge_da3
+    from panoramic_to_3dgs import DA3Model, rate_pano_da3, test_edge_da3
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
     pipeline = get_pipeline()
@@ -127,13 +127,13 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
             def test_edge(path_a, path_b, test_id):
                 return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            score_ids = itertools.count()
+            rate_ids = itertools.count()
 
-            def score_pano(path):
-                return score_pano_da3(path, pipeline.config, views_base, da3, score_id=next(score_ids), step_degrees=step_degrees)
+            def rate_pano(path):
+                return rate_pano_da3(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
             return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                score_pano=score_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+                                                rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
     finally:
         del da3
         torch.cuda.empty_cache()
@@ -210,7 +210,7 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
     import time
 
     import torch
-    from panoramic_to_3dgs import DA3Model, score_pano_da3, test_edge_da3, test_edge_da3_bridge
+    from panoramic_to_3dgs import DA3Model, rate_pano_da3, test_edge_da3, test_edge_da3_bridge
     from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
@@ -227,16 +227,16 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
             def test_edge(path_a, path_b, test_id):
                 return test_edge_da3(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            score_ids = itertools.count()
+            rate_ids = itertools.count()
 
-            def score_pano(path):
-                return score_pano_da3(path, pipeline.config, views_base, da3, score_id=next(score_ids), step_degrees=step_degrees)
+            def rate_pano(path):
+                return rate_pano_da3(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
             def bridge_test_edge(path_a, path_b, test_id):
                 return test_edge_da3_bridge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
             segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                    score_pano=score_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+                                                    rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
             if not segments or len(segments) < 2:
                 return segments, None
 

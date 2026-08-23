@@ -26,7 +26,6 @@ from services.geo import extract_lat_lon
 from services.streetview_fetch import fetch_pano_by_id, run_async
 from street_builder.map_selection import candidates as candidates_mod
 from street_builder.map_selection import map_ui
-from street_builder.reconstruction import generate
 from street_builder import main as street_main
 
 BRIDGE_ELEM_ID = "street_builder_bridge"
@@ -298,26 +297,6 @@ def handle_clear(state):
     return _map_html(state), _summary_markdown(state), state
 
 
-def handle_generate_chain(state, progress=gr.Progress(track_tqdm=True)):
-    if len(state.get("selected", [])) < 2:
-        raise gr.Error("Select at least 2 nodes (needs multi-view context for DA3).")
-
-    yield viewers.SPLAT_PLACEHOLDER
-
-    by_key = _nodes_by_key(state)
-    ordered_nodes = [by_key[k] for k in state["selected"] if k in by_key]
-
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    progress(0, desc=f"Reconstructing {len(ordered_nodes)} nodes...")
-    try:
-        ply_path = generate.reconstruct_chain(ordered_nodes, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Reconstruction failed: {e}")
-
-    progress(1.0, desc="Done!")
-    yield viewers.pointcloud_viewer_with_download(viewers.file_url(ply_path))
-
-
 def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
     """Experimental button, step 1 of 3: gathers every Google + Apple pano
     near the clicked graph's real shape -- branches and loops included,
@@ -485,17 +464,15 @@ def build_tab():
         selection_view = gr.Markdown(_summary_markdown(_empty_state()), elem_id="street_builder_selection")
         with gr.Column(scale=0, min_width=140):
             clear_btn = gr.Button("Clear selection")
-            generate_btn = gr.Button("Generate", variant="primary")
-            # Experimental: auto-path across the whole clicked graph
-            # (branches/loops included). Split into three steps -- prepare
-            # (gather + download, no GPU), run (the actual GPU search), join
-            # (fit + merge multiple segments, no GPU) -- so the
-            # GPU-triggering click is its own fresh interaction instead of
-            # following a long download inside one combined request (see
+            # Auto-path across the whole clicked graph (branches/loops
+            # included). Split into three steps -- prepare (gather +
+            # download, no GPU), run (the actual GPU search), join (fit +
+            # merge multiple segments, no GPU) -- so the GPU-triggering
+            # click is its own fresh interaction instead of following a
+            # long download inside one combined request (see
             # handle_pathfind_run's docstring), and re-testing/tuning the
             # join step doesn't require re-running the expensive GPU search
-            # each time (see handle_pathfind_join's docstring). Not part of
-            # the normal Generate flow.
+            # each time (see handle_pathfind_join's docstring).
             pathfind_prepare_btn = gr.Button("1. Prepare auto-path (experimental)")
             pathfind_run_btn = gr.Button("2. Run auto-path")
             pathfind_join_btn = gr.Button("3. Join segments")
@@ -554,14 +531,6 @@ def build_tab():
         fn=handle_clear,
         inputs=[state],
         outputs=[map_view, selection_view, state],
-    )
-
-    generate_btn.click(
-        fn=handle_generate_chain,
-        inputs=[state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
     )
 
     pathfind_prepare_btn.click(
