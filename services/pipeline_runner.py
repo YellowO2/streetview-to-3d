@@ -5,6 +5,17 @@ decorator setup, since that setup exists purely to wrap these calls.
 get_pipeline() is the single Pipeline singleton for this whole app -- both
 app.py's Gradio handlers and street_builder's own handlers call through
 here, rather than each loading a separate copy of the DA3/SHARP models.
+
+There is exactly ONE @spaces.GPU-decorated function in this whole module
+(_gpu_dispatch) -- matches DA3's own official Space (app.py wraps a single
+ModelInference.run_inference, everything else is plain Python calling into
+it), instead of one decorated function per task. Every public run_*_gpu
+function below is a thin, undecorated wrapper that calls _gpu_dispatch
+with its own task name -- callers (app.py, street_builder/main.py,
+tests/) don't need to change at all, since these functions keep their
+same names/signatures. The actual per-task work lives in the _run_*_impl
+functions, plain Python, called only from inside _gpu_dispatch where a
+real GPU is guaranteed attached.
 """
 import os
 
@@ -14,30 +25,39 @@ try:
     # spaces is also installed locally via requirements.txt, so gate on SPACE_ID
     # which HF Spaces always sets but local machines don't have.
     ON_SPACES = bool(os.getenv("SPACE_ID"))
-    # Longer budget for run_pathfind_reconstruction_gpu: it does the entire
-    # multi-date pathfind search (map_date/set_cover, potentially dozens of
-    # DA3 tests) inside one GPU call, specifically to avoid the 'Expired
-    # ZeroGPU proxy token' failure hit when that was split into several
-    # smaller calls instead. PATHFIND_MAX_TIME_BUDGET_S is a CEILING passed
-    # to run_pathfind_reconstruction, not its actual deadline -- the
+    # Longer budget for the pathfind tasks: run_pathfind_reconstruction does
+    # the entire multi-date pathfind search (map_date/set_cover, potentially
+    # dozens of DA3 tests) inside one GPU call, specifically to avoid the
+    # 'Expired ZeroGPU proxy token' failure hit when that was split into
+    # several smaller calls instead. PATHFIND_MAX_TIME_BUDGET_S is a CEILING
+    # passed to run_pathfind_reconstruction, not its actual deadline -- the
     # algorithm scales its own deadline to corridor size and only caps at
     # this. Kept well under GPU_WINDOWED_DURATION_S to leave real margin
     # for model load (before the search even starts) and save/teardown after.
     GPU_WINDOWED_DURATION_S = 280
     PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 60
 
+    # Per-task duration, looked up by _gpu_duration below -- matches what
+    # each task used to request under its own separate decorator (GPU=108,
+    # GPU_EDIT=72, GPU_WINDOWED=280) before consolidating to one function.
+    _TASK_DURATIONS = {
+        "editor": 72,
+        "pipeline": 108,
+        "pointcloud": 108,
+        "pathfind_reconstruction": GPU_WINDOWED_DURATION_S,
+        "join_segments": GPU_WINDOWED_DURATION_S,
+        "pathfind_and_join": GPU_WINDOWED_DURATION_S,
+    }
+
+    def _gpu_duration(task, *args, **kwargs):
+        return _TASK_DURATIONS[task]
+
     if ON_SPACES:
-        GPU = spaces.GPU(duration=108)
-        GPU_EDIT = spaces.GPU(duration=72)
-        GPU_WINDOWED = spaces.GPU(duration=GPU_WINDOWED_DURATION_S)
+        GPU_DISPATCH = spaces.GPU(duration=_gpu_duration)
     else:
-        GPU = lambda fn: fn
-        GPU_EDIT = lambda fn: fn
-        GPU_WINDOWED = lambda fn: fn
+        GPU_DISPATCH = lambda fn: fn
 except ImportError:
-    GPU = lambda fn: fn  # no-op outside HF Spaces
-    GPU_EDIT = lambda fn: fn
-    GPU_WINDOWED = lambda fn: fn
+    GPU_DISPATCH = lambda fn: fn  # no-op outside HF Spaces
     ON_SPACES = False
     GPU_WINDOWED_DURATION_S = 280
     PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 60
@@ -60,7 +80,7 @@ def get_pipeline():
 
 
 def get_da3():
-    """Lazily built on first real use, INSIDE a @spaces.GPU call -- not at
+    """Lazily built on first real use, INSIDE _gpu_dispatch -- not at
     module level (building it before any @spaces.GPU call has attached a
     real GPU segfaults on pycolmap's own raw CUDA calls, which bypass
     spaces' PyTorch-only .to()/.cuda() emulation). Cached in a module-
@@ -79,8 +99,27 @@ def get_da3():
     return _da3
 
 
-@GPU_EDIT
+@GPU_DISPATCH
+def _gpu_dispatch(task, *args, **kwargs):
+    """The ONE @spaces.GPU-decorated entry point for this whole app. Every
+    run_*_gpu function below routes through here with its own task name
+    -- see this module's own docstring for why."""
+    impl = {
+        "editor": _run_editor_impl,
+        "pipeline": _run_pipeline_impl,
+        "pointcloud": _run_pointcloud_impl,
+        "pathfind_reconstruction": _run_pathfind_reconstruction_impl,
+        "join_segments": _join_segments_impl,
+        "pathfind_and_join": _run_pathfind_and_join_impl,
+    }[task]
+    return impl(*args, **kwargs)
+
+
 def run_editor_gpu(image_path, prompt, mode, output_path):
+    return _gpu_dispatch("editor", image_path, prompt, mode, output_path)
+
+
+def _run_editor_impl(image_path, prompt, mode, output_path):
     global _flux_editor
     if _flux_editor is None:
         from editors.flux_editor import FluxEditor
@@ -89,8 +128,12 @@ def run_editor_gpu(image_path, prompt, mode, output_path):
     return output_path
 
 
-@GPU
 def run_pipeline_gpu(target_appearance_path, output_dir, scale_mode, gs_backend, support_paths=None, target_depth_path=None):
+    return _gpu_dispatch("pipeline", target_appearance_path, output_dir, scale_mode, gs_backend,
+                          support_paths=support_paths, target_depth_path=target_depth_path)
+
+
+def _run_pipeline_impl(target_appearance_path, output_dir, scale_mode, gs_backend, support_paths=None, target_depth_path=None):
     pipeline = get_pipeline()
     os.makedirs(output_dir, exist_ok=True)
     pipeline.config.scale_mode = scale_mode
@@ -106,8 +149,12 @@ def run_pipeline_gpu(target_appearance_path, output_dir, scale_mode, gs_backend,
     return ply if os.path.exists(ply) else None
 
 
-@GPU
 def run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None, step_degrees=20):
+    return _gpu_dispatch("pointcloud", target_depth_path, output_dir,
+                          support_paths=support_paths, step_degrees=step_degrees)
+
+
+def _run_pointcloud_impl(target_depth_path, output_dir, support_paths=None, step_degrees=20):
     pipeline = get_pipeline()
     os.makedirs(output_dir, exist_ok=True)
     pipeline.run_da3_pointcloud(
@@ -121,14 +168,18 @@ def run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None, step_d
     return ply if os.path.exists(ply) else None
 
 
-@GPU_WINDOWED
 def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20):
-    """The one @spaces.GPU call for the whole pathfind flow (see
-    street_builder/main.py's module docstring for why it's one call, not
-    several). This function's only job is to hand the actual algorithm
+    """See street_builder/main.py's module docstring for why the whole
+    pathfind search runs inside one GPU call, not several."""
+    return _gpu_dispatch("pathfind_reconstruction", date_graphs, points, adjacency, start_lat, start_lon,
+                          step_degrees=step_degrees)
+
+
+def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20):
+    """This function's only job is to hand the actual algorithm
     (street_builder/reconstruction/walk_graph.py) a way to test one edge,
-    using the shared cached DA3 model (see get_da3) -- it knows nothing about
-    corridors, dates, or coverage itself.
+    using the shared cached DA3 model (see get_da3) -- it knows nothing
+    about corridors, dates, or coverage itself.
 
     date_graphs: already ranked/capped/isolated per date, dot_candidates
     shape -- see street_builder/build_graph/build_graph.py's
@@ -163,17 +214,24 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
         torch.cuda.empty_cache()
 
 
-@GPU_WINDOWED
 def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
                        chunk_ids=None, known_adjacent_chunk_pairs=None):
-    """The GPU call for the join step's bridging search (see
+    """See _join_segments_impl for the real docstring -- this is just the
+    thin dispatch wrapper (see this module's own docstring for why)."""
+    return _gpu_dispatch("join_segments", segments, edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees,
+                          chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
+
+
+def _join_segments_impl(segments, edge_max_dist_m=None, step_degrees=20,
+                         chunk_ids=None, known_adjacent_chunk_pairs=None):
+    """The join step's bridging search (see
     street_builder/reconstruction/join_segments.py) -- its own separate
-    session from run_pathfind_reconstruction_gpu's, since bridging only
-    needs each segment's own already-confirmed nodes (no candidate pool,
-    no corridor/date data), not anything from the corridor search's own
-    call. Keeping it separate means bridging behavior can be iterated on
-    (or Join re-run on a saved segments bundle) without re-paying for
-    the whole corridor search each time.
+    task from pathfind_reconstruction's, since bridging only needs each
+    segment's own already-confirmed nodes (no candidate pool, no
+    corridor/date data), not anything from the corridor search itself.
+    Keeping it separate means bridging behavior can be iterated on (or
+    Join re-run on a saved segments bundle) without re-paying for the
+    whole corridor search each time.
 
     edge_max_dist_m: None (default) defers to join_segments.py's own
     BRIDGE_MAX_DIST_M -- kept as a single source of truth instead of a
@@ -187,13 +245,13 @@ def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
     Returns a list of (points, colors, metadata) -- see join_segments.
 
     Re-fetches each candidate pano fresh (by key) right before testing it,
-    rather than trusting frame_poses' stored path -- this call is its own
-    separate ZeroGPU session, possibly a different worker/container than
-    whichever one produced `segments`, so the ORIGINAL downloaded image
-    files aren't guaranteed to still exist here (see refetch_path in
-    join_segments.py's _try_bridge). Google-only for now -- Apple has no
-    fetch-by-id-alone helper yet, so an Apple node's pair attempts are
-    skipped like a normal per-attempt failure rather than erroring."""
+    rather than trusting frame_poses' stored path -- a separately-called
+    join_segments task has no guarantee the ORIGINAL downloaded image
+    files that produced `segments` still exist on whatever worker/disk
+    this call lands on (see refetch_path in join_segments.py's
+    _try_bridge). Google-only for now -- Apple has no fetch-by-id-alone
+    helper yet, so an Apple node's pair attempts are skipped like a
+    normal per-attempt failure rather than erroring."""
     import tempfile
 
     import torch
@@ -228,21 +286,28 @@ def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
         torch.cuda.empty_cache()
 
 
-@GPU_WINDOWED
 def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_lon,
                                edge_max_dist_m=None, step_degrees=20):
-    """Convenience combined call: corridor search (run_pathfind_reconstruction)
+    """See _run_pathfind_and_join_impl for the real docstring -- this is
+    just the thin dispatch wrapper (see this module's own docstring for
+    why)."""
+    return _gpu_dispatch("pathfind_and_join", date_graphs, points, adjacency, start_lat, start_lon,
+                          edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees)
+
+
+def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
+                                 edge_max_dist_m=None, step_degrees=20):
+    """Convenience combined task: corridor search (run_pathfind_reconstruction)
     AND join/bridging (join_segments) in ONE GPU session, using the same
     already-downloaded local image paths for both phases -- Join re-run
-    as a separate call needs to re-fetch each candidate pano fresh
-    instead (see join_segments_gpu's refetch_path), since a separate
-    ZeroGPU call has no guarantee of landing on the same worker/disk.
-    Use when you just want the final result end-to-end and don't need to
-    iterate on join/bridging separately --
-    run_pathfind_reconstruction_gpu/join_segments_gpu (split) are still
-    the right choice for re-testing Join alone against an already-saved
-    segments bundle, without redoing the whole (much more expensive)
-    corridor search.
+    as a separate task needs to re-fetch each candidate pano fresh
+    instead (see _join_segments_impl's refetch_path), since a separate
+    call has no guarantee of landing on the same worker/disk. Use when
+    you just want the final result end-to-end and don't need to iterate
+    on join/bridging separately -- pathfind_reconstruction/join_segments
+    (split) are still the right choice for re-testing Join alone against
+    an already-saved segments bundle, without redoing the whole (much
+    more expensive) corridor search.
 
     Splits the one GPU_WINDOWED time budget between the two phases
     sequentially (corridor search first, then whatever's left over for
