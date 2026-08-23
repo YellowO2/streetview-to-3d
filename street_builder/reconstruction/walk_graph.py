@@ -246,11 +246,22 @@ def run_pathfind_reconstruction(
             piece_data[pid] = {"pts": pts, "cols": cols, "path_edges": []}
 
         def covered_points(dots):
-            covered = set()
+            """A dot's own point is always covered by itself. Any OTHER
+            point needs at least 2 distinct confirmed dots within
+            point_cover_tolerance_m to count as covered -- a single nearby
+            confirmed dot is not enough on its own, since with ensure_piece
+            every dot now has its own real, valuable data; only a point
+            genuinely flanked by real coverage on multiple sides (a true
+            interior gap) is redundant to visit."""
+            near_count = {}
+            covered = set(dots)
             for d in dots:
                 lat, lon = confirmed[d]["lat"], confirmed[d]["lon"]
                 for pi in range(len(points)):
-                    if pi not in covered and pdist(lat, lon, pi) <= point_cover_tolerance_m:
+                    if pi in covered or pdist(lat, lon, pi) > point_cover_tolerance_m:
+                        continue
+                    near_count[pi] = near_count.get(pi, 0) + 1
+                    if near_count[pi] >= 2:
                         covered.add(pi)
             return covered
 
