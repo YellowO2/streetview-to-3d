@@ -142,6 +142,9 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
     n_candidates = sum(len(bucket) for g in date_graphs for bucket in g["dot_candidates"].values())
     print(f"Downloading {n_candidates} candidate(s) across {len(date_graphs)} date graph(s): "
           f"{[g['date'] for g in date_graphs]}")
+    for g in date_graphs:
+        for dot, bucket in g["dot_candidates"].items():
+            print(f"  [candidates] date={g['date']} dot={dot}: {[k for k, _, _, _ in bucket]}")
     ready_graphs, node_entries = _download_date_graphs(date_graphs)
     if not ready_graphs:
         raise ValueError("Nothing downloaded successfully -- can't reconstruct.")
