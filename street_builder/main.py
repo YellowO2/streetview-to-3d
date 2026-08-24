@@ -1,5 +1,5 @@
 """Orchestrator for the pathfind flow -- wires the pipeline stages
-together for the UI (map_selection/tab.py calls into this):
+together for the UI (tab.py calls into this):
 
 1. build_graph.build_corridor_graphs: gather candidate panos along the
    real click-graph and split into up to DATE_TOP_N isolated, capped

@@ -23,7 +23,8 @@ import pillow_heif
 pillow_heif.register_heif_opener()
 
 from paths import IMAGES_DIR, SPLATS_DIR
-from street_builder.map_selection.tab import build_tab as build_street_builder_tab, BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
+from street_builder.tab import build_tab as build_street_builder_tab
+from street_builder.map_selection.tab import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
 
 
 # ── Debug probe: isolate just our DA3Model caching pattern + run_da3 ───────
@@ -86,18 +87,67 @@ def our_pattern_probe(image_files):
         torch.cuda.empty_cache()
 
 
+@spaces.GPU(duration=120)
+def many_calls_probe(image_files, n_calls):
+    """Simulates the call VOLUME a real corridor search makes in one GPU
+    lease -- "2. Run auto-path" internally calls run_da3 (via
+    services/da3_ops.py's test_edge/rate_pano) once per candidate edge
+    tested, easily dozens of times, all within ONE @spaces.GPU call,
+    before "3. Join segments" starts a SEPARATE lease that's the one
+    observed to crash. our_pattern_probe above only ever makes ONE
+    run_da3 call per lease and does NOT crash on a second lease -- this
+    tests whether it's specifically the repetition/volume in the FIRST
+    lease that leaves something broken for the next one, not just
+    "calling GPU twice" in general. Click this first, then click
+    "Run our pattern probe" above as the second lease."""
+    import tempfile
+    import time
+
+    import torch
+    from panoramic_da3 import run_da3
+
+    if not image_files or len(image_files) < 2:
+        return "Upload at least 2 images first."
+    n_ok = 0
+    try:
+        da3 = _get_probe_da3()
+        paths = [f.name if hasattr(f, "name") else f for f in image_files]
+        t0 = time.monotonic()
+        for i in range(int(n_calls)):
+            with tempfile.TemporaryDirectory() as views_base:
+                run_da3(paths[0], paths[1:], _ProbeCfg(), views_base, da3=da3)
+            n_ok += 1
+        elapsed = time.monotonic() - t0
+        return f"OK -- {n_ok}/{int(n_calls)} run_da3 call(s) completed in {elapsed:.1f}s"
+    except Exception as e:
+        import traceback
+        return f"FAILED after {n_ok} call(s): {e}\n\n{traceback.format_exc()}"
+    finally:
+        torch.cuda.empty_cache()
+
+
 def build_probe_tab() -> gr.Blocks:
     with gr.Blocks() as probe:
         gr.Markdown(
-            "Isolated probe: panoramic_da3.DA3Model caching pattern + a real "
-            "run_da3 call, nothing else from this app (no street_builder "
-            "logic, no multi-task dispatch). Upload 2+ images and click the "
-            "button **twice in a row** to test."
+            "Isolated probes: panoramic_da3.DA3Model caching pattern + real "
+            "run_da3 calls, nothing else from this app (no street_builder "
+            "logic, no multi-task dispatch)."
         )
         files = gr.File(file_count="multiple", label="Images")
+
+        gr.Markdown("**Test 1** -- single call, twice in a row (already confirmed OK):")
         btn = gr.Button("Run our pattern probe")
         out = gr.Textbox(label="Result", lines=8)
         btn.click(fn=our_pattern_probe, inputs=[files], outputs=[out])
+
+        gr.Markdown(
+            "**Test 2** -- simulate corridor-search call volume in ONE lease, "
+            "then click Test 1's button as a second, separate lease:"
+        )
+        n_calls = gr.Number(value=15, label="Number of run_da3 calls to make", precision=0)
+        many_btn = gr.Button("Simulate corridor search (many calls, one lease)")
+        many_out = gr.Textbox(label="Result", lines=8)
+        many_btn.click(fn=many_calls_probe, inputs=[files, n_calls], outputs=[many_out])
     return probe
 
 

@@ -8,7 +8,7 @@ comes from.
 Not a pytest module -- GPU calls only run via a live Gradio queue on HF
 Spaces (ZeroGPU), so re-running this for real requires temporarily
 wiring run_debug_solo_score_experiment() into a button in
-map_selection/tab.py again (same pattern debug_solo_score_experiment_gpu
+street_builder/tab.py again (same pattern debug_solo_score_experiment_gpu
 below already follows), calling it, then removing the wiring again.
 
 Results from the original run (2026-08-19, 3 real adjacent dot pairs on
