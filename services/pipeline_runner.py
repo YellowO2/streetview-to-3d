@@ -3,9 +3,9 @@ street_builder's corridor pathfinding/join tasks. Also owns the
 ZeroGPU/@spaces.GPU decorator setup, since that setup exists purely to wrap
 these calls.
 
-get_pipeline() is the single Pipeline singleton for this whole app --
+get_da3() is the single DA3Model singleton for this whole app --
 street_builder's handlers call through here, rather than each loading a
-separate copy of the DA3 model.
+separate copy.
 
 There is exactly ONE @spaces.GPU-decorated function in this whole module
 (_gpu_dispatch) -- matches DA3's own official Space (app.py wraps a single
@@ -23,7 +23,7 @@ import sys
 import types
 
 # Stub out pycolmap BEFORE anything can import depth_anything_3 (which
-# panoramic_to_3dgs pulls in). depth_anything_3.api unconditionally does
+# panoramic_da3 pulls in). depth_anything_3.api unconditionally does
 # `from .utils.export import export`, whose __init__ eagerly imports EVERY
 # export format handler including .colmap -- which does `import pycolmap`
 # at module level, even though we only ever use export_format="mini_npz"
@@ -64,17 +64,16 @@ except ImportError:
     GPU_WINDOWED_DURATION_S = 120
     PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 30
 
-_pipeline = None
+_da3_config = None
 _da3 = None
 
 
-def get_pipeline():
-    global _pipeline
-    if _pipeline is None:
-        from panoramic_to_3dgs import Pipeline
-        from config import load_pipeline_config
-        _pipeline = Pipeline(load_pipeline_config())
-    return _pipeline
+def get_da3_config():
+    global _da3_config
+    if _da3_config is None:
+        from config import load_da3_config
+        _da3_config = load_da3_config()
+    return _da3_config
 
 
 def get_da3():
@@ -90,8 +89,8 @@ def get_da3():
     exact check every time, not just once)."""
     global _da3
     if _da3 is None:
-        from panoramic_to_3dgs import DA3Model
-        _da3 = DA3Model(get_pipeline().config.da3_model)
+        from panoramic_da3 import DA3Model
+        _da3 = DA3Model(get_da3_config().da3_model)
     elif next(_da3.model.parameters()).device.type != "cuda":
         _da3.model = _da3.model.to(device="cuda")
     return _da3
@@ -117,17 +116,25 @@ def run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None, step_d
 
 
 def _run_pointcloud_impl(target_depth_path, output_dir, support_paths=None, step_degrees=20):
-    pipeline = get_pipeline()
-    os.makedirs(output_dir, exist_ok=True)
-    pipeline.run_da3_pointcloud(
-        target_depth_path=target_depth_path,
-        output_dir=output_dir,
-        support_paths=support_paths,
-        step_degrees=step_degrees,
-    )
+    import tempfile
 
-    ply = os.path.join(output_dir, "da3_pointcloud.ply")
-    return ply if os.path.exists(ply) else None
+    import torch
+    from panoramic_da3 import run_da3, save_da3_pointcloud
+
+    os.makedirs(output_dir, exist_ok=True)
+    cfg = get_da3_config()
+    da3 = get_da3()
+    try:
+        with tempfile.TemporaryDirectory() as views_base:
+            _, _, pts, cols, _, _ = run_da3(target_depth_path, support_paths or [], cfg, views_base,
+                                             da3=da3, step_degrees=step_degrees)
+        if pts is None:
+            return None
+        ply = os.path.join(output_dir, "da3_pointcloud.ply")
+        save_da3_pointcloud(pts, cols, ply)
+        return ply
+    finally:
+        torch.cuda.empty_cache()
 
 
 def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20):
@@ -154,17 +161,17 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
     from services.da3_ops import rate_pano as da3_rate_pano, test_edge as da3_test_edge
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
-    pipeline = get_pipeline()
+    cfg = get_da3_config()
     da3 = get_da3()
     try:
         with tempfile.TemporaryDirectory() as views_base:
             def test_edge(path_a, path_b, test_id):
-                return da3_test_edge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+                return da3_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
             rate_ids = itertools.count()
 
             def rate_pano(path):
-                return da3_rate_pano(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
+                return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
             return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
                                                 rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
@@ -234,12 +241,12 @@ def _join_segments_impl(segments, edge_max_dist_m=None, step_degrees=20,
             print(f"[bridge] refetch failed for {key}: {e}")
             return None
 
-    pipeline = get_pipeline()
+    cfg = get_da3_config()
     da3 = get_da3()
     try:
         with tempfile.TemporaryDirectory() as views_base:
             def bridge_test_edge(path_a, path_b, test_id):
-                return da3_bridge_test_edge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+                return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
             return join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m,
                                   chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
@@ -294,20 +301,20 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
     t0 = time.monotonic()
     overall_deadline = t0 + PATHFIND_MAX_TIME_BUDGET_S
 
-    pipeline = get_pipeline()
+    cfg = get_da3_config()
     da3 = get_da3()
     try:
         with tempfile.TemporaryDirectory() as views_base:
             def test_edge(path_a, path_b, test_id):
-                return da3_test_edge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+                return da3_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
             rate_ids = itertools.count()
 
             def rate_pano(path):
-                return da3_rate_pano(path, pipeline.config, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
+                return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
             def bridge_test_edge(path_a, path_b, test_id):
-                return da3_bridge_test_edge(path_a, path_b, pipeline.config, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+                return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
             segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
                                                     rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
@@ -323,7 +330,7 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
 
 def save_pointcloud(points, colors, path):
     """Not GPU-wrapped -- pure disk I/O (open3d write), no CUDA involved.
-    Lazy import to match get_pipeline()'s pattern, so this module still
-    imports cleanly on machines without panoramic_to_3dgs installed."""
-    from panoramic_to_3dgs import save_da3_pointcloud
+    Lazy import to match get_da3_config()'s pattern, so this module still
+    imports cleanly on machines without panoramic_da3 installed."""
+    from panoramic_da3 import save_da3_pointcloud
     return save_da3_pointcloud(points, colors, path)

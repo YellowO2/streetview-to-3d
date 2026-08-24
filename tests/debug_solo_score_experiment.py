@@ -28,7 +28,7 @@ a dense Apple LookAround date, 42 real GPU calls):
 """
 import os
 
-from services.pipeline_runner import GPU_WINDOWED, get_pipeline
+from services.pipeline_runner import GPU_DISPATCH, get_da3_config
 from services.streetview_fetch import run_async
 from street_builder.build_graph.build_graph import build_corridor_graphs
 from street_builder.main import DEFAULT_STEP_DEGREES, _download_all
@@ -50,7 +50,7 @@ DEBUG_DATE = "2026-06-16"
 DEBUG_ADJACENT_PAIRS = [(0, 1), (5, 6), (2, 5)]
 
 
-@GPU_WINDOWED
+@GPU_DISPATCH
 def debug_solo_score_experiment_gpu(dot_pairs, step_degrees=DEFAULT_STEP_DEGREES):
     """The one @spaces.GPU call. dot_pairs: [([(key, path), ...],
     [(key, path), ...]), ...] -- each tuple is one real adjacent dot
@@ -64,13 +64,12 @@ def debug_solo_score_experiment_gpu(dot_pairs, step_degrees=DEFAULT_STEP_DEGREES
     import time
 
     import torch
-    from components.ViewExtractor.ViewExtractor import extract_views_for_da3
-    from panoramic_to_3dgs import DA3Model
+    from panoramic_da3 import DA3Model, extract_views_for_da3
     from services.da3_ops import test_edge as da3_test_edge
 
-    pipeline = get_pipeline()
+    cfg = get_da3_config()
     t0 = time.monotonic()
-    da3 = DA3Model(pipeline.config.da3_model)
+    da3 = DA3Model(cfg.da3_model)
     load_time_s = time.monotonic() - t0
     print(f"[debug] DA3Model load: {load_time_s:.2f}s")
 
@@ -101,7 +100,7 @@ def debug_solo_score_experiment_gpu(dot_pairs, step_degrees=DEFAULT_STEP_DEGREES
                 for key_a, path_a in cands_a:
                     for key_b, path_b in cands_b:
                         t0 = time.monotonic()
-                        result = da3_test_edge(path_a, path_b, pipeline.config, views_base, da3,
+                        result = da3_test_edge(path_a, path_b, cfg, views_base, da3,
                                                 test_id=f"debug_{test_id}", step_degrees=step_degrees)
                         elapsed = time.monotonic() - t0
                         test_id += 1

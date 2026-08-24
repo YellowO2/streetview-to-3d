@@ -1,9 +1,9 @@
 """Our own domain-specific decisions about DA3 results: what counts as a
 passing edge test, a usable solo rating, or a good bridge candidate. Lives
-here rather than in panoramic_to_3dgs on purpose -- these are OUR
+here rather than in panoramic_da3 on purpose -- these are OUR
 pipeline's own thresholds/shape choices (keep-rate cutoffs, what "rating"
 or "bridging" means for our corridor search), not something a general
-"run DA3 on a list of panos" library should know about. panoramic_to_3dgs
+"run DA3 on a list of panos" library should know about. panoramic_da3
 exposes exactly one primitive (run_da3); this module is the only place
 that calls it and interprets the raw result.
 """
@@ -19,7 +19,7 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
     """One real pairwise DA3 test between two already-downloaded panos.
     Returns None if either pano fails the keep-rate health check, else
     (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views)."""
-    from panoramic_to_3dgs import run_da3
+    from panoramic_da3 import run_da3
     test_dir = os.path.join(views_base, f"t{test_id}")
     os.makedirs(test_dir, exist_ok=True)
     id_a, id_b = os.path.basename(path_a), os.path.basename(path_b)
@@ -53,7 +53,7 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
         all for this pano (rare).
       - pts, cols: this pano's own backprojected points/colors.
       - n_kept, n_total: view counts surviving DA3's filter."""
-    from panoramic_to_3dgs import run_da3
+    from panoramic_da3 import run_da3
     rate_dir = os.path.join(views_base, f"r{rate_id}")
     os.makedirs(rate_dir, exist_ok=True)
     pano_id = os.path.basename(path)
@@ -83,7 +83,7 @@ def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thres
     Else a dict: pose_a/pose_b, pts, cols, keep_a/keep_b ((kept, total)
     view counts), avg_dev_a/avg_dev_b (average real-world deviation in
     meters among that pano's own kept views only; inf if zero kept)."""
-    from panoramic_to_3dgs import run_da3
+    from panoramic_da3 import run_da3
     test_dir = os.path.join(views_base, f"b{test_id}")
     os.makedirs(test_dir, exist_ok=True)
     id_a, id_b = os.path.basename(path_a), os.path.basename(path_b)

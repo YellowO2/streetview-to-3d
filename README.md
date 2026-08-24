@@ -14,7 +14,7 @@ short_description: Reconstructs a street corridor into a 3D point cloud
 
 # Street Builder
 
-Reconstructs a walkable street corridor into a joined 3D point cloud from Google Street View / Apple Look Around panoramas, built on top of [panoramic-to-3dgs](https://github.com/YellowO2/panoramic-to-3dgs)'s DA3 core.
+Reconstructs a walkable street corridor into a joined 3D point cloud from Google Street View / Apple Look Around panoramas, built on top of [panoramic-da3](https://github.com/YellowO2/panoramic-da3)'s DA3 core.
 Check out the demo on [Hugging Face](https://huggingface.co/spaces/potato-bug/street-view-to-3d).
 
 For the single-panorama SHARP/3DGS pipeline, see [streetview-to-3dgs](https://github.com/YellowO2/streetview-to-3dgs).

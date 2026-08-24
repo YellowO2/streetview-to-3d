@@ -1,16 +1,15 @@
-from huggingface_hub import hf_hub_download, snapshot_download
-from panoramic_to_3dgs import PipelineConfig
+from dataclasses import dataclass
 
-PIPELINE_CONFIG_PATH = "config.yaml"
+from huggingface_hub import snapshot_download
 
 
-def load_pipeline_config() -> PipelineConfig:
-    config = PipelineConfig.from_yaml(PIPELINE_CONFIG_PATH)
-    config.sharp_model = hf_hub_download(
-        repo_id="apple/Sharp",
-        filename="sharp_2572gikvuh.pt",
-    )
-    config.da3_model = snapshot_download(
-        repo_id="depth-anything/da3nested-giant-large",
-    )
-    return config
+@dataclass
+class DA3Config:
+    """The only thing panoramic_da3.run_da3 needs from a config: a
+    `.da3_model` attribute (model path/repo id). This app has no SHARP/GS
+    pipeline, so there's nothing else to configure here."""
+    da3_model: str = ""
+
+
+def load_da3_config() -> DA3Config:
+    return DA3Config(da3_model=snapshot_download(repo_id="depth-anything/da3nested-giant-large"))
