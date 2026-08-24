@@ -25,42 +25,23 @@ try:
     # spaces is also installed locally via requirements.txt, so gate on SPACE_ID
     # which HF Spaces always sets but local machines don't have.
     ON_SPACES = bool(os.getenv("SPACE_ID"))
-    # Longer budget for the pathfind tasks: run_pathfind_reconstruction does
-    # the entire multi-date pathfind search (map_date/set_cover, potentially
-    # dozens of DA3 tests) inside one GPU call, specifically to avoid the
-    # 'Expired ZeroGPU proxy token' failure hit when that was split into
-    # several smaller calls instead. PATHFIND_MAX_TIME_BUDGET_S is a CEILING
-    # passed to run_pathfind_reconstruction, not its actual deadline -- the
-    # algorithm scales its own deadline to corridor size and only caps at
-    # this. Kept well under GPU_WINDOWED_DURATION_S to leave real margin
-    # for model load (before the search even starts) and save/teardown after.
-    GPU_WINDOWED_DURATION_S = 280
-    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 60
-
-    # Per-task duration, looked up by _gpu_duration below -- matches what
-    # each task used to request under its own separate decorator (GPU=108,
-    # GPU_EDIT=72, GPU_WINDOWED=280) before consolidating to one function.
-    _TASK_DURATIONS = {
-        "editor": 72,
-        "pipeline": 108,
-        "pointcloud": 108,
-        "pathfind_reconstruction": GPU_WINDOWED_DURATION_S,
-        "join_segments": GPU_WINDOWED_DURATION_S,
-        "pathfind_and_join": GPU_WINDOWED_DURATION_S,
-    }
-
-    def _gpu_duration(task, *args, **kwargs):
-        return _TASK_DURATIONS[task]
+    # TEMP DIAGNOSTIC: hardcoded flat duration, matching DA3's own official
+    # Space exactly (duration=120, not a callable) -- testing whether our
+    # dynamic per-task duration=callable is itself somehow implicated in
+    # the post-GPU-call segfault we've been chasing. If this changes
+    # anything, the callable was the culprit; if not, ruled out.
+    GPU_WINDOWED_DURATION_S = 120
+    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 30
 
     if ON_SPACES:
-        GPU_DISPATCH = spaces.GPU(duration=_gpu_duration)
+        GPU_DISPATCH = spaces.GPU(duration=120)
     else:
         GPU_DISPATCH = lambda fn: fn
 except ImportError:
     GPU_DISPATCH = lambda fn: fn  # no-op outside HF Spaces
     ON_SPACES = False
-    GPU_WINDOWED_DURATION_S = 280
-    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 60
+    GPU_WINDOWED_DURATION_S = 120
+    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 30
 
 _pipeline = None
 _flux_editor = None
