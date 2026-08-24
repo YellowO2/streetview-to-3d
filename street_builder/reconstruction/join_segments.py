@@ -102,6 +102,13 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     if not pairs:
         closest_desc = f"closest real pair was {closest[1]} <-> {closest[2]} at {closest[0]:.1f}m" if closest else "no nodes on either side at all"
         if expected_adjacent:
+            # ZeroGPU's cross-process exception marshalling can drop the
+            # real message, surfacing only the exception class name to
+            # the caller -- print the diagnostic here too so it's always
+            # visible in the Space's own server logs regardless.
+            print(f"[bridge] NoBridgeCandidatesError: {a_date} ({len(a_positions)} node(s)) <-> "
+                  f"{b_date} ({len(b_positions)} node(s)): 0 candidate pair(s) within {edge_max_dist_m:.0f}m "
+                  f"({closest_desc}) -- declared adjacent, so this points to a bug upstream.")
             raise NoBridgeCandidatesError(
                 f"{a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
                 f"0 candidate pair(s) within {edge_max_dist_m:.0f}m ({closest_desc}) -- "
