@@ -1,10 +1,11 @@
-"""GPU-wrapped pipeline runners: SHARP/DA3 3DGS generation, DA3-only point
-cloud generation, and the Flux image editor. Also owns the ZeroGPU/@spaces.GPU
-decorator setup, since that setup exists purely to wrap these calls.
+"""GPU-wrapped pipeline runners: DA3-only point cloud generation, plus
+street_builder's corridor pathfinding/join tasks. Also owns the
+ZeroGPU/@spaces.GPU decorator setup, since that setup exists purely to wrap
+these calls.
 
-get_pipeline() is the single Pipeline singleton for this whole app -- both
-app.py's Gradio handlers and street_builder's own handlers call through
-here, rather than each loading a separate copy of the DA3/SHARP models.
+get_pipeline() is the single Pipeline singleton for this whole app --
+street_builder's handlers call through here, rather than each loading a
+separate copy of the DA3 model.
 
 There is exactly ONE @spaces.GPU-decorated function in this whole module
 (_gpu_dispatch) -- matches DA3's own official Space (app.py wraps a single
@@ -64,11 +65,7 @@ except ImportError:
     PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 30
 
 _pipeline = None
-_flux_editor = None
 _da3 = None
-if ON_SPACES:
-    from editors.flux_editor import FluxEditor
-    _flux_editor = FluxEditor(offload=False)
 
 
 def get_pipeline():
@@ -106,48 +103,12 @@ def _gpu_dispatch(task, *args, **kwargs):
     run_*_gpu function below routes through here with its own task name
     -- see this module's own docstring for why."""
     impl = {
-        "editor": _run_editor_impl,
-        "pipeline": _run_pipeline_impl,
         "pointcloud": _run_pointcloud_impl,
         "pathfind_reconstruction": _run_pathfind_reconstruction_impl,
         "join_segments": _join_segments_impl,
         "pathfind_and_join": _run_pathfind_and_join_impl,
     }[task]
     return impl(*args, **kwargs)
-
-
-def run_editor_gpu(image_path, prompt, mode, output_path):
-    return _gpu_dispatch("editor", image_path, prompt, mode, output_path)
-
-
-def _run_editor_impl(image_path, prompt, mode, output_path):
-    global _flux_editor
-    if _flux_editor is None:
-        from editors.flux_editor import FluxEditor
-        _flux_editor = FluxEditor(offload=True)
-    _flux_editor.edit(image_path, prompt, mode=mode, output_path=output_path)
-    return output_path
-
-
-def run_pipeline_gpu(target_appearance_path, output_dir, scale_mode, gs_backend, support_paths=None, target_depth_path=None):
-    return _gpu_dispatch("pipeline", target_appearance_path, output_dir, scale_mode, gs_backend,
-                          support_paths=support_paths, target_depth_path=target_depth_path)
-
-
-def _run_pipeline_impl(target_appearance_path, output_dir, scale_mode, gs_backend, support_paths=None, target_depth_path=None):
-    pipeline = get_pipeline()
-    os.makedirs(output_dir, exist_ok=True)
-    pipeline.config.scale_mode = scale_mode
-    pipeline.config.gs_backend = gs_backend
-    pipeline.run(
-        target_appearance_path=target_appearance_path,
-        output_dir=output_dir,
-        target_depth_path=target_depth_path,
-        support_paths=support_paths,
-    )
-
-    ply = os.path.join(output_dir, "final_output.ply")
-    return ply if os.path.exists(ply) else None
 
 
 def run_pointcloud_gpu(target_depth_path, output_dir, support_paths=None, step_degrees=20):

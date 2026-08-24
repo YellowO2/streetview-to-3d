@@ -1,6 +1,6 @@
 ---
-title: Street View To 3dgs
-emoji: 🌖
+title: Street View To 3D
+emoji: 🌆
 colorFrom: pink
 colorTo: indigo
 sdk: gradio
@@ -9,24 +9,15 @@ python_version: '3.12'
 app_file: app.py
 pinned: false
 license: mit
-short_description: Turns a Google Street View location into a 3DGS scene
+short_description: Reconstructs a walkable street corridor into a 3D point cloud
 ---
 
-# Street View to 3DGS
+# Street Builder
 
-Convert Google Street View panoramas into 3D Gaussian Splat scenes, built on top of [panoramic-to-3dgs](https://github.com/YellowO2/panoramic-to-3dgs).
-Check out the demo on [Hugging Face](https://huggingface.co/spaces/potato-bug/street-view-to-3dgs).
+Reconstructs a walkable street corridor into a joined 3D point cloud from Google Street View / Apple Look Around panoramas, built on top of [panoramic-to-3dgs](https://github.com/YellowO2/panoramic-to-3dgs)'s DA3 core.
+Check out the demo on [Hugging Face](https://huggingface.co/spaces/potato-bug/street-view-to-3d).
 
-<table>
-<tr>
-<td align="center"><sub>Demo Video</sub></td>
-<td align="center"><sub>Comparison with HunyuanWorld 2.0 + World Marble 1.1</sub></td>
-</tr>
-<tr>
-<td width="50%"><a href="https://youtu.be/mzIDZWxv4vA"><img src="https://img.youtube.com/vi/mzIDZWxv4vA/hqdefault.jpg" alt="Demo video"></a></td>
-<td width="50%"><a href="https://youtu.be/fYANbQXMZ_0"><img src="https://img.youtube.com/vi/fYANbQXMZ_0/maxresdefault.jpg" alt="Comparison with HunyuanWorld 2.0 + World Marble 1.1"></a></td>
-</tr>
-</table>
+For the single-panorama SHARP/3DGS pipeline, see [streetview-to-3dgs](https://github.com/YellowO2/streetview-to-3dgs).
 
 ## Run locally
 
@@ -50,7 +41,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Models (Sharp, DA3, and FLUX) are downloaded from the Hugging Face Hub on first run and cached under `~/.cache/huggingface/`.
+Models (DA3) are downloaded from the Hugging Face Hub on first run and cached under `~/.cache/huggingface/`.
 
 ## Dev notes
 
@@ -80,20 +71,12 @@ raw panoramas.
   people), then re-run just the join/reconstruction step
   (`street_builder/reconstruction/join_segments.py`) against the cleaned
   images.
-- Possible head start: this repo already has a Flux-based object-removal
-  editor (`editors/flux_editor.py`, `flux-2-klein-4B-object-remove-lora`
-  in Acknowledgments below) wired up for other editing use -- worth
-  checking whether it's directly reusable for this instead of building
-  a new cleanup step from scratch.
 
 ## Acknowledgments
 
 This project relies on:
 
 - [Depth-Anything-3](https://github.com/ByteDance-Seed/Depth-Anything-3) (Apache 2.0)
-- [Apple ml-sharp](https://github.com/apple/ml-sharp) (Apple sample code license)
-- [FLUX.2-klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) (Black Forest Labs)
-- [flux-2-klein-4B-object-remove-lora](https://huggingface.co/fal/flux-2-klein-4B-object-remove-lora) (fal)
 
 ## License
 
