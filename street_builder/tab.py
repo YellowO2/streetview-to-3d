@@ -229,43 +229,69 @@ def _upload_checkpoint(pieces, id_sets):
     return urls
 
 
-def handle_cli_add_chunk(payload_str, adjacent_ids_str, progress=gr.Progress(track_tqdm=True)):
-    """Scripted/CLI: runs Prepare+Run for ONE chunk, then incrementally
-    bridges it onto whatever's currently checkpointed in
-    CLI_JOIN_DATASET_REPO -- see services.pipeline_runner.
-    bridge_incremental_gpu's own docstring for why this does NOT
-    re-verify pairs a previous call already merged (unlike the old
-    all-at-once join, whose cost grew with total chunks ever run). Fully
-    stateless from the caller's side: no gr.State, no separate load/save
-    step -- the dataset checkpoint IS the current state, downloaded at
-    the start of this call and re-uploaded at the end (see
-    _download_checkpoint/_upload_checkpoint), so it's always directly
-    viewable AND resumable, in the same files, at every step -- not two
-    separate formats for two separate purposes.
+def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
+    """Scripted/CLI: Prepare+Run for ONE chunk -- its own single
+    @spaces.GPU call, kept SEPARATE from handle_cli_bridge_chunk's own
+    GPU call on purpose. An earlier version combined prepare+run+bridge
+    into one handler and hit 'Expired ZeroGPU proxy token' on the very
+    first chunk -- exactly the documented failure mode this whole app
+    otherwise avoids everywhere else (see street_builder/main.py's own
+    module docstring): a second @spaces.GPU call inside the same request
+    can fire after the first one's proxy token has already gone stale.
+    Two separate client calls (two separate button clicks/gradio_client
+    predict()s) each get their own fresh token; one handler making two
+    GPU calls back-to-back does not.
 
     payload_str: JSON {"chunk_id": ..., "start": [lat, lon],
     "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...]}.
-    adjacent_ids_str: JSON list of existing chunk ids this new chunk is
-    known-adjacent to (from the caller's own graph-level chunking, e.g.
-    map_selection.candidates.split_into_chunks's known_adjacent_chunk_pairs)
-    -- "[]" for the very first chunk, nothing to bridge onto yet."""
+
+    Returns (new_segments, status) -- new_segments is a gr.State, feed it
+    straight into handle_cli_bridge_chunk."""
     try:
         payload = json.loads(payload_str)
         chunk_id = payload["chunk_id"]
         start = tuple(payload["start"])
         goals = [tuple(g) for g in payload["goals"]]
         edges = [(tuple(a), tuple(b)) for a, b in payload["edges"]]
-        adjacent_ids = json.loads(adjacent_ids_str) if adjacent_ids_str.strip() else []
     except Exception as e:
         raise gr.Error(f"Bad payload: {e}")
-
-    existing_pieces, existing_ids = _download_checkpoint()
 
     try:
         prep = street_main.prepare_pathfind(start, goals, edges)
         new_segments = street_main.run_prepared_pathfind_segments(prep)
     except Exception as e:
         raise gr.Error(f"Chunk {chunk_id} failed: {e}")
+
+    return {"chunk_id": chunk_id, "segments": new_segments}, f"<p>Chunk {chunk_id}: {len(new_segments)} segment(s). Ready to bridge.</p>"
+
+
+def handle_cli_bridge_chunk(run_result, adjacent_ids_str, progress=gr.Progress(track_tqdm=True)):
+    """Scripted/CLI: bridges a chunk already run via handle_cli_run_chunk
+    onto whatever's currently checkpointed in CLI_JOIN_DATASET_REPO --
+    its own separate @spaces.GPU call (see handle_cli_run_chunk's
+    docstring for why). See services.pipeline_runner.
+    bridge_incremental_gpu's own docstring for why this does NOT
+    re-verify pairs a previous call already merged. Fully stateless with
+    respect to the dataset: no separate load/save step -- the dataset
+    checkpoint IS the current state, downloaded at the start of this call
+    and re-uploaded at the end (see _download_checkpoint/
+    _upload_checkpoint), so it's always directly viewable AND resumable,
+    in the same files, at every step.
+
+    run_result: the gr.State handle_cli_run_chunk returned.
+    adjacent_ids_str: JSON list of existing chunk ids this chunk is
+    known-adjacent to (from the caller's own graph-level chunking, e.g.
+    map_selection.candidates.split_into_chunks's known_adjacent_chunk_pairs)
+    -- "[]" for the very first chunk, nothing to bridge onto yet."""
+    if not run_result:
+        raise gr.Error("Nothing run yet -- call cli_run_chunk first.")
+    chunk_id, new_segments = run_result["chunk_id"], run_result["segments"]
+    try:
+        adjacent_ids = json.loads(adjacent_ids_str) if adjacent_ids_str.strip() else []
+    except Exception as e:
+        raise gr.Error(f"Bad adjacent_ids: {e}")
+
+    existing_pieces, existing_ids = _download_checkpoint()
 
     from services.pipeline_runner import bridge_incremental_gpu
     try:
@@ -276,14 +302,14 @@ def handle_cli_add_chunk(payload_str, adjacent_ids_str, progress=gr.Progress(tra
     urls = _upload_checkpoint(pieces, ids)
     sizes = [len(id_list) for id_list in ids]
     links = "".join(f'<li><a href="{u}">{u}</a></li>' for u in urls)
-    return (f"<p>Chunk {chunk_id}: {len(new_segments)} new segment(s), now {len(pieces)} "
+    return (f"<p>Chunk {chunk_id}: merged, now {len(pieces)} "
             f"piece(s) total (chunks per piece: {sizes}).</p><ul>{links}</ul>")
 
 
 def handle_cli_reset():
     """Scripted/CLI testing only: deletes the current checkpoint from
-    CLI_JOIN_DATASET_REPO, so the next cli_add_chunk call starts a fresh
-    run instead of building onto whatever was there before."""
+    CLI_JOIN_DATASET_REPO, so the next cli_bridge_chunk call starts a
+    fresh run instead of building onto whatever was there before."""
     api = HfApi()
     try:
         files = [f for f in api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
@@ -335,16 +361,20 @@ def build_tab():
     # Scripted/CLI-only controls for staging a large-area reconstruction
     # (e.g. a whole campus) chunk by chunk via gradio_client, incrementally
     # bridging each new chunk onto whatever's already merged instead of
-    # one huge corridor in one GPU call -- see handle_cli_add_chunk's own
-    # docstring. Not meant for manual clicking (payloads are raw JSON),
-    # kept as real UI so it's inspectable/debuggable in the browser too.
+    # one huge corridor in one GPU call. Run and Bridge are separate GPU
+    # calls/separate buttons on purpose -- see handle_cli_run_chunk's own
+    # docstring for why combining them into one handler causes 'Expired
+    # ZeroGPU proxy token'. Not meant for manual clicking (payloads are
+    # raw JSON), kept as real UI so it's inspectable/debuggable too.
     with gr.Accordion("Scripted staged testing (CLI, experimental)", open=False):
         cli_chunk_payload = gr.Textbox(
             label='Chunk payload JSON: {"chunk_id": ..., "start": [lat, lon], "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...]}',
             lines=3,
         )
+        cli_run_chunk_btn = gr.Button("1. Run chunk (GPU search)")
+        cli_run_result_state = gr.State(None)
         cli_adjacent_ids = gr.Textbox(label='Existing chunk ids this chunk is known-adjacent to, JSON e.g. ["chunk0"] ("[]" for the first chunk)')
-        cli_add_chunk_btn = gr.Button("Add chunk (prepare + run + incremental bridge)")
+        cli_bridge_chunk_btn = gr.Button("2. Bridge chunk onto checkpoint (GPU bridge)")
         cli_status = gr.HTML()
         cli_reset_btn = gr.Button("Reset checkpoint (start a fresh run)")
 
@@ -388,11 +418,20 @@ def build_tab():
         show_progress_on=[reconstruct_view],
     )
 
-    cli_add_chunk_btn.click(
-        fn=handle_cli_add_chunk,
-        inputs=[cli_chunk_payload, cli_adjacent_ids],
+    cli_run_chunk_btn.click(
+        fn=handle_cli_run_chunk,
+        inputs=[cli_chunk_payload],
+        outputs=[cli_run_result_state, cli_status],
+        api_name="cli_run_chunk",
+        show_progress="minimal",
+        show_progress_on=[cli_status],
+    )
+
+    cli_bridge_chunk_btn.click(
+        fn=handle_cli_bridge_chunk,
+        inputs=[cli_run_result_state, cli_adjacent_ids],
         outputs=[cli_status],
-        api_name="cli_add_chunk",
+        api_name="cli_bridge_chunk",
         show_progress="minimal",
         show_progress_on=[cli_status],
     )

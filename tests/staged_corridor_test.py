@@ -123,8 +123,10 @@ def main():
         adjacent_ids = sorted(neighbors_of.get(cid, set()) & set(added_so_far))
         print(f"\n--- {cid} ({idx + 1}/{len(chunks)}, {len(chunk['goals']) + 1} node(s), "
               f"{len(chunk['corridor_edges'])} edge(s), adjacent_ids={adjacent_ids}) ---")
-        status = client.predict(json.dumps(payload), json.dumps(adjacent_ids), api_name="/cli_add_chunk")
-        print(status)
+        run_status = client.predict(json.dumps(payload), api_name="/cli_run_chunk")
+        print(run_status)
+        bridge_status = client.predict(json.dumps(adjacent_ids), api_name="/cli_bridge_chunk")
+        print(bridge_status)
         added_so_far.append(cid)
 
     print("\nDone -- the checkpoint above (cli_join/current/ in the dataset repo) is already the current, viewable result.")
