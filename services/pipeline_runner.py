@@ -26,11 +26,13 @@ try:
     # spaces is also installed locally via requirements.txt, so gate on SPACE_ID
     # which HF Spaces always sets but local machines don't have.
     ON_SPACES = bool(os.getenv("SPACE_ID"))
-    # TEMP DIAGNOSTIC: hardcoded flat duration, matching DA3's own official
-    # Space exactly (duration=120, not a callable) -- testing whether our
-    # dynamic per-task duration=callable is itself somehow implicated in
-    # the post-GPU-call segfault we've been chasing. If this changes
-    # anything, the callable was the culprit; if not, ruled out.
+    # Flat duration, matching DA3's own official Space (duration=120, not
+    # a per-task callable). The real cause of the second-@spaces.GPU-call
+    # segfault this was chasing turned out to be unrelated (open3d's
+    # persistent background thread pool in Saver.save_point_cloud, fixed
+    # in panoramic-da3) -- a dynamic per-task duration was never actually
+    # implicated, but this flat value works and there's no reason to
+    # complicate it back into a callable without a real need to.
     GPU_WINDOWED_DURATION_S = 120
     PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 30
 
