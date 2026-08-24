@@ -126,27 +126,45 @@ def many_calls_probe(image_files, n_calls):
         torch.cuda.empty_cache()
 
 
-def real_pathfind_probe(image_files):
+def _real_google_candidates():
+    """Fetch 1-2 REAL, valid Google pano IDs + locally-downloaded image
+    paths near a known-covered location. Required, not optional: fake
+    keys (e.g. "probe:0") make pipeline_runner.py's refetch_path (join's
+    real re-download step, join_segments.py:124) return None for every
+    single pair, silently skipping bridge_test_edge entirely -- an
+    earlier version of this probe did exactly that and produced a false
+    "no crash" result without ever calling DA3 during Join. Real
+    "google:<id>" keys are the only way refetch_path (and therefore the
+    real DA3 call) actually runs."""
+    from services.streetview_fetch import fetch_pano, download_pano_by_id, run_async, DA3_ONLY_ZOOM
+    # Times Square, NYC -- dense, reliable Street View coverage.
+    meta = run_async(fetch_pano(40.758896, -73.985130))
+    if not meta:
+        raise RuntimeError("No real Street View coverage at the probe's fixed test coordinate.")
+    id_a = meta["id"]
+    neighbors = meta.get("neighbors") or []
+    id_b = neighbors[0]["id"] if neighbors else id_a
+    path_a = run_async(download_pano_by_id(id_a, zoom=DA3_ONLY_ZOOM))
+    path_b = run_async(download_pano_by_id(id_b, zoom=DA3_ONLY_ZOOM))
+    return f"google:{id_a}", path_a, f"google:{id_b}", path_b
+
+
+def real_pathfind_probe():
     """Test 3: the REAL pipeline_runner.run_pathfind_reconstruction_gpu
     (-> real _gpu_dispatch -> real services/da3_ops.py -> real
     street_builder/reconstruction/walk_graph.py) called directly with a
-    fabricated 4-dot corridor -- two structurally-disconnected 2-dot
+    fabricated 4-dot corridor built from 1-2 REAL Google panos (see
+    _real_google_candidates) -- two structurally-disconnected 2-dot
     pairs, close enough together (a few meters) that join_segments'
     real bridging search actually attempts real DA3 pairwise tests
     between them, instead of skipping for being too far apart. No
-    Gradio UI/state involved, no network downloads -- same real backend
-    code the "Street Builder" tab's Run button calls, minus everything
-    upstream of it (map picking, candidate downloading).
+    Gradio map-picking UI involved -- same real backend code the
+    "Street Builder" tab's Run button calls, minus the UI/state layer.
 
     Returns segments from the real corridor search -- pass this
     straight into real_join_probe below as the SECOND, separate GPU
     lease, exactly mirroring "2. Run auto-path" then "3. Join
     segments"."""
-    if not image_files or len(image_files) < 2:
-        return "Upload at least 2 images first.", None
-    path_a, path_b = image_files[0].name if hasattr(image_files[0], "name") else image_files[0], \
-        image_files[1].name if hasattr(image_files[1], "name") else image_files[1]
-
     # ~0.00009 deg lat ~= 10m. Pair (0,1) and pair (2,3) are each
     # structurally adjacent to each other but NOT to the other pair --
     # forces 2 disconnected pieces out of phase 1 -- while staying well
@@ -154,20 +172,34 @@ def real_pathfind_probe(image_files):
     # bridging search has a real nearby candidate to test.
     points = [(0.0, 0.0), (0.00009, 0.0), (0.00004, 0.00004), (0.00013, 0.00004)]
     adjacency = {0: [1], 1: [0], 2: [3], 3: [2]}
-    date_graphs = [{
-        "date": "probe-date",
-        "dot_candidates": {
-            0: [("probe:0", path_a, points[0][0], points[0][1])],
-            1: [("probe:1", path_b, points[1][0], points[1][1])],
-            2: [("probe:2", path_a, points[2][0], points[2][1])],
-            3: [("probe:3", path_b, points[3][0], points[3][1])],
-        },
-    }]
     try:
+        key_a, path_a, key_b, path_b = _real_google_candidates()
+        date_graphs = [{
+            "date": "probe-date",
+            "dot_candidates": {
+                0: [(key_a, path_a, points[0][0], points[0][1])],
+                1: [(key_b, path_b, points[1][0], points[1][1])],
+                2: [(key_a, path_a, points[2][0], points[2][1])],
+                3: [(key_b, path_b, points[3][0], points[3][1])],
+            },
+        }]
         segments = pipeline_runner.run_pathfind_reconstruction_gpu(
             date_graphs, points, adjacency, points[0][0], points[0][1],
         )
-        return f"OK -- {len(segments)} segment(s) produced. Now click Test 3b below.", segments
+        # Real handle_pathfind_run also does this, right after the GPU
+        # call returns, before the user can click Join -- real disk I/O
+        # (open3d point-cloud writes w/ voxel downsampling, pickle
+        # serialization) sitting between the two GPU leases in
+        # production. Test 3a/3b without this passed; adding it now to
+        # test whether THIS is the missing piece.
+        import os
+        import uuid
+        from paths import SPLATS_DIR
+        from street_builder import main as street_main
+        output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+        street_main.save_pathfind_segments(segments, output_dir)
+        street_main.save_segments_bundle(segments, output_dir)
+        return f"OK -- {len(segments)} segment(s) produced + saved to disk. Now click Test 3b below.", segments
     except Exception as e:
         import traceback
         return f"FAILED: {e}\n\n{traceback.format_exc()}", None
@@ -215,15 +247,21 @@ def build_probe_tab() -> gr.Blocks:
 
         gr.Markdown(
             "**Test 3** -- the REAL pathfind + join code (pipeline_runner.py, "
-            "services/da3_ops.py, street_builder/reconstruction/*), fed a "
-            "fabricated 4-dot corridor instead of real map data. Click 3a, "
-            "then 3b -- the actual real-code equivalent of \"2. Run auto-path\" "
-            "then \"3. Join segments\" as two separate GPU leases:"
+            "services/da3_ops.py, street_builder/reconstruction/*, "
+            "street_builder/main.py's save_pathfind_segments/save_segments_bundle "
+            "disk I/O between the two calls), fed a fabricated 4-dot corridor "
+            "built from 1-2 REAL Google panos (fetched automatically, no upload "
+            "needed) -- an earlier version used fake keys here, which silently "
+            "made Join's real bridge test never actually run (refetch_path "
+            "returned None for every pair); fixed now. Click 3a, then 3b -- the "
+            "actual real-code equivalent of \"2. Run auto-path\" then \"3. Join "
+            "segments\" as two separate GPU leases, now including the real "
+            "disk-I/O step too:"
         )
         segments_state = gr.State(None)
-        real_run_btn = gr.Button("3a. Real run_pathfind_reconstruction_gpu")
+        real_run_btn = gr.Button("3a. Real run_pathfind_reconstruction_gpu + save")
         real_run_out = gr.Textbox(label="Result", lines=8)
-        real_run_btn.click(fn=real_pathfind_probe, inputs=[files], outputs=[real_run_out, segments_state])
+        real_run_btn.click(fn=real_pathfind_probe, inputs=[], outputs=[real_run_out, segments_state])
 
         real_join_btn = gr.Button("3b. Real join_segments_gpu (separate lease)")
         real_join_out = gr.Textbox(label="Result", lines=8)
