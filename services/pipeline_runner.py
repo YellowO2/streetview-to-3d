@@ -19,26 +19,6 @@ functions, plain Python, called only from inside _gpu_dispatch where a
 real GPU is guaranteed attached.
 """
 import os
-import sys
-import types
-
-# Stub out pycolmap BEFORE anything can import depth_anything_3 (which
-# panoramic_da3 pulls in). depth_anything_3.api unconditionally does
-# `from .utils.export import export`, whose __init__ eagerly imports EVERY
-# export format handler including .colmap -- which does `import pycolmap`
-# at module level, even though we only ever use export_format="mini_npz"
-# and never call export_to_colmap ourselves. pycolmap's native _core
-# extension has its own pthread_once-guarded static init that touches the
-# CUDA driver directly (cudaGetDevice/cuCtxGetDevice_v2), bypassing
-# spaces' PyTorch-only .to()/.cuda() emulation entirely -- this is the
-# exact native frame in every segfault we've hit chasing this bug (see
-# git history/session notes). Since pycolmap is used ONLY inside
-# export_to_colmap's function body (never at that file's module level),
-# a bare placeholder module satisfies `import pycolmap` without ever
-# loading the real native extension, so its problematic init never runs
-# in this process at all.
-if "pycolmap" not in sys.modules:
-    sys.modules["pycolmap"] = types.ModuleType("pycolmap")
 
 try:
     import spaces
