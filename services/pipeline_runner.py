@@ -136,14 +136,32 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
     date_graphs: already ranked/capped/isolated per date, dot_candidates
     shape -- see street_builder/build_graph/build_graph.py's
     build_corridor_graphs. adjacency: the corridor's shared dot-to-dot
-    structural graph, same source."""
+    structural graph, same source.
+
+    After the walk, runs a SELF-bridge pass (bridge_pieces, no
+    known_adjacent_chunk_pairs restriction -- blind all-pairs among just
+    this call's own segments) before returning. The walk only ever tries
+    a node against its structural neighbor (plus a limited flood-past-
+    empty-dot fallback); one failed real DA3 test there permanently
+    leaves two nodes disconnected even if they'd actually pair fine --
+    the walk's search is narrower than "try every combination", so this
+    gives every fragment one more real shot at every other fragment
+    before this chunk's result is ever saved/handed to cross-chunk
+    bridging. Same GPU session/already-open da3 model as the walk
+    itself -- no separate @spaces.GPU call, and shares the SAME overall
+    time budget as the walk (self-bridge only gets whatever's left over
+    after the walk, not extra time on top of it) so the combined call
+    still respects the one hard ZeroGPU wall-clock window."""
     import itertools
     import tempfile
+    import time
 
     import torch
-    from services.da3_ops import rate_pano as da3_rate_pano, test_edge as da3_test_edge
+    from services.da3_ops import bridge_test_edge as da3_bridge_test_edge, rate_pano as da3_rate_pano, test_edge as da3_test_edge
+    from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, bridge_pieces
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
+    overall_deadline = time.monotonic() + PATHFIND_MAX_TIME_BUDGET_S
     cfg = get_da3_config()
     da3 = get_da3()
     try:
@@ -156,8 +174,15 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
             def rate_pano(path):
                 return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
-            return run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+            segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                    rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+            if len(segments) < 2 or time.monotonic() >= overall_deadline:
+                return segments
+
+            def bridge_test_edge(path_a, path_b, test_id):
+                return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+
+            return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=overall_deadline)
     finally:
         # Release CACHED (unused) allocator memory, like DA3's own official
         # Space does after every call -- NOT del da3, which would force a
