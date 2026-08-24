@@ -149,7 +149,7 @@ def _real_google_candidates():
     return f"google:{id_a}", path_a, f"google:{id_b}", path_b
 
 
-def real_pathfind_probe(do_save):
+def real_pathfind_probe(do_open3d_save, do_pickle_save):
     """Test 3: the REAL pipeline_runner.run_pathfind_reconstruction_gpu
     (-> real _gpu_dispatch -> real services/da3_ops.py -> real
     street_builder/reconstruction/walk_graph.py) called directly with a
@@ -161,13 +161,22 @@ def real_pathfind_probe(do_save):
     Gradio map-picking UI involved -- same real backend code the
     "Street Builder" tab's Run button calls, minus the UI/state layer.
 
-    do_save: whether to also run the real handle_pathfind_run disk-I/O
-    step (save_pathfind_segments/save_segments_bundle -- open3d point-
-    cloud writes w/ voxel downsampling, pickle serialization) between
-    this lease and Test 3b's. CONFIRMED to crash with this on. Toggle
-    off to test whether that step alone is necessary for the crash, or
-    whether it's really about the shared _gpu_dispatch/different-task-
-    branch pattern regardless of what runs between the two leases.
+    CONFIRMED: some real disk-I/O step between two GPU leases (same task
+    or different, doesn't matter) is sufficient to cause the crash on
+    its own -- two leases with nothing in between don't crash (Test 1/2);
+    two leases with the real save step in between do (Test 3). Split
+    into two independently-toggleable pieces to find out which ONE
+    matters:
+    - do_open3d_save: save_pathfind_segments -- open3d's
+      voxel_down_sample + write_point_cloud, native C++ code that spins
+      up its own background threads for real work. Prime suspect: a
+      fork (for the next GPU worker) landing while those threads are
+      active is a classic fork-safety hazard.
+    - do_pickle_save: save_segments_bundle -- pure Python pickle.dump,
+      no native code, no extra threads. If this alone reproduces the
+      crash too, it's not about open3d specifically -- points at
+      something broader (e.g. any real disk I/O, or just any CPU work
+      between leases).
 
     Returns segments from the real corridor search -- pass this
     straight into real_join_probe below as the SECOND, separate GPU
@@ -194,17 +203,22 @@ def real_pathfind_probe(do_save):
         segments = pipeline_runner.run_pathfind_reconstruction_gpu(
             date_graphs, points, adjacency, points[0][0], points[0][1],
         )
-        if not do_save:
-            return f"OK -- {len(segments)} segment(s) produced (save step SKIPPED). Now click Test 3b below.", segments
+        if not do_open3d_save and not do_pickle_save:
+            return f"OK -- {len(segments)} segment(s) produced (no save step). Now click Test 3b below.", segments
 
         import os
         import uuid
         from paths import SPLATS_DIR
         from street_builder import main as street_main
         output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-        street_main.save_pathfind_segments(segments, output_dir)
-        street_main.save_segments_bundle(segments, output_dir)
-        return f"OK -- {len(segments)} segment(s) produced + saved to disk. Now click Test 3b below.", segments
+        did = []
+        if do_open3d_save:
+            street_main.save_pathfind_segments(segments, output_dir)
+            did.append("open3d save")
+        if do_pickle_save:
+            street_main.save_segments_bundle(segments, output_dir)
+            did.append("pickle save")
+        return f"OK -- {len(segments)} segment(s) produced + {' + '.join(did)}. Now click Test 3b below.", segments
     except Exception as e:
         import traceback
         return f"FAILED: {e}\n\n{traceback.format_exc()}", None
@@ -264,12 +278,16 @@ def build_probe_tab() -> gr.Blocks:
             "disk-I/O step too:"
         )
         segments_state = gr.State(None)
-        do_save_checkbox = gr.Checkbox(
-            value=True, label="Include real disk-I/O save step (uncheck to isolate: is the save step necessary for the crash?)",
-        )
+        with gr.Row():
+            do_open3d_checkbox = gr.Checkbox(
+                value=True, label="open3d save (voxel_down_sample + write_point_cloud) -- prime suspect",
+            )
+            do_pickle_checkbox = gr.Checkbox(
+                value=True, label="pickle save (pure Python, no native code)",
+            )
         real_run_btn = gr.Button("3a. Real run_pathfind_reconstruction_gpu")
         real_run_out = gr.Textbox(label="Result", lines=8)
-        real_run_btn.click(fn=real_pathfind_probe, inputs=[do_save_checkbox], outputs=[real_run_out, segments_state])
+        real_run_btn.click(fn=real_pathfind_probe, inputs=[do_open3d_checkbox, do_pickle_checkbox], outputs=[real_run_out, segments_state])
 
         real_join_btn = gr.Button("3b. Real join_segments_gpu (separate lease)")
         real_join_out = gr.Textbox(label="Result", lines=8)
