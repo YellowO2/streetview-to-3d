@@ -35,6 +35,10 @@ def build_pointcloud_viewer(ply_url: str | None = None) -> str:
     the viewer renders empty and ready for a drop (used as the Street Builder
     tab's initial state, so you can preview an already-downloaded .ply without
     needing a GPU run first)."""
+    loading_msg = (
+        '''Loading point cloud<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>'''
+        if ply_url else "Drop a .ply file here to preview it"
+    )
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>body{{margin:0;background:#000;overflow:hidden;cursor:grab;font:14px sans-serif;color:#bbb}}body:active{{cursor:grabbing}}canvas{{display:block}}
 #hint{{position:fixed;bottom:8px;right:8px;color:rgba(255,255,255,.4);font:11px sans-serif;pointer-events:none}}
@@ -54,7 +58,7 @@ def build_pointcloud_viewer(ply_url: str | None = None) -> str:
     "three/addons/":"https://unpkg.com/three@0.178.0/examples/jsm/"
 }}}}
 </script></head><body>
-<div id="loading">{"Loading point cloud<span class=\"dot\">.</span><span class=\"dot\">.</span><span class=\"dot\">.</span>" if ply_url else "Drop a .ply file here to preview it"}</div>
+<div id="loading">{loading_msg}</div>
 <div id="hint">drag to orbit · scroll to zoom · drop a .ply to preview it</div>
 <div id="dropzone">Drop .ply to preview</div>
 <script type="module">
