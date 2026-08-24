@@ -7,6 +7,7 @@ Composes the whole tab: mounts map_selection's own map-picking section,
 then this module's own prepare/run/join controls underneath it, wired
 against the same shared `state` map_selection's handlers already update.
 """
+import json
 import os
 import uuid
 
@@ -149,6 +150,79 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
     return viewers.labeled_download_links(results)
 
 
+def handle_cli_run_chunk(payload_str, accum, progress=gr.Progress(track_tqdm=True)):
+    """Scripted/CLI testing only: runs Prepare+Run for ONE explicit chunk
+    of a larger corridor, bypassing map_selection's `state` entirely --
+    driven by gradio_client, not the map UI. Lets a large area (e.g. a
+    whole campus) be walked through this pipeline in small pieces from a
+    script: fetch the full real graph once (locally, via
+    map_selection.candidates.expand_area -- no GPU needed for that), slice
+    its edges into chunks, then call this endpoint once per chunk, each
+    tagged with its own chunk_id.
+
+    payload_str: JSON {"chunk_id": int, "start": [lat, lon],
+    "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...]}.
+    accum: {"segments": [...], "chunk_ids": [...]} accumulated across
+    every chunk run so far in this session (gr.State, persists across
+    calls on the same gradio_client session) -- feed straight into
+    handle_cli_join once enough chunks are in."""
+    try:
+        payload = json.loads(payload_str)
+        chunk_id = payload["chunk_id"]
+        start = tuple(payload["start"])
+        goals = [tuple(g) for g in payload["goals"]]
+        edges = [(tuple(a), tuple(b)) for a, b in payload["edges"]]
+    except Exception as e:
+        raise gr.Error(f"Bad payload: {e}")
+
+    accum = accum or {"segments": [], "chunk_ids": []}
+    try:
+        prep = street_main.prepare_pathfind(start, goals, edges)
+        segments = street_main.run_prepared_pathfind_segments(prep)
+    except Exception as e:
+        raise gr.Error(f"Chunk {chunk_id} failed: {e}")
+
+    accum = {
+        "segments": accum["segments"] + segments,
+        "chunk_ids": accum["chunk_ids"] + [chunk_id] * len(segments),
+    }
+    n_chunks = len(set(accum["chunk_ids"]))
+    return accum, f"<p>Chunk {chunk_id}: {len(segments)} segment(s). Accumulated: {len(accum['segments'])} segment(s) across {n_chunks} chunk(s).</p>"
+
+
+def handle_cli_join(pairs_str, accum, progress=gr.Progress(track_tqdm=True)):
+    """Scripted/CLI testing only: joins every chunk accumulated so far
+    (see handle_cli_run_chunk) via street_main.save_joined_pathfind,
+    scoping bridging to declared-adjacent chunk pairs only. Safe to call
+    repeatedly as more chunks get added -- always re-joins the FULL
+    accumulated set, not just the newest chunk.
+
+    pairs_str: JSON [[chunk_id_a, chunk_id_b], ...] -- empty/"" means no
+    restriction (blind O(n^2) bridging attempt over every segment pair,
+    only reasonable for a small accumulated segment count)."""
+    if not accum or not accum.get("segments"):
+        raise gr.Error("No chunks run yet -- call cli_run_chunk first.")
+    try:
+        pairs = [tuple(p) for p in json.loads(pairs_str)] if pairs_str.strip() else None
+    except Exception as e:
+        raise gr.Error(f"Bad known_adjacent_chunk_pairs: {e}")
+
+    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    try:
+        results = street_main.save_joined_pathfind(
+            accum["segments"], output_dir, chunk_ids=accum["chunk_ids"], known_adjacent_chunk_pairs=pairs,
+        )
+    except Exception as e:
+        raise gr.Error(f"Join failed: {e}")
+    return viewers.labeled_download_links(results)
+
+
+def handle_cli_reset():
+    """Scripted/CLI testing only: clears the accumulated chunk state, to
+    start a fresh staged run without restarting the whole Space."""
+    return None, "<p>Cleared.</p>"
+
+
 def build_tab():
     state, map_view, selection_view = build_map_section()
 
@@ -185,6 +259,24 @@ def build_tab():
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
     reconstruct_view = gr.HTML(viewers.build_pointcloud_viewer())
+
+    # Scripted/CLI-only controls for staging a large-area reconstruction
+    # (e.g. a whole campus) chunk by chunk via gradio_client, instead of
+    # one huge corridor in one GPU call -- see handle_cli_run_chunk's own
+    # docstring. Not meant for manual clicking (payloads are raw JSON),
+    # kept as real UI so it's inspectable/debuggable in the browser too.
+    with gr.Accordion("Scripted staged testing (CLI, experimental)", open=False):
+        cli_chunk_payload = gr.Textbox(
+            label='Chunk payload JSON: {"chunk_id": int, "start": [lat, lon], "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...]}',
+            lines=3,
+        )
+        cli_run_chunk_btn = gr.Button("Run chunk (prepare + GPU search)")
+        cli_status = gr.HTML()
+        cli_accum_state = gr.State(None)
+
+        cli_pairs = gr.Textbox(label="known_adjacent_chunk_pairs JSON, e.g. [[0, 1], [1, 2]] (blank = try all pairs)")
+        cli_join_btn = gr.Button("Join accumulated chunks")
+        cli_reset_btn = gr.Button("Reset accumulated chunks")
 
     pathfind_prepare_btn.click(
         fn=handle_pathfind_prepare,
@@ -224,4 +316,29 @@ def build_tab():
         outputs=[reconstruct_view, pathfind_segments_state, pathfind_segments_file],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
+    )
+
+    cli_run_chunk_btn.click(
+        fn=handle_cli_run_chunk,
+        inputs=[cli_chunk_payload, cli_accum_state],
+        outputs=[cli_accum_state, cli_status],
+        api_name="cli_run_chunk",
+        show_progress="minimal",
+        show_progress_on=[cli_status],
+    )
+
+    cli_join_btn.click(
+        fn=handle_cli_join,
+        inputs=[cli_pairs, cli_accum_state],
+        outputs=[reconstruct_view],
+        api_name="cli_join",
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    cli_reset_btn.click(
+        fn=handle_cli_reset,
+        inputs=[],
+        outputs=[cli_accum_state, cli_status],
+        api_name="cli_reset",
     )
