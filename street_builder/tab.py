@@ -208,9 +208,14 @@ def _download_checkpoint():
 def _upload_checkpoint(pieces, id_sets):
     """Saves pieces (already in final output shape via pieces_to_output)
     to CLI_CHECKPOINT_PREFIX, replacing whatever was checkpointed before
-    -- old files are cleared first since the piece count can shrink (two
-    pieces bridging into one) or grow (a chunk that doesn't connect to
-    anything yet) between calls. Returns the dataset URLs."""
+    -- ONE commit (a folder-delete op + one add op per new file), not one
+    commit per file. HF rate-limits dataset commits to 256/hour; the
+    original per-file delete_file/upload_file loop could burn through
+    dozens of commits for a single checkpoint update (a 17-piece
+    checkpoint = 34 files = 34+ separate commits) and hit that limit
+    after only a handful of chunks -- confirmed the hard way. Returns the
+    dataset URLs."""
+    from huggingface_hub import CommitOperationAdd, CommitOperationDelete
     from street_builder.reconstruction.join_segments import pieces_to_output
 
     results = pieces_to_output(pieces, id_sets=id_sets)
@@ -218,23 +223,19 @@ def _upload_checkpoint(pieces, id_sets):
     output_dir = os.path.join(SPLATS_DIR, run_id)
     saved = street_main._save_joined_pieces(results, output_dir)
 
+    fnames = sorted(os.listdir(output_dir))
     api = HfApi()
-    try:
-        for f in api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset"):
-            if f.startswith(CLI_CHECKPOINT_PREFIX + "/"):
-                api.delete_file(path_in_repo=f, repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
-    except Exception as e:
-        print(f"[cli] warning: couldn't clear old checkpoint files: {e}")
-
-    urls = []
-    for fname in sorted(os.listdir(output_dir)):
-        path_in_repo = f"{CLI_CHECKPOINT_PREFIX}/{fname}"
-        api.upload_file(
-            path_or_fileobj=os.path.join(output_dir, fname), path_in_repo=path_in_repo,
-            repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset",
-        )
-        urls.append(f"https://huggingface.co/datasets/{CLI_JOIN_DATASET_REPO}/blob/main/{path_in_repo}")
-    return urls
+    has_existing = any(f.startswith(CLI_CHECKPOINT_PREFIX + "/") for f in api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset"))
+    operations = [CommitOperationDelete(path_in_repo=CLI_CHECKPOINT_PREFIX + "/")] if has_existing else []
+    operations += [
+        CommitOperationAdd(path_in_repo=f"{CLI_CHECKPOINT_PREFIX}/{fname}", path_or_fileobj=os.path.join(output_dir, fname))
+        for fname in fnames
+    ]
+    api.create_commit(
+        repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", operations=operations,
+        commit_message=f"cli checkpoint: {len(pieces)} piece(s)",
+    )
+    return [f"https://huggingface.co/datasets/{CLI_JOIN_DATASET_REPO}/blob/main/{CLI_CHECKPOINT_PREFIX}/{fname}" for fname in fnames]
 
 
 def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
@@ -329,16 +330,22 @@ def handle_cli_bridge_chunk(run_result, adjacent_ids_str, progress=gr.Progress(t
 def handle_cli_reset():
     """Scripted/CLI testing only: deletes the current checkpoint from
     CLI_JOIN_DATASET_REPO, so the next cli_bridge_chunk call starts a
-    fresh run instead of building onto whatever was there before."""
-    api = HfApi()
+    fresh run instead of building onto whatever was there before. ONE
+    commit (a folder-delete op), not one per file -- see
+    _upload_checkpoint's docstring for why that matters."""
+    from huggingface_hub import CommitOperationDelete
     try:
-        files = [f for f in api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
-                 if f.startswith(CLI_CHECKPOINT_PREFIX + "/")]
-        for f in files:
-            api.delete_file(path_in_repo=f, repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
+        api = HfApi()
+        if not any(f.startswith(CLI_CHECKPOINT_PREFIX + "/") for f in api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")):
+            return "<p>Nothing to clear -- checkpoint already empty.</p>"
+        api.create_commit(
+            repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset",
+            operations=[CommitOperationDelete(path_in_repo=CLI_CHECKPOINT_PREFIX + "/")],
+            commit_message="cli reset",
+        )
     except Exception as e:
         raise gr.Error(f"Reset failed: {e}")
-    return f"<p>Cleared {len(files)} checkpoint file(s).</p>"
+    return "<p>Checkpoint cleared.</p>"
 
 
 def build_tab():
