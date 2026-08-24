@@ -10,4 +10,7 @@ pyyaml
 streetlevel @ git+https://github.com/YellowO2/streetlevel.git
 torchvision
 pillow-heif
+# Bump comment to bust HF's build cache when panoramic-da3's HEAD moves
+# (this line is unpinned, so a text-identical requirements.txt won't
+# trigger a re-fetch on its own): TEMP DIAGNOSTIC pycolmap-version test.
 panoramic-da3 @ git+https://github.com/YellowO2/panoramic-da3.git
