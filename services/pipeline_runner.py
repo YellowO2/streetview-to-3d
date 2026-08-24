@@ -309,8 +309,10 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
 
 
 def save_pointcloud(points, colors, path):
-    """Not GPU-wrapped -- pure disk I/O (open3d write), no CUDA involved.
-    Lazy import to match get_da3_config()'s pattern, so this module still
-    imports cleanly on machines without panoramic_da3 installed."""
+    """Not GPU-wrapped -- pure disk I/O (numpy/manual PLY write, no
+    open3d -- see Saver._voxel_downsample's docstring for why), no CUDA
+    involved. Lazy import to match get_da3_config()'s pattern, so this
+    module still imports cleanly on machines without panoramic_da3
+    installed."""
     from panoramic_da3 import save_da3_pointcloud
     return save_da3_pointcloud(points, colors, path)
