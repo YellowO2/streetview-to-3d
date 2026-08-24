@@ -12,5 +12,5 @@ torchvision
 pillow-heif
 # Unpinned -- bump this comment whenever panoramic-da3's HEAD moves and
 # needs to be picked up, since a text-identical requirements.txt won't
-# trigger HF's build cache to re-fetch it on its own. (bump: 2026-08-24-2)
+# trigger HF's build cache to re-fetch it on its own. (bump: 2026-08-24-3)
 panoramic-da3 @ git+https://github.com/YellowO2/panoramic-da3.git
