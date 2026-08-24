@@ -9,7 +9,7 @@ python_version: '3.12'
 app_file: app.py
 pinned: false
 license: mit
-short_description: Reconstructs a walkable street corridor into a 3D point cloud
+short_description: Reconstructs a street corridor into a 3D point cloud
 ---
 
 # Street Builder
