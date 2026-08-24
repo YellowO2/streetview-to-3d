@@ -126,6 +126,70 @@ def many_calls_probe(image_files, n_calls):
         torch.cuda.empty_cache()
 
 
+def real_pathfind_probe(image_files):
+    """Test 3: the REAL pipeline_runner.run_pathfind_reconstruction_gpu
+    (-> real _gpu_dispatch -> real services/da3_ops.py -> real
+    street_builder/reconstruction/walk_graph.py) called directly with a
+    fabricated 4-dot corridor -- two structurally-disconnected 2-dot
+    pairs, close enough together (a few meters) that join_segments'
+    real bridging search actually attempts real DA3 pairwise tests
+    between them, instead of skipping for being too far apart. No
+    Gradio UI/state involved, no network downloads -- same real backend
+    code the "Street Builder" tab's Run button calls, minus everything
+    upstream of it (map picking, candidate downloading).
+
+    Returns segments from the real corridor search -- pass this
+    straight into real_join_probe below as the SECOND, separate GPU
+    lease, exactly mirroring "2. Run auto-path" then "3. Join
+    segments"."""
+    if not image_files or len(image_files) < 2:
+        return "Upload at least 2 images first.", None
+    path_a, path_b = image_files[0].name if hasattr(image_files[0], "name") else image_files[0], \
+        image_files[1].name if hasattr(image_files[1], "name") else image_files[1]
+
+    # ~0.00009 deg lat ~= 10m. Pair (0,1) and pair (2,3) are each
+    # structurally adjacent to each other but NOT to the other pair --
+    # forces 2 disconnected pieces out of phase 1 -- while staying well
+    # within join_segments.BRIDGE_MAX_DIST_M (30m) of each other so the
+    # bridging search has a real nearby candidate to test.
+    points = [(0.0, 0.0), (0.00009, 0.0), (0.00004, 0.00004), (0.00013, 0.00004)]
+    adjacency = {0: [1], 1: [0], 2: [3], 3: [2]}
+    date_graphs = [{
+        "date": "probe-date",
+        "dot_candidates": {
+            0: [("probe:0", path_a, points[0][0], points[0][1])],
+            1: [("probe:1", path_b, points[1][0], points[1][1])],
+            2: [("probe:2", path_a, points[2][0], points[2][1])],
+            3: [("probe:3", path_b, points[3][0], points[3][1])],
+        },
+    }]
+    try:
+        segments = pipeline_runner.run_pathfind_reconstruction_gpu(
+            date_graphs, points, adjacency, points[0][0], points[0][1],
+        )
+        return f"OK -- {len(segments)} segment(s) produced. Now click Test 3b below.", segments
+    except Exception as e:
+        import traceback
+        return f"FAILED: {e}\n\n{traceback.format_exc()}", None
+
+
+def real_join_probe(segments):
+    """Test 3b: the REAL pipeline_runner.join_segments_gpu, fed the
+    segments Test 3 above just produced -- the actual second, separate
+    GPU lease. This is as close as this probe tab gets to the exact
+    real crash sequence without going through the Gradio map-picking UI."""
+    if not segments:
+        return "Run Test 3 first."
+    if len(segments) < 2:
+        return f"Only {len(segments)} segment(s) -- nothing to join. Re-run Test 3."
+    try:
+        pieces = pipeline_runner.join_segments_gpu(segments)
+        return f"OK -- {len(pieces) if pieces else 0} joined piece(s) produced"
+    except Exception as e:
+        import traceback
+        return f"FAILED: {e}\n\n{traceback.format_exc()}"
+
+
 def build_probe_tab() -> gr.Blocks:
     with gr.Blocks() as probe:
         gr.Markdown(
@@ -148,6 +212,22 @@ def build_probe_tab() -> gr.Blocks:
         many_btn = gr.Button("Simulate corridor search (many calls, one lease)")
         many_out = gr.Textbox(label="Result", lines=8)
         many_btn.click(fn=many_calls_probe, inputs=[files, n_calls], outputs=[many_out])
+
+        gr.Markdown(
+            "**Test 3** -- the REAL pathfind + join code (pipeline_runner.py, "
+            "services/da3_ops.py, street_builder/reconstruction/*), fed a "
+            "fabricated 4-dot corridor instead of real map data. Click 3a, "
+            "then 3b -- the actual real-code equivalent of \"2. Run auto-path\" "
+            "then \"3. Join segments\" as two separate GPU leases:"
+        )
+        segments_state = gr.State(None)
+        real_run_btn = gr.Button("3a. Real run_pathfind_reconstruction_gpu")
+        real_run_out = gr.Textbox(label="Result", lines=8)
+        real_run_btn.click(fn=real_pathfind_probe, inputs=[files], outputs=[real_run_out, segments_state])
+
+        real_join_btn = gr.Button("3b. Real join_segments_gpu (separate lease)")
+        real_join_out = gr.Textbox(label="Result", lines=8)
+        real_join_btn.click(fn=real_join_probe, inputs=[segments_state], outputs=[real_join_out])
     return probe
 
 
