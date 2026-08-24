@@ -1,6 +1,7 @@
 """CLI driver for staged, chunked corridor reconstruction against a
 deployed street-view-to-3d Space -- see street_builder/tab.py's
-handle_cli_add_chunk docstring for the API this drives.
+handle_cli_run_chunk/handle_cli_bridge_chunk docstrings for the API this
+drives.
 
 Fetches the full real Street View graph for an area once (pure network,
 no GPU) and caches it to ntu/graph.json so re-running doesn't re-hit the
@@ -10,11 +11,12 @@ raw discovery-order edge list, which can put two unconnected branches
 back-to-back purely by BFS queue timing (see that function's own
 docstring) -- then grows a chain of --max-chunks mutually-adjacent
 chunks (starting from one real known_adjacent_chunk_pairs entry) and
-runs them one at a time via cli_add_chunk, each incrementally bridged
-onto whatever's currently checkpointed in the dataset repo -- no
-re-verifying earlier merges, unlike the old all-at-once join. The
-checkpoint is already the final, viewable result after every call -- no
-separate finalize step needed.
+runs them one at a time via cli_run_chunk + cli_bridge_chunk (two
+separate GPU calls, see handle_cli_run_chunk's own docstring for why),
+each incrementally bridged onto whatever's currently checkpointed in the
+dataset repo -- no re-verifying earlier merges, unlike the old
+all-at-once join. The checkpoint is already the final, viewable result
+after every call -- no separate finalize step needed.
 
 Usage:
     python tests/staged_corridor_test.py --center 1.3481742,103.6836485 --radius 750
@@ -24,6 +26,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from gradio_client import Client
 
@@ -47,6 +50,13 @@ def fetch_or_load_graph(center_lat, center_lon, radius_m, refetch):
         json.dump({"center": [center_lat, center_lon], "radius_m": radius_m, "nodes": nodes, "edges": list(edges)}, f)
     print(f"Cached to {CACHE_PATH}.")
     return nodes, edges
+
+
+def _summary(status_html):
+    """Strips the <ul>...</ul> file-link dump each cli_* call returns --
+    scannable progress in a long run needs the one-line status, not a
+    wall of dataset URLs repeated on every single chunk."""
+    return status_html.split("</p>")[0].removeprefix("<p>")
 
 
 def to_payload(chunk):
@@ -123,10 +133,12 @@ def main():
         adjacent_ids = sorted(neighbors_of.get(cid, set()) & set(added_so_far))
         print(f"\n--- {cid} ({idx + 1}/{len(chunks)}, {len(chunk['goals']) + 1} node(s), "
               f"{len(chunk['corridor_edges'])} edge(s), adjacent_ids={adjacent_ids}) ---")
+        t0 = time.monotonic()
         run_status = client.predict(json.dumps(payload), api_name="/cli_run_chunk")
-        print(run_status)
+        print(_summary(run_status))
         bridge_status = client.predict(json.dumps(adjacent_ids), api_name="/cli_bridge_chunk")
-        print(bridge_status)
+        print(_summary(bridge_status))
+        print(f"[timing] {cid}: {time.monotonic() - t0:.1f}s wall-clock (run+bridge, includes network)")
         added_so_far.append(cid)
 
     print("\nDone -- the checkpoint above (cli_join/current/ in the dataset repo) is already the current, viewable result.")

@@ -184,7 +184,15 @@ def _download_checkpoint():
 
     pieces, id_sets = [], []
     for ply_rel in ply_files:
-        json_rel = ply_rel[:-4] + ".json"
+        # _save_joined_pieces names these "pathfind_joined{suffix}.ply" /
+        # "pathfind_metadata{suffix}.json" -- different prefixes, not
+        # just a different extension, so swap the whole basename prefix
+        # rather than assuming they share one.
+        dirname, basename = os.path.split(ply_rel)
+        if not basename.startswith("pathfind_joined") or not basename.endswith(".ply"):
+            continue
+        suffix = basename[len("pathfind_joined"):-len(".ply")]
+        json_rel = os.path.join(dirname, f"pathfind_metadata{suffix}.json")
         if json_rel not in files:
             continue
         ply_path = hf_hub_download(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", filename=ply_rel)
@@ -256,13 +264,16 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
     except Exception as e:
         raise gr.Error(f"Bad payload: {e}")
 
+    import time
+    t0 = time.monotonic()
     try:
         prep = street_main.prepare_pathfind(start, goals, edges)
         new_segments = street_main.run_prepared_pathfind_segments(prep)
     except Exception as e:
         raise gr.Error(f"Chunk {chunk_id} failed: {e}")
+    dt = time.monotonic() - t0
 
-    return {"chunk_id": chunk_id, "segments": new_segments}, f"<p>Chunk {chunk_id}: {len(new_segments)} segment(s). Ready to bridge.</p>"
+    return {"chunk_id": chunk_id, "segments": new_segments}, f"<p>Chunk {chunk_id}: {len(new_segments)} segment(s) in {dt:.1f}s. Ready to bridge.</p>"
 
 
 def handle_cli_bridge_chunk(run_result, adjacent_ids_str, progress=gr.Progress(track_tqdm=True)):
@@ -291,19 +302,28 @@ def handle_cli_bridge_chunk(run_result, adjacent_ids_str, progress=gr.Progress(t
     except Exception as e:
         raise gr.Error(f"Bad adjacent_ids: {e}")
 
+    import time
+    t0 = time.monotonic()
     existing_pieces, existing_ids = _download_checkpoint()
+    t_download = time.monotonic() - t0
 
     from services.pipeline_runner import bridge_incremental_gpu
+    t1 = time.monotonic()
     try:
         pieces, ids = bridge_incremental_gpu(existing_pieces, existing_ids, new_segments, chunk_id, adjacent_ids)
     except Exception as e:
         raise gr.Error(f"Bridging chunk {chunk_id} onto existing pieces failed: {e}")
+    t_bridge = time.monotonic() - t1
 
+    t2 = time.monotonic()
     urls = _upload_checkpoint(pieces, ids)
+    t_upload = time.monotonic() - t2
+
     sizes = [len(id_list) for id_list in ids]
     links = "".join(f'<li><a href="{u}">{u}</a></li>' for u in urls)
-    return (f"<p>Chunk {chunk_id}: merged, now {len(pieces)} "
-            f"piece(s) total (chunks per piece: {sizes}).</p><ul>{links}</ul>")
+    return (f"<p>Chunk {chunk_id}: merged {len(existing_pieces)} existing + {len(new_segments)} new -> {len(pieces)} "
+            f"piece(s) total (chunks per piece: {sizes}) "
+            f"(download {t_download:.1f}s, bridge {t_bridge:.1f}s, upload {t_upload:.1f}s).</p><ul>{links}</ul>")
 
 
 def handle_cli_reset():
