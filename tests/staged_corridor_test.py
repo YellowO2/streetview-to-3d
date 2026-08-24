@@ -136,7 +136,7 @@ def main():
         t0 = time.monotonic()
         run_status = client.predict(json.dumps(payload), api_name="/cli_run_chunk")
         print(_summary(run_status))
-        bridge_status = client.predict(json.dumps(adjacent_ids), api_name="/cli_bridge_chunk")
+        bridge_status = client.predict(cid, json.dumps(adjacent_ids), api_name="/cli_bridge_chunk")
         print(_summary(bridge_status))
         print(f"[timing] {cid}: {time.monotonic() - t0:.1f}s wall-clock (run+bridge, includes network)")
         added_so_far.append(cid)

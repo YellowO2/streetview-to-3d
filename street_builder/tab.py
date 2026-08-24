@@ -161,17 +161,25 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
 
 
 CLI_CHECKPOINT_PREFIX = "cli_join/current"
+# Each chunk's own raw, un-bridged Run output, saved independently of
+# whatever bridging does with it -- see _upload_pieces/_download_pieces.
+# Without this, a bug in the BRIDGE step (we've hit two) has no fallback:
+# the raw output only ever lived in that one Gradio session's gr.State,
+# so fixing the bug meant re-running the expensive GPU generation too,
+# not just re-running the fixed bridge step against the same data.
+CLI_RAW_PREFIX = "cli_raw"
 
 
-def _download_checkpoint():
-    """Downloads whatever's currently checkpointed in the dataset repo
-    (see _upload_checkpoint) and reconstructs bridgeable pieces from it
-    -- ([], []) if nothing's checkpointed yet (first chunk of a fresh
-    run). The checkpoint files themselves (one .ply + one .json per
-    still-separate piece) ARE the live state -- no separate internal
-    format, directly viewable/downloadable at any point, and exactly
-    what output_to_piece reconstructs from (see its own docstring for
-    why that's enough to keep bridging further)."""
+def _download_pieces(prefix):
+    """Downloads whatever's saved under `prefix` in the dataset repo (see
+    _upload_pieces) and reconstructs bridgeable pieces from it -- ([],
+    []) if nothing's there yet. Used for both the running checkpoint
+    (CLI_CHECKPOINT_PREFIX) and each chunk's own raw output
+    (CLI_RAW_PREFIX/<chunk_id>) -- same file shape (.ply + .json per
+    piece) either way, just a different path. Directly
+    viewable/downloadable at any point, and exactly what output_to_piece
+    reconstructs from (see its own docstring for why that's enough to
+    keep bridging further)."""
     from huggingface_hub import hf_hub_download
     from street_builder.reconstruction.join_segments import output_to_piece
 
@@ -180,7 +188,7 @@ def _download_checkpoint():
         files = api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
     except Exception:
         files = []
-    ply_files = sorted(f for f in files if f.startswith(CLI_CHECKPOINT_PREFIX + "/") and f.endswith(".ply"))
+    ply_files = sorted(f for f in files if f.startswith(prefix + "/") and f.endswith(".ply"))
 
     pieces, id_sets = [], []
     for ply_rel in ply_files:
@@ -205,16 +213,16 @@ def _download_checkpoint():
     return pieces, id_sets
 
 
-def _upload_checkpoint(pieces, id_sets):
-    """Saves pieces (already in final output shape via pieces_to_output)
-    to CLI_CHECKPOINT_PREFIX, replacing whatever was checkpointed before
-    -- ONE commit (a folder-delete op + one add op per new file), not one
-    commit per file. HF rate-limits dataset commits to 256/hour; the
-    original per-file delete_file/upload_file loop could burn through
-    dozens of commits for a single checkpoint update (a 17-piece
-    checkpoint = 34 files = 34+ separate commits) and hit that limit
-    after only a handful of chunks -- confirmed the hard way. Returns the
-    dataset URLs."""
+def _upload_pieces(prefix, pieces, id_sets, commit_message):
+    """Saves pieces (converted to final output shape via pieces_to_output)
+    under `prefix` in the dataset repo, replacing whatever was there
+    before -- ONE commit (a folder-delete op + one add op per new file),
+    not one commit per file. HF rate-limits dataset commits to 256/hour;
+    the original per-file delete_file/upload_file loop could burn
+    through dozens of commits for a single update (a 17-piece checkpoint
+    = 34 files = 34+ separate commits) and hit that limit after only a
+    handful of chunks -- confirmed the hard way. Returns the dataset
+    URLs."""
     from huggingface_hub import CommitOperationAdd, CommitOperationDelete
     from street_builder.reconstruction.join_segments import pieces_to_output
 
@@ -225,17 +233,14 @@ def _upload_checkpoint(pieces, id_sets):
 
     fnames = sorted(os.listdir(output_dir))
     api = HfApi()
-    has_existing = any(f.startswith(CLI_CHECKPOINT_PREFIX + "/") for f in api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset"))
-    operations = [CommitOperationDelete(path_in_repo=CLI_CHECKPOINT_PREFIX + "/")] if has_existing else []
+    has_existing = any(f.startswith(prefix + "/") for f in api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset"))
+    operations = [CommitOperationDelete(path_in_repo=prefix + "/")] if has_existing else []
     operations += [
-        CommitOperationAdd(path_in_repo=f"{CLI_CHECKPOINT_PREFIX}/{fname}", path_or_fileobj=os.path.join(output_dir, fname))
+        CommitOperationAdd(path_in_repo=f"{prefix}/{fname}", path_or_fileobj=os.path.join(output_dir, fname))
         for fname in fnames
     ]
-    api.create_commit(
-        repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", operations=operations,
-        commit_message=f"cli checkpoint: {len(pieces)} piece(s)",
-    )
-    return [f"https://huggingface.co/datasets/{CLI_JOIN_DATASET_REPO}/blob/main/{CLI_CHECKPOINT_PREFIX}/{fname}" for fname in fnames]
+    api.create_commit(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", operations=operations, commit_message=commit_message)
+    return [f"https://huggingface.co/datasets/{CLI_JOIN_DATASET_REPO}/blob/main/{prefix}/{fname}" for fname in fnames]
 
 
 def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
@@ -254,8 +259,15 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
     payload_str: JSON {"chunk_id": ..., "start": [lat, lon],
     "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...]}.
 
-    Returns (new_segments, status) -- new_segments is a gr.State, feed it
-    straight into handle_cli_bridge_chunk."""
+    Saves this chunk's own raw segments to CLI_RAW_PREFIX/<chunk_id>
+    BEFORE returning -- independent of whatever bridging does with them
+    later. Without this, a bug in the bridge step (we've hit two) has no
+    fallback: the raw output only lives in this call's return value, so
+    fixing a bridge bug would mean re-running this expensive GPU step
+    again too, not just re-running the fixed bridge against the same
+    data. handle_cli_bridge_chunk reads chunk data back from here by
+    chunk_id -- it does NOT need this call's return value at all
+    (returned mainly as an immediate status/preview)."""
     try:
         payload = json.loads(payload_str)
         chunk_id = payload["chunk_id"]
@@ -274,30 +286,37 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
         raise gr.Error(f"Chunk {chunk_id} failed: {e}")
     dt = time.monotonic() - t0
 
-    return {"chunk_id": chunk_id, "segments": new_segments}, f"<p>Chunk {chunk_id}: {len(new_segments)} segment(s) in {dt:.1f}s. Ready to bridge.</p>"
+    t1 = time.monotonic()
+    _upload_pieces(f"{CLI_RAW_PREFIX}/{chunk_id}", new_segments, [[chunk_id]] * len(new_segments),
+                    commit_message=f"cli raw chunk {chunk_id}: {len(new_segments)} segment(s)")
+    dt_save = time.monotonic() - t1
+
+    return (f"<p>Chunk {chunk_id}: {len(new_segments)} segment(s) in {dt:.1f}s "
+            f"(saved raw output in {dt_save:.1f}s). Ready to bridge.</p>")
 
 
-def handle_cli_bridge_chunk(run_result, adjacent_ids_str, progress=gr.Progress(track_tqdm=True)):
-    """Scripted/CLI: bridges a chunk already run via handle_cli_run_chunk
-    onto whatever's currently checkpointed in CLI_JOIN_DATASET_REPO --
-    its own separate @spaces.GPU call (see handle_cli_run_chunk's
-    docstring for why). See services.pipeline_runner.
-    bridge_incremental_gpu's own docstring for why this does NOT
-    re-verify pairs a previous call already merged. Fully stateless with
-    respect to the dataset: no separate load/save step -- the dataset
-    checkpoint IS the current state, downloaded at the start of this call
-    and re-uploaded at the end (see _download_checkpoint/
-    _upload_checkpoint), so it's always directly viewable AND resumable,
-    in the same files, at every step.
+def handle_cli_bridge_chunk(chunk_id, adjacent_ids_str, progress=gr.Progress(track_tqdm=True)):
+    """Scripted/CLI: bridges a chunk (already run + saved via
+    handle_cli_run_chunk) onto whatever's currently checkpointed in
+    CLI_JOIN_DATASET_REPO -- its own separate @spaces.GPU call (see
+    handle_cli_run_chunk's docstring for why). See services.
+    pipeline_runner.bridge_incremental_gpu's own docstring for why this
+    does NOT re-verify pairs a previous call already merged.
 
-    run_result: the gr.State handle_cli_run_chunk returned.
+    Reads the chunk's raw segments back from CLI_RAW_PREFIX (NOT from any
+    in-session state) -- so this call is fully independent of
+    handle_cli_run_chunk's own return value/session, and safe to retry
+    (e.g. after fixing a bridge-step bug) without regenerating anything,
+    in a brand new session if needed. Same for the checkpoint itself:
+    downloaded at the start of this call and re-uploaded at the end (see
+    _download_pieces/_upload_pieces), so it's always directly viewable
+    AND resumable, in the same files, at every step.
+
+    chunk_id: the chunk to bridge in (must have been run+saved already).
     adjacent_ids_str: JSON list of existing chunk ids this chunk is
     known-adjacent to (from the caller's own graph-level chunking, e.g.
     map_selection.candidates.split_into_chunks's known_adjacent_chunk_pairs)
     -- "[]" for the very first chunk, nothing to bridge onto yet."""
-    if not run_result:
-        raise gr.Error("Nothing run yet -- call cli_run_chunk first.")
-    chunk_id, new_segments = run_result["chunk_id"], run_result["segments"]
     try:
         adjacent_ids = json.loads(adjacent_ids_str) if adjacent_ids_str.strip() else []
     except Exception as e:
@@ -305,7 +324,10 @@ def handle_cli_bridge_chunk(run_result, adjacent_ids_str, progress=gr.Progress(t
 
     import time
     t0 = time.monotonic()
-    existing_pieces, existing_ids = _download_checkpoint()
+    new_segments, _ = _download_pieces(f"{CLI_RAW_PREFIX}/{chunk_id}")
+    if not new_segments:
+        raise gr.Error(f"No saved raw output for chunk {chunk_id} -- call cli_run_chunk for it first.")
+    existing_pieces, existing_ids = _download_pieces(CLI_CHECKPOINT_PREFIX)
     t_download = time.monotonic() - t0
 
     from services.pipeline_runner import bridge_incremental_gpu
@@ -317,7 +339,7 @@ def handle_cli_bridge_chunk(run_result, adjacent_ids_str, progress=gr.Progress(t
     t_bridge = time.monotonic() - t1
 
     t2 = time.monotonic()
-    urls = _upload_checkpoint(pieces, ids)
+    urls = _upload_pieces(CLI_CHECKPOINT_PREFIX, pieces, ids, commit_message=f"cli checkpoint: {len(pieces)} piece(s)")
     t_upload = time.monotonic() - t2
 
     sizes = [len(id_list) for id_list in ids]
@@ -328,11 +350,14 @@ def handle_cli_bridge_chunk(run_result, adjacent_ids_str, progress=gr.Progress(t
 
 
 def handle_cli_reset():
-    """Scripted/CLI testing only: deletes the current checkpoint from
-    CLI_JOIN_DATASET_REPO, so the next cli_bridge_chunk call starts a
-    fresh run instead of building onto whatever was there before. ONE
-    commit (a folder-delete op), not one per file -- see
-    _upload_checkpoint's docstring for why that matters."""
+    """Scripted/CLI testing only: deletes the current checkpoint (bridged/
+    merged state) from CLI_JOIN_DATASET_REPO, so the next cli_bridge_chunk
+    call starts a fresh merge instead of building onto whatever was there
+    before. Deliberately does NOT touch CLI_RAW_PREFIX -- each chunk's
+    own raw generation output stays around, so a reset only costs a
+    re-bridge (cheap-ish), not a full re-generate (the expensive part).
+    ONE commit (a folder-delete op), not one per file -- see
+    _upload_pieces's docstring for why that matters."""
     from huggingface_hub import CommitOperationDelete
     try:
         api = HfApi()
@@ -398,12 +423,12 @@ def build_tab():
             label='Chunk payload JSON: {"chunk_id": ..., "start": [lat, lon], "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...]}',
             lines=3,
         )
-        cli_run_chunk_btn = gr.Button("1. Run chunk (GPU search)")
-        cli_run_result_state = gr.State(None)
+        cli_run_chunk_btn = gr.Button("1. Run chunk (GPU search, saves raw output)")
+        cli_bridge_chunk_id = gr.Textbox(label="Chunk id to bridge (must already be run+saved)")
         cli_adjacent_ids = gr.Textbox(label='Existing chunk ids this chunk is known-adjacent to, JSON e.g. ["chunk0"] ("[]" for the first chunk)')
         cli_bridge_chunk_btn = gr.Button("2. Bridge chunk onto checkpoint (GPU bridge)")
         cli_status = gr.HTML()
-        cli_reset_btn = gr.Button("Reset checkpoint (start a fresh run)")
+        cli_reset_btn = gr.Button("Reset checkpoint (start a fresh merge, keeps raw chunks)")
 
     pathfind_prepare_btn.click(
         fn=handle_pathfind_prepare,
@@ -448,7 +473,7 @@ def build_tab():
     cli_run_chunk_btn.click(
         fn=handle_cli_run_chunk,
         inputs=[cli_chunk_payload],
-        outputs=[cli_run_result_state, cli_status],
+        outputs=[cli_status],
         api_name="cli_run_chunk",
         show_progress="minimal",
         show_progress_on=[cli_status],
@@ -456,7 +481,7 @@ def build_tab():
 
     cli_bridge_chunk_btn.click(
         fn=handle_cli_bridge_chunk,
-        inputs=[cli_run_result_state, cli_adjacent_ids],
+        inputs=[cli_bridge_chunk_id, cli_adjacent_ids],
         outputs=[cli_status],
         api_name="cli_bridge_chunk",
         show_progress="minimal",
