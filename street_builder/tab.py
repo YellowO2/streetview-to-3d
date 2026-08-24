@@ -12,11 +12,20 @@ import os
 import uuid
 
 import gradio as gr
+from huggingface_hub import HfApi
 
 import viewers
 from paths import SPLATS_DIR
 from street_builder import main as street_main
 from street_builder.map_selection.tab import build_map_section, nodes_by_key
+
+# Where cli_join pushes its results -- Hub-native storage (fast up/download,
+# survives Space restarts/redeploys) instead of routing large files through
+# Gradio's own file-serving proxy, which is slow for anything this size.
+# Needs an HF_TOKEN secret configured on the Space itself (Settings ->
+# Variables and secrets) with write access -- a Space has no Hub write
+# access by default. HfApi() picks that env var up automatically.
+CLI_JOIN_DATASET_REPO = "potato-bug/ntu-reconstruction"
 
 
 def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
@@ -195,7 +204,19 @@ def handle_cli_join(pairs_str, accum, progress=gr.Progress(track_tqdm=True)):
     (see handle_cli_run_chunk) via street_main.save_joined_pathfind,
     scoping bridging to declared-adjacent chunk pairs only. Safe to call
     repeatedly as more chunks get added -- always re-joins the FULL
-    accumulated set, not just the newest chunk.
+    accumulated set, not just the newest chunk (so don't call this after
+    every single chunk on a large run -- each call re-bridges pairs that
+    already succeeded in a previous call too, since nothing here
+    remembers prior merges; checkpoint every several chunks instead).
+
+    Results are pushed straight to CLI_JOIN_DATASET_REPO (a HF dataset,
+    not the Space's own local disk) -- large-file up/download through
+    huggingface_hub's own transfer goes straight to Hub storage, instead
+    of routing through Gradio's file-serving proxy (slow, and the
+    Space's local disk doesn't survive a redeploy anyway). Requires an
+    HF_TOKEN secret configured on the Space itself (Settings -> Variables
+    and secrets) with write access -- HfApi() picks that up from the
+    environment automatically, no token handling needed here.
 
     pairs_str: JSON [[chunk_id_a, chunk_id_b], ...] -- empty/"" means no
     restriction (blind O(n^2) bridging attempt over every segment pair,
@@ -207,14 +228,33 @@ def handle_cli_join(pairs_str, accum, progress=gr.Progress(track_tqdm=True)):
     except Exception as e:
         raise gr.Error(f"Bad known_adjacent_chunk_pairs: {e}")
 
-    output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    run_id = uuid.uuid4().hex
+    output_dir = os.path.join(SPLATS_DIR, run_id)
     try:
         results = street_main.save_joined_pathfind(
             accum["segments"], output_dir, chunk_ids=accum["chunk_ids"], known_adjacent_chunk_pairs=pairs,
         )
     except Exception as e:
         raise gr.Error(f"Join failed: {e}")
-    return viewers.labeled_download_links(results)
+
+    api = HfApi()
+    uploaded = []
+    for fname in sorted(os.listdir(output_dir)):
+        path_in_repo = f"cli_join/{run_id}/{fname}"
+        try:
+            api.upload_file(
+                path_or_fileobj=os.path.join(output_dir, fname),
+                path_in_repo=path_in_repo,
+                repo_id=CLI_JOIN_DATASET_REPO,
+                repo_type="dataset",
+            )
+            uploaded.append(f"https://huggingface.co/datasets/{CLI_JOIN_DATASET_REPO}/blob/main/{path_in_repo}")
+        except Exception as e:
+            raise gr.Error(f"Join succeeded but upload to {CLI_JOIN_DATASET_REPO} failed: {e}")
+
+    labels = "".join(f"<li>{label}</li>" for label, _ in results)
+    links = "".join(f'<li><a href="{u}">{u}</a></li>' for u in uploaded)
+    return f"<p>Joined {len(results)} piece(s):</p><ul>{labels}</ul><p>Uploaded to {CLI_JOIN_DATASET_REPO}:</p><ul>{links}</ul>"
 
 
 def handle_cli_reset():
