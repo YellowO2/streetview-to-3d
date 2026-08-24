@@ -19,7 +19,8 @@ from paths import SPLATS_DIR
 from street_builder import main as street_main
 from street_builder.map_selection.tab import build_map_section, nodes_by_key
 
-# Where cli_join pushes its results -- Hub-native storage (fast up/download,
+# Where the scripted CLI flow pushes its running state and final results --
+# Hub-native storage (fast up/download,
 # survives Space restarts/redeploys) instead of routing large files through
 # Gradio's own file-serving proxy, which is slow for anything this size.
 # Needs an HF_TOKEN secret configured on the Space itself (Settings ->
@@ -159,108 +160,139 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
     return viewers.labeled_download_links(results)
 
 
-def handle_cli_run_chunk(payload_str, accum, progress=gr.Progress(track_tqdm=True)):
-    """Scripted/CLI testing only: runs Prepare+Run for ONE explicit chunk
-    of a larger corridor, bypassing map_selection's `state` entirely --
-    driven by gradio_client, not the map UI. Lets a large area (e.g. a
-    whole campus) be walked through this pipeline in small pieces from a
-    script: fetch the full real graph once (locally, via
-    map_selection.candidates.expand_area -- no GPU needed for that), slice
-    its edges into chunks, then call this endpoint once per chunk, each
-    tagged with its own chunk_id.
+CLI_CHECKPOINT_PREFIX = "cli_join/current"
 
-    payload_str: JSON {"chunk_id": int, "start": [lat, lon],
+
+def _download_checkpoint():
+    """Downloads whatever's currently checkpointed in the dataset repo
+    (see _upload_checkpoint) and reconstructs bridgeable pieces from it
+    -- ([], []) if nothing's checkpointed yet (first chunk of a fresh
+    run). The checkpoint files themselves (one .ply + one .json per
+    still-separate piece) ARE the live state -- no separate internal
+    format, directly viewable/downloadable at any point, and exactly
+    what output_to_piece reconstructs from (see its own docstring for
+    why that's enough to keep bridging further)."""
+    from huggingface_hub import hf_hub_download
+    from street_builder.reconstruction.join_segments import output_to_piece
+
+    api = HfApi()
+    try:
+        files = api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
+    except Exception:
+        files = []
+    ply_files = sorted(f for f in files if f.startswith(CLI_CHECKPOINT_PREFIX + "/") and f.endswith(".ply"))
+
+    pieces, id_sets = [], []
+    for ply_rel in ply_files:
+        json_rel = ply_rel[:-4] + ".json"
+        if json_rel not in files:
+            continue
+        ply_path = hf_hub_download(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", filename=ply_rel)
+        json_path = hf_hub_download(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", filename=json_rel)
+        with open(json_path) as f:
+            metadata = json.load(f)
+        piece, chunk_ids = output_to_piece(ply_path, metadata)
+        pieces.append(piece)
+        id_sets.append(chunk_ids or [])
+    return pieces, id_sets
+
+
+def _upload_checkpoint(pieces, id_sets):
+    """Saves pieces (already in final output shape via pieces_to_output)
+    to CLI_CHECKPOINT_PREFIX, replacing whatever was checkpointed before
+    -- old files are cleared first since the piece count can shrink (two
+    pieces bridging into one) or grow (a chunk that doesn't connect to
+    anything yet) between calls. Returns the dataset URLs."""
+    from street_builder.reconstruction.join_segments import pieces_to_output
+
+    results = pieces_to_output(pieces, id_sets=id_sets)
+    run_id = uuid.uuid4().hex
+    output_dir = os.path.join(SPLATS_DIR, run_id)
+    saved = street_main._save_joined_pieces(results, output_dir)
+
+    api = HfApi()
+    try:
+        for f in api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset"):
+            if f.startswith(CLI_CHECKPOINT_PREFIX + "/"):
+                api.delete_file(path_in_repo=f, repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
+    except Exception as e:
+        print(f"[cli] warning: couldn't clear old checkpoint files: {e}")
+
+    urls = []
+    for fname in sorted(os.listdir(output_dir)):
+        path_in_repo = f"{CLI_CHECKPOINT_PREFIX}/{fname}"
+        api.upload_file(
+            path_or_fileobj=os.path.join(output_dir, fname), path_in_repo=path_in_repo,
+            repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset",
+        )
+        urls.append(f"https://huggingface.co/datasets/{CLI_JOIN_DATASET_REPO}/blob/main/{path_in_repo}")
+    return urls
+
+
+def handle_cli_add_chunk(payload_str, adjacent_ids_str, progress=gr.Progress(track_tqdm=True)):
+    """Scripted/CLI: runs Prepare+Run for ONE chunk, then incrementally
+    bridges it onto whatever's currently checkpointed in
+    CLI_JOIN_DATASET_REPO -- see services.pipeline_runner.
+    bridge_incremental_gpu's own docstring for why this does NOT
+    re-verify pairs a previous call already merged (unlike the old
+    all-at-once join, whose cost grew with total chunks ever run). Fully
+    stateless from the caller's side: no gr.State, no separate load/save
+    step -- the dataset checkpoint IS the current state, downloaded at
+    the start of this call and re-uploaded at the end (see
+    _download_checkpoint/_upload_checkpoint), so it's always directly
+    viewable AND resumable, in the same files, at every step -- not two
+    separate formats for two separate purposes.
+
+    payload_str: JSON {"chunk_id": ..., "start": [lat, lon],
     "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...]}.
-    accum: {"segments": [...], "chunk_ids": [...]} accumulated across
-    every chunk run so far in this session (gr.State, persists across
-    calls on the same gradio_client session) -- feed straight into
-    handle_cli_join once enough chunks are in."""
+    adjacent_ids_str: JSON list of existing chunk ids this new chunk is
+    known-adjacent to (from the caller's own graph-level chunking, e.g.
+    map_selection.candidates.split_into_chunks's known_adjacent_chunk_pairs)
+    -- "[]" for the very first chunk, nothing to bridge onto yet."""
     try:
         payload = json.loads(payload_str)
         chunk_id = payload["chunk_id"]
         start = tuple(payload["start"])
         goals = [tuple(g) for g in payload["goals"]]
         edges = [(tuple(a), tuple(b)) for a, b in payload["edges"]]
+        adjacent_ids = json.loads(adjacent_ids_str) if adjacent_ids_str.strip() else []
     except Exception as e:
         raise gr.Error(f"Bad payload: {e}")
 
-    accum = accum or {"segments": [], "chunk_ids": []}
+    existing_pieces, existing_ids = _download_checkpoint()
+
     try:
         prep = street_main.prepare_pathfind(start, goals, edges)
-        segments = street_main.run_prepared_pathfind_segments(prep)
+        new_segments = street_main.run_prepared_pathfind_segments(prep)
     except Exception as e:
         raise gr.Error(f"Chunk {chunk_id} failed: {e}")
 
-    accum = {
-        "segments": accum["segments"] + segments,
-        "chunk_ids": accum["chunk_ids"] + [chunk_id] * len(segments),
-    }
-    n_chunks = len(set(accum["chunk_ids"]))
-    return accum, f"<p>Chunk {chunk_id}: {len(segments)} segment(s). Accumulated: {len(accum['segments'])} segment(s) across {n_chunks} chunk(s).</p>"
-
-
-def handle_cli_join(pairs_str, accum, progress=gr.Progress(track_tqdm=True)):
-    """Scripted/CLI testing only: joins every chunk accumulated so far
-    (see handle_cli_run_chunk) via street_main.save_joined_pathfind,
-    scoping bridging to declared-adjacent chunk pairs only. Safe to call
-    repeatedly as more chunks get added -- always re-joins the FULL
-    accumulated set, not just the newest chunk (so don't call this after
-    every single chunk on a large run -- each call re-bridges pairs that
-    already succeeded in a previous call too, since nothing here
-    remembers prior merges; checkpoint every several chunks instead).
-
-    Results are pushed straight to CLI_JOIN_DATASET_REPO (a HF dataset,
-    not the Space's own local disk) -- large-file up/download through
-    huggingface_hub's own transfer goes straight to Hub storage, instead
-    of routing through Gradio's file-serving proxy (slow, and the
-    Space's local disk doesn't survive a redeploy anyway). Requires an
-    HF_TOKEN secret configured on the Space itself (Settings -> Variables
-    and secrets) with write access -- HfApi() picks that up from the
-    environment automatically, no token handling needed here.
-
-    pairs_str: JSON [[chunk_id_a, chunk_id_b], ...] -- empty/"" means no
-    restriction (blind O(n^2) bridging attempt over every segment pair,
-    only reasonable for a small accumulated segment count)."""
-    if not accum or not accum.get("segments"):
-        raise gr.Error("No chunks run yet -- call cli_run_chunk first.")
+    from services.pipeline_runner import bridge_incremental_gpu
     try:
-        pairs = [tuple(p) for p in json.loads(pairs_str)] if pairs_str.strip() else None
+        pieces, ids = bridge_incremental_gpu(existing_pieces, existing_ids, new_segments, chunk_id, adjacent_ids)
     except Exception as e:
-        raise gr.Error(f"Bad known_adjacent_chunk_pairs: {e}")
+        raise gr.Error(f"Bridging chunk {chunk_id} onto existing pieces failed: {e}")
 
-    run_id = uuid.uuid4().hex
-    output_dir = os.path.join(SPLATS_DIR, run_id)
-    try:
-        results = street_main.save_joined_pathfind(
-            accum["segments"], output_dir, chunk_ids=accum["chunk_ids"], known_adjacent_chunk_pairs=pairs,
-        )
-    except Exception as e:
-        raise gr.Error(f"Join failed: {e}")
-
-    api = HfApi()
-    uploaded = []
-    for fname in sorted(os.listdir(output_dir)):
-        path_in_repo = f"cli_join/{run_id}/{fname}"
-        try:
-            api.upload_file(
-                path_or_fileobj=os.path.join(output_dir, fname),
-                path_in_repo=path_in_repo,
-                repo_id=CLI_JOIN_DATASET_REPO,
-                repo_type="dataset",
-            )
-            uploaded.append(f"https://huggingface.co/datasets/{CLI_JOIN_DATASET_REPO}/blob/main/{path_in_repo}")
-        except Exception as e:
-            raise gr.Error(f"Join succeeded but upload to {CLI_JOIN_DATASET_REPO} failed: {e}")
-
-    labels = "".join(f"<li>{label}</li>" for label, _ in results)
-    links = "".join(f'<li><a href="{u}">{u}</a></li>' for u in uploaded)
-    return f"<p>Joined {len(results)} piece(s):</p><ul>{labels}</ul><p>Uploaded to {CLI_JOIN_DATASET_REPO}:</p><ul>{links}</ul>"
+    urls = _upload_checkpoint(pieces, ids)
+    sizes = [len(id_list) for id_list in ids]
+    links = "".join(f'<li><a href="{u}">{u}</a></li>' for u in urls)
+    return (f"<p>Chunk {chunk_id}: {len(new_segments)} new segment(s), now {len(pieces)} "
+            f"piece(s) total (chunks per piece: {sizes}).</p><ul>{links}</ul>")
 
 
 def handle_cli_reset():
-    """Scripted/CLI testing only: clears the accumulated chunk state, to
-    start a fresh staged run without restarting the whole Space."""
-    return None, "<p>Cleared.</p>"
+    """Scripted/CLI testing only: deletes the current checkpoint from
+    CLI_JOIN_DATASET_REPO, so the next cli_add_chunk call starts a fresh
+    run instead of building onto whatever was there before."""
+    api = HfApi()
+    try:
+        files = [f for f in api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
+                 if f.startswith(CLI_CHECKPOINT_PREFIX + "/")]
+        for f in files:
+            api.delete_file(path_in_repo=f, repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
+    except Exception as e:
+        raise gr.Error(f"Reset failed: {e}")
+    return f"<p>Cleared {len(files)} checkpoint file(s).</p>"
 
 
 def build_tab():
@@ -301,22 +333,20 @@ def build_tab():
     reconstruct_view = gr.HTML(viewers.build_pointcloud_viewer())
 
     # Scripted/CLI-only controls for staging a large-area reconstruction
-    # (e.g. a whole campus) chunk by chunk via gradio_client, instead of
-    # one huge corridor in one GPU call -- see handle_cli_run_chunk's own
+    # (e.g. a whole campus) chunk by chunk via gradio_client, incrementally
+    # bridging each new chunk onto whatever's already merged instead of
+    # one huge corridor in one GPU call -- see handle_cli_add_chunk's own
     # docstring. Not meant for manual clicking (payloads are raw JSON),
     # kept as real UI so it's inspectable/debuggable in the browser too.
     with gr.Accordion("Scripted staged testing (CLI, experimental)", open=False):
         cli_chunk_payload = gr.Textbox(
-            label='Chunk payload JSON: {"chunk_id": int, "start": [lat, lon], "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...]}',
+            label='Chunk payload JSON: {"chunk_id": ..., "start": [lat, lon], "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...]}',
             lines=3,
         )
-        cli_run_chunk_btn = gr.Button("Run chunk (prepare + GPU search)")
+        cli_adjacent_ids = gr.Textbox(label='Existing chunk ids this chunk is known-adjacent to, JSON e.g. ["chunk0"] ("[]" for the first chunk)')
+        cli_add_chunk_btn = gr.Button("Add chunk (prepare + run + incremental bridge)")
         cli_status = gr.HTML()
-        cli_accum_state = gr.State(None)
-
-        cli_pairs = gr.Textbox(label="known_adjacent_chunk_pairs JSON, e.g. [[0, 1], [1, 2]] (blank = try all pairs)")
-        cli_join_btn = gr.Button("Join accumulated chunks")
-        cli_reset_btn = gr.Button("Reset accumulated chunks")
+        cli_reset_btn = gr.Button("Reset checkpoint (start a fresh run)")
 
     pathfind_prepare_btn.click(
         fn=handle_pathfind_prepare,
@@ -358,27 +388,18 @@ def build_tab():
         show_progress_on=[reconstruct_view],
     )
 
-    cli_run_chunk_btn.click(
-        fn=handle_cli_run_chunk,
-        inputs=[cli_chunk_payload, cli_accum_state],
-        outputs=[cli_accum_state, cli_status],
-        api_name="cli_run_chunk",
+    cli_add_chunk_btn.click(
+        fn=handle_cli_add_chunk,
+        inputs=[cli_chunk_payload, cli_adjacent_ids],
+        outputs=[cli_status],
+        api_name="cli_add_chunk",
         show_progress="minimal",
         show_progress_on=[cli_status],
-    )
-
-    cli_join_btn.click(
-        fn=handle_cli_join,
-        inputs=[cli_pairs, cli_accum_state],
-        outputs=[reconstruct_view],
-        api_name="cli_join",
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
     )
 
     cli_reset_btn.click(
         fn=handle_cli_reset,
         inputs=[],
-        outputs=[cli_accum_state, cli_status],
+        outputs=[cli_status],
         api_name="cli_reset",
     )

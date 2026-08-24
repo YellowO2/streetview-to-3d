@@ -178,7 +178,7 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
 
 
 def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=None,
-                   chunk_ids=None, known_adjacent_chunk_pairs=None, refetch_path=None):
+                   chunk_ids=None, known_adjacent_chunk_pairs=None, refetch_path=None, return_ids=False):
     """Try to merge geographically/structurally adjacent segments via real
     DA3-verified transforms. Greedily merges pairs until nothing more
     merges or the deadline hits. Returns a new list of (possibly merged)
@@ -191,25 +191,43 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
 
     chunk_ids: optional, same length/order as segments -- an identifying
     label per segment (e.g. which chunk of a large-scale corridor it
-    came from). known_adjacent_chunk_pairs: optional [(id_a, id_b), ...]
-    -- when given (needs chunk_ids too), ONLY segment pairs whose chunk
-    id(s) appear together in this list are ever attempted, skipping the
-    blind O(n^2) all-pairs scan entirely. Use when the caller already
-    knows which pieces are structurally meant to connect (e.g.
-    deliberately-chunked corridor segments) -- far cheaper once there
-    are many segments, and avoids wrongly bridging two segments that
-    just happen to be geographically close but aren't actually adjacent
-    (different floor, opposite side of a loop, etc.). As pieces merge, a
-    merged piece inherits the union of its ingredients' chunk ids, so it
-    stays matchable against anything adjacent to either original chunk."""
+    came from). Each entry is normally a single id, but MAY itself be an
+    iterable of ids -- lets a caller feed back in an already-merged piece
+    from a PREVIOUS bridge_pieces call (see return_ids) as one input
+    segment carrying its own whole prior chunk-id set, so a later call
+    only needs to test that piece against genuinely NEW segments, never
+    re-verifying pairs it already merged. known_adjacent_chunk_pairs:
+    optional [(id_a, id_b), ...] -- when given (needs chunk_ids too),
+    ONLY segment pairs whose chunk id(s) appear together in this list are
+    ever attempted, skipping the blind O(n^2) all-pairs scan entirely.
+    Use when the caller already knows which pieces are structurally meant
+    to connect (e.g. deliberately-chunked corridor segments) -- far
+    cheaper once there are many segments, and avoids wrongly bridging two
+    segments that just happen to be geographically close but aren't
+    actually adjacent (different floor, opposite side of a loop, etc.).
+    As pieces merge, a merged piece inherits the union of its
+    ingredients' chunk ids, so it stays matchable against anything
+    adjacent to either original chunk.
+
+    return_ids: when True, returns (pieces, id_sets) -- id_sets[i] is the
+    sorted list of every original chunk id folded into pieces[i], for a
+    caller that wants to persist "here's what's already merged" and feed
+    it back into a later call as chunk_ids (see above)."""
     if bridge_test_edge is None or len(segments) < 2:
-        return segments
+        pieces = list(segments)
+        if not return_ids:
+            return pieces
+        if chunk_ids is not None:
+            id_sets = [sorted(cid) if isinstance(cid, (set, frozenset, list, tuple)) else [cid] for cid in chunk_ids]
+        else:
+            id_sets = [[i] for i in range(len(pieces))]
+        return pieces, id_sets
     if deadline is None:
         deadline = time.monotonic() + 200.0
 
     pieces = list(segments)
     if chunk_ids is not None:
-        id_sets = [frozenset({cid}) for cid in chunk_ids]
+        id_sets = [frozenset(cid) if isinstance(cid, (set, frozenset, list, tuple)) else frozenset({cid}) for cid in chunk_ids]
     else:
         id_sets = [frozenset({i}) for i in range(len(pieces))]
     adjacency_set = ({frozenset(pair) for pair in known_adjacent_chunk_pairs}
@@ -238,7 +256,72 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
                 id_sets = [s for k, s in enumerate(id_sets) if k not in (i, j)] + [merged_ids]
                 changed = True
                 break
-    return pieces
+    if not return_ids:
+        return pieces
+    return pieces, [sorted(s) for s in id_sets]
+
+
+def pieces_to_output(pieces, id_sets=None):
+    """Converts internal 7-tuple pieces to the (points, colors, metadata)
+    shape returned to callers/saved to disk. Includes each node's own
+    rotation (needed to bridge further later -- see output_to_piece) --
+    only `path` is dropped, since bridging never trusts a stored path
+    anyway (every real caller supplies bridge_pieces a refetch_path
+    callback that re-downloads each candidate fresh by key; see
+    _try_bridge). id_sets: optional, same length/order as pieces -- each
+    piece's own list of original chunk ids (see bridge_pieces'
+    return_ids=True), tagged onto every node in that piece as
+    "chunk_ids" so output_to_piece can recover it later. This makes the
+    output round-trippable: see output_to_piece, its exact inverse."""
+    results = []
+    for idx, (pts, cols, path_edges, date, reached, node_positions, frame_poses) in enumerate(pieces):
+        chunk_ids = id_sets[idx] if id_sets is not None else None
+        metadata = {k: {"lat": lat, "lon": lon, "date": date, "position": pos.tolist(),
+                         "rotation": rot.tolist(), "n_views_kept": n_kept, "n_views_total": n_total,
+                         **({"chunk_ids": chunk_ids} if chunk_ids is not None else {})}
+                    for k, (pos, rot, path, lat, lon, n_kept, n_total) in frame_poses.items()}
+        results.append((pts, cols, metadata))
+    return results
+
+
+def output_to_piece(ply_path, metadata):
+    """Inverse of pieces_to_output, for ONE already-saved piece --
+    reconstructs a 7-tuple segment good enough to keep bridging further
+    (see bridge_pieces/_try_bridge). pts/cols come back from the binary
+    PLY file; per-node position/rotation/lat/lon/date/view-counts come
+    from metadata. `path` is set to None -- safe ONLY because this is
+    meant to be fed to bridge_pieces together with a refetch_path
+    callback (every real GPU caller here provides one), which re-fetches
+    each candidate fresh by key and never looks at this field; never call
+    this for a bridge_pieces call that lacks refetch_path.
+
+    Returns (piece, chunk_ids) -- chunk_ids is whatever pieces_to_output
+    tagged this piece's nodes with (all nodes in one piece carry the same
+    list), or None for older output that predates that field."""
+    import numpy as np
+    with open(ply_path, "rb") as f:
+        data = f.read()
+    header_end = data.index(b"end_header\n") + len(b"end_header\n")
+    header = data[:header_end].decode("ascii")
+    n = int(next(l for l in header.splitlines() if l.startswith("element vertex")).split()[-1])
+    has_color = "red" in header
+    fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
+    if has_color:
+        fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+    verts = np.frombuffer(data[header_end:], dtype=np.dtype(fields), count=n)
+    pts = np.stack([verts["x"], verts["y"], verts["z"]], axis=1).astype(np.float64)
+    cols = (np.stack([verts["red"], verts["green"], verts["blue"]], axis=1).astype(np.float64) / 255.0) if has_color else None
+
+    node_positions, frame_poses, date, chunk_ids = {}, {}, "merged", None
+    for key, m in metadata.items():
+        pos, rot = np.array(m["position"]), np.array(m["rotation"])
+        node_positions[key] = pos
+        frame_poses[key] = (pos, rot, None, m["lat"], m["lon"], m["n_views_kept"], m["n_views_total"])
+        date = m["date"]
+        if "chunk_ids" in m:
+            chunk_ids = m["chunk_ids"]
+    piece = (pts, cols, [], date, False, node_positions, frame_poses)
+    return piece, chunk_ids
 
 
 def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
@@ -275,11 +358,4 @@ def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
                             refetch_path=refetch_path)
     print(f"join: bridge_pieces: {len(segments)} piece(s) in, {len(pieces)} piece(s) out "
           f"({len(segments) - len(pieces)} merge(s))")
-
-    results = []
-    for pts, cols, path_edges, date, reached, node_positions, frame_poses in pieces:
-        metadata = {k: {"lat": lat, "lon": lon, "date": date, "position": pos.tolist(),
-                         "n_views_kept": n_kept, "n_views_total": n_total}
-                    for k, (pos, rot, path, lat, lon, n_kept, n_total) in frame_poses.items()}
-        results.append((pts, cols, metadata))
-    return results
+    return pieces_to_output(pieces)

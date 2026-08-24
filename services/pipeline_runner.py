@@ -88,6 +88,7 @@ def _gpu_dispatch(task, *args, **kwargs):
         "pathfind_reconstruction": _run_pathfind_reconstruction_impl,
         "join_segments": _join_segments_impl,
         "pathfind_and_join": _run_pathfind_and_join_impl,
+        "bridge_incremental": _bridge_incremental_impl,
     }[task]
     return impl(*args, **kwargs)
 
@@ -233,6 +234,85 @@ def _join_segments_impl(segments, edge_max_dist_m=None, step_degrees=20,
             return join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m,
                                   chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
                                   refetch_path=refetch_path)
+    finally:
+        torch.cuda.empty_cache()
+
+
+def bridge_incremental_gpu(existing_pieces, existing_ids, new_segments, new_chunk_id,
+                            adjacent_ids, edge_max_dist_m=None, step_degrees=20):
+    """See _bridge_incremental_impl for the real docstring -- this is just
+    the thin dispatch wrapper (see this module's own docstring for why)."""
+    return _gpu_dispatch("bridge_incremental", existing_pieces, existing_ids, new_segments, new_chunk_id,
+                          adjacent_ids, edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees)
+
+
+def _bridge_incremental_impl(existing_pieces, existing_ids, new_segments, new_chunk_id,
+                              adjacent_ids, edge_max_dist_m=None, step_degrees=20):
+    """Bridges ONE new chunk's segments onto whatever's already been
+    merged so far, WITHOUT re-verifying pairs already merged in a
+    previous call -- unlike _join_segments_impl (which always re-bridges
+    from scratch over its whole input every time), this is the
+    genuinely-incremental version: existing_pieces/existing_ids are
+    exactly what a previous call (to this function, or the first
+    new-chunk call with existing_pieces=[]) returned, fed straight back
+    in. Restricting known_adjacent_chunk_pairs to (new_chunk_id, x) for x
+    in adjacent_ids means an existing piece only ever gets tested against
+    the genuinely new segments, never against other existing pieces
+    (those pairs, if any, were already resolved -- or deliberately never
+    attempted -- in whichever earlier call produced existing_pieces).
+
+    existing_pieces: [] on the very first chunk, otherwise the `pieces`
+    this function itself returned last time. existing_ids: parallel list
+    of each existing piece's own (possibly multi-chunk) id list, as
+    returned by bridge_pieces' return_ids=True. new_segments: this
+    chunk's own run_pathfind_reconstruction_gpu output, chunk_id
+    new_chunk_id. adjacent_ids: every existing chunk id (NOT necessarily
+    matching existing_pieces' current ids 1:1, since those may already be
+    merged unions) that the corridor's real graph says new_chunk_id
+    touches -- from the caller's own known_adjacent_chunk_pairs (see
+    street_builder.map_selection.candidates.split_into_chunks).
+
+    Returns (pieces, id_sets) -- same shape as existing_pieces/
+    existing_ids, ready to feed straight back into the next call. Once no
+    more chunks are coming, convert the final pieces via
+    join_segments.pieces_to_output (lossy, one-way -- see its own
+    docstring) instead of calling this again."""
+    import tempfile
+    import time
+
+    import torch
+    from services.da3_ops import bridge_test_edge as da3_bridge_test_edge
+    from services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
+    from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, bridge_pieces
+
+    if edge_max_dist_m is None:
+        edge_max_dist_m = BRIDGE_MAX_DIST_M
+
+    def refetch_path(key):
+        source, pano_id = key.split(":", 1)
+        if source != "google":
+            return None
+        try:
+            return run_async(download_pano_by_id(pano_id, zoom=DA3_ONLY_ZOOM))
+        except Exception as e:
+            print(f"[bridge] refetch failed for {key}: {e}")
+            return None
+
+    segments = list(existing_pieces) + list(new_segments)
+    chunk_ids = list(existing_ids) + [new_chunk_id] * len(new_segments)
+    known_adjacent_chunk_pairs = [(new_chunk_id, other) for other in adjacent_ids]
+
+    cfg = get_da3_config()
+    da3 = get_da3()
+    try:
+        with tempfile.TemporaryDirectory() as views_base:
+            def bridge_test_edge(path_a, path_b, test_id):
+                return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+
+            deadline = time.monotonic() + 200.0
+            return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, deadline=deadline,
+                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
+                                  refetch_path=refetch_path, return_ids=True)
     finally:
         torch.cuda.empty_cache()
 
