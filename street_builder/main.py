@@ -222,7 +222,7 @@ def prepare_pathfind_from_cover_chunk(dots, date, top_per_dot=TOP_PANOS_PER_DOT)
 
     dot_set = set(dots)
     local_index = {d: i for i, d in enumerate(dots)}
-    local_points = [global_points[d] for d in dots]
+    local_points = [tuple(global_points[d]) for d in dots]
     local_adjacency = {
         local_index[d]: [local_index[n] for n in global_adjacency.get(str(d), []) if n in dot_set]
         for d in dots
