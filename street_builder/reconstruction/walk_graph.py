@@ -65,66 +65,64 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
 SECONDS_PER_DOT_ESTIMATE = 6.0
 
 
-PROTECTED_POSITION_MATCH_M = 3.0
-
-
-def _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_positions):
+def _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_indices):
     """After set_cover has already picked its coverage-optimal pieces,
-    force back in any piece covering a `protected_positions` entry that
-    got dropped as geographically redundant -- see
+    force back in any piece covering a `protected_indices` dot that got
+    dropped as geographically redundant -- see
     run_pathfind_reconstruction's own docstring for why. Pure
     bookkeeping, no GPU/network -- factored out from
     run_pathfind_reconstruction so it's directly unit-testable without
     needing a real walk to exercise it (see tests/test_pathfind_scenarios.py).
 
-    Matched by REAL DISTANCE (within PROTECTED_POSITION_MATCH_M), not by
-    node key -- confirmed empirically (a real chunk-boundary bridge
-    failure) that a node key is date-specific, not location-stable: the
-    exact same real spot gets a totally different pano id on every
-    historical date, so exact-key matching can never rescue a location
-    whose winning date differs from whichever date the caller's own
-    boundary-node snapshot came from. protected_positions: set of (lat,
-    lon) real-world coordinates that must end up in the result if
-    reconstructed at all, in ANY date.
+    Matched by DOT INDEX (piece[6], the raw dot-index set every piece
+    tuple carries -- see map_date), not by node key or real distance:
+    every date graph walks the exact same points/adjacency object, so a
+    dot index is a precise, date-independent structural identity for "this
+    real location" -- confirmed empirically (a real chunk-boundary bridge
+    failure) that a node KEY is date-specific instead (the same real spot
+    gets a totally different pano id on every historical date), so
+    exact-key matching can never rescue a location whose winning date
+    differs from whichever date the caller's own boundary-node snapshot
+    came from. protected_indices: set of dot indices (see
+    run_pathfind_reconstruction's own resolution of protected_positions
+    -> protected_indices) that must end up in the result if reconstructed
+    at all, in ANY date.
 
     chosen/all_pieces: (pts, cols, path_edges, node_positions, covered,
-    frame_poses, date) tuples -- id()-based membership check throughout,
-    NOT ==, since these tuples hold numpy arrays (pts/cols) that make `==`
-    ambiguous/raise. Returns (chosen, leftover_uncovered), both possibly
-    updated in place... actually returned fresh, not mutated -- chosen is
-    the same list object appended to, leftover_uncovered is a new set."""
-    if not protected_positions:
+    frame_poses, dots, date) tuples -- id()-based membership check
+    throughout, NOT ==, since these tuples hold numpy arrays (pts/cols)
+    that make `==` ambiguous/raise. Returns (chosen, leftover_uncovered),
+    both possibly updated in place... actually returned fresh, not
+    mutated -- chosen is the same list object appended to,
+    leftover_uncovered is a new set."""
+    if not protected_indices:
         return chosen, leftover_uncovered
 
-    def piece_has_position(piece, target_lat, target_lon):
-        for (_pos, _rot, _path, lat, lon, _nk, _nt) in piece[5].values():  # piece[5] == frame_poses
-            if haversine_m(lat, lon, target_lat, target_lon) <= PROTECTED_POSITION_MATCH_M:
-                return True
-        return False
-
-    missing = [pos for pos in protected_positions if not any(piece_has_position(c, *pos) for c in chosen)]
+    chosen_dots = set()
+    for p in chosen:
+        chosen_dots |= p[6]  # p[6] == dots
+    missing = protected_indices - chosen_dots
     if not missing:
         return chosen, leftover_uncovered
 
     rescued = 0
     chosen_ids = {id(c) for c in chosen}
-    still_missing = []
-    for target_lat, target_lon in missing:
-        for p in all_pieces:
-            if id(p) in chosen_ids:
-                continue
-            if piece_has_position(p, target_lat, target_lon):
-                chosen.append(p)
-                chosen_ids.add(id(p))
-                leftover_uncovered = leftover_uncovered - p[4]  # p[4] == covered
-                rescued += 1
-                break
-        else:
-            still_missing.append((target_lat, target_lon))
+    for p in all_pieces:
+        if not missing:
+            break
+        if id(p) in chosen_ids:
+            continue
+        overlap = p[6] & missing
+        if overlap:
+            chosen.append(p)
+            chosen_ids.add(id(p))
+            leftover_uncovered = leftover_uncovered - p[4]  # p[4] == covered
+            missing -= overlap
+            rescued += 1
     if rescued:
-        print(f"pathfind: rescued {rescued} piece(s) covering protected location(s) set_cover had dropped as redundant")
-    if still_missing:
-        print(f"pathfind: {len(still_missing)} protected location(s) never reconstructed in any date, nothing to rescue: {still_missing}")
+        print(f"pathfind: rescued {rescued} piece(s) covering protected dot(s) set_cover had dropped as redundant")
+    if missing:
+        print(f"pathfind: {len(missing)} protected dot(s) never reconstructed in any date, nothing to rescue: dot indices {sorted(missing)}")
     return chosen, leftover_uncovered
 
 
@@ -240,14 +238,18 @@ def run_pathfind_reconstruction(
     only optimizes for covering THIS chunk's own corridor, so a boundary
     location already covered by a different date's piece looks
     "redundant" and gets discarded, even though it's exactly what a later
-    cross-chunk bridge attempt needs. Matched by real distance, not node
-    key -- a node key is date-specific (the same real spot gets a
-    different pano id on every historical date), so exact-key matching
-    can't rescue a location whose winning date differs from whichever
-    date the coordinate itself came from (see _rescue_protected_pieces).
-    A protected position with zero real candidates anywhere just stays
-    absent -- this only rescues a location that WAS reconstructed
-    somewhere but lost the coverage competition.
+    cross-chunk bridge attempt needs. Resolved to the matching dot INDEX
+    in `points` (exact match -- every date graph walks the same
+    points/adjacency object, so a dot index is a precise, date-
+    independent structural identity for "this real location") before
+    rescuing, NOT matched by node key or approximate distance -- a node
+    key is date-specific (the same real spot gets a different pano id on
+    every historical date), so exact-key matching can't rescue a location
+    whose winning date differs from whichever date the coordinate itself
+    came from (see _rescue_protected_pieces). A protected position with
+    zero real candidates anywhere just stays absent -- this only rescues
+    a location that WAS reconstructed somewhere but lost the coverage
+    competition.
 
     Returns [(pts, cols, path_edges, date, reached_all, node_positions,
     frame_poses), ...], phase 2's (set_cover's) chosen pieces.
@@ -529,7 +531,13 @@ def run_pathfind_reconstruction(
             frame_poses = {confirmed[d]["key"]: (node_positions[confirmed[d]["key"]], confirmed[d]["pose"][1] @ confirmed[d]["seg_R"].T,
                                                    confirmed[d]["path"], confirmed[d]["lat"], confirmed[d]["lon"],
                                                    confirmed[d]["n_views_kept"], confirmed[d]["n_views_total"]) for d in dots}
-            pieces.append((pd["pts"], pd["cols"], pd["path_edges"], node_positions, covered_points(dots), frame_poses))
+            # dots (the raw dot-index set) tags along as the LAST field --
+            # internal-only, structural identity shared bit-for-bit across
+            # every date graph (same points/adjacency object), used by
+            # _rescue_protected_pieces for exact dot matching instead of
+            # approximate real-distance matching against a node's own
+            # (differently-sourced) reported lat/lon.
+            pieces.append((pd["pts"], pd["cols"], pd["path_edges"], node_positions, covered_points(dots), frame_poses, set(dots)))
         return pieces, tests_used[0]
 
     def set_cover(pieces, total_points):
@@ -550,7 +558,7 @@ def run_pathfind_reconstruction(
             pool.pop(0)
         return chosen, uncovered
 
-    all_pieces = []  # (pts, cols, path_edges, node_positions, covered, frame_poses, date)
+    all_pieces = []  # (pts, cols, path_edges, node_positions, covered, frame_poses, dots, date)
     total_tests = 0
     time_budget_s = min(len(points) * SECONDS_PER_DOT_ESTIMATE, max_time_budget_s)
     deadline = time.monotonic() + time_budget_s
@@ -573,13 +581,21 @@ def run_pathfind_reconstruction(
             print(f"pathfind: {len(chosen_so_far)} segment(s) already cover everything -- stopping date exploration")
             break
 
+    protected_indices = None
+    if protected_positions:
+        pos_to_idx = {pt: i for i, pt in enumerate(points)}
+        protected_indices = {pos_to_idx[pos] for pos in protected_positions if pos in pos_to_idx}
+        not_in_graph = set(protected_positions) - set(pos_to_idx)
+        if not_in_graph:
+            print(f"pathfind: {len(not_in_graph)} protected position(s) aren't a dot in this corridor at all: {sorted(not_in_graph)}")
+
     chosen, leftover_uncovered = set_cover(all_pieces, len(points))
-    chosen, leftover_uncovered = _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_positions)
+    chosen, leftover_uncovered = _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_indices)
 
     reached_all = not leftover_uncovered
     segments = [
         (pts, cols, path_edges, date, reached_all, node_positions, frame_poses)
-        for pts, cols, path_edges, node_positions, covered, frame_poses, date in chosen
+        for pts, cols, path_edges, node_positions, covered, frame_poses, dots, date in chosen
     ]
     print(f"pathfind: {total_tests} attempts total, {len(date_graphs)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")
     return segments
