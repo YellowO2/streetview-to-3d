@@ -256,26 +256,27 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
     predict()s) each get their own fresh token; one handler making two
     GPU calls back-to-back does not.
 
-    payload_str: JSON {"chunk_id": ..., "start": [lat, lon],
-    "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...],
-    "protected_positions": [[lat, lon], ...], "use_global_cover": bool}.
+    payload_str: JSON. When use_global_cover (default True):
+    {"chunk_id": ..., "dots": [dot_index, ...], "date": str,
+    "protected_positions": [[lat, lon], ...], "use_global_cover": true} --
+    dots/date come straight from
+    global_dates.split_cover_into_chunks (this chunk was already cut
+    FROM the pre-computed whole-NTU date cover, single-date by
+    construction -- see street_main.prepare_pathfind_from_cover_chunk).
+    When use_global_cover is False (fallback for an area outside
+    whatever tests/fetch_ntu_metadata.py already covered):
+    {"chunk_id": ..., "start": [lat, lon], "goals": [[lat, lon], ...],
+    "edges": [[[lat1, lon1], [lat2, lon2]], ...], "protected_positions":
+    [[lat, lon], ...], "use_global_cover": false} -- this chunk
+    independently ranks its own top-N dates (street_main.prepare_pathfind).
+
     protected_positions (optional): this chunk's own real boundary node
-    COORDINATES (known from the chunking step, e.g.
-    map_selection.candidates.split_into_chunks's boundary edges) -- kept
-    even if set_cover would otherwise drop them as geographically
-    redundant, since that location is what cross-chunk bridging needs
-    later. Matched by real distance, not node key -- a node key is
-    date-specific (the same real spot gets a different pano id per
-    historical date), so this can't be a key. See walk_graph.
-    run_pathfind_reconstruction's own docstring. use_global_cover
-    (default True): sources candidates from the pre-computed whole-NTU
-    date cover (street_main.prepare_pathfind_from_global) instead of this
-    chunk independently ranking its own dates -- see that function's own
-    docstring for why (two adjacent chunks ranking dates independently is
-    exactly why cross-chunk bridging kept failing on a real, recurring
-    pattern this session). Set False to fall back to the old per-chunk
-    independent ranking (street_main.prepare_pathfind), e.g. for an area
-    outside whatever tests/fetch_ntu_metadata.py already covered.
+    COORDINATES (known from the chunking step) -- kept even if set_cover
+    would otherwise drop them as geographically redundant, since that
+    location is what cross-chunk bridging needs later. Matched by real
+    distance, not node key -- a node key is date-specific (the same real
+    spot gets a different pano id per historical date), so this can't be
+    a key. See walk_graph.run_pathfind_reconstruction's own docstring.
 
     Saves this chunk's own raw segments to CLI_RAW_PREFIX/<chunk_id>
     BEFORE returning -- independent of whatever bridging does with them
@@ -289,21 +290,20 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
     try:
         payload = json.loads(payload_str)
         chunk_id = payload["chunk_id"]
-        start = tuple(payload["start"])
-        goals = [tuple(g) for g in payload["goals"]]
-        edges = [(tuple(a), tuple(b)) for a, b in payload["edges"]]
         protected_positions = {tuple(p) for p in (payload.get("protected_positions") or [])}
+        use_global_cover = payload.get("use_global_cover", True)
     except Exception as e:
         raise gr.Error(f"Bad payload: {e}")
-
-    use_global_cover = payload.get("use_global_cover", True)
 
     import time
     t0 = time.monotonic()
     try:
         if use_global_cover:
-            prep = street_main.prepare_pathfind_from_global(start, goals, edges)
+            prep = street_main.prepare_pathfind_from_cover_chunk(payload["dots"], payload["date"])
         else:
+            start = tuple(payload["start"])
+            goals = [tuple(g) for g in payload["goals"]]
+            edges = [(tuple(a), tuple(b)) for a, b in payload["edges"]]
             prep = street_main.prepare_pathfind(start, goals, edges)
         new_segments = street_main.run_prepared_pathfind_segments(prep, protected_positions=protected_positions)
     except Exception as e:

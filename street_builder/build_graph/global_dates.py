@@ -125,6 +125,115 @@ def build_date_cover(points, adjacency, buckets, ranked_dates):
     return assigned
 
 
+def split_cover_into_chunks(points, adjacency, cover, chunk_size=20):
+    """Split a whole-corridor date cover into chunks of roughly
+    chunk_size dots each, analogous to
+    map_selection.candidates.split_into_chunks but grown over the
+    GLOBAL date-cover's dot graph instead of the raw selection graph --
+    a chunk's own local BFS only ever steps into a neighbor dot that's
+    both unassigned AND on the SAME assigned date as the chunk's seed,
+    so every chunk is single-date BY CONSTRUCTION.
+
+    That's the actual fix over the old flow: chunks used to get cut
+    geographically first (chunk_size nodes off the raw selection graph)
+    and only look up dates afterward, so a single chunk could straddle a
+    date seam internally -- relying on the walk's own self-bridge pass
+    (see pipeline_runner.py) to patch it back together inside one GPU
+    call. Cutting along date-cover region boundaries instead means a
+    cross-date seam only ever happens AT a chunk boundary, exactly where
+    cross-chunk bridging (join_segments.bridge_incremental_gpu) already
+    handles it.
+
+    Returns (chunks, known_adjacent_chunk_pairs).
+    chunks: [{"chunk_id": str, "dots": [dot_index, ...], "date": str,
+    "start": (lat, lon), "goals": [(lat, lon), ...]}, ...] -- dots[0] is
+    always the chunk's own start.
+    known_adjacent_chunk_pairs: [(chunk_id_a, chunk_id_b), ...] -- every
+    pair of chunks connected by at least one real adjacency edge, same
+    date or not (a different-date pair is exactly a real seam -- still
+    needs bridging, same as before)."""
+    unassigned = set(cover)
+    raw_chunks = []  # [[dots, date], ...]
+    for seed in sorted(cover):
+        if seed not in unassigned:
+            continue
+        date = cover[seed]
+        chunk_dots = []
+        queue = [seed]
+        queued = {seed}
+        while queue and len(chunk_dots) < chunk_size:
+            d = queue.pop(0)
+            if d not in unassigned:
+                continue
+            chunk_dots.append(d)
+            unassigned.discard(d)
+            for nb in adjacency.get(d, []):
+                if nb in unassigned and nb not in queued and cover.get(nb) == date:
+                    queued.add(nb)
+                    queue.append(nb)
+        if chunk_dots:
+            raw_chunks.append([chunk_dots, date])
+
+    # A chunk with <2 dots can't stand alone (prepare_pathfind_from_cover_chunk
+    # needs a start + at least 1 goal) -- fold it into a same-date
+    # neighbor chunk if one exists, else any adjacent chunk at all (a
+    # genuine, unavoidable single-dot seam -- same last-resort fallback
+    # split_into_chunks uses for the raw graph).
+    dot_to_chunk_idx = {d: i for i, (dots, _) in enumerate(raw_chunks) for d in dots}
+    for i, (dots, date) in enumerate(raw_chunks):
+        if len(dots) >= 2 or not dots:
+            continue
+        target_same_date, target_any = None, None
+        for d in dots:
+            for nb in adjacency.get(d, []):
+                j = dot_to_chunk_idx.get(nb)
+                if j is None or j == i:
+                    continue
+                if raw_chunks[j][1] == date:
+                    target_same_date = j
+                    break
+                target_any = j if target_any is None else target_any
+            if target_same_date is not None:
+                break
+        target = target_same_date if target_same_date is not None else target_any
+        if target is not None:
+            raw_chunks[target][0].extend(dots)
+            for d in dots:
+                dot_to_chunk_idx[d] = target
+            raw_chunks[i][0] = []
+        else:
+            print(f"split_cover_into_chunks: dropping isolated dot(s) with no real adjacency to anything: {dots}")
+            raw_chunks[i][0] = []
+    raw_chunks = [(dots, date) for dots, date in raw_chunks if dots]
+
+    dot_to_chunk_id = {}
+    for i, (dots, _) in enumerate(raw_chunks):
+        chunk_id = f"chunk{i}"
+        for d in dots:
+            dot_to_chunk_id[d] = chunk_id
+
+    chunks = []
+    for i, (dots, date) in enumerate(raw_chunks):
+        chunk_points = [points[d] for d in dots]
+        chunks.append({
+            "chunk_id": f"chunk{i}",
+            "dots": dots,
+            "date": date,
+            "start": tuple(chunk_points[0]),
+            "goals": [tuple(p) for p in chunk_points[1:]],
+        })
+
+    adjacent_pairs = set()
+    for d, ca in dot_to_chunk_id.items():
+        for nb in adjacency.get(d, []):
+            cb = dot_to_chunk_id.get(nb)
+            if cb and cb != ca:
+                adjacent_pairs.add(frozenset((ca, cb)))
+    known_adjacent_chunk_pairs = [tuple(sorted(pair)) for pair in adjacent_pairs]
+
+    return chunks, known_adjacent_chunk_pairs
+
+
 def build_global_date_graphs(points, adjacency, buckets, ranked_dates, cover=None):
     """Converts a build_date_cover assignment into the SAME
     {dot_index: [candidates]} shape build_corridor_graphs' date_graphs

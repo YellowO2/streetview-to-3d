@@ -3,53 +3,34 @@ deployed street-view-to-3d Space -- see street_builder/tab.py's
 handle_cli_run_chunk/handle_cli_bridge_chunk docstrings for the API this
 drives.
 
-Fetches the full real Street View graph for an area once (pure network,
-no GPU) and caches it to ntu/graph.json so re-running doesn't re-hit the
-network every time. Splits it into connected chunks via
-map_selection.candidates.split_into_chunks -- NOT a flat slice of the
-raw discovery-order edge list, which can put two unconnected branches
-back-to-back purely by BFS queue timing (see that function's own
-docstring) -- then grows a chain of --max-chunks mutually-adjacent
-chunks (starting from one real known_adjacent_chunk_pairs entry) and
-runs them one at a time via cli_run_chunk + cli_bridge_chunk (two
-separate GPU calls, see handle_cli_run_chunk's own docstring for why),
-each incrementally bridged onto whatever's currently checkpointed in the
+Loads the pre-computed whole-NTU metadata + date cover (see
+tests/fetch_ntu_metadata.py, tests/inspect_global_date_cover.py) and
+splits it into connected, SINGLE-DATE chunks via
+global_dates.split_cover_into_chunks -- not the raw selection graph, so
+a chunk never straddles a date seam internally (see that function's own
+docstring). Then grows a chain of --max-chunks mutually-adjacent chunks
+(starting from one real known_adjacent_chunk_pairs entry) and runs them
+one at a time via cli_run_chunk + cli_bridge_chunk (two separate GPU
+calls, see handle_cli_run_chunk's own docstring for why), each
+incrementally bridged onto whatever's currently checkpointed in the
 dataset repo -- no re-verifying earlier merges, unlike the old
 all-at-once join. The checkpoint is already the final, viewable result
 after every call -- no separate finalize step needed.
 
 Usage:
-    python tests/staged_corridor_test.py --center 1.3481742,103.6836485 --radius 750
-    python tests/staged_corridor_test.py --center 1.3481742,103.6836485 --radius 750 --refetch
+    python tests/staged_corridor_test.py
+    python tests/staged_corridor_test.py --max-chunks 4 --chunk-size 20
 """
 import argparse
 import json
 import os
-import sys
 import time
 
 from gradio_client import Client
 
-from street_builder.map_selection.candidates import expand_area, split_into_chunks
+from street_builder.build_graph.global_dates import split_cover_into_chunks
 
-CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu", "graph.json")
-
-
-def fetch_or_load_graph(center_lat, center_lon, radius_m, refetch):
-    if not refetch and os.path.exists(CACHE_PATH):
-        with open(CACHE_PATH) as f:
-            cached = json.load(f)
-        print(f"Loaded cached graph from {CACHE_PATH}: {len(cached['nodes'])} node(s), {len(cached['edges'])} edge(s).")
-        return cached["nodes"], [tuple(e) for e in cached["edges"]]
-
-    print(f"Fetching real graph within {radius_m}m of ({center_lat}, {center_lon})...")
-    nodes, edges = expand_area(center_lat, center_lon, radius_m)
-    print(f"Found {len(nodes)} node(s), {len(edges)} edge(s).")
-    os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
-    with open(CACHE_PATH, "w") as f:
-        json.dump({"center": [center_lat, center_lon], "radius_m": radius_m, "nodes": nodes, "edges": list(edges)}, f)
-    print(f"Cached to {CACHE_PATH}.")
-    return nodes, edges
+NTU_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu")
 
 
 def _summary(status_html):
@@ -60,61 +41,56 @@ def _summary(status_html):
 
 
 def to_payload(chunk, protected_positions=()):
-    start_lat, start_lon = chunk["start"]
     return {
         "chunk_id": chunk["chunk_id"],
-        "start": [start_lat, start_lon],
-        "goals": [[lat, lon] for lat, lon in chunk["goals"]],
-        "edges": [[[a[0], a[1]], [b[0], b[1]]] for a, b in chunk["corridor_edges"]],
+        "dots": chunk["dots"],
+        "date": chunk["date"],
         "protected_positions": sorted(protected_positions),
+        "use_global_cover": True,
     }
 
 
-def boundary_positions_by_chunk(all_chunks, edges):
-    """Every node COORDINATE that has a real edge crossing into a
-    DIFFERENT chunk -- these are exactly the locations a later
+def boundary_positions_by_chunk(all_chunks, points, adjacency):
+    """Every dot COORDINATE that has a real adjacency edge crossing into
+    a DIFFERENT chunk -- these are exactly the locations a later
     cli_bridge_chunk call needs to survive set_cover's coverage-only
     selection (see walk_graph.run_pathfind_reconstruction's
-    protected_positions docstring). Coordinates, not keys -- a node key
-    is date-specific (the same real spot gets a different pano id per
-    historical date), so a key snapshot from THIS graph wouldn't match
-    whichever date the corridor search actually ends up using.
-    Returns {chunk_id: {(lat, lon), ...}}."""
-    key_to_chunk = {n["key"]: c["chunk_id"] for c in all_chunks for n in c["nodes"]}
-    by_key = {n["key"]: n for c in all_chunks for n in c["nodes"]}
+    protected_positions docstring). Returns {chunk_id: {(lat, lon), ...}}."""
+    dot_to_chunk = {d: c["chunk_id"] for c in all_chunks for d in c["dots"]}
     result = {c["chunk_id"]: set() for c in all_chunks}
-    for a, b in edges:
-        ca, cb = key_to_chunk.get(a), key_to_chunk.get(b)
-        if ca and cb and ca != cb:
-            result[ca].add((by_key[a]["lat"], by_key[a]["lon"]))
-            result[cb].add((by_key[b]["lat"], by_key[b]["lon"]))
+    for d, cid in dot_to_chunk.items():
+        for nb in adjacency.get(d, []):
+            cb = dot_to_chunk.get(nb)
+            if cb and cb != cid:
+                result[cid].add(tuple(points[d]))
     return result
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--space", default="potato-bug/street-view-to-3d")
-    parser.add_argument("--center", required=True, help="lat,lon")
-    parser.add_argument("--radius", type=float, required=True, help="meters")
-    parser.add_argument("--chunk-size", type=int, default=12, help="max nodes per chunk")
+    parser.add_argument("--metadata", default=os.path.join(NTU_DIR, "fetch_metadata.json"))
+    parser.add_argument("--cover", default=os.path.join(NTU_DIR, "date_cover.json"))
+    parser.add_argument("--chunk-size", type=int, default=20, help="max dots per chunk")
     parser.add_argument("--max-chunks", type=int, default=2, help="how many (mutually-adjacent) chunks to actually run")
-    parser.add_argument("--refetch", action="store_true", help="ignore the local cache and re-fetch the graph")
     args = parser.parse_args()
 
-    center_lat, center_lon = (float(x) for x in args.center.split(","))
-    nodes, edges = fetch_or_load_graph(center_lat, center_lon, args.radius, args.refetch)
-    if not edges:
-        print("No edges found -- nothing to do.")
-        sys.exit(1)
+    with open(args.metadata) as f:
+        m = json.load(f)
+    points = m["points"]
+    adjacency = {int(k): v for k, v in m["adjacency"].items()}
+    with open(args.cover) as f:
+        cover = {int(k): v for k, v in json.load(f).items()}
+    print(f"Loaded {len(points)} dot(s), {len(cover)} assigned to a date.")
 
-    all_chunks, known_adjacent_chunk_pairs = split_into_chunks(nodes, edges, chunk_size=args.chunk_size)
-    print(f"Split into {len(all_chunks)} connected chunk(s), {len(known_adjacent_chunk_pairs)} known-adjacent pair(s).")
+    all_chunks, known_adjacent_chunk_pairs = split_cover_into_chunks(points, adjacency, cover, chunk_size=args.chunk_size)
+    print(f"Split into {len(all_chunks)} single-date chunk(s), {len(known_adjacent_chunk_pairs)} known-adjacent pair(s).")
     if not known_adjacent_chunk_pairs:
         print("No adjacent chunk pairs found -- can't run a join test.")
-        sys.exit(1)
+        raise SystemExit(1)
 
     by_id = {c["chunk_id"]: c for c in all_chunks}
-    boundary_positions = boundary_positions_by_chunk(all_chunks, edges)
+    boundary_positions = boundary_positions_by_chunk(all_chunks, points, adjacency)
     # neighbors_of[cid] -- every OTHER chunk id known-adjacent to cid,
     # from the real graph -- used to compute each new chunk's
     # adjacent_ids argument (only the ones already added so far).
@@ -154,9 +130,8 @@ def main():
         cid = chunk["chunk_id"]
         payload = to_payload(chunk, protected_positions=boundary_positions.get(cid, set()))
         adjacent_ids = sorted(neighbors_of.get(cid, set()) & set(added_so_far))
-        print(f"\n--- {cid} ({idx + 1}/{len(chunks)}, {len(chunk['goals']) + 1} node(s), "
-              f"{len(chunk['corridor_edges'])} edge(s), adjacent_ids={adjacent_ids}, "
-              f"protected_positions={len(payload['protected_positions'])}) ---")
+        print(f"\n--- {cid} ({idx + 1}/{len(chunks)}, {len(chunk['dots'])} dot(s), date={chunk['date']}, "
+              f"adjacent_ids={adjacent_ids}, protected_positions={len(payload['protected_positions'])}) ---")
         t0 = time.monotonic()
         run_status = client.predict(json.dumps(payload), api_name="/cli_run_chunk")
         print(_summary(run_status))

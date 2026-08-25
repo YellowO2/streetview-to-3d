@@ -37,10 +37,9 @@ from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
 from street_builder.build_graph.build_graph import TOP_PANOS_PER_DOT, build_corridor_graphs
-from street_builder.build_graph.fetch_nodes import corridor_points
 from street_builder.map_selection.candidates import apple_tile_panos
 
-# Where prepare_pathfind_from_global downloads the whole-NTU metadata +
+# Where prepare_pathfind_from_cover_chunk downloads the whole-NTU metadata +
 # date cover from (see tests/fetch_ntu_metadata.py,
 # tests/inspect_global_date_cover.py, street_builder/build_graph/
 # global_dates.py -- these were produced ONCE, offline, not something a
@@ -193,65 +192,52 @@ def _load_global_cover():
     return _global_metadata, _global_cover
 
 
-def prepare_pathfind_from_global(start, goals, corridor_edges, top_per_dot=TOP_PANOS_PER_DOT) -> dict:
+def prepare_pathfind_from_cover_chunk(dots, date, top_per_dot=TOP_PANOS_PER_DOT) -> dict:
     """Same job as prepare_pathfind (gather candidates, download, return
-    a dict ready for run_prepared_pathfind_segments) but sources
-    candidates from the pre-computed WHOLE-NTU metadata + date cover
-    (see _load_global_cover) instead of this chunk independently fetching
-    and ranking its own dates. This is exactly the fix for why cross-
-    chunk bridging kept failing on a real, recurring pattern this
-    session: two adjacent chunks ranking their OWN local dates
-    independently can easily land on different "best" dates even when
-    both have real data on a shared date that's merely their second- or
-    third-best locally. One global date choice removes that mismatch by
-    construction -- every chunk sourced from the same cover gets the
-    same date at a shared boundary, whenever the cover assigned one.
+    a dict ready for run_prepared_pathfind_segments) but for a chunk that
+    was already cut FROM the pre-computed whole-NTU date cover (see
+    global_dates.split_cover_into_chunks) instead of independently
+    fetching/ranking its own dates off the raw selection graph. dots are
+    global dot indices (into _load_global_cover's own points/adjacency/
+    buckets) and date is the single date split_cover_into_chunks already
+    assigned this whole chunk -- no per-dot date lookup or lat/lon
+    matching needed here, dot index IS the identity.
 
-    Produces a SINGLE combined dot_candidates dict (not multiple isolated
-    per-date graphs) -- every dot already has exactly one assigned date
-    from the global cover, so there's nothing left to isolate. Packaged
-    as one synthetic date_graph (date="global_cover") purely to reuse
-    _download_date_graphs/run_pathfind_reconstruction_gpu unchanged --
-    the real per-node date is still carried on each candidate's own
-    "date" field, same as always.
-
-    A local dot with no match in the global cover (genuinely zero real
-    candidates on any date anywhere -- see global_dates.build_date_cover)
-    is simply absent, same as prepare_pathfind's existing behavior for an
-    empty dot."""
+    This is the fix for why cross-chunk bridging kept failing on a real,
+    recurring pattern this session: two adjacent chunks ranking their OWN
+    local dates independently could land on different "best" dates even
+    when both had real data on a shared date that was merely their
+    second- or third-best locally. Sourcing every chunk from the SAME
+    global cover, cut along the cover's own region boundaries, removes
+    that mismatch by construction -- a cross-date seam only ever happens
+    at a chunk boundary now, never buried inside one chunk's own walk."""
     t0 = time.monotonic()
-    if not goals:
-        raise ValueError("Need at least one goal (a second selected node).")
-    if not corridor_edges:
-        raise ValueError("Need at least one confirmed edge tracing the route.")
+    if len(dots) < 2:
+        raise ValueError("Need at least 2 dots (a start + a goal) in this chunk.")
 
-    metadata, cover = _load_global_cover()
+    metadata, _ = _load_global_cover()
     global_points = metadata["points"]
     global_buckets = metadata["buckets"]
-    latlon_to_global = {tuple(p): i for i, p in enumerate(global_points)}
+    global_adjacency = metadata["adjacency"]
 
-    local_points, local_adjacency = corridor_points(corridor_edges)
+    dot_set = set(dots)
+    local_index = {d: i for i, d in enumerate(dots)}
+    local_points = [global_points[d] for d in dots]
+    local_adjacency = {
+        local_index[d]: [local_index[n] for n in global_adjacency.get(str(d), []) if n in dot_set]
+        for d in dots
+    }
 
     dot_candidates = {}
-    unmatched = 0
-    for i, latlon in enumerate(local_points):
-        g = latlon_to_global.get(tuple(latlon))
-        if g is None:
-            unmatched += 1
-            continue
-        date = cover.get(g)
-        if date is None:
-            continue  # genuinely no real candidate for this dot on any date
-        same_date = [n for n in global_buckets.get(str(g), []) if n["date"] == date]
-        same_date.sort(key=lambda n: haversine_m(latlon[0], latlon[1], n["lat"], n["lon"]))
+    for d in dots:
+        lat, lon = global_points[d]
+        same_date = [n for n in global_buckets.get(str(d), []) if n["date"] == date]
+        same_date.sort(key=lambda n: haversine_m(lat, lon, n["lat"], n["lon"]))
         capped = same_date[:top_per_dot]
         if capped:
-            dot_candidates[i] = capped
-    if unmatched:
-        print(f"prepare_pathfind_from_global: {unmatched} local dot(s) not found in the global cover at all "
-              f"(corridor extends past what tests/fetch_ntu_metadata.py covered)")
+            dot_candidates[local_index[d]] = capped
     if not dot_candidates:
-        raise ValueError("No dot in this corridor has any candidate in the global cover.")
+        raise ValueError(f"No dot in this chunk has a real candidate on date {date}.")
 
     # Apple candidates need their live _pano object to actually download
     # (see _download_one) -- the cached global metadata dropped it (not
@@ -267,14 +253,16 @@ def prepare_pathfind_from_global(start, goals, corridor_edges, top_per_dot=TOP_P
                 except Exception as e:
                     print(f"Apple re-fetch failed for {n['key']}: {e}")
 
-    date_graphs = [{"date": "global_cover", "dot_candidates": dot_candidates}]
+    date_graphs = [{"date": date, "dot_candidates": dot_candidates}]
     n_candidates = sum(len(bucket) for bucket in dot_candidates.values())
-    print(f"prepare_pathfind_from_global: {n_candidates} candidate(s) across {len(dot_candidates)} dot(s)")
+    print(f"prepare_pathfind_from_cover_chunk: {n_candidates} candidate(s) across {len(dot_candidates)} dot(s), date={date}")
     ready_graphs, node_entries = _download_date_graphs(date_graphs)
     if not ready_graphs:
         raise ValueError("Nothing downloaded successfully -- can't reconstruct.")
 
-    print(f"prepare_pathfind_from_global: done in {time.monotonic() - t0:.1f}s")
+    start = tuple(local_points[0])
+    goals = [tuple(p) for p in local_points[1:]]
+    print(f"prepare_pathfind_from_cover_chunk: done in {time.monotonic() - t0:.1f}s")
     return {
         "date_graphs": ready_graphs,
         "node_entries": node_entries,
