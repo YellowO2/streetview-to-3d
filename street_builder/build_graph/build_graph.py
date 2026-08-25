@@ -9,8 +9,12 @@ from street_builder.build_graph.fetch_nodes import fetch_corridor_nodes
 # spacing) trapping the search in one dot's worth of redundant same-spot
 # candidates before it ever reaches the next dot -- at most this many
 # real options exist at any dot, for any date, period, regardless of how
-# dense that date's real coverage is.
-TOP_PANOS_PER_DOT = 5
+# dense that date's real coverage is. Bumped from 5 now that
+# POINT_MAX_DIST_M is wider (fetch_nodes.py) to match real selection-
+# graph node spacing instead of the old 5m interpolation -- a wider
+# catchment can turn up more real candidates per dot, so the cap needs
+# more headroom to keep them all as options.
+TOP_PANOS_PER_DOT = 10
 
 
 def _cap_bucket_for_date(bucket, date, dot_lat, dot_lon, top_n):

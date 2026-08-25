@@ -303,23 +303,23 @@ def load_segments_bundle(path: str) -> list:
     return bundle["segments"]
 
 
-def run_prepared_pathfind_segments(prep: dict, step_degrees: int = DEFAULT_STEP_DEGREES, protected_keys=None):
+def run_prepared_pathfind_segments(prep: dict, step_degrees: int = DEFAULT_STEP_DEGREES, protected_positions=None):
     """Same GPU call as run_prepared_pathfind, but returns the raw segment
     list (pts, cols, path_edges, date, reached, node_positions per segment)
     instead of saved .ply paths -- what join_segments.py needs to fit and
     merge segments, rather than just preview them individually.
 
-    protected_keys: passed straight through to run_pathfind_reconstruction_gpu
+    protected_positions: passed straight through to run_pathfind_reconstruction_gpu
     -- see walk_graph.run_pathfind_reconstruction's own docstring. For a
     chunked large-area reconstruction, pass the chunk's own real boundary
-    node keys (known from the chunking step) so a node needed for
-    cross-chunk bridging later doesn't get dropped as redundant coverage
-    within this chunk alone."""
+    node COORDINATES (known from the chunking step) so a location needed
+    for cross-chunk bridging later doesn't get dropped as redundant
+    coverage within this chunk alone."""
     t0 = time.monotonic()
     start_lat, start_lon = prep["start"]
     segments = run_pathfind_reconstruction_gpu(
         prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon, step_degrees=step_degrees,
-        protected_keys=protected_keys,
+        protected_positions=protected_positions,
     )
     print(f"run_prepared_pathfind_segments: done in {time.monotonic() - t0:.1f}s")
     if not segments:
