@@ -20,13 +20,6 @@ DATE_TOP_N = 3
 START_ZONE_M = 5.0
 GOAL_TOLERANCE_M = 15.0
 
-# A candidate real edge between two dots' own panos is only plausible if
-# they're within this real distance -- used here (and by the algorithm's
-# own skip-one-dot fallback, see walk_graph.py) to decide whether hopping
-# PAST an empty dot to the one after it is even structurally reasonable.
-EDGE_MAX_DIST_M = 18.0
-
-
 def _date_recency_key(date_str):
     """date_str is format_date's output: "YYYY-MM" or "YYYY-MM-DD", zero-
     padded so plain string comparison already sorts chronologically.
@@ -67,23 +60,21 @@ def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
 
 def date_connects(dot_candidates, adjacency, points, start_lat, start_lon, goals):
     """Whether this date's own dots can structurally reach from near the
-    start toward at least one goal, walking dot-to-dot -- a direct move to
-    an adjacent dot that has a candidate, or a flood past however many
-    empty dots in a row (structurally, through adjacency), as long as
-    that stays within real EDGE_MAX_DIST_M of where the flood started.
-    Any gap width, not a fixed hop count -- the real constraint was
-    always "close enough to plausibly connect," never "exactly one empty
-    dot in between." Mirrors the algorithm's own movement rule exactly
-    (see walk_graph.py's visit()) -- not a real DA3 test, just "could
-    this date's coverage even physically connect," so a date that fails
-    here truly can't work no matter what gets tested. Doesn't need to
-    reach EVERY goal to be worth trying -- the algorithm itself handles a
-    date covering only some of them.
+    start toward at least one goal, walking dot-to-dot through ONLY
+    non-empty, directly-adjacent dots -- no flood past an empty dot,
+    mirroring the algorithm's own movement rule exactly (see
+    walk_graph.py's visit()): a dot is a real selection-graph node, so an
+    empty structural neighbor is a genuine dead end for that date, not
+    skipped past. Not a real DA3 test, just "could this date's coverage
+    even physically connect," so a date that fails here truly can't work
+    no matter what gets tested. Doesn't need to reach EVERY goal to be
+    worth trying -- the algorithm itself handles a date covering only
+    some of them.
 
     dot_candidates: {dot_index: [panos]} for non-empty dots of this date
     ONLY (see build_graph.build_corridor_graphs). adjacency: the
-    structural dot-to-dot graph (see fetch_nodes.interpolate_points).
-    points: every dot's real (lat, lon), for the flood distance check.
+    structural dot-to-dot graph (see fetch_nodes.corridor_points).
+    points: every dot's real (lat, lon), for the start-zone check.
     """
     non_empty = set(dot_candidates.keys())
     if not non_empty:
@@ -105,28 +96,8 @@ def date_connects(dot_candidates, adjacency, points, start_lat, start_lon, goals
         if any(haversine_m(lat_i, lon_i, g[0], g[1]) <= GOAL_TOLERANCE_M for g in goals):
             return True
         for j in adjacency.get(i, []):
-            if j in seen:
+            if j in seen or j not in non_empty:
                 continue
-            if j in non_empty:
-                seen.add(j)
-                stack.append(j)
-                continue
-            # j is empty -- flood through it (and further empty dots)
-            # within real EDGE_MAX_DIST_M of i, same rule as the
-            # algorithm's own flood fallback.
-            sub_seen = {i, j}
-            sub_frontier = [j]
-            while sub_frontier:
-                d = sub_frontier.pop()
-                if haversine_m(lat_i, lon_i, points[d][0], points[d][1]) > EDGE_MAX_DIST_M:
-                    continue
-                if d in non_empty:
-                    if d not in seen:
-                        seen.add(d)
-                        stack.append(d)
-                    continue
-                for k in adjacency.get(d, []):
-                    if k not in sub_seen:
-                        sub_seen.add(k)
-                        sub_frontier.append(k)
+            seen.add(j)
+            stack.append(j)
     return False

@@ -5,39 +5,33 @@ from services.geo import haversine_m
 from services.streetview_fetch import fetch_pano_by_id, format_date
 from street_builder.map_selection.candidates import MAX_NODES, apple_tile_panos, nearby_nodes, node_key
 
-# Sample points every this many meters along the clicked route -- the one
-# spine used for both gathering (this file) and date-coverage ranking
-# (walk_graph.py), instead of relying on wherever real nodes happen to be.
-POINT_SPACING_M = 5.0
-
-# A candidate only counts as "at" a sample point within this range. Half
-# of POINT_SPACING_M, deliberately -- each dot's own catchment radius
-# shouldn't reach into a neighboring dot's territory, so every real pano
-# belongs to exactly one dot (see fetch_corridor_nodes).
-POINT_MAX_DIST_M = 2.5
+# Catchment radius for candidate lookup around each real selection-graph
+# node. Real Street View node spacing is commonly ~10-20m, so this is
+# generous enough to catch nearby Apple/Google coverage without one
+# dot's search reaching into a neighboring dot's own territory.
+POINT_MAX_DIST_M = 5.0
 
 
-def interpolate_points(edges, spacing_m: float = POINT_SPACING_M) -> tuple[list[tuple[float, float]], dict[int, list[int]]]:
-    """Evenly-spaced (lat, lon) points along each given edge -- edges: list
-    of ((lat1, lon1), (lat2, lon2)) pairs, each a straight line between two
-    real, already-connected points. Not a single ordered polyline: the
-    corridor can branch or loop, so each edge is sampled independently
-    rather than assuming consecutive list order traces one path.
+def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[int]]]:
+    """Real (lat, lon) dots + structural adjacency straight from the
+    corridor's own already-confirmed edges -- edges: list of ((lat1,
+    lon1), (lat2, lon2)) pairs, each a real, already-connected pair (not
+    a single ordered polyline: the corridor can branch or loop, so edges
+    aren't assumed to trace one path in list order).
 
-    Two points from DIFFERENT corridor edges that share the exact same
-    (lat, lon) -- a branch point, where two real clicked edges meet at the
-    same node -- collapse into the SAME dot, so the corridor's own branch
-    structure carries through into the dot graph rather than each edge
-    getting a disconnected copy of that point.
+    No synthetic in-between sampling -- a dot is exactly one real
+    selection-graph node, not an interpolated point along a straight
+    line between two of them. Two edges sharing the exact same (lat,
+    lon) endpoint (a branch point, where two real clicked edges meet at
+    the same node) collapse into the SAME dot, so the corridor's own
+    branch structure carries through into the dot graph rather than each
+    edge getting a disconnected copy of that point.
 
     Returns (points, adjacency). adjacency: {dot_index: [neighbor_dot_index,
-    ...]} -- structural "this dot comes right after that dot" facts along
-    the corridor spine, independent of which real panos end up at either
-    dot. This is what the pathfind algorithm walks dot-by-dot over (see
-    street_builder/reconstruction/walk_graph.py) -- a different thing from
-    "which panos are close enough to test together", which is a real-
-    distance question the algorithm now only asks dynamically, for its
-    skip-one-dot fallback.
+    ...]} -- the corridor's own real dot-to-dot structure, independent of
+    which real panos end up at either dot. This is what the pathfind
+    algorithm walks dot-by-dot over (see
+    street_builder/reconstruction/walk_graph.py).
     """
     points: list[tuple[float, float]] = []
     adjacency: dict[int, list[int]] = {}
@@ -59,21 +53,14 @@ def interpolate_points(edges, spacing_m: float = POINT_SPACING_M) -> tuple[list[
             adjacency[j].append(i)
 
     for (lat1, lon1), (lat2, lon2) in edges:
-        prev_idx = dot_for((lat1, lon1))
-        seg_len = haversine_m(lat1, lon1, lat2, lon2)
-        n_steps = max(1, round(seg_len / spacing_m))
-        for i in range(1, n_steps + 1):
-            t = i / n_steps
-            idx = dot_for((lat1 + (lat2 - lat1) * t, lon1 + (lon2 - lon1) * t))
-            connect(prev_idx, idx)
-            prev_idx = idx
+        connect(dot_for((lat1, lon1)), dot_for((lat2, lon2)))
 
     return points, adjacency
 
 
 def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
-    """Every Google + Apple pano within max_dist_m of any interpolated
-    point along the given edges (see interpolate_points).
+    """Every Google + Apple pano within max_dist_m of any real corridor
+    node (see corridor_points).
 
     - For each point: nearby_nodes (Google stops) + apple_tile_panos
       (Apple), both metadata only. A newly-seen Google stop gets one extra
@@ -83,18 +70,17 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
     Each real pano is assigned to exactly one dot -- the first (lowest-
     index) dot it's found within max_dist_m of, tracked globally via
     seen_google_ids/seen_apple_ids so a pano already claimed by an earlier
-    dot never gets double-counted by a later one. With max_dist_m at half
-    POINT_SPACING_M this is normally unambiguous (a pano can't be in range
-    of two dots at once), but the "first dot wins" rule still resolves the
-    rare boundary case cleanly.
+    dot never gets double-counted by a later one. The "first dot wins"
+    rule resolves the rare case of a pano sitting within range of two
+    real dots at once.
 
     Returns (buckets, points, adjacency): buckets is {point_index: [{key,
     source, id, lat, lon, date}, ...]} -- each dot's own separate set of
-    panos, not one shared pool. points is the interpolated point list
-    itself. adjacency is the dot-to-dot structural graph (see
-    interpolate_points).
+    panos, not one shared pool. points is the corridor's own real node
+    list. adjacency is the dot-to-dot structural graph (see
+    corridor_points).
     """
-    points, adjacency = interpolate_points(edges)
+    points, adjacency = corridor_points(edges)
 
     buckets = {i: [] for i in range(len(points))}
     seen_google_ids = set()

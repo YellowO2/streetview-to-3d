@@ -51,7 +51,7 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
 
 
 # Rough real DA3 pairwise-test cost x ~2 tests/dot (most dots succeed on
-# the first candidate; occasional floods/restarts need more) -- scales
+# the first candidate; occasional restarts need more) -- scales
 # the search's own time budget to corridor size (see
 # run_pathfind_reconstruction's deadline calc) instead of every corridor
 # getting the same flat allowance regardless of how much there is to walk.
@@ -117,7 +117,6 @@ def run_pathfind_reconstruction(
     test_edge,
     rate_pano=None,
     point_cover_tolerance_m: float = 15.0,
-    edge_max_dist_m: float = 18.0,
     max_time_budget_s: float = 220.0,
     early_exit_segments: int = 4,
     protected_keys: set = None,
@@ -133,11 +132,11 @@ def run_pathfind_reconstruction(
       piece -- so every dot the walk ever touches ends up in the output,
       even if it never successfully pairs with anything. From there, try
       each structural neighbor's own top candidates against the current
-      dot's established candidate; if that neighbor is empty or every
-      candidate fails, try skipping past it to ITS neighbors instead, but
-      only within real edge_max_dist_m (the corridor's own capture density
-      can't be trusted to have SOMETHING at every single dot). A
-      successful pairwise test MERGES the two dots' pieces (discarding the
+      dot's established candidate; a dot is now a real selection-graph
+      node (not an interpolated sample point), so an empty/failed
+      neighbor is a genuine dead end for that date, not skipped past --
+      no flood-past-empty-dot fallback. A successful pairwise test MERGES
+      the two dots' pieces (discarding the
       newly-reached dot's own solo piece in favor of this edge's own
       jointly-reconstructed, higher-quality points for it -- the
       already-established side is never re-added, so its points never get
@@ -180,7 +179,7 @@ def run_pathfind_reconstruction(
       function tries them in the given order and stops once
       early_exit_segments is satisfied, it doesn't re-rank them.
     - points/adjacency: the corridor's shared spine and dot-to-dot
-      structural graph (see fetch_nodes.interpolate_points) -- dates
+      structural graph (see fetch_nodes.corridor_points) -- dates
       never share real panos, but they all walk the same structure.
     - test_edge(path_a, path_b, test_id) -> (pose_a, pose_b, pts, cols,
       per_pano_pts, per_pano_cols) or None on failure. per_pano_pts/cols:
@@ -431,27 +430,19 @@ def run_pathfind_reconstruction(
 
         def visit(dot):
             """Give `dot` its one chance to reach every structural
-            direction out of it. `dot` and every candidate dot looked at
+            neighbor out of it. `dot` and every candidate dot looked at
             below get ensure_piece'd first, as a best-effort fallback
             piece for each -- but try_target still works even when that
             didn't produce one (rate_pano not provided), via its own
-            bootstrap fallback. The immediate structural neighbor is
-            always tried directly, no distance check -- that's what
-            "structurally adjacent" means. If that neighbor is empty or
-            every candidate there fails, flood PAST it through further
-            empty (or already-failed) dots -- as far as real distance
-            allows, capped at edge_max_dist_m from `dot` -- and try every
-            candidate-bearing dot found that way, closest real-distance
-            first, until one succeeds. This bridges a gap of ANY width,
-            not a fixed hop count: the real constraint was always "close
-            enough to plausibly connect," never "exactly one empty dot in
-            between." Each dot is only ever tested once, ever, across
-            this whole date -- nothing is ever retried, so no dead-edge
-            tracking is needed."""
+            bootstrap fallback. No flood-past-empty-dot fallback: a dot
+            is a real selection-graph node (not an interpolated sample
+            point), so a failed/empty structural neighbor is a genuine
+            dead end for that date here, not skipped past. Each dot is
+            only ever tested once, ever, across this whole date --
+            nothing is ever retried, so no dead-edge tracking is needed."""
             print(f"[timing] visit(dot={dot}): {deadline - time.monotonic():.1f}s left in budget")
             ensure_piece(dot)
             was_confirmed = dot in confirmed
-            lat0, lon0 = points[dot]
 
             def confirm_dot():
                 nonlocal was_confirmed
@@ -464,41 +455,10 @@ def run_pathfind_reconstruction(
                 if nb in visited or nb in confirmed:
                     continue
                 ensure_piece(nb)
+                visited.add(nb)
                 if try_target(dot, nb, dot_candidates.get(nb, [])):
-                    visited.add(nb)
                     confirm_dot()
                     queue.append(nb)
-                    continue
-                visited.add(nb)
-
-                seen = {dot, nb}
-                frontier = [k for k in adjacency.get(nb, []) if k not in seen and k not in confirmed]
-                seen.update(frontier)
-                reachable = []  # (dist_m, dot_index)
-                while frontier:
-                    d = frontier.pop()
-                    d_lat, d_lon = points[d]
-                    dist = haversine_m(lat0, lon0, d_lat, d_lon)
-                    if dist > edge_max_dist_m:
-                        continue
-                    if dot_candidates.get(d) and d not in visited:
-                        reachable.append((dist, d))
-                    for nxt in adjacency.get(d, []):
-                        if nxt not in seen and nxt not in confirmed:
-                            seen.add(nxt)
-                            frontier.append(nxt)
-                reachable.sort()
-
-                for _, target in reachable:
-                    if target in visited:
-                        continue  # reached via more than one branch this call
-                    ensure_piece(target)
-                    ok = try_target(dot, target, dot_candidates.get(target, []))
-                    visited.add(target)
-                    if ok:
-                        confirm_dot()
-                        queue.append(target)
-                        break
 
         def pick_seed(uncovered):
             """Nearest untried non-empty dot to the real start (very

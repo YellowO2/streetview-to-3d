@@ -13,14 +13,14 @@ Input: `selection_graph`
 
 With the `selection_graph` from map_selection, we do a series of processing to build our own graph.
 
-    - 2.1 Build the fetch_graph  (fetch_nodes.py: `interpolate_points`, `fetch_corridor_nodes`)
-    We make the selection_graph finer: `interpolate_points` resamples each edge into points spaced `POINT_SPACING_M` = 5m apart (vs. the selection_graph's native ~10m). This finer graph is called the **fetch_graph** because for each of its points, `fetch_corridor_nodes` fetches the nearby Apple and Google panoramic metadata (no images yet).
+    - 2.1 Build the fetch_graph  (fetch_nodes.py: `corridor_points`, `fetch_corridor_nodes`)
+    The fetch_graph's dots ARE the selection_graph's own real nodes -- `corridor_points` builds the dot/adjacency structure directly from the corridor's real edges, no synthetic in-between sampling. For each dot, `fetch_corridor_nodes` fetches the nearby Apple and Google panoramic metadata (no images yet), within `POINT_MAX_DIST_M` = 5m of that dot's own real coordinates.
     Output: a fetch_graph where each dot has a bucket of candidate panoramic metadata (no images).
 
     - 2.2 Build the top N date_graphs  (build_graph.py: `build_corridor_graphs`; date_ranking.py)
     The fetch_graph's candidates span multiple real-world capture dates. We split it into isolated graph per date -- e.g. if the fetch_graph's contains dates A, B and C, we get 3 separate `date_graphs`.
         - 2.2.1 Select top N date_graphs (currently N = `DATE_TOP_N` = 3)
-        `rank_dates` scores every candidate date by coverage span (earliest-to-latest dot it reaches), then total dot count, then recency as a tiebreaker. `date_connects` then filters to dates that can structurally reach from the start zone toward a goal (walking dot-to-dot through the fetch_graph's adjacency, hopping past empty dots up to `EDGE_MAX_DIST_M` = 18m) -- a date only counts toward the top N if it passes this reachability check, not just the ranking.
+        `rank_dates` scores every candidate date by coverage span (earliest-to-latest dot it reaches), then total dot count, then recency as a tiebreaker. `date_connects` then filters to dates that can structurally reach from the start zone toward a goal (walking dot-to-dot through the fetch_graph's adjacency, ONLY through non-empty directly-adjacent dots -- no flood past an empty one) -- a date only counts toward the top N if it passes this reachability check, not just the ranking.
         - 2.2.2 Fetch panoramic images for the top N date_graphs
         We only download images for the top N date_graphs, to avoid fetching images for dates we'll never use.
     Output: N date_graphs, each with metadata + downloaded pano image per dot.
@@ -37,10 +37,10 @@ Turns downloaded panos into an actual 3d point cloud, via real pairwise DA3 test
         - 3.1.1 Pick a seed (`pick_seed`) from THIS date_graph's closest dot to `start_node` in step 1. Only called when the BFS queue is empty but the corridor still isn't fully covered or visited (normal in-progress BFS traversal, popping the queue, is a separate branch that never calls this). Every later seed: the not-yet-visited dot closest to a still uncovered region. curr_node = start_node.
         - 3.1.2 Rate a node. When curr_node not in visited, we run `rate_node`, which does DA3 scoring on every one of node B candidate panos, discard failed ones, but always keep at least one single best-scoring candidate (even if failed) + its solo DA3 point cloud. Then mark the dot `visited`.
         - 3.1.3 Connecting to a neighbour. Set curr_node to direct structural neighbor (typical bfs with queue), rate_node it too if not yet visited, then run a real DA3 `test_edge` between the two dots' best candidates. On success, `test_edge` itself returns a jointly-computed point cloud for the pair (higher quality then solo pieces via 'rate_node'). If either dot was already part of a larger piece (from earlier successful connections), the pairwise pointcloud result of only the NEW NODE (as one node might already be in) is joined onto that existing piece instead.
-        - 3.1.4 If 3.1.3 fails entirely: flood past the neighbor, up to `EDGE_MAX_DIST_M` (18m) from the original dot, trying each reachable candidate dot closest-first. First success confirms into the same piece.
+        - 3.1.4 If 3.1.3 fails: no flood/skip fallback. A dot is a real selection-graph node, so a failed or empty direct structural neighbor is a genuine dead end for that date -- the neighbor is simply left unconfirmed.
         - 3.1.5 On any merge success, the neighbor is queued so its own onward neighbors get tried next.
         - 3.1.6 Repeat 3.1.1-3.1.5 until every dot is covered or visited, then move to the next date_graph.
-        - 3.1.8 `set_cover`: across all dates' pieces, greedily pick the fewest that cover the most of the corridor.
+        - 3.1.8 `set_cover`: across all dates' pieces, greedily pick the fewest that cover the most of the corridor. `protected_keys` (a chunked large-area reconstruction's own known cross-chunk boundary node keys) are force-kept afterward even if `set_cover` would otherwise drop their piece as geographically redundant -- their specific identity, not just their location, is what a later cross-chunk bridge attempt needs.
 
     Output: **segments** -- `[(points, colors, path_edges, date, reached_all, node_positions, frame_poses), ...]`, one per chosen piece. Usually more than one if no single date's coverage alone spans the whole corridor.
     

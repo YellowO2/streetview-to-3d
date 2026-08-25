@@ -20,6 +20,14 @@ from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 M_PER_DEG_LAT = 111320.0
 
 
+def fake_rate_pano(path):
+    """Enables ensure_piece's solo-piece fallback in a scenario (without
+    rate_pano, ensure_piece is a no-op -- old drop-on-failure behavior).
+    Fixed score/pose/pts/cols -- these scenarios only care about which
+    dots end up in which piece, not real geometry."""
+    return 10.0, (np.zeros(3), np.eye(3)), np.zeros((1, 3)), np.zeros((1, 3)), 1, 1
+
+
 def latlon(offset_m):
     """Fake positions along a single line, offset_m meters from a fixed
     origin -- real haversine math still applies, just along one axis."""
@@ -29,7 +37,7 @@ def latlon(offset_m):
 def build_scenario_graph(dot_specs, dot_edges):
     """dot_specs: {dot_index: offset_m} -- one dot per corridor position.
     dot_edges: [(dot_a, dot_b), ...] -- structural dot-to-dot adjacency
-    (same shape fetch_nodes.interpolate_points produces). Returns
+    (same shape fetch_nodes.corridor_points produces). Returns
     (points, adjacency): points is dot_index-ordered, adjacency is
     {dot_index: [neighbor_dot_index, ...]}."""
     n = max(dot_specs) + 1
@@ -86,9 +94,9 @@ def run_scenario(name, node_specs, dot_specs, dot_edges, fail_pairs, start_dot=0
 
 # ---- scenarios ------------------------------------------------------
 # Dot spacing kept well beyond the default point_cover_tolerance_m (15m)
-# and edge_max_dist_m (18m) where the scenario needs those to matter --
-# otherwise tolerance overlap alone would cover everything without the
-# search actually walking anywhere.
+# where the scenario needs that to matter -- otherwise tolerance overlap
+# alone would cover everything without the search actually walking
+# anywhere.
 SCENARIOS = [
     {
         "name": "dead-end chain, one point unreachable by any date (live-log reproduction)",
@@ -121,7 +129,7 @@ SCENARIOS = [
         ),
     },
     {
-        "name": "skip-one bridges a single empty dot within edge_max_dist_m",
+        "name": "no flood-past-empty-dot: an empty dot is a genuine dead end, not skipped",
         "dot_specs": {0: 0, 1: 20, 2: 40, 3: 60},
         "dot_edges": [(0, 1), (1, 2), (2, 3)],
         "node_specs": {
@@ -129,10 +137,10 @@ SCENARIOS = [
         },
         "fail_pairs": set(),
         "point_cover_tolerance_m": 1.0,
-        "edge_max_dist_m": 45.0,  # dot1 -> dot3 skip is 40m, must clear this
+        "rate_pano": fake_rate_pano,
         "check": lambda segs, log: (
-            len(segs) == 1 and set(segs[0][2]) == {("N0", "N1"), ("N1", "N3")},
-            f"expected skip-one to bridge the empty dot and connect all 3 real panos in one piece; got segments: {[(s[3], s[2]) for s in segs]}",
+            len(segs) == 2 and sorted(len(s[2]) for s in segs) == [0, 1],
+            f"expected N0-N1 as one piece (1 hop) and N3 stranded as its own separate piece (0 hops) -- no flood past the empty dot 2; got segments: {[(s[3], s[2]) for s in segs]}",
         ),
     },
 ]

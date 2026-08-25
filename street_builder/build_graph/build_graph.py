@@ -32,12 +32,12 @@ def build_corridor_graphs(corridor_edges, start_lat, start_lon, goals,
     candidates -- at most top_per_dot real options exist at any dot, for
     any date.
 
-    Unlike the client-graph edges the map selector gives us, there's no
-    real pano-to-pano edge list here anymore -- the pathfind algorithm
-    (street_builder/reconstruction/walk_graph.py) walks the shared
-    dot-to-dot adjacency directly (dot i to dot i+1, branching wherever
-    the corridor itself branches), only checking real pano distance
-    dynamically for its skip-one-empty-dot fallback.
+    A dot IS a real selection-graph node (see fetch_nodes.corridor_points)
+    -- the pathfind algorithm (street_builder/reconstruction/walk_graph.py)
+    walks the shared dot-to-dot adjacency directly (dot i to its real
+    structural neighbors, branching wherever the corridor itself
+    branches), no distance-based fallback needed since each dot is
+    already a real, individually-searched location.
 
     Ranked best-first by coverage span (see date_ranking.rank_dates), and
     a candidate date only counts toward top_n_dates if its own dots can
@@ -50,7 +50,7 @@ def build_corridor_graphs(corridor_edges, start_lat, start_lon, goals,
     graph already isolated to its own date and containing only its own
     non-empty dots. points/adjacency: shared across every date graph --
     the corridor's own dot positions and structure (see
-    fetch_nodes.interpolate_points).
+    fetch_nodes.corridor_points).
     """
     buckets, points, adjacency = fetch_corridor_nodes(corridor_edges)
     ranked_dates = rank_dates(buckets)
