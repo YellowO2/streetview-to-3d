@@ -258,15 +258,24 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
 
     payload_str: JSON {"chunk_id": ..., "start": [lat, lon],
     "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...],
-    "protected_positions": [[lat, lon], ...]}. protected_positions
-    (optional): this chunk's own real boundary node COORDINATES (known
-    from the chunking step, e.g. map_selection.candidates.
-    split_into_chunks's boundary edges) -- kept even if set_cover would
-    otherwise drop them as geographically redundant, since that location
-    is what cross-chunk bridging needs later. Matched by real distance,
-    not node key -- a node key is date-specific (the same real spot gets
-    a different pano id per historical date), so this can't be a key. See
-    walk_graph.run_pathfind_reconstruction's own docstring.
+    "protected_positions": [[lat, lon], ...], "use_global_cover": bool}.
+    protected_positions (optional): this chunk's own real boundary node
+    COORDINATES (known from the chunking step, e.g.
+    map_selection.candidates.split_into_chunks's boundary edges) -- kept
+    even if set_cover would otherwise drop them as geographically
+    redundant, since that location is what cross-chunk bridging needs
+    later. Matched by real distance, not node key -- a node key is
+    date-specific (the same real spot gets a different pano id per
+    historical date), so this can't be a key. See walk_graph.
+    run_pathfind_reconstruction's own docstring. use_global_cover
+    (default True): sources candidates from the pre-computed whole-NTU
+    date cover (street_main.prepare_pathfind_from_global) instead of this
+    chunk independently ranking its own dates -- see that function's own
+    docstring for why (two adjacent chunks ranking dates independently is
+    exactly why cross-chunk bridging kept failing on a real, recurring
+    pattern this session). Set False to fall back to the old per-chunk
+    independent ranking (street_main.prepare_pathfind), e.g. for an area
+    outside whatever tests/fetch_ntu_metadata.py already covered.
 
     Saves this chunk's own raw segments to CLI_RAW_PREFIX/<chunk_id>
     BEFORE returning -- independent of whatever bridging does with them
@@ -287,10 +296,15 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
     except Exception as e:
         raise gr.Error(f"Bad payload: {e}")
 
+    use_global_cover = payload.get("use_global_cover", True)
+
     import time
     t0 = time.monotonic()
     try:
-        prep = street_main.prepare_pathfind(start, goals, edges)
+        if use_global_cover:
+            prep = street_main.prepare_pathfind_from_global(start, goals, edges)
+        else:
+            prep = street_main.prepare_pathfind(start, goals, edges)
         new_segments = street_main.run_prepared_pathfind_segments(prep, protected_positions=protected_positions)
     except Exception as e:
         raise gr.Error(f"Chunk {chunk_id} failed: {e}")
