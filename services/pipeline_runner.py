@@ -120,14 +120,14 @@ def _run_pointcloud_impl(target_depth_path, output_dir, support_paths=None, step
         torch.cuda.empty_cache()
 
 
-def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20):
+def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20, protected_keys=None):
     """See street_builder/main.py's module docstring for why the whole
     pathfind search runs inside one GPU call, not several."""
     return _gpu_dispatch("pathfind_reconstruction", date_graphs, points, adjacency, start_lat, start_lon,
-                          step_degrees=step_degrees)
+                          step_degrees=step_degrees, protected_keys=protected_keys)
 
 
-def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20):
+def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20, protected_keys=None):
     """This function's only job is to hand the actual algorithm
     (street_builder/reconstruction/walk_graph.py) a way to test one edge,
     using the shared cached DA3 model (see get_da3) -- it knows nothing
@@ -136,7 +136,8 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
     date_graphs: already ranked/capped/isolated per date, dot_candidates
     shape -- see street_builder/build_graph/build_graph.py's
     build_corridor_graphs. adjacency: the corridor's shared dot-to-dot
-    structural graph, same source.
+    structural graph, same source. protected_keys: passed straight
+    through to run_pathfind_reconstruction -- see its own docstring.
 
     After the walk, runs a SELF-bridge pass (bridge_pieces, no
     known_adjacent_chunk_pairs restriction -- blind all-pairs among just
@@ -175,7 +176,8 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
                 return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
             segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                    rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+                                                    rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S,
+                                                    protected_keys=protected_keys)
             if len(segments) < 2 or time.monotonic() >= overall_deadline:
                 return segments
 

@@ -59,14 +59,31 @@ def _summary(status_html):
     return status_html.split("</p>")[0].removeprefix("<p>")
 
 
-def to_payload(chunk):
+def to_payload(chunk, protected_keys=()):
     start_lat, start_lon = chunk["start"]
     return {
         "chunk_id": chunk["chunk_id"],
         "start": [start_lat, start_lon],
         "goals": [[lat, lon] for lat, lon in chunk["goals"]],
         "edges": [[[a[0], a[1]], [b[0], b[1]]] for a, b in chunk["corridor_edges"]],
+        "protected_keys": sorted(protected_keys),
     }
+
+
+def boundary_keys_by_chunk(all_chunks, edges):
+    """Every node key that has a real edge crossing into a DIFFERENT
+    chunk -- these are exactly the nodes a later cli_bridge_chunk call
+    needs to survive set_cover's coverage-only selection (see
+    walk_graph.run_pathfind_reconstruction's protected_keys docstring).
+    Returns {chunk_id: {key, ...}}."""
+    key_to_chunk = {n["key"]: c["chunk_id"] for c in all_chunks for n in c["nodes"]}
+    result = {c["chunk_id"]: set() for c in all_chunks}
+    for a, b in edges:
+        ca, cb = key_to_chunk.get(a), key_to_chunk.get(b)
+        if ca and cb and ca != cb:
+            result[ca].add(a)
+            result[cb].add(b)
+    return result
 
 
 def main():
@@ -92,6 +109,7 @@ def main():
         sys.exit(1)
 
     by_id = {c["chunk_id"]: c for c in all_chunks}
+    boundary_keys = boundary_keys_by_chunk(all_chunks, edges)
     # neighbors_of[cid] -- every OTHER chunk id known-adjacent to cid,
     # from the real graph -- used to compute each new chunk's
     # adjacent_ids argument (only the ones already added so far).
@@ -129,10 +147,11 @@ def main():
     added_so_far = []
     for idx, chunk in enumerate(chunks):
         cid = chunk["chunk_id"]
-        payload = to_payload(chunk)
+        payload = to_payload(chunk, protected_keys=boundary_keys.get(cid, set()))
         adjacent_ids = sorted(neighbors_of.get(cid, set()) & set(added_so_far))
         print(f"\n--- {cid} ({idx + 1}/{len(chunks)}, {len(chunk['goals']) + 1} node(s), "
-              f"{len(chunk['corridor_edges'])} edge(s), adjacent_ids={adjacent_ids}) ---")
+              f"{len(chunk['corridor_edges'])} edge(s), adjacent_ids={adjacent_ids}, "
+              f"protected_keys={len(payload['protected_keys'])}) ---")
         t0 = time.monotonic()
         run_status = client.predict(json.dumps(payload), api_name="/cli_run_chunk")
         print(_summary(run_status))

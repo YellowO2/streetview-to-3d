@@ -257,7 +257,14 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
     GPU calls back-to-back does not.
 
     payload_str: JSON {"chunk_id": ..., "start": [lat, lon],
-    "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...]}.
+    "goals": [[lat, lon], ...], "edges": [[[lat1, lon1], [lat2, lon2]], ...],
+    "protected_keys": [...]}. protected_keys (optional): this chunk's own
+    real boundary node keys (known from the chunking step, e.g.
+    map_selection.candidates.split_into_chunks's boundary edges) -- kept
+    even if set_cover would otherwise drop them as geographically
+    redundant, since their specific identity (not just their location) is
+    what cross-chunk bridging needs later. See walk_graph.
+    run_pathfind_reconstruction's own docstring.
 
     Saves this chunk's own raw segments to CLI_RAW_PREFIX/<chunk_id>
     BEFORE returning -- independent of whatever bridging does with them
@@ -274,6 +281,7 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
         start = tuple(payload["start"])
         goals = [tuple(g) for g in payload["goals"]]
         edges = [(tuple(a), tuple(b)) for a, b in payload["edges"]]
+        protected_keys = set(payload.get("protected_keys") or [])
     except Exception as e:
         raise gr.Error(f"Bad payload: {e}")
 
@@ -281,7 +289,7 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
     t0 = time.monotonic()
     try:
         prep = street_main.prepare_pathfind(start, goals, edges)
-        new_segments = street_main.run_prepared_pathfind_segments(prep)
+        new_segments = street_main.run_prepared_pathfind_segments(prep, protected_keys=protected_keys)
     except Exception as e:
         raise gr.Error(f"Chunk {chunk_id} failed: {e}")
     dt = time.monotonic() - t0

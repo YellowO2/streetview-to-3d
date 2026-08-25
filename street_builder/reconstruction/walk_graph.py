@@ -65,6 +65,49 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
 SECONDS_PER_DOT_ESTIMATE = 6.0
 
 
+def _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_keys):
+    """After set_cover has already picked its coverage-optimal pieces,
+    force back in any piece containing a `protected_keys` entry that got
+    dropped as geographically redundant -- see run_pathfind_reconstruction's
+    own docstring for why. Pure bookkeeping, no GPU/network -- factored
+    out from run_pathfind_reconstruction so it's directly unit-testable
+    without needing a real walk to exercise it (see
+    tests/test_pathfind_scenarios.py).
+
+    chosen/all_pieces: (pts, cols, path_edges, node_positions, covered,
+    frame_poses, date) tuples -- id()-based membership check throughout,
+    NOT ==, since these tuples hold numpy arrays (pts/cols) that make `==`
+    ambiguous/raise. Returns (chosen, leftover_uncovered), both possibly
+    updated in place... actually returned fresh, not mutated -- chosen is
+    the same list object appended to, leftover_uncovered is a new set."""
+    if not protected_keys:
+        return chosen, leftover_uncovered
+
+    chosen_keys = {k for p in chosen for k in p[5]}  # p[5] == frame_poses
+    missing = protected_keys - chosen_keys
+    if not missing:
+        return chosen, leftover_uncovered
+
+    rescued = 0
+    chosen_ids = {id(c) for c in chosen}
+    for p in all_pieces:
+        if id(p) in chosen_ids:
+            continue
+        piece_keys = set(p[5])
+        if piece_keys & missing:
+            chosen.append(p)
+            leftover_uncovered = leftover_uncovered - p[4]  # p[4] == covered
+            missing -= piece_keys
+            rescued += 1
+            if not missing:
+                break
+    if rescued:
+        print(f"pathfind: rescued {rescued} piece(s) covering protected key(s) set_cover had dropped as redundant")
+    if missing:
+        print(f"pathfind: {len(missing)} protected key(s) never reconstructed in any date, nothing to rescue: {sorted(missing)}")
+    return chosen, leftover_uncovered
+
+
 def run_pathfind_reconstruction(
     date_graphs: list[dict],
     points: list[tuple[float, float]],
@@ -77,6 +120,7 @@ def run_pathfind_reconstruction(
     edge_max_dist_m: float = 18.0,
     max_time_budget_s: float = 220.0,
     early_exit_segments: int = 4,
+    protected_keys: set = None,
 ) -> list[tuple]:
     """Two-phase pathfind.
 
@@ -167,6 +211,20 @@ def run_pathfind_reconstruction(
     which GPS-fits whatever's left over -- both run in their own later
     GPU call, not this one, since bridging needs no data this function
     doesn't already expose).
+
+    protected_keys: optional set of node keys that MUST end up in the
+    returned segments if they were reconstructed at all (in ANY date),
+    even if set_cover would otherwise drop their piece as geographically
+    redundant. For a chunked large-area reconstruction, these are a
+    chunk's own real boundary nodes (real edges to a neighboring chunk,
+    known from the chunking step itself) -- set_cover only optimizes for
+    covering THIS chunk's own corridor, so a boundary node whose real-
+    world spot is already covered by a different date's piece looks
+    "redundant" and gets discarded, even though its specific identity
+    (not just its location) is exactly what a later cross-chunk bridge
+    attempt needs. A protected key with zero real candidates anywhere
+    just stays absent -- this only rescues a key that WAS reconstructed
+    somewhere but lost the coverage competition.
 
     Returns [(pts, cols, path_edges, date, reached_all, node_positions,
     frame_poses), ...], phase 2's (set_cover's) chosen pieces.
@@ -532,6 +590,7 @@ def run_pathfind_reconstruction(
             break
 
     chosen, leftover_uncovered = set_cover(all_pieces, len(points))
+    chosen, leftover_uncovered = _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_keys)
 
     reached_all = not leftover_uncovered
     segments = [
