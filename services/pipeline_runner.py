@@ -227,15 +227,49 @@ def _refetch_bridge_pano(key, lat, lon):
         return None
 
 
+def _frame_pose_positions(segments):
+    """{key: (lat, lon)} across every given segment's own frame_poses,
+    deduped by key -- plain CPU data (no GPU needed), used to prefetch
+    every candidate pano's image BEFORE the GPU call touches it (see
+    _prefetch_bridge_panos)."""
+    positions = {}
+    for seg in segments:
+        frame_poses = seg[6]
+        for key, (_, _, _, lat, lon, _, _) in frame_poses.items():
+            positions[key] = (lat, lon)
+    return positions
+
+
+def _prefetch_bridge_panos(positions, concurrency=10):
+    """positions: {key: (lat, lon)}. Downloads every one of them
+    CONCURRENTLY, network-only, BEFORE any @spaces.GPU call touches them
+    -- refetch_path used to do this same per-key download live INSIDE
+    the GPU session (see _refetch_bridge_pano), burning GPU-billed
+    wall-clock on pure network I/O for every bridge attempt, when the
+    download itself never needed a GPU at all. Returns {key: path or
+    None (download failed)}, fed straight into the GPU call as a plain
+    dict lookup instead of a live fetch."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    if not positions:
+        return {}
+    with ThreadPoolExecutor(max_workers=concurrency) as ex:
+        futures = {ex.submit(_refetch_bridge_pano, key, lat, lon): key for key, (lat, lon) in positions.items()}
+        return {futures[fut]: fut.result() for fut in futures}
+
+
 def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
                        chunk_ids=None, known_adjacent_chunk_pairs=None):
     """See _join_segments_impl for the real docstring -- this is just the
-    thin dispatch wrapper (see this module's own docstring for why)."""
-    return _gpu_dispatch("join_segments", segments, edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees,
+    thin dispatch wrapper (see this module's own docstring for why).
+    Prefetches every candidate pano (see _prefetch_bridge_panos) here,
+    OUTSIDE the GPU call, before dispatching."""
+    path_by_key = _prefetch_bridge_panos(_frame_pose_positions(segments))
+    return _gpu_dispatch("join_segments", segments, path_by_key, edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees,
                           chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
 
 
-def _join_segments_impl(segments, edge_max_dist_m=None, step_degrees=20,
+def _join_segments_impl(segments, path_by_key, edge_max_dist_m=None, step_degrees=20,
                          chunk_ids=None, known_adjacent_chunk_pairs=None):
     """The join step's bridging search (see
     street_builder/reconstruction/join_segments.py) -- its own separate
@@ -257,12 +291,13 @@ def _join_segments_impl(segments, edge_max_dist_m=None, step_degrees=20,
 
     Returns a list of (points, colors, metadata) -- see join_segments.
 
-    Re-fetches each candidate pano fresh (by key) right before testing it,
-    rather than trusting frame_poses' stored path -- a separately-called
-    join_segments task has no guarantee the ORIGINAL downloaded image
-    files that produced `segments` still exist on whatever worker/disk
-    this call lands on (see refetch_path in join_segments.py's
-    _try_bridge)."""
+    path_by_key: {key: path or None} -- prefetched by join_segments_gpu
+    BEFORE this GPU call (see _prefetch_bridge_panos), since a
+    separately-called join_segments task has no guarantee the ORIGINAL
+    downloaded image files that produced `segments` still exist on
+    whatever worker/disk this call lands on (see refetch_path in
+    join_segments.py's _try_bridge) -- refetching used to happen live,
+    INSIDE this GPU session; a plain dict lookup here instead."""
     import tempfile
 
     import torch
@@ -281,7 +316,7 @@ def _join_segments_impl(segments, edge_max_dist_m=None, step_degrees=20,
 
             return join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m,
                                   chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
-                                  refetch_path=_refetch_bridge_pano)
+                                  refetch_path=lambda key, lat, lon: path_by_key.get(key))
     finally:
         torch.cuda.empty_cache()
 
@@ -289,13 +324,16 @@ def _join_segments_impl(segments, edge_max_dist_m=None, step_degrees=20,
 def bridge_incremental_gpu(existing_pieces, existing_ids, new_segments, new_chunk_id,
                             adjacent_ids, edge_max_dist_m=None, step_degrees=20):
     """See _bridge_incremental_impl for the real docstring -- this is just
-    the thin dispatch wrapper (see this module's own docstring for why)."""
+    the thin dispatch wrapper (see this module's own docstring for why).
+    Prefetches every candidate pano (see _prefetch_bridge_panos) here,
+    OUTSIDE the GPU call, before dispatching."""
+    path_by_key = _prefetch_bridge_panos(_frame_pose_positions(list(existing_pieces) + list(new_segments)))
     return _gpu_dispatch("bridge_incremental", existing_pieces, existing_ids, new_segments, new_chunk_id,
-                          adjacent_ids, edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees)
+                          adjacent_ids, path_by_key, edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees)
 
 
 def _bridge_incremental_impl(existing_pieces, existing_ids, new_segments, new_chunk_id,
-                              adjacent_ids, edge_max_dist_m=None, step_degrees=20):
+                              adjacent_ids, path_by_key, edge_max_dist_m=None, step_degrees=20):
     """Bridges ONE new chunk's segments onto whatever's already been
     merged so far, WITHOUT re-verifying pairs already merged in a
     previous call -- unlike _join_segments_impl (which always re-bridges
@@ -324,7 +362,11 @@ def _bridge_incremental_impl(existing_pieces, existing_ids, new_segments, new_ch
     existing_ids, ready to feed straight back into the next call. Once no
     more chunks are coming, convert the final pieces via
     join_segments.pieces_to_output (lossy, one-way -- see its own
-    docstring) instead of calling this again."""
+    docstring) instead of calling this again.
+
+    path_by_key: {key: path or None} -- prefetched by bridge_incremental_gpu
+    BEFORE this GPU call (see _prefetch_bridge_panos); refetching used to
+    happen live, INSIDE this GPU session, a plain dict lookup here instead."""
     import tempfile
     import time
 
@@ -349,7 +391,7 @@ def _bridge_incremental_impl(existing_pieces, existing_ids, new_segments, new_ch
             deadline = time.monotonic() + 200.0
             return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, deadline=deadline,
                                   chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
-                                  refetch_path=_refetch_bridge_pano, return_ids=True)
+                                  refetch_path=lambda key, lat, lon: path_by_key.get(key), return_ids=True)
     finally:
         torch.cuda.empty_cache()
 
