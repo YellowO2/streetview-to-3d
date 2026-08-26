@@ -624,4 +624,16 @@ def run_pathfind_reconstruction(
     })
 
     print(f"pathfind: {total_tests} attempts total, {len(date_graphs)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")
+
+    # Diagnostic for whether set_cover's cross-date greedy pick is
+    # actually pulling its weight, or just have the OPTION to but never
+    # using it -- "N date(s) considered" above only says how many got
+    # walked, not whether the CHOSEN combination actually crossed dates.
+    dates_used = sorted({s[3] for s in segments})
+    if len(dates_used) > 1:
+        print(f"pathfind: set_cover MIXED {len(dates_used)} different dates across the chosen segments: {dates_used}")
+    elif len(date_graphs) > 1:
+        print(f"pathfind: {len(date_graphs)} date(s) were available but every chosen segment came from a single date "
+              f"({dates_used[0] if dates_used else 'n/a'}) -- cross-date mixing wasn't needed here")
+
     return segments, structural_pairs
