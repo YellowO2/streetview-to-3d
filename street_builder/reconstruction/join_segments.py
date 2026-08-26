@@ -43,15 +43,18 @@ BRIDGE_MAX_DIST_M = 30.0
 
 
 class NoBridgeCandidatesError(RuntimeError):
-    """Raised when two segments that should be adjacent (per the caller's
-    own chunking/graph data) have zero real node pairs within
-    edge_max_dist_m of each other. Since our chunk boundaries always come
-    from a real, previously-confirmed graph edge, this means something
-    upstream is wrong (bad chunking, a node that failed to download, a
-    corrupted position) -- not a normal outcome to silently work around."""
+    """Raised when a DECLARED-adjacent chunk-id pair never had a single
+    real node pair within edge_max_dist_m, across EVERY piece-level
+    combination carrying those two ids -- not just the first one tried.
+    A chunk can legitimately still be several separate pieces (self-
+    bridge/an earlier call didn't fully connect it), so one specific
+    piece-pair coming up empty is normal; only the declared id pair as a
+    WHOLE coming up empty everywhere points to something wrong upstream
+    (bad chunking, a node that failed to download, a corrupted
+    position)."""
 
 
-def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, expected_adjacent, refetch_path=None):
+def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, refetch_path=None):
     """One pair's worth of bridge search: every (Ax, By) node pair within
     edge_max_dist_m, same-date-first then closest-first, up to
     BRIDGE_MAX_ATTEMPTS real tests. ALWAYS merges using whichever attempt
@@ -59,19 +62,14 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     BRIDGE_KEEP_RATE on both sides, no bad-consensus red flag) stops the
     search early; otherwise every attempt is ranked and the best one
     wins once the attempt budget/deadline is hit.
-    Returns (merged_segment, next_bridge_test_id), or (None,
-    next_bridge_test_id) if real candidates existed but every DA3 attempt
-    on them came back unusable (a genuine per-attempt failure, distinct
-    from NoBridgeCandidatesError below) -- or if there were zero
-    candidates AND expected_adjacent is False (a normal miss in a blind
-    all-pairs scan, not an error).
-    expected_adjacent: True when this pair was selected via a DECLARED
-    adjacency (known_adjacent_chunk_pairs) -- zero candidates then means
-    something upstream is wrong (bad chunking, a lost/corrupted node),
-    so this raises NoBridgeCandidatesError instead of returning None.
-    False in the blind O(n^2) scan (no known_adjacent_chunk_pairs given),
-    where most pairs are legitimately unrelated and zero candidates is
-    expected, not a bug.
+    Returns (merged_segment, next_bridge_test_id, had_candidates).
+    merged_segment is None if real candidates existed but every DA3
+    attempt on them came back unusable (a genuine per-attempt failure),
+    or if there were zero candidates at all. had_candidates distinguishes
+    those two None cases for the caller (bridge_pieces) -- whether THIS
+    declared pair ever needs raising NoBridgeCandidatesError is decided
+    there, only once EVERY piece-level pair sharing those two chunk ids
+    has been tried, not on this one pair alone.
     refetch_path: optional (key, lat, lon) -> path (or None on failure)
     callback -- lat/lon passed through since Apple's fetch-by-id needs a
     coarse location to know which coverage tile to search (see
@@ -105,22 +103,9 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
                 pairs.append((a_date != b_date, dist, a_key, b_key))
     if not pairs:
         closest_desc = f"closest real pair was {closest[1]} <-> {closest[2]} at {closest[0]:.1f}m" if closest else "no nodes on either side at all"
-        if expected_adjacent:
-            # ZeroGPU's cross-process exception marshalling can drop the
-            # real message, surfacing only the exception class name to
-            # the caller -- print the diagnostic here too so it's always
-            # visible in the Space's own server logs regardless.
-            print(f"[bridge] NoBridgeCandidatesError: {a_date} ({len(a_positions)} node(s)) <-> "
-                  f"{b_date} ({len(b_positions)} node(s)): 0 candidate pair(s) within {edge_max_dist_m:.0f}m "
-                  f"({closest_desc}) -- declared adjacent, so this points to a bug upstream.")
-            raise NoBridgeCandidatesError(
-                f"{a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
-                f"0 candidate pair(s) within {edge_max_dist_m:.0f}m ({closest_desc}) -- "
-                f"these were declared adjacent, so this points to a bug upstream, not a normal miss."
-            )
         print(f"[bridge] {a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
               f"0 candidate pair(s) within {edge_max_dist_m:.0f}m -- skipped ({closest_desc})")
-        return None, bridge_test_id
+        return None, bridge_test_id, False
     print(f"[bridge] {a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
           f"{len(pairs)} candidate pair(s) within {edge_max_dist_m:.0f}m, trying up to {BRIDGE_MAX_ATTEMPTS}")
     pairs.sort()
@@ -164,7 +149,7 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
             break
 
     if best is None:
-        return None, bridge_test_id
+        return None, bridge_test_id, True
 
     _, result, a_key, b_key = best
     a_center, a_rot, _, _, _, _, _ = a_frame_poses[a_key]
@@ -185,7 +170,7 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
                               for k, (p, r, path, lat, lon, n_kept, n_total) in b_frame_poses.items()}}
     print(f"[bridge] {a_date}+{b_date}: merged via {a_key} -> {b_key} (keep={result['keep_a']},{result['keep_b']})")
     merged = (merged_pts, merged_cols, merged_edges, a_date, a_reached, merged_positions, merged_frame_poses)
-    return merged, bridge_test_id
+    return merged, bridge_test_id, True
 
 
 def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=None,
@@ -254,19 +239,48 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
                         continue
                 yield i, j
 
+    # Declared pairs (from known_adjacent_chunk_pairs) that have had at
+    # least one real candidate node pair in SOME piece-level attempt --
+    # tracked across the whole run, not per-attempt, since a chunk can
+    # legitimately still be several separate pieces (self-bridge/an
+    # earlier call didn't fully connect it) and only one of them needs
+    # to actually have candidates for the declared pair to be "satisfied".
+    satisfied_declared_pairs = set()
+
     bridge_test_id = 0
     changed = True
     while changed and len(pieces) > 1 and time.monotonic() < deadline:
         changed = False
         for i, j in candidate_pairs():
-            merged, bridge_test_id = _try_bridge(pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id,
-                                                  expected_adjacent=adjacency_set is not None, refetch_path=refetch_path)
+            merged, bridge_test_id, had_candidates = _try_bridge(pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id,
+                                                                   refetch_path=refetch_path)
+            if had_candidates and adjacency_set is not None:
+                satisfied_declared_pairs |= {frozenset((x, y)) for x in id_sets[i] for y in id_sets[j]
+                                              if frozenset((x, y)) in adjacency_set}
             if merged is not None:
                 merged_ids = id_sets[i] | id_sets[j]
                 pieces = [p for k, p in enumerate(pieces) if k not in (i, j)] + [merged]
                 id_sets = [s for k, s in enumerate(id_sets) if k not in (i, j)] + [merged_ids]
                 changed = True
                 break
+
+    if adjacency_set is not None:
+        unsatisfied = adjacency_set - satisfied_declared_pairs
+        if unsatisfied:
+            desc = ", ".join(f"{sorted(pair)[0]} <-> {sorted(pair)[1]}" for pair in sorted(unsatisfied, key=sorted))
+            # ZeroGPU's cross-process exception marshalling can drop the
+            # real message, surfacing only the exception class name to
+            # the caller -- print the diagnostic here too so it's always
+            # visible in the Space's own server logs regardless.
+            print(f"[bridge] NoBridgeCandidatesError: {len(unsatisfied)} declared-adjacent pair(s) never had a single "
+                  f"real candidate within {edge_max_dist_m:.0f}m, across every piece-level attempt: {desc} -- "
+                  f"declared adjacent, so this points to a bug upstream.")
+            raise NoBridgeCandidatesError(
+                f"{len(unsatisfied)} declared-adjacent pair(s) never had a single real candidate within "
+                f"{edge_max_dist_m:.0f}m, across every piece-level attempt: {desc} -- these were declared "
+                f"adjacent, so this points to a bug upstream, not a normal miss."
+            )
+
     if not return_ids:
         return pieces
     return pieces, [sorted(s) for s in id_sets]

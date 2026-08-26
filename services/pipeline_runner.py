@@ -139,14 +139,17 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
     structural graph, same source. protected_positions: passed straight
     through to run_pathfind_reconstruction -- see its own docstring.
 
-    After the walk, runs a SELF-bridge pass (bridge_pieces, no
-    known_adjacent_chunk_pairs restriction -- blind all-pairs among just
-    this call's own segments) before returning. The walk only ever tries
-    a node against its structural neighbor (plus a limited flood-past-
-    empty-dot fallback); one failed real DA3 test there permanently
-    leaves two nodes disconnected even if they'd actually pair fine --
-    the walk's search is narrower than "try every combination", so this
-    gives every fragment one more real shot at every other fragment
+    After the walk, runs a SELF-bridge pass (bridge_pieces) before
+    returning, restricted to structural_pairs -- the pairs of RETURNED
+    segments that run_pathfind_reconstruction itself already knows share
+    a real corridor edge (see its own docstring). NOT a blind O(n^2)
+    all-pairs distance scan: the walk already knows precisely which
+    fragments are structurally supposed to connect (a dot in one
+    fragment has a real graph-neighbor dot in another), so there's no
+    need to guess via distance. One failed real DA3 test during the walk
+    permanently leaves that specific dot pair disconnected (see
+    walk_graph.visit's own docstring -- no retry, ever); this gives every
+    fragment one more real shot at its actual structural neighbor(s)
     before this chunk's result is ever saved/handed to cross-chunk
     bridging. Same GPU session/already-open da3 model as the walk
     itself -- no separate @spaces.GPU call, and shares the SAME overall
@@ -175,16 +178,18 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
             def rate_pano(path):
                 return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
-            segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                    rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S,
-                                                    protected_positions=protected_positions)
+            segments, structural_pairs = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                                      rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S,
+                                                                      protected_positions=protected_positions)
             if len(segments) < 2 or time.monotonic() >= overall_deadline:
                 return segments
 
             def bridge_test_edge(path_a, path_b, test_id):
                 return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=overall_deadline)
+            chunk_ids = list(range(len(segments)))
+            return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=overall_deadline,
+                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=structural_pairs)
     finally:
         # Release CACHED (unused) allocator memory, like DA3's own official
         # Space does after every call -- NOT del da3, which would force a
@@ -457,13 +462,15 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
             def bridge_test_edge(path_a, path_b, test_id):
                 return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                    rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+            segments, structural_pairs = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                                      rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
             if not segments or len(segments) < 2:
                 return segments, None
 
             remaining_s = max(10.0, overall_deadline - time.monotonic())
-            pieces = join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s)
+            chunk_ids = list(range(len(segments)))
+            pieces = join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s,
+                                    chunk_ids=chunk_ids, known_adjacent_chunk_pairs=structural_pairs)
             return segments, pieces
     finally:
         torch.cuda.empty_cache()

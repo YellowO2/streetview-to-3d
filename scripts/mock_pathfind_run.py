@@ -133,7 +133,7 @@ def main():
         test_edge = make_fake_test_edge(test_log, tested_pairs)
         print(f"\n=== running pathfind (test_edge mocked, FAIL_IDS={FAIL_IDS or 'none -- everything succeeds'}) ===")
 
-    segments = run_pathfind_reconstruction(fake_date_graphs, points, adjacency, start[0], start[1], test_edge)
+    segments, _ = run_pathfind_reconstruction(fake_date_graphs, points, adjacency, start[0], start[1], test_edge)
 
     print(f"\n=== RESULT ===")
     print(f"{len(test_log)} test call(s), {len(segments)} segment(s)")
