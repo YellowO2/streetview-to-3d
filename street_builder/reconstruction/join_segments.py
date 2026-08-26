@@ -72,7 +72,11 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     False in the blind O(n^2) scan (no known_adjacent_chunk_pairs given),
     where most pairs are legitimately unrelated and zero candidates is
     expected, not a bug.
-    refetch_path: optional key -> path (or None on failure) callback.
+    refetch_path: optional (key, lat, lon) -> path (or None on failure)
+    callback -- lat/lon passed through since Apple's fetch-by-id needs a
+    coarse location to know which coverage tile to search (see
+    map_selection.candidates.apple_tile_panos), unlike Google's pure
+    fetch-by-id.
     frame_poses' own path field points at wherever the image lived in the
     ORIGINAL segment-producing GPU session's ephemeral disk -- a separate
     Join call (a different ZeroGPU worker/container) has no guarantee
@@ -126,10 +130,10 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     for _, _, a_key, b_key in pairs:
         if attempts >= BRIDGE_MAX_ATTEMPTS or time.monotonic() >= deadline:
             break
-        _, _, a_path, _, _, _, _ = a_frame_poses[a_key]
-        _, _, b_path, _, _, _, _ = b_frame_poses[b_key]
+        _, _, a_path, a_lat, a_lon, _, _ = a_frame_poses[a_key]
+        _, _, b_path, b_lat, b_lon, _, _ = b_frame_poses[b_key]
         if refetch_path is not None:
-            fresh_a, fresh_b = refetch_path(a_key), refetch_path(b_key)
+            fresh_a, fresh_b = refetch_path(a_key, a_lat, a_lon), refetch_path(b_key, b_lat, b_lon)
             if fresh_a is None or fresh_b is None:
                 print(f"[bridge] {a_key} -> {b_key}: refetch failed, skipping")
                 attempts += 1

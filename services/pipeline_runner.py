@@ -193,6 +193,40 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
         torch.cuda.empty_cache()
 
 
+def _refetch_bridge_pano(key, lat, lon):
+    """Shared refetch_path implementation for both _join_segments_impl and
+    _bridge_incremental_impl -- re-downloads ONE candidate pano fresh, by
+    key, right before a bridge DA3 test (see join_segments.py's
+    _try_bridge for why: a separately-called bridge task has no
+    guarantee the ORIGINAL image file still exists on whatever worker/
+    disk this call lands on). Google fetches by id alone; Apple has no
+    such lookup (streetlevel.lookaround only offers fetch-by-coverage-
+    tile, see map_selection.candidates.apple_tile_panos), so lat/lon
+    (the node's own real position, already carried in frame_poses) picks
+    which tile neighborhood to search, then the id picks the pano within
+    it -- same two-step lookup main.py's prepare_pathfind_from_cover_chunk
+    already does for its own Apple re-fetch."""
+    from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
+    from services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
+    from street_builder.map_selection.candidates import apple_tile_panos
+
+    source, pano_id = key.split(":", 1)
+    try:
+        if source == "google":
+            return run_async(download_pano_by_id(pano_id, zoom=DA3_ONLY_ZOOM))
+        if source == "apple":
+            pano = apple_tile_panos(lat, lon).get(int(pano_id))
+            if pano is None:
+                print(f"[bridge] refetch failed for {key}: not found in the coverage tile near ({lat}, {lon})")
+                return None
+            return download_lookaround(pano, zoom=DA3_ONLY_APPLE_ZOOM)
+        print(f"[bridge] refetch failed for {key}: unknown source {source!r}")
+        return None
+    except Exception as e:
+        print(f"[bridge] refetch failed for {key}: {e}")
+        return None
+
+
 def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
                        chunk_ids=None, known_adjacent_chunk_pairs=None):
     """See _join_segments_impl for the real docstring -- this is just the
@@ -228,28 +262,15 @@ def _join_segments_impl(segments, edge_max_dist_m=None, step_degrees=20,
     join_segments task has no guarantee the ORIGINAL downloaded image
     files that produced `segments` still exist on whatever worker/disk
     this call lands on (see refetch_path in join_segments.py's
-    _try_bridge). Google-only for now -- Apple has no fetch-by-id-alone
-    helper yet, so an Apple node's pair attempts are skipped like a
-    normal per-attempt failure rather than erroring."""
+    _try_bridge)."""
     import tempfile
 
     import torch
     from services.da3_ops import bridge_test_edge as da3_bridge_test_edge
-    from services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
     from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
 
     if edge_max_dist_m is None:
         edge_max_dist_m = BRIDGE_MAX_DIST_M
-
-    def refetch_path(key):
-        source, pano_id = key.split(":", 1)
-        if source != "google":
-            return None
-        try:
-            return run_async(download_pano_by_id(pano_id, zoom=DA3_ONLY_ZOOM))
-        except Exception as e:
-            print(f"[bridge] refetch failed for {key}: {e}")
-            return None
 
     cfg = get_da3_config()
     da3 = get_da3()
@@ -260,7 +281,7 @@ def _join_segments_impl(segments, edge_max_dist_m=None, step_degrees=20,
 
             return join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m,
                                   chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
-                                  refetch_path=refetch_path)
+                                  refetch_path=_refetch_bridge_pano)
     finally:
         torch.cuda.empty_cache()
 
@@ -309,21 +330,10 @@ def _bridge_incremental_impl(existing_pieces, existing_ids, new_segments, new_ch
 
     import torch
     from services.da3_ops import bridge_test_edge as da3_bridge_test_edge
-    from services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
     from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, bridge_pieces
 
     if edge_max_dist_m is None:
         edge_max_dist_m = BRIDGE_MAX_DIST_M
-
-    def refetch_path(key):
-        source, pano_id = key.split(":", 1)
-        if source != "google":
-            return None
-        try:
-            return run_async(download_pano_by_id(pano_id, zoom=DA3_ONLY_ZOOM))
-        except Exception as e:
-            print(f"[bridge] refetch failed for {key}: {e}")
-            return None
 
     segments = list(existing_pieces) + list(new_segments)
     chunk_ids = list(existing_ids) + [new_chunk_id] * len(new_segments)
@@ -339,7 +349,7 @@ def _bridge_incremental_impl(existing_pieces, existing_ids, new_segments, new_ch
             deadline = time.monotonic() + 200.0
             return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, deadline=deadline,
                                   chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
-                                  refetch_path=refetch_path, return_ids=True)
+                                  refetch_path=_refetch_bridge_pano, return_ids=True)
     finally:
         torch.cuda.empty_cache()
 

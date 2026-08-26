@@ -77,6 +77,7 @@ raw panoramas.
 This project relies on:
 
 - [Depth-Anything-3](https://github.com/ByteDance-Seed/Depth-Anything-3) (Apache 2.0)
+- [streetlevel](https://streetlevel.readthedocs.io/en/master/streetlevel.lookaround.html) (`streetlevel.lookaround`) -- fetching Apple Look Around panorama coverage/metadata and downloading panorama faces (`get_coverage_tile`/`get_coverage_tile_by_latlon`, `get_panorama_face`/`download_panorama_face`).
 
 ## License
 
