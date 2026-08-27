@@ -18,10 +18,13 @@ POINT_MAX_DIST_M = 5.0
 # capture re-walking the same stretch), which otherwise shows up as
 # several near-duplicate dots each independently competing for a date/
 # candidates instead of one dot with the union of everyone's real
-# candidates. Same value as POINT_MAX_DIST_M by current convention, not
-# because they must match -- one is a merge threshold between two real
-# nodes, the other is a catchment radius for candidates around one node.
-MERGE_DIST_M = 5.0
+# candidates. 8.0, not POINT_MAX_DIST_M's 5.0 -- checked real NTU data
+# (tests/visualize_date_cover.py) after the first pass at 5.0: normal
+# real node spacing along a single path is itself often 8-11m, so 5.0
+# already correctly avoided merging genuinely distinct waypoints; 8.0
+# is a deliberate small step up, not matched to the catchment radius on
+# principle.
+MERGE_DIST_M = 8.0
 
 
 def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[int]]]:
