@@ -38,16 +38,19 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
     selection-graph node, not an interpolated point along a straight
     line between two of them. Real selection-graph nodes within
     MERGE_DIST_M of each other then collapse into the SAME dot (see
-    MERGE_DIST_M's own docstring) -- transitively: A-B within range and
-    B-C within range merges all three into one dot even if A-C alone
-    wouldn't qualify, same as two edges sharing an exact (lat, lon)
-    endpoint always did. A merged dot's own position is the centroid of
-    everything folded into it. Rare, deliberately-accepted edge case: a
-    long enough near-straight run of sub-threshold gaps (e.g. two
-    parallel captures the whole length of a long road) can chain into
-    one dot whose centroid sits further from either original end than
-    MERGE_DIST_M -- POINT_MAX_DIST_M's own candidate catchment (fetched
-    from the centroid) could then miss real candidates out at the ends.
+    MERGE_DIST_M's own docstring). NOT transitive: merging is a single
+    greedy pass over yet-unclaimed raw nodes -- each still-unclaimed node
+    becomes a new dot's seed and claims every other still-unclaimed node
+    within MERGE_DIST_M of ITSELF, but an already-claimed node never goes
+    on to claim its own further-out neighbors. A real transitive union-
+    find (A-B close, B-C close => A,B,C all one dot even if A-C alone
+    is 70m+ apart) was tried and confirmed BROKEN on real NTU data: a
+    single, ordinary, densely-sampled 72m stretch chain-collapsed into
+    ONE dot, since consecutive real nodes along it were each individually
+    under threshold. The greedy version caps that: a claimed node can
+    still anchor a real connection out to whatever's left over, but can't
+    silently drag its own whole neighborhood in behind it. A merged dot's
+    own position is the centroid of everything folded into it.
 
     Returns (points, adjacency). adjacency: {dot_index: [neighbor_dot_index,
     ...]} -- the corridor's own real dot-to-dot structure, independent of
@@ -68,39 +71,32 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
 
     raw_edges = [(raw_index_for((lat1, lon1)), raw_index_for((lat2, lon2))) for (lat1, lon1), (lat2, lon2) in edges]
 
-    # Union-find: any two raw nodes within MERGE_DIST_M join the same
-    # dot, transitively. O(n^2) distance checks -- fine at real-world
-    # selection-graph sizes (a few thousand nodes at most).
-    parent = list(range(len(raw_points)))
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a, b):
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-
-    for i in range(len(raw_points)):
-        lat_i, lon_i = raw_points[i]
-        for j in range(i + 1, len(raw_points)):
-            if haversine_m(lat_i, lon_i, *raw_points[j]) <= MERGE_DIST_M:
-                union(i, j)
-
-    cluster_members: dict[int, list[int]] = {}
-    for i in range(len(raw_points)):
-        cluster_members.setdefault(find(i), []).append(i)
-
+    # Greedy, non-transitive merge -- see this function's own docstring
+    # for why NOT union-find. O(n^2) distance checks -- fine at real-
+    # world selection-graph sizes (a few thousand nodes at most).
+    dot_index_by_raw: dict[int, int] = {}
     points: list[tuple[float, float]] = []
-    dot_index_by_root: dict[int, int] = {}
-    for root, members in cluster_members.items():
-        lat = sum(raw_points[m][0] for m in members) / len(members)
-        lon = sum(raw_points[m][1] for m in members) / len(members)
-        dot_index_by_root[root] = len(points)
+    claimed = [False] * len(raw_points)
+
+    for i in range(len(raw_points)):
+        if claimed[i]:
+            continue
+        lat_i, lon_i = raw_points[i]
+        cluster = [i]
+        claimed[i] = True
+        for j in range(len(raw_points)):
+            if claimed[j]:
+                continue
+            if haversine_m(lat_i, lon_i, *raw_points[j]) <= MERGE_DIST_M:
+                cluster.append(j)
+                claimed[j] = True
+
+        lat = sum(raw_points[m][0] for m in cluster) / len(cluster)
+        lon = sum(raw_points[m][1] for m in cluster) / len(cluster)
+        dot_idx = len(points)
         points.append((lat, lon))
+        for m in cluster:
+            dot_index_by_raw[m] = dot_idx
 
     adjacency: dict[int, list[int]] = {i: [] for i in range(len(points))}
 
@@ -113,7 +109,7 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
             adjacency[j].append(i)
 
     for a, b in raw_edges:
-        connect(dot_index_by_root[find(a)], dot_index_by_root[find(b)])
+        connect(dot_index_by_raw[a], dot_index_by_raw[b])
 
     return points, adjacency
 
