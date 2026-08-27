@@ -309,6 +309,251 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
     return pieces, [sorted(s) for s in id_sets]
 
 
+# ---- Metadata-only merging (for large-scale, many-chunk trees) --------
+#
+# bridge_pieces/_try_bridge above concatenate real pts/cols on every
+# merge -- fine for a handful of segments, but a real chunk's own raw
+# output routinely runs 50-100+MB, and a large-scale reconstruction
+# (many chunks, merged as a tree -- see tests/staged_corridor_test.py)
+# would otherwise carry an ever-growing point cloud through every
+# intermediate merge step, right up to the root. The functions below
+# do the exact same real DA3-verified bridging (same candidate search,
+# same rigid_align, same NoBridgeCandidatesError semantics) but track
+# WHERE each original leaf piece's own points would need to go
+# (chunk_id, piece_index, and the rigid transform into the current
+# group's shared frame) instead of actually moving any point-cloud
+# bytes. The real points only ever get touched once, at the very end,
+# by assemble_metadata_piece -- reading each leaf's own already-
+# durably-saved raw .ply (see tab.py's cli_run_chunk) and applying its
+# final composed transform.
+
+
+def segments_to_meta_pieces(chunk_id, segments):
+    """Converts one chunk's own real segments (run_pathfind_reconstruction's
+    output, already self-bridged -- see pipeline_runner.py) into
+    metadata-only pieces ready for tree merging (see bridge_metadata).
+    Each piece starts as its own single leaf reference with an identity
+    transform -- its own raw frame IS the group's frame, until a real
+    merge composes something else in front of it. piece_index is this
+    segment's own position in `segments`, matching exactly how
+    pieces_to_output/_save_joined_pieces numbers a chunk's own raw
+    output files (pathfind_joined_0.ply, _1.ply, ...) -- what
+    assemble_metadata_piece needs to find the right file later.
+
+    Returns a list of meta pieces: (leaf_refs, path_edges, date,
+    reached, frame_poses) -- leaf_refs: [(chunk_id, piece_index, R, t),
+    ...], normally just one entry until real merges start accumulating
+    more."""
+    meta_pieces = []
+    for i, (pts, cols, path_edges, date, reached, node_positions, frame_poses) in enumerate(segments):
+        leaf_refs = [(chunk_id, i, np.eye(3), np.zeros(3))]
+        meta_pieces.append((leaf_refs, path_edges, date, reached, frame_poses))
+    return meta_pieces
+
+
+def _try_bridge_meta(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, refetch_path=None):
+    """Metadata-only sibling of _try_bridge -- see its own docstring for
+    the shared candidate search/ranking/refetch logic, identical here.
+    The only real difference: _try_bridge concatenates a_pts/bridge_pts/
+    b_pts into a new array; this composes the same b_to_a_R/b_to_a_t
+    transform into each of b's own leaf_refs instead (point p in a
+    leaf's own raw frame -> R_leaf @ p + t_leaf gives p in b's frame ->
+    b_to_a_R @ (that) + b_to_a_t gives p in a's frame -- so composing is
+    just b_to_a_R @ R_leaf, b_to_a_R @ t_leaf + b_to_a_t), leaving the
+    actual point-cloud bytes untouched anywhere.
+
+    Returns (merged_meta_piece_or_None, next_bridge_test_id,
+    had_candidates) -- same three-part contract as _try_bridge."""
+    leaf_refs_a, a_edges, a_date, a_reached, a_frame_poses = a
+    leaf_refs_b, b_edges, b_date, b_reached, b_frame_poses = b
+
+    pairs = []
+    closest = None
+    for a_key, (_, _, _, a_lat, a_lon, _, _) in a_frame_poses.items():
+        for b_key, (_, _, _, b_lat, b_lon, _, _) in b_frame_poses.items():
+            dist = haversine_m(a_lat, a_lon, b_lat, b_lon)
+            if closest is None or dist < closest[0]:
+                closest = (dist, a_key, b_key)
+            if dist <= edge_max_dist_m:
+                pairs.append((a_date != b_date, dist, a_key, b_key))
+    if not pairs:
+        closest_desc = f"closest real pair was {closest[1]} <-> {closest[2]} at {closest[0]:.1f}m" if closest else "no nodes on either side at all"
+        print(f"[bridge-meta] {a_date} ({len(a_frame_poses)} node(s)) <-> {b_date} ({len(b_frame_poses)} node(s)): "
+              f"0 candidate pair(s) within {edge_max_dist_m:.0f}m -- skipped ({closest_desc})")
+        return None, bridge_test_id, False
+    print(f"[bridge-meta] {a_date} ({len(a_frame_poses)} node(s)) <-> {b_date} ({len(b_frame_poses)} node(s)): "
+          f"{len(pairs)} candidate pair(s) within {edge_max_dist_m:.0f}m, trying up to {BRIDGE_MAX_ATTEMPTS}")
+    pairs.sort()
+
+    best = None
+    attempts = 0
+    for _, _, a_key, b_key in pairs:
+        if attempts >= BRIDGE_MAX_ATTEMPTS or time.monotonic() >= deadline:
+            break
+        _, _, a_path, a_lat, a_lon, _, _ = a_frame_poses[a_key]
+        _, _, b_path, b_lat, b_lon, _, _ = b_frame_poses[b_key]
+        if refetch_path is not None:
+            fresh_a, fresh_b = refetch_path(a_key, a_lat, a_lon), refetch_path(b_key, b_lat, b_lon)
+            if fresh_a is None or fresh_b is None:
+                print(f"[bridge-meta] {a_key} -> {b_key}: refetch failed, skipping")
+                attempts += 1
+                continue
+            a_path, b_path = fresh_a, fresh_b
+        result = bridge_test_edge(a_path, b_path, f"bridgemeta_{bridge_test_id}")
+        bridge_test_id += 1
+        attempts += 1
+        if result is None:
+            continue
+        ka, ta = result["keep_a"]
+        kb, tb = result["keep_b"]
+        keep_a_ratio = ka / ta if ta else 0.0
+        keep_b_ratio = kb / tb if tb else 0.0
+        sane = result["avg_dev_a"] < BRIDGE_RIDICULOUS_DEV_M and result["avg_dev_b"] < BRIDGE_RIDICULOUS_DEV_M
+        passed = keep_a_ratio >= BRIDGE_KEEP_RATE and keep_b_ratio >= BRIDGE_KEEP_RATE
+        rank_key = (passed and sane, sane, min(keep_a_ratio, keep_b_ratio), -(result["avg_dev_a"] + result["avg_dev_b"]))
+        print(f"[bridge-meta] {a_key} -> {b_key}: keep={ka}/{ta},{kb}/{tb} avg_dev={result['avg_dev_a']:.2f}m,{result['avg_dev_b']:.2f}m "
+              f"{'OK' if passed and sane else ('weak' if sane else 'poor consensus')}")
+        if best is None or rank_key > best[0]:
+            best = (rank_key, result, a_key, b_key)
+        if passed and sane:
+            break
+
+    if best is None:
+        return None, bridge_test_id, True
+
+    _, result, a_key, b_key = best
+    a_center, a_rot, _, _, _, _, _ = a_frame_poses[a_key]
+    local_R, local_t = rigid_align([result["pose_a"]], [(a_center, a_rot)])
+    b_key_center_in_a = local_R @ result["pose_b"][0] + local_t
+    b_key_rot_in_a = result["pose_b"][1] @ local_R.T
+
+    b_own_center, b_own_rot, _, _, _, _, _ = b_frame_poses[b_key]
+    b_to_a_R, b_to_a_t = rigid_align([(b_own_center, b_own_rot)], [(b_key_center_in_a, b_key_rot_in_a)])
+
+    merged_leaf_refs = list(leaf_refs_a) + [
+        (chunk_id, piece_idx, b_to_a_R @ R_leaf, b_to_a_R @ t_leaf + b_to_a_t)
+        for chunk_id, piece_idx, R_leaf, t_leaf in leaf_refs_b
+    ]
+    merged_frame_poses = {**a_frame_poses,
+                           **{k: (b_to_a_R @ p + b_to_a_t, r @ b_to_a_R.T, path, lat, lon, n_kept, n_total)
+                              for k, (p, r, path, lat, lon, n_kept, n_total) in b_frame_poses.items()}}
+    print(f"[bridge-meta] {a_date}+{b_date}: merged via {a_key} -> {b_key} (keep={result['keep_a']},{result['keep_b']})")
+    merged = (merged_leaf_refs, a_edges + [(a_key, b_key)] + b_edges, a_date, a_reached, merged_frame_poses)
+    return merged, bridge_test_id, True
+
+
+def bridge_metadata(meta_pieces, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=None,
+                     chunk_ids=None, known_adjacent_chunk_pairs=None, refetch_path=None, return_ids=False,
+                     raise_on_unsatisfied=True):
+    """Metadata-only sibling of bridge_pieces -- see its own docstring
+    for the shared merge-order/declared-adjacency-restriction/
+    NoBridgeCandidatesError logic, identical here except it calls
+    _try_bridge_meta instead of _try_bridge and never touches point-
+    cloud-sized data. meta_pieces: from segments_to_meta_pieces, or a
+    previous bridge_metadata call's own output fed back in."""
+    if bridge_test_edge is None or len(meta_pieces) < 2:
+        pieces = list(meta_pieces)
+        if not return_ids:
+            return pieces
+        if chunk_ids is not None:
+            id_sets = [sorted(cid) if isinstance(cid, (set, frozenset, list, tuple)) else [cid] for cid in chunk_ids]
+        else:
+            id_sets = [[i] for i in range(len(pieces))]
+        return pieces, id_sets
+    if deadline is None:
+        deadline = time.monotonic() + 200.0
+
+    pieces = list(meta_pieces)
+    if chunk_ids is not None:
+        id_sets = [frozenset(cid) if isinstance(cid, (set, frozenset, list, tuple)) else frozenset({cid}) for cid in chunk_ids]
+    else:
+        id_sets = [frozenset({i}) for i in range(len(pieces))]
+    adjacency_set = ({frozenset(pair) for pair in known_adjacent_chunk_pairs}
+                      if known_adjacent_chunk_pairs is not None else None)
+
+    def candidate_pairs():
+        for i in range(len(pieces)):
+            for j in range(len(pieces)):
+                if i == j:
+                    continue
+                if adjacency_set is not None:
+                    if not any(frozenset((x, y)) in adjacency_set for x in id_sets[i] for y in id_sets[j]):
+                        continue
+                yield i, j
+
+    satisfied_declared_pairs = set()
+    bridge_test_id = 0
+    changed = True
+    while changed and len(pieces) > 1 and time.monotonic() < deadline:
+        changed = False
+        for i, j in candidate_pairs():
+            merged, bridge_test_id, had_candidates = _try_bridge_meta(pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id,
+                                                                        refetch_path=refetch_path)
+            if had_candidates and adjacency_set is not None:
+                satisfied_declared_pairs |= {frozenset((x, y)) for x in id_sets[i] for y in id_sets[j]
+                                              if frozenset((x, y)) in adjacency_set}
+            if merged is not None:
+                merged_ids = id_sets[i] | id_sets[j]
+                pieces = [p for k, p in enumerate(pieces) if k not in (i, j)] + [merged]
+                id_sets = [s for k, s in enumerate(id_sets) if k not in (i, j)] + [merged_ids]
+                changed = True
+                break
+
+    if adjacency_set is not None:
+        unsatisfied = adjacency_set - satisfied_declared_pairs
+        if unsatisfied and not raise_on_unsatisfied:
+            desc = ", ".join(f"{sorted(pair)[0]} <-> {sorted(pair)[1]}" for pair in sorted(unsatisfied, key=sorted))
+            print(f"[bridge-meta] {len(unsatisfied)} declared-adjacent pair(s) never had a single real candidate within "
+                  f"{edge_max_dist_m:.0f}m, across every piece-level attempt: {desc} -- left as separate pieces "
+                  f"(raise_on_unsatisfied=False, a normal real-world gap, not treated as a bug here).")
+        elif unsatisfied:
+            desc = ", ".join(f"{sorted(pair)[0]} <-> {sorted(pair)[1]}" for pair in sorted(unsatisfied, key=sorted))
+            print(f"[bridge-meta] NoBridgeCandidatesError: {len(unsatisfied)} declared-adjacent pair(s) never had a single "
+                  f"real candidate within {edge_max_dist_m:.0f}m, across every piece-level attempt: {desc} -- "
+                  f"declared adjacent, so this points to a bug upstream.")
+            raise NoBridgeCandidatesError(
+                f"{len(unsatisfied)} declared-adjacent pair(s) never had a single real candidate within "
+                f"{edge_max_dist_m:.0f}m, across every piece-level attempt: {desc} -- these were declared "
+                f"adjacent, so this points to a bug upstream, not a normal miss."
+            )
+
+    if not return_ids:
+        return pieces
+    return pieces, [sorted(s) for s in id_sets]
+
+
+def assemble_metadata_piece(meta_piece, fetch_leaf_ply):
+    """Resolves ONE metadata-only piece's leaf_refs into an actual point
+    cloud -- the ONLY place in the whole tree-merge flow that ever
+    touches point-cloud-sized data, and it only ever needs to run once,
+    on the final root (or whenever a human wants to see an actual
+    viewable result from an in-progress tree).
+
+    fetch_leaf_ply(chunk_id, piece_index) -> local .ply path, already
+    resolved to a plain (decompressed, dequantized) file -- this
+    module has no idea how or where leaves are actually stored (see
+    tab.py), it only knows how to read one once it has a path (see
+    _read_ply_points).
+
+    Returns (pts, cols, path_edges, date, reached, node_positions,
+    frame_poses) -- the SAME real-segment 7-tuple shape bridge_pieces/
+    pieces_to_output already expect, so nothing downstream needs to
+    know metadata-only merging happened at all."""
+    leaf_refs, path_edges, date, reached, frame_poses = meta_piece
+    all_pts, all_cols = [], []
+    any_cols = False
+    for chunk_id, piece_idx, R, t in leaf_refs:
+        pts, cols = _read_ply_points(fetch_leaf_ply(chunk_id, piece_idx))
+        all_pts.append(pts @ R.T + t)
+        all_cols.append(cols)
+        any_cols = any_cols or cols is not None
+    merged_pts = np.concatenate(all_pts, axis=0) if all_pts else np.zeros((0, 3))
+    merged_cols = (np.concatenate([c if c is not None else np.zeros((len(p), 3)) for p, c in zip(all_pts, all_cols)], axis=0)
+                   if any_cols else None)
+    node_positions = {k: pos for k, (pos, rot, path, lat, lon, n_kept, n_total) in frame_poses.items()}
+    return merged_pts, merged_cols, path_edges, date, reached, node_positions, frame_poses
+
+
 def pieces_to_output(pieces, id_sets=None):
     """Converts internal 7-tuple pieces to the (points, colors, metadata)
     shape returned to callers/saved to disk. Includes each node's own
@@ -332,6 +577,27 @@ def pieces_to_output(pieces, id_sets=None):
     return results
 
 
+def _read_ply_points(ply_path):
+    """Reads a plain (uncompressed, unquantized -- see tab.py's own
+    _dequantize_ply for the CLI storage format that resolves to this
+    before it ever reaches here) binary PLY back into (pts, cols) --
+    the shared core of output_to_piece and assemble_metadata_piece, so
+    there's exactly one place that understands this file format."""
+    with open(ply_path, "rb") as f:
+        data = f.read()
+    header_end = data.index(b"end_header\n") + len(b"end_header\n")
+    header = data[:header_end].decode("ascii")
+    n = int(next(l for l in header.splitlines() if l.startswith("element vertex")).split()[-1])
+    has_color = "red" in header
+    fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
+    if has_color:
+        fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+    verts = np.frombuffer(data[header_end:], dtype=np.dtype(fields), count=n)
+    pts = np.stack([verts["x"], verts["y"], verts["z"]], axis=1).astype(np.float64)
+    cols = (np.stack([verts["red"], verts["green"], verts["blue"]], axis=1).astype(np.float64) / 255.0) if has_color else None
+    return pts, cols
+
+
 def output_to_piece(ply_path, metadata):
     """Inverse of pieces_to_output, for ONE already-saved piece --
     reconstructs a 7-tuple segment good enough to keep bridging further
@@ -346,19 +612,7 @@ def output_to_piece(ply_path, metadata):
     Returns (piece, chunk_ids) -- chunk_ids is whatever pieces_to_output
     tagged this piece's nodes with (all nodes in one piece carry the same
     list), or None for older output that predates that field."""
-    import numpy as np
-    with open(ply_path, "rb") as f:
-        data = f.read()
-    header_end = data.index(b"end_header\n") + len(b"end_header\n")
-    header = data[:header_end].decode("ascii")
-    n = int(next(l for l in header.splitlines() if l.startswith("element vertex")).split()[-1])
-    has_color = "red" in header
-    fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
-    if has_color:
-        fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
-    verts = np.frombuffer(data[header_end:], dtype=np.dtype(fields), count=n)
-    pts = np.stack([verts["x"], verts["y"], verts["z"]], axis=1).astype(np.float64)
-    cols = (np.stack([verts["red"], verts["green"], verts["blue"]], axis=1).astype(np.float64) / 255.0) if has_color else None
+    pts, cols = _read_ply_points(ply_path)
 
     node_positions, frame_poses, date, chunk_ids = {}, {}, "merged", None
     for key, m in metadata.items():
