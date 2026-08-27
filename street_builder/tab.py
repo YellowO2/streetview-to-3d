@@ -7,11 +7,13 @@ Composes the whole tab: mounts map_selection's own map-picking section,
 then this module's own prepare/run/join controls underneath it, wired
 against the same shared `state` map_selection's handlers already update.
 """
+import gzip
 import json
 import os
 import uuid
 
 import gradio as gr
+import numpy as np
 from huggingface_hub import HfApi
 
 import viewers
@@ -169,17 +171,121 @@ CLI_CHECKPOINT_PREFIX = "cli_join/current"
 # not just re-running the fixed bridge step against the same data.
 CLI_RAW_PREFIX = "cli_raw"
 
+# int16-xyz quantization step for CLI storage -- see _quantize_ply. 1cm:
+# finer than Saver's own 3cm voxel downsampling grid, so no perceptible
+# extra loss on top of what's already there.
+QUANT_SCALE_M = 0.01
+
+
+def _quantize_ply(path):
+    """Rewrites a plain float32-xyz PLY (Saver._write_ply's own output)
+    IN PLACE as int16-xyz quantized at QUANT_SCALE_M -- halves position
+    storage (2 bytes/axis vs 4) for no perceptible loss: each piece's
+    own DA3 frame is centered near (0,0,0) (the first confirmed node
+    anchors it there, see walk_graph.test_and_confirm), so 1cm
+    resolution comfortably fits int16's +-327m range for any single
+    piece. Leaves the file untouched (plain float32) if any point would
+    overflow that range, rather than silently corrupting data.
+
+    Deliberately isolated here rather than in Saver or output_to_piece:
+    this only ever runs on the CLI flow's own intermediate/checkpoint
+    storage (_upload_pieces), never on the interactive UI's regular
+    preview/download output, which a person might open directly in an
+    external viewer that doesn't expect non-float vertex coordinates.
+    _dequantize_ply is the exact inverse, so output_to_piece itself
+    never has to know this format exists at all."""
+    with open(path, "rb") as f:
+        data = f.read()
+    header_end = data.index(b"end_header\n") + len(b"end_header\n")
+    header = data[:header_end].decode("ascii")
+    lines = header.splitlines()
+    n = int(next(l for l in lines if l.startswith("element vertex")).split()[-1])
+    has_color = "red" in header
+    fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
+    if has_color:
+        fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+    verts = np.frombuffer(data[header_end:], dtype=np.dtype(fields), count=n)
+    pts = np.stack([verts["x"], verts["y"], verts["z"]], axis=1)
+
+    if n > 0 and np.abs(pts).max() > 32767 * QUANT_SCALE_M:
+        return  # out of int16 range at this scale -- leave as plain float32
+
+    q = np.rint(pts / QUANT_SCALE_M).astype(np.int16)
+    out_fields = [("x", "<i2"), ("y", "<i2"), ("z", "<i2")]
+    if has_color:
+        out_fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+    structured = np.empty(n, dtype=np.dtype(out_fields))
+    structured["x"], structured["y"], structured["z"] = q[:, 0], q[:, 1], q[:, 2]
+    if has_color:
+        structured["red"] = verts["red"]
+        structured["green"] = verts["green"]
+        structured["blue"] = verts["blue"]
+
+    new_header = [
+        "ply", "format binary_little_endian 1.0", f"comment quant_scale_m {QUANT_SCALE_M}",
+        f"element vertex {n}", "property short x", "property short y", "property short z",
+    ]
+    if has_color:
+        new_header += ["property uchar red", "property uchar green", "property uchar blue"]
+    new_header.append("end_header")
+    with open(path, "wb") as f:
+        f.write(("\n".join(new_header) + "\n").encode("ascii"))
+        f.write(structured.tobytes())
+
+
+def _dequantize_ply(path):
+    """Inverse of _quantize_ply, in place -- a no-op if the file was
+    never quantized (the out-of-range fallback, or an older upload that
+    predates this format). Always leaves a plain float32-xyz PLY behind,
+    so output_to_piece only ever has to understand the one format."""
+    with open(path, "rb") as f:
+        data = f.read()
+    header_end = data.index(b"end_header\n") + len(b"end_header\n")
+    header = data[:header_end].decode("ascii")
+    lines = header.splitlines()
+    if not any(l.startswith("property short x") for l in lines):
+        return
+    scale = float(next(l for l in lines if l.startswith("comment quant_scale_m")).split()[-1])
+    n = int(next(l for l in lines if l.startswith("element vertex")).split()[-1])
+    has_color = "red" in header
+    fields = [("x", "<i2"), ("y", "<i2"), ("z", "<i2")]
+    if has_color:
+        fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+    verts = np.frombuffer(data[header_end:], dtype=np.dtype(fields), count=n)
+    pts = (np.stack([verts["x"], verts["y"], verts["z"]], axis=1).astype(np.float32)) * scale
+
+    out_fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
+    if has_color:
+        out_fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+    structured = np.empty(n, dtype=np.dtype(out_fields))
+    structured["x"], structured["y"], structured["z"] = pts[:, 0], pts[:, 1], pts[:, 2]
+    if has_color:
+        structured["red"] = verts["red"]
+        structured["green"] = verts["green"]
+        structured["blue"] = verts["blue"]
+
+    new_header = ["ply", "format binary_little_endian 1.0", f"element vertex {n}",
+                  "property float x", "property float y", "property float z"]
+    if has_color:
+        new_header += ["property uchar red", "property uchar green", "property uchar blue"]
+    new_header.append("end_header")
+    with open(path, "wb") as f:
+        f.write(("\n".join(new_header) + "\n").encode("ascii"))
+        f.write(structured.tobytes())
+
 
 def _download_pieces(prefix):
     """Downloads whatever's saved under `prefix` in the dataset repo (see
     _upload_pieces) and reconstructs bridgeable pieces from it -- ([],
     []) if nothing's there yet. Used for both the running checkpoint
     (CLI_CHECKPOINT_PREFIX) and each chunk's own raw output
-    (CLI_RAW_PREFIX/<chunk_id>) -- same file shape (.ply + .json per
-    piece) either way, just a different path. Directly
-    viewable/downloadable at any point, and exactly what output_to_piece
+    (CLI_RAW_PREFIX/<chunk_id>) -- same file shape (.ply.gz + .json per
+    piece) either way, just a different path. Exactly what output_to_piece
     reconstructs from (see its own docstring for why that's enough to
-    keep bridging further)."""
+    keep bridging further) -- the .gz is transparently decompressed and
+    dequantized right here, so nothing downstream of this function ever
+    deals with either (see _upload_pieces' own docstring for why the
+    file's compressed/quantized on disk in the first place)."""
     from huggingface_hub import hf_hub_download
     from street_builder.reconstruction.join_segments import output_to_piece
 
@@ -188,7 +294,7 @@ def _download_pieces(prefix):
         files = api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
     except Exception:
         files = []
-    ply_files = sorted(f for f in files if f.startswith(prefix + "/") and f.endswith(".ply"))
+    ply_files = sorted(f for f in files if f.startswith(prefix + "/") and f.endswith(".ply.gz"))
 
     pieces, id_sets = [], []
     for ply_rel in ply_files:
@@ -197,14 +303,18 @@ def _download_pieces(prefix):
         # just a different extension, so swap the whole basename prefix
         # rather than assuming they share one.
         dirname, basename = os.path.split(ply_rel)
-        if not basename.startswith("pathfind_joined") or not basename.endswith(".ply"):
+        if not basename.startswith("pathfind_joined") or not basename.endswith(".ply.gz"):
             continue
-        suffix = basename[len("pathfind_joined"):-len(".ply")]
+        suffix = basename[len("pathfind_joined"):-len(".ply.gz")]
         json_rel = os.path.join(dirname, f"pathfind_metadata{suffix}.json")
         if json_rel not in files:
             continue
-        ply_path = hf_hub_download(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", filename=ply_rel)
+        ply_gz_path = hf_hub_download(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", filename=ply_rel)
         json_path = hf_hub_download(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", filename=json_rel)
+        ply_path = ply_gz_path[:-len(".gz")]
+        with gzip.open(ply_gz_path, "rb") as f_in, open(ply_path, "wb") as f_out:
+            f_out.writelines(f_in)
+        _dequantize_ply(ply_path)
         with open(json_path) as f:
             metadata = json.load(f)
         piece, chunk_ids = output_to_piece(ply_path, metadata)
@@ -222,7 +332,19 @@ def _upload_pieces(prefix, pieces, id_sets, commit_message):
     through dozens of commits for a single update (a 17-piece checkpoint
     = 34 files = 34+ separate commits) and hit that limit after only a
     handful of chunks -- confirmed the hard way. Returns the dataset
-    URLs."""
+    URLs.
+
+    Each .ply gets quantized (see _quantize_ply) then gzip-compressed
+    before upload (renamed to .ply.gz); _download_pieces reverses both,
+    transparently, so nothing else in the pipeline ever deals with
+    either. The writer (panoramic_da3.Saver) stores raw binary float32
+    xyz + uint8 rgb with zero compression of its own -- a real chunk's
+    own raw output routinely runs 50-100+MB, and this is purely a
+    storage/transport concern, not a point-cloud format one, so it's
+    handled here at the upload boundary instead of in the general-
+    purpose writer (which the interactive UI's own preview/download
+    output also goes through, unquantized/uncompressed, for a person
+    who might open it directly in an external viewer)."""
     from huggingface_hub import CommitOperationAdd, CommitOperationDelete
     from street_builder.reconstruction.join_segments import pieces_to_output
 
@@ -230,6 +352,14 @@ def _upload_pieces(prefix, pieces, id_sets, commit_message):
     run_id = uuid.uuid4().hex
     output_dir = os.path.join(SPLATS_DIR, run_id)
     saved = street_main._save_joined_pieces(results, output_dir)
+
+    for fname in os.listdir(output_dir):
+        if fname.endswith(".ply"):
+            path = os.path.join(output_dir, fname)
+            _quantize_ply(path)
+            with open(path, "rb") as f_in, gzip.open(path + ".gz", "wb") as f_out:
+                f_out.writelines(f_in)
+            os.remove(path)
 
     fnames = sorted(os.listdir(output_dir))
     api = HfApi()
