@@ -20,6 +20,17 @@ real GPU is guaranteed attached.
 """
 import os
 
+# Self-bridge/join's own guaranteed minimum window after the walk,
+# regardless of how much of PATHFIND_MAX_TIME_BUDGET_S the walk itself
+# used -- see _run_pathfind_reconstruction_impl's own docstring.
+# SAVE_BUFFER_S: headroom left after bridging for saving/uploading the
+# result before the hard ZeroGPU wall-clock window closes. Both are
+# subtracted from GPU_WINDOWED_DURATION_S to get the walk's own budget
+# (PATHFIND_MAX_TIME_BUDGET_S) -- carved OUT of the one hard window, not
+# added on top of it.
+SELF_BRIDGE_MIN_S = 20.0
+SAVE_BUFFER_S = 10.0
+
 try:
     import spaces
 
@@ -34,7 +45,7 @@ try:
     # implicated, but this flat value works and there's no reason to
     # complicate it back into a callable without a real need to.
     GPU_WINDOWED_DURATION_S = 120
-    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 30
+    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S
 
     if ON_SPACES:
         GPU_DISPATCH = spaces.GPU(duration=120)
@@ -44,7 +55,7 @@ except ImportError:
     GPU_DISPATCH = lambda fn: fn  # no-op outside HF Spaces
     ON_SPACES = False
     GPU_WINDOWED_DURATION_S = 120
-    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - 30
+    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S
 
 _da3_config = None
 _da3 = None
@@ -162,10 +173,17 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
     fragment one more real shot at every other fragment before this
     chunk's result is ever saved/handed to cross-chunk bridging. Same GPU
     session/already-open da3 model as the walk itself -- no separate
-    @spaces.GPU call, and shares the SAME overall time budget as the
-    walk (self-bridge only gets whatever's left over after the walk, not
-    extra time on top of it) so the combined call still respects the one
-    hard ZeroGPU wall-clock window."""
+    @spaces.GPU call.
+
+    Gets its own guaranteed SELF_BRIDGE_MIN_S window after the walk, NOT
+    just whatever's left of the walk's own PATHFIND_MAX_TIME_BUDGET_S --
+    a chunk with several fragments needing several real DA3 attempts each
+    could otherwise get ~0s if the walk alone used its whole budget
+    (confirmed on real data: a 20-dot chunk's walk took 94.6s, leaving
+    self-bridge nothing, so its own 6 fragments never got a real chance
+    to merge even though a real <=30m chain connected all of them).
+    Carved out of the SAME hard GPU_WINDOWED_DURATION_S wall-clock window
+    (via hard_deadline), not extra time on top of it."""
     import itertools
     import tempfile
     import time
@@ -175,7 +193,8 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
     from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, bridge_pieces
     from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
 
-    overall_deadline = time.monotonic() + PATHFIND_MAX_TIME_BUDGET_S
+    t0 = time.monotonic()
+    hard_deadline = t0 + GPU_WINDOWED_DURATION_S - SAVE_BUFFER_S
     cfg = get_da3_config()
     da3 = get_da3()
     try:
@@ -191,13 +210,20 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
             segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
                                                     rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S,
                                                     protected_positions=protected_positions)
-            if len(segments) < 2 or time.monotonic() >= overall_deadline:
+            if len(segments) < 2 or time.monotonic() >= hard_deadline:
                 return segments
 
             def bridge_test_edge(path_a, path_b, test_id):
                 return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=overall_deadline,
+            # Whatever's left of the hard GPU-session deadline, not the
+            # walk's own (smaller) budget -- see SELF_BRIDGE_MIN_S's own
+            # docstring. Never exceeds hard_deadline (the true ZeroGPU
+            # wall-clock ceiling), and typically has ~SELF_BRIDGE_MIN_S
+            # to work with since the walk's own budget is capped well
+            # below hard_deadline -- but uses MORE if the walk finished
+            # early, rather than wasting the unused time.
+            return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=hard_deadline,
                                   raise_on_unsatisfied=False)
     finally:
         # Release CACHED (unused) allocator memory, like DA3's own official
@@ -454,7 +480,7 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
         edge_max_dist_m = BRIDGE_MAX_DIST_M
 
     t0 = time.monotonic()
-    overall_deadline = t0 + PATHFIND_MAX_TIME_BUDGET_S
+    hard_deadline = t0 + GPU_WINDOWED_DURATION_S - SAVE_BUFFER_S
 
     cfg = get_da3_config()
     da3 = get_da3()
@@ -476,7 +502,12 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
             if not segments or len(segments) < 2:
                 return segments, None
 
-            remaining_s = max(10.0, overall_deadline - time.monotonic())
+            # Whatever's left of the hard GPU-session deadline, not the
+            # walk's own (smaller) budget -- see SELF_BRIDGE_MIN_S's own
+            # docstring. Clamped at 0 so this can never go negative (and
+            # so never asks join_segments to run past hard_deadline) even
+            # if the walk somehow overran its own budget.
+            remaining_s = max(0.0, hard_deadline - time.monotonic())
             pieces = join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s,
                                     raise_on_unsatisfied=False)
             return segments, pieces
