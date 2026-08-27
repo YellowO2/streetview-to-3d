@@ -83,7 +83,7 @@ def run_scenario(name, node_specs, dot_specs, dot_edges, fail_pairs, start_dot=0
     start_lat, start_lon = points[start_dot]
 
     print(f"\n{'=' * 60}\nScenario: {name}\n{'=' * 60}")
-    segments, _ = run_pathfind_reconstruction(
+    segments = run_pathfind_reconstruction(
         date_graphs, points, adjacency, start_lat, start_lon, fake_test_edge, **kwargs,
     )
     print(f"-> {len(test_log)} test call(s): {test_log}")
@@ -198,7 +198,7 @@ def run_fuzz(seed, fail_rate, n_dates=3, dots_per_date=6, spacing_m=20.0):
 
     start_lat, start_lon = points[0]
 
-    segments, _ = run_pathfind_reconstruction(
+    segments = run_pathfind_reconstruction(
         date_graphs, points, adjacency, start_lat, start_lon, fake_test_edge,
     )
     return segments, test_log, tested_pairs

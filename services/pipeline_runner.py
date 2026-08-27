@@ -140,22 +140,32 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
     through to run_pathfind_reconstruction -- see its own docstring.
 
     After the walk, runs a SELF-bridge pass (bridge_pieces) before
-    returning, restricted to structural_pairs -- the pairs of RETURNED
-    segments that run_pathfind_reconstruction itself already knows share
-    a real corridor edge (see its own docstring). NOT a blind O(n^2)
-    all-pairs distance scan: the walk already knows precisely which
-    fragments are structurally supposed to connect (a dot in one
-    fragment has a real graph-neighbor dot in another), so there's no
-    need to guess via distance. One failed real DA3 test during the walk
-    permanently leaves that specific dot pair disconnected (see
+    returning -- a blind, unrestricted all-pairs scan among just this
+    call's own segments (no chunk_ids/known_adjacent_chunk_pairs).
+    Tried restricting this to structural_pairs (real one-hop dot-graph
+    neighbors, computed by run_pathfind_reconstruction itself) and
+    reverted it: two fragments can be genuinely close (well within
+    BRIDGE_MAX_DIST_M) and still not be direct one-hop graph neighbors
+    -- e.g. the dot directly between them itself failed and became its
+    own stranded fragment -- so the one-hop restriction silently skipped
+    real, biddable connections instead of just saving redundant work.
+    Confirmed on real data: a 20-dot chunk's own 6 self-bridge fragments
+    were all mutually reachable via a real <=30m chain, but the one-hop
+    version left them separate. A blind scan here is genuinely cheap
+    (a chunk has at most a handful of fragments, not hundreds), so there
+    was nothing to actually save by restricting it -- unlike cross-chunk
+    bridging (_bridge_incremental_impl), which operates over many more
+    pieces at full-campus scale and keeps its own chunk-id-level
+    restriction for that reason. One failed real DA3 test during the
+    walk permanently leaves that specific dot pair disconnected (see
     walk_graph.visit's own docstring -- no retry, ever); this gives every
-    fragment one more real shot at its actual structural neighbor(s)
-    before this chunk's result is ever saved/handed to cross-chunk
-    bridging. Same GPU session/already-open da3 model as the walk
-    itself -- no separate @spaces.GPU call, and shares the SAME overall
-    time budget as the walk (self-bridge only gets whatever's left over
-    after the walk, not extra time on top of it) so the combined call
-    still respects the one hard ZeroGPU wall-clock window."""
+    fragment one more real shot at every other fragment before this
+    chunk's result is ever saved/handed to cross-chunk bridging. Same GPU
+    session/already-open da3 model as the walk itself -- no separate
+    @spaces.GPU call, and shares the SAME overall time budget as the
+    walk (self-bridge only gets whatever's left over after the walk, not
+    extra time on top of it) so the combined call still respects the one
+    hard ZeroGPU wall-clock window."""
     import itertools
     import tempfile
     import time
@@ -178,18 +188,17 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
             def rate_pano(path):
                 return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
 
-            segments, structural_pairs = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                                      rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S,
-                                                                      protected_positions=protected_positions)
+            segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                    rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S,
+                                                    protected_positions=protected_positions)
             if len(segments) < 2 or time.monotonic() >= overall_deadline:
                 return segments
 
             def bridge_test_edge(path_a, path_b, test_id):
                 return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            chunk_ids = list(range(len(segments)))
             return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=overall_deadline,
-                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=structural_pairs, raise_on_unsatisfied=False)
+                                  raise_on_unsatisfied=False)
     finally:
         # Release CACHED (unused) allocator memory, like DA3's own official
         # Space does after every call -- NOT del da3, which would force a
@@ -462,15 +471,14 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
             def bridge_test_edge(path_a, path_b, test_id):
                 return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
 
-            segments, structural_pairs = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                                      rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+            segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
+                                                    rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
             if not segments or len(segments) < 2:
                 return segments, None
 
             remaining_s = max(10.0, overall_deadline - time.monotonic())
-            chunk_ids = list(range(len(segments)))
             pieces = join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s,
-                                    chunk_ids=chunk_ids, known_adjacent_chunk_pairs=structural_pairs, raise_on_unsatisfied=False)
+                                    raise_on_unsatisfied=False)
             return segments, pieces
     finally:
         torch.cuda.empty_cache()

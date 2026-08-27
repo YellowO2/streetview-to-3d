@@ -251,8 +251,7 @@ def run_pathfind_reconstruction(
     a location that WAS reconstructed somewhere but lost the coverage
     competition.
 
-    Returns (segments, structural_pairs).
-    segments: [(pts, cols, path_edges, date, reached_all, node_positions,
+    Returns [(pts, cols, path_edges, date, reached_all, node_positions,
     frame_poses), ...], phase 2's (set_cover's) chosen pieces.
     reached_all: whole corridor covered. node_positions: {key:
     np.ndarray(3,)}, DA3's placement in that piece's own frame.
@@ -264,21 +263,9 @@ def run_pathfind_reconstruction(
     produced this node's current points); node_positions is just
     frame_poses' own center field, kept separate since it's all the
     simpler GPS-fit path needs.
-
-    structural_pairs: [(segment_index_a, segment_index_b), ...] -- every
-    pair of RETURNED segments that share a real structural edge in
-    `adjacency` (one segment has a confirmed dot, the other has one of
-    its real graph-neighbor dots). This is exactly what a caller doing a
-    same-call self-bridge pass (see pipeline_runner._run_pathfind_
-    reconstruction_impl) should pass as bridge_pieces' own
-    known_adjacent_chunk_pairs, INSTEAD of a blind O(n^2) all-pairs scan
-    -- the walk already knows precisely which fragments are supposed to
-    connect (they share a real corridor edge), no need to guess via
-    distance. Segment index, not chunk id -- self-bridge doesn't have
-    chunk ids yet at this point, only its own position in `segments`.
     """
     if not date_graphs or not points:
-        return [], []
+        return []
 
     def pdist(lat, lon, pi):
         return haversine_m(lat, lon, points[pi][0], points[pi][1])
@@ -611,30 +598,6 @@ def run_pathfind_reconstruction(
         for pts, cols, path_edges, node_positions, covered, frame_poses, dots, date in chosen
     ]
 
-    # Real structural adjacency between the CHOSEN pieces themselves --
-    # see this function's own docstring for why a same-call self-bridge
-    # pass should use this instead of a blind all-pairs scan. A dot can
-    # legitimately be CONFIRMED in more than one chosen piece (set_cover
-    # picks by broad, radius-based `covered` area -- a piece can still
-    # get chosen for genuinely new coverage elsewhere even though one of
-    # its own confirmed dots was already covered by an earlier-chosen
-    # piece from a DIFFERENT date's independent walk) -- so this must be
-    # dot -> ALL owning piece indices, not just one; a plain dict here
-    # would silently overwrite and misattribute which piece a real
-    # neighbor pair actually belongs to.
-    dot_to_segments = {}
-    for i, (*_, dots, date) in enumerate(chosen):
-        for d in dots:
-            dot_to_segments.setdefault(d, []).append(i)
-    structural_pairs = sorted({
-        tuple(sorted((i, j)))
-        for i, (*_, dots, date) in enumerate(chosen)
-        for d in dots
-        for nb in adjacency.get(d, [])
-        for j in dot_to_segments.get(nb, [])
-        if j != i
-    })
-
     print(f"pathfind: {total_tests} attempts total, {len(date_graphs)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")
 
     # Diagnostic for whether set_cover's cross-date greedy pick is
@@ -648,4 +611,4 @@ def run_pathfind_reconstruction(
         print(f"pathfind: {len(date_graphs)} date(s) were available but every chosen segment came from a single date "
               f"({dates_used[0] if dates_used else 'n/a'}) -- cross-date mixing wasn't needed here")
 
-    return segments, structural_pairs
+    return segments
