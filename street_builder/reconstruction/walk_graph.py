@@ -613,14 +613,26 @@ def run_pathfind_reconstruction(
 
     # Real structural adjacency between the CHOSEN pieces themselves --
     # see this function's own docstring for why a same-call self-bridge
-    # pass should use this instead of a blind all-pairs scan.
-    dot_to_segment = {d: i for i, (*_, dots, date) in enumerate(chosen) for d in dots}
+    # pass should use this instead of a blind all-pairs scan. A dot can
+    # legitimately be CONFIRMED in more than one chosen piece (set_cover
+    # picks by broad, radius-based `covered` area -- a piece can still
+    # get chosen for genuinely new coverage elsewhere even though one of
+    # its own confirmed dots was already covered by an earlier-chosen
+    # piece from a DIFFERENT date's independent walk) -- so this must be
+    # dot -> ALL owning piece indices, not just one; a plain dict here
+    # would silently overwrite and misattribute which piece a real
+    # neighbor pair actually belongs to.
+    dot_to_segments = {}
+    for i, (*_, dots, date) in enumerate(chosen):
+        for d in dots:
+            dot_to_segments.setdefault(d, []).append(i)
     structural_pairs = sorted({
-        tuple(sorted((i, dot_to_segment[nb])))
+        tuple(sorted((i, j)))
         for i, (*_, dots, date) in enumerate(chosen)
         for d in dots
         for nb in adjacency.get(d, [])
-        if nb in dot_to_segment and dot_to_segment[nb] != i
+        for j in dot_to_segments.get(nb, [])
+        if j != i
     })
 
     print(f"pathfind: {total_tests} attempts total, {len(date_graphs)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")

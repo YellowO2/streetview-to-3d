@@ -189,7 +189,7 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
 
             chunk_ids = list(range(len(segments)))
             return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=overall_deadline,
-                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=structural_pairs)
+                                  chunk_ids=chunk_ids, known_adjacent_chunk_pairs=structural_pairs, raise_on_unsatisfied=False)
     finally:
         # Release CACHED (unused) allocator memory, like DA3's own official
         # Space does after every call -- NOT del da3, which would force a
@@ -470,7 +470,7 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
             remaining_s = max(10.0, overall_deadline - time.monotonic())
             chunk_ids = list(range(len(segments)))
             pieces = join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s,
-                                    chunk_ids=chunk_ids, known_adjacent_chunk_pairs=structural_pairs)
+                                    chunk_ids=chunk_ids, known_adjacent_chunk_pairs=structural_pairs, raise_on_unsatisfied=False)
             return segments, pieces
     finally:
         torch.cuda.empty_cache()

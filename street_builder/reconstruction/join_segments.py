@@ -174,7 +174,8 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
 
 
 def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=None,
-                   chunk_ids=None, known_adjacent_chunk_pairs=None, refetch_path=None, return_ids=False):
+                   chunk_ids=None, known_adjacent_chunk_pairs=None, refetch_path=None, return_ids=False,
+                   raise_on_unsatisfied=True):
     """Try to merge geographically/structurally adjacent segments via real
     DA3-verified transforms. Greedily merges pairs until nothing more
     merges or the deadline hits. Returns a new list of (possibly merged)
@@ -183,7 +184,24 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
     back is expected whenever parts of the input are genuinely not meant
     to connect (e.g. two unrelated regions with no declared adjacency) --
     not an error; see NoBridgeCandidatesError for the actual error case
-    (a declared-adjacent pair with zero real candidates).
+    (a declared-adjacent pair with zero real candidates, and
+    raise_on_unsatisfied=True -- see that param).
+
+    raise_on_unsatisfied: whether a declared-adjacent pair that never
+    once had a real candidate raises NoBridgeCandidatesError (True,
+    default) or is just left as separate pieces, same as an
+    undeclared/blind miss (False). True is right when the caller's own
+    adjacency really does guarantee real closeness (e.g. cross-chunk
+    bridging, where chunking itself is built around a tight per-dot
+    catchment -- see global_dates.split_cover_into_chunks -- so a
+    declared pair with zero candidates does point to something wrong
+    upstream). False is right for a same-call self-bridge pass over an
+    arbitrary corridor (e.g. a hand-picked selection, or ANY chunk that
+    isn't specifically engineered for tight spacing): two real graph-
+    adjacent dots can legitimately still be a genuine 30m+ apart in
+    practice (real gaps in real coverage) -- that's not a bug, it's just
+    geography, and should leave those two as separate pieces like any
+    other normal miss, not hard-fail the whole call.
 
     chunk_ids: optional, same length/order as segments -- an identifying
     label per segment (e.g. which chunk of a large-scale corridor it
@@ -266,7 +284,12 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
 
     if adjacency_set is not None:
         unsatisfied = adjacency_set - satisfied_declared_pairs
-        if unsatisfied:
+        if unsatisfied and not raise_on_unsatisfied:
+            desc = ", ".join(f"{sorted(pair)[0]} <-> {sorted(pair)[1]}" for pair in sorted(unsatisfied, key=sorted))
+            print(f"[bridge] {len(unsatisfied)} declared-adjacent pair(s) never had a single real candidate within "
+                  f"{edge_max_dist_m:.0f}m, across every piece-level attempt: {desc} -- left as separate pieces "
+                  f"(raise_on_unsatisfied=False, a normal real-world gap, not treated as a bug here).")
+        elif unsatisfied:
             desc = ", ".join(f"{sorted(pair)[0]} <-> {sorted(pair)[1]}" for pair in sorted(unsatisfied, key=sorted))
             # ZeroGPU's cross-process exception marshalling can drop the
             # real message, surfacing only the exception class name to
@@ -351,7 +374,7 @@ def output_to_piece(ply_path, metadata):
 
 def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
                    max_time_budget_s: float = 200.0, chunk_ids=None, known_adjacent_chunk_pairs=None,
-                   refetch_path=None):
+                   refetch_path=None, raise_on_unsatisfied=True):
     """Bridges segments together via real DA3 tests (see bridge_pieces),
     then returns each remaining piece as-is -- no GPS fit, no shared
     coordinate frame across pieces that never bridged. Each returned
@@ -363,8 +386,9 @@ def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
     already carries each node's real lat/lon (see bridge_pieces), so no
     separate node_entries/GPS lookup is needed here.
 
-    chunk_ids/known_adjacent_chunk_pairs/refetch_path: passed straight
-    through to bridge_pieces/_try_bridge -- see their own docstrings.
+    chunk_ids/known_adjacent_chunk_pairs/refetch_path/raise_on_unsatisfied:
+    passed straight through to bridge_pieces/_try_bridge -- see their
+    own docstrings.
 
     Returns a list of (points, colors, metadata) -- one per final piece
     still separate after bridging. metadata is {key: {"lat", "lon", "date",
@@ -380,7 +404,7 @@ def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
     deadline = time.monotonic() + max_time_budget_s
     pieces = bridge_pieces(segments, bridge_test_edge, edge_max_dist_m, deadline,
                             chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
-                            refetch_path=refetch_path)
+                            refetch_path=refetch_path, raise_on_unsatisfied=raise_on_unsatisfied)
     print(f"join: bridge_pieces: {len(segments)} piece(s) in, {len(pieces)} piece(s) out "
           f"({len(segments) - len(pieces)} merge(s))")
     return pieces_to_output(pieces)
