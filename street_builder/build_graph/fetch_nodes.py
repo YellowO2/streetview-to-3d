@@ -11,6 +11,18 @@ from street_builder.map_selection.candidates import MAX_NODES, apple_tile_panos,
 # dot's search reaching into a neighboring dot's own territory.
 POINT_MAX_DIST_M = 5.0
 
+# Real selection-graph nodes within this distance of each other collapse
+# into ONE dot (see corridor_points) -- real coverage is frequently
+# double/triple-sampled at the same real spot (a road captured in both
+# directions, a pedestrian path running alongside a road, a backpack
+# capture re-walking the same stretch), which otherwise shows up as
+# several near-duplicate dots each independently competing for a date/
+# candidates instead of one dot with the union of everyone's real
+# candidates. Same value as POINT_MAX_DIST_M by current convention, not
+# because they must match -- one is a merge threshold between two real
+# nodes, the other is a catchment radius for candidates around one node.
+MERGE_DIST_M = 5.0
+
 
 def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[int]]]:
     """Real (lat, lon) dots + structural adjacency straight from the
@@ -19,13 +31,20 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
     a single ordered polyline: the corridor can branch or loop, so edges
     aren't assumed to trace one path in list order).
 
-    No synthetic in-between sampling -- a dot is exactly one real
+    No synthetic in-between sampling -- a dot starts as exactly one real
     selection-graph node, not an interpolated point along a straight
-    line between two of them. Two edges sharing the exact same (lat,
-    lon) endpoint (a branch point, where two real clicked edges meet at
-    the same node) collapse into the SAME dot, so the corridor's own
-    branch structure carries through into the dot graph rather than each
-    edge getting a disconnected copy of that point.
+    line between two of them. Real selection-graph nodes within
+    MERGE_DIST_M of each other then collapse into the SAME dot (see
+    MERGE_DIST_M's own docstring) -- transitively: A-B within range and
+    B-C within range merges all three into one dot even if A-C alone
+    wouldn't qualify, same as two edges sharing an exact (lat, lon)
+    endpoint always did. A merged dot's own position is the centroid of
+    everything folded into it. Rare, deliberately-accepted edge case: a
+    long enough near-straight run of sub-threshold gaps (e.g. two
+    parallel captures the whole length of a long road) can chain into
+    one dot whose centroid sits further from either original end than
+    MERGE_DIST_M -- POINT_MAX_DIST_M's own candidate catchment (fetched
+    from the centroid) could then miss real candidates out at the ends.
 
     Returns (points, adjacency). adjacency: {dot_index: [neighbor_dot_index,
     ...]} -- the corridor's own real dot-to-dot structure, independent of
@@ -33,27 +52,65 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
     algorithm walks dot-by-dot over (see
     street_builder/reconstruction/walk_graph.py).
     """
-    points: list[tuple[float, float]] = []
-    adjacency: dict[int, list[int]] = {}
-    index_by_latlon: dict[tuple[float, float], int] = {}
+    raw_points: list[tuple[float, float]] = []
+    raw_index_by_latlon: dict[tuple[float, float], int] = {}
 
-    def dot_for(latlon):
-        idx = index_by_latlon.get(latlon)
+    def raw_index_for(latlon):
+        idx = raw_index_by_latlon.get(latlon)
         if idx is None:
-            idx = len(points)
-            points.append(latlon)
-            adjacency[idx] = []
-            index_by_latlon[latlon] = idx
+            idx = len(raw_points)
+            raw_points.append(latlon)
+            raw_index_by_latlon[latlon] = idx
         return idx
 
+    raw_edges = [(raw_index_for((lat1, lon1)), raw_index_for((lat2, lon2))) for (lat1, lon1), (lat2, lon2) in edges]
+
+    # Union-find: any two raw nodes within MERGE_DIST_M join the same
+    # dot, transitively. O(n^2) distance checks -- fine at real-world
+    # selection-graph sizes (a few thousand nodes at most).
+    parent = list(range(len(raw_points)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for i in range(len(raw_points)):
+        lat_i, lon_i = raw_points[i]
+        for j in range(i + 1, len(raw_points)):
+            if haversine_m(lat_i, lon_i, *raw_points[j]) <= MERGE_DIST_M:
+                union(i, j)
+
+    cluster_members: dict[int, list[int]] = {}
+    for i in range(len(raw_points)):
+        cluster_members.setdefault(find(i), []).append(i)
+
+    points: list[tuple[float, float]] = []
+    dot_index_by_root: dict[int, int] = {}
+    for root, members in cluster_members.items():
+        lat = sum(raw_points[m][0] for m in members) / len(members)
+        lon = sum(raw_points[m][1] for m in members) / len(members)
+        dot_index_by_root[root] = len(points)
+        points.append((lat, lon))
+
+    adjacency: dict[int, list[int]] = {i: [] for i in range(len(points))}
+
     def connect(i, j):
+        if i == j:
+            return
         if j not in adjacency[i]:
             adjacency[i].append(j)
         if i not in adjacency[j]:
             adjacency[j].append(i)
 
-    for (lat1, lon1), (lat2, lon2) in edges:
-        connect(dot_for((lat1, lon1)), dot_for((lat2, lon2)))
+    for a, b in raw_edges:
+        connect(dot_index_by_root[find(a)], dot_index_by_root[find(b)])
 
     return points, adjacency
 
