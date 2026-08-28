@@ -37,24 +37,27 @@ try:
     # spaces is also installed locally via requirements.txt, so gate on SPACE_ID
     # which HF Spaces always sets but local machines don't have.
     ON_SPACES = bool(os.getenv("SPACE_ID"))
-    # Flat duration, matching DA3's own official Space (duration=120, not
-    # a per-task callable). The real cause of the second-@spaces.GPU-call
-    # segfault this was chasing turned out to be unrelated (open3d's
-    # persistent background thread pool in Saver.save_point_cloud, fixed
-    # in panoramic-da3) -- a dynamic per-task duration was never actually
-    # implicated, but this flat value works and there's no reason to
-    # complicate it back into a callable without a real need to.
-    GPU_WINDOWED_DURATION_S = 120
+    # Flat duration -- started at 120 to match DA3's own official Space
+    # (duration=120, not a per-task callable; the real cause of the
+    # second-@spaces.GPU-call segfault this was originally chasing turned
+    # out to be unrelated -- open3d's persistent background thread pool
+    # in Saver.save_point_cloud, fixed in panoramic-da3). Bumped to 180:
+    # self-bridge kept getting starved of real time to work with once the
+    # walk alone routinely used most of a 120s window (confirmed on real
+    # data: a 20-dot chunk's walk took 94.6s), and our chunk sizes are
+    # consistently similar (~20 dots), so a flat bump is simpler than a
+    # dynamic per-task duration -- bump further if 180 still isn't enough.
+    GPU_WINDOWED_DURATION_S = 180
     PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S
 
     if ON_SPACES:
-        GPU_DISPATCH = spaces.GPU(duration=120)
+        GPU_DISPATCH = spaces.GPU(duration=GPU_WINDOWED_DURATION_S)
     else:
         GPU_DISPATCH = lambda fn: fn
 except ImportError:
     GPU_DISPATCH = lambda fn: fn  # no-op outside HF Spaces
     ON_SPACES = False
-    GPU_WINDOWED_DURATION_S = 120
+    GPU_WINDOWED_DURATION_S = 180
     PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S
 
 _da3_config = None
