@@ -125,47 +125,63 @@ def main():
         print(_summary(run_status))
         print(f"[timing] {cid}: {time.monotonic() - t0:.1f}s")
 
-    # Step 2: pair up consecutive chunks in the chain and merge level by
-    # level -- N -> N/2 -> ... -> 1. Consecutive pairing in `chosen`
-    # matters: grow_chain only ever appends a chunk adjacent to the
-    # ALREADY-chosen set, not necessarily to its immediate predecessor,
-    # so a merge step here could in principle pair two chunks that
-    # aren't directly adjacent to EACH OTHER (only each to the group as
-    # a whole). handle_cli_merge_group's own known_adjacent_chunk_pairs
-    # is a real per-call check (only actually-close node pairs ever get
-    # a real DA3 test), so a wrongly-paired level just leaves that pair
-    # as 2 separate pieces instead of silently merging something wrong --
-    # still safe, just possibly not fully connected. Good enough for
-    # this test; a real full-NTU tree would want a pairing that follows
-    # real geographic adjacency more carefully.
+    # Step 2: pair up REAL-adjacent groups and merge level by level --
+    # N -> N/2 -> ... -> 1. Position in `chosen` does NOT imply adjacency
+    # between neighbors: grow_chain only guarantees each chunk is
+    # adjacent to the growing SET as a whole, not to its immediate list
+    # predecessor -- pairing by list position can (and did, in an earlier
+    # version of this script) pair two chunks that were never actually
+    # declared adjacent, which handle_cli_merge_group correctly rejects
+    # with NoBridgeCandidatesError (a declared-adjacent pair with zero
+    # real candidates raises loudly -- see join_segments.py; it does NOT
+    # silently leave them as 2 pieces). So pairing here must only ever
+    # match groups with a REAL declared-adjacent chunk pair between them.
+    leaf_pairs = {frozenset(p) for p in known_adjacent_chunk_pairs}
+    group_chunk_ids = {cid: frozenset({cid}) for cid in chosen}
+
+    def groups_adjacent(ids_a, ids_b):
+        return any(frozenset((x, y)) in leaf_pairs for x in ids_a for y in ids_b)
+
     level = list(chosen)
     level_num = 0
     while len(level) > 1:
         level_num += 1
+        unmatched = list(level)
         next_level = []
-        print(f"\n=== tree level {level_num}: merging {len(level)} group(s) -> {(len(level) + 1) // 2} ===")
-        for i in range(0, len(level) - 1, 2):
-            a, b = level[i], level[i + 1]
-            new_id = f"g_L{level_num}_{i // 2}"
+        print(f"\n=== tree level {level_num}: {len(level)} group(s) ===")
+        while len(unmatched) > 1:
+            a = unmatched.pop(0)
+            partner_idx = next((i for i, b in enumerate(unmatched)
+                                 if groups_adjacent(group_chunk_ids[a], group_chunk_ids[b])), None)
+            if partner_idx is None:
+                print(f"--- {a} has no adjacent unmatched partner this level -- carries over ---")
+                next_level.append(a)
+                continue
+            b = unmatched.pop(partner_idx)
+            new_id = f"g_L{level_num}_{len(next_level)}"
             print(f"\n--- merge {a} + {b} -> {new_id} ---")
             t0 = time.monotonic()
             status = client.predict(a, b, new_id, api_name="/cli_merge_group")
             print(_summary(status))
             print(f"[timing] {new_id}: {time.monotonic() - t0:.1f}s")
+            group_chunk_ids[new_id] = group_chunk_ids[a] | group_chunk_ids[b]
             next_level.append(new_id)
-        if len(level) % 2 == 1:
-            print(f"\n--- {level[-1]} carries over unpaired to the next level ---")
-            next_level.append(level[-1])
+        next_level.extend(unmatched)  # last leftover if the level had an odd count
+        if len(next_level) == len(level):
+            print("No more adjacent pairs found this pass -- stopping (the chosen chunks don't form one connected tree).")
+            break
         level = next_level
 
-    root = level[0]
-    print(f"\n=== assembling root group {root} ===")
-    t0 = time.monotonic()
-    status = client.predict(root, api_name="/cli_assemble")
-    print(_summary(status))
-    print(f"[timing] assemble: {time.monotonic() - t0:.1f}s")
-
-    print(f"\nDone -- root group '{root}' assembled into cli_join/current/ in the dataset repo.")
+    if len(level) == 1:
+        root = level[0]
+        print(f"\n=== assembling root group {root} ===")
+        t0 = time.monotonic()
+        status = client.predict(root, api_name="/cli_assemble")
+        print(_summary(status))
+        print(f"[timing] assemble: {time.monotonic() - t0:.1f}s")
+        print(f"\nDone -- root group '{root}' assembled into cli_join/current/ in the dataset repo.")
+    else:
+        print(f"\nEnded with {len(level)} disconnected group(s): {level} -- assemble each separately via cli_assemble if needed.")
 
 
 if __name__ == "__main__":
