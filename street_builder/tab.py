@@ -373,6 +373,261 @@ def _upload_pieces(prefix, pieces, id_sets, commit_message):
     return [f"https://huggingface.co/datasets/{CLI_JOIN_DATASET_REPO}/blob/main/{prefix}/{fname}" for fname in fnames]
 
 
+# Binary-tree merge (large-scale, many-chunk reconstruction): each group
+# is either a raw chunk id (a leaf -- see _load_leaf_meta_pieces) or a
+# previously cli_merge_group'd group id, saved here as metadata-only
+# pieces (see join_segments.py's own module docstring for the whole
+# metadata-only design). No point-cloud bytes live under this prefix at
+# all -- only leaf_refs (chunk_id, piece_index, rigid transform) and each
+# node's own lat/lon/pose, small regardless of how many chunks a group
+# has absorbed. cli_assemble is the only step that ever reads real .ply
+# data, and only once, at whichever group you actually want to view.
+CLI_META_PREFIX = "cli_meta"
+
+
+def _meta_piece_to_json(meta_piece):
+    leaf_refs, path_edges, date, reached, frame_poses = meta_piece
+    return {
+        "leaf_refs": [[chunk_id, piece_idx, R.tolist(), t.tolist()] for chunk_id, piece_idx, R, t in leaf_refs],
+        "date": date,
+        "reached": reached,
+        "frame_poses": {
+            key: {"position": pos.tolist(), "rotation": rot.tolist(), "lat": lat, "lon": lon,
+                  "n_views_kept": n_kept, "n_views_total": n_total}
+            for key, (pos, rot, path, lat, lon, n_kept, n_total) in frame_poses.items()
+        },
+    }
+
+
+def _meta_piece_from_json(d):
+    """Inverse of _meta_piece_to_json. `path` is always None -- a
+    metadata-only piece never carries a live local image path (bridging
+    always re-fetches fresh by key via refetch_path, see
+    join_segments.py's _try_bridge_meta), and path_edges is always []
+    (not persisted -- matches output_to_piece's own existing lossy
+    round-trip for real pieces; nothing downstream needs it)."""
+    leaf_refs = [(chunk_id, piece_idx, np.array(R), np.array(t)) for chunk_id, piece_idx, R, t in d["leaf_refs"]]
+    frame_poses = {
+        key: (np.array(m["position"]), np.array(m["rotation"]), None, m["lat"], m["lon"], m["n_views_kept"], m["n_views_total"])
+        for key, m in d["frame_poses"].items()
+    }
+    return (leaf_refs, [], d["date"], d.get("reached", False), frame_poses)
+
+
+def _meta_piece_chunk_ids(meta_piece):
+    """Every distinct leaf chunk id folded into this one meta piece so
+    far, sorted -- e.g. bridge_metadata's own chunk_ids/known_adjacent_
+    chunk_pairs param, or for a driver that wants to know what a group
+    actually covers (see tests/tree_merge_test.py)."""
+    return sorted({chunk_id for chunk_id, _, _, _ in meta_piece[0]})
+
+
+def _load_leaf_meta_pieces(chunk_id):
+    """Builds this chunk's own meta pieces straight from its already-
+    saved per-piece metadata JSON (CLI_RAW_PREFIX/<chunk_id>/
+    pathfind_metadata*.json) -- NOT from the .ply data, which
+    metadata-only merging never needs to touch until cli_assemble.
+    piece_idx (the index into leaf_refs, matching exactly what
+    _save_joined_pieces used to name that piece's own .ply file) comes
+    from the JSON filename's own suffix -- blank means this chunk had
+    exactly one piece (index 0), "_N" means index N (see
+    _save_joined_pieces's own docstring for why the blank case only
+    applies when there's a single piece, not always the first index)."""
+    from huggingface_hub import hf_hub_download
+
+    api = HfApi()
+    try:
+        files = api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
+    except Exception:
+        files = []
+    prefix = f"{CLI_RAW_PREFIX}/{chunk_id}/"
+    json_files = sorted(f for f in files if f.startswith(prefix + "pathfind_metadata") and f.endswith(".json"))
+
+    pieces = []
+    for json_rel in json_files:
+        basename = os.path.basename(json_rel)
+        suffix = basename[len("pathfind_metadata"):-len(".json")]
+        piece_idx = 0 if suffix == "" else int(suffix.lstrip("_"))
+        json_path = hf_hub_download(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", filename=json_rel)
+        with open(json_path) as f:
+            metadata = json.load(f)
+        if not metadata:
+            continue
+        frame_poses = {
+            key: (np.array(m["position"]), np.array(m["rotation"]), None, m["lat"], m["lon"], m["n_views_kept"], m["n_views_total"])
+            for key, m in metadata.items()
+        }
+        date = next(iter(metadata.values()))["date"]
+        leaf_refs = [(chunk_id, piece_idx, np.eye(3), np.zeros(3))]
+        pieces.append((leaf_refs, [], date, False, frame_poses))
+    return pieces
+
+
+def _load_group_meta_pieces(group_id):
+    """A group is either a previously cli_merge_group'd id (saved under
+    CLI_META_PREFIX) or a raw chunk id that's never been merged into
+    anything yet (a tree leaf) -- this resolves either transparently, so
+    handle_cli_merge_group/handle_cli_assemble don't need to know which
+    kind of id they were given."""
+    from huggingface_hub import hf_hub_download
+
+    meta_rel = f"{CLI_META_PREFIX}/{group_id}/group_meta.json"
+    api = HfApi()
+    try:
+        files = api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
+    except Exception:
+        files = []
+    if meta_rel in files:
+        local_path = hf_hub_download(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", filename=meta_rel)
+        with open(local_path) as f:
+            data = json.load(f)
+        return [_meta_piece_from_json(d) for d in data["pieces"]]
+    return _load_leaf_meta_pieces(group_id)
+
+
+def _save_group_meta_pieces(group_id, meta_pieces):
+    """ONE commit, same reasoning as _upload_pieces (HF's 256/hour
+    dataset-commit rate limit)."""
+    from huggingface_hub import CommitOperationAdd, CommitOperationDelete
+
+    data = {"pieces": [_meta_piece_to_json(mp) for mp in meta_pieces]}
+    os.makedirs(SPLATS_DIR, exist_ok=True)
+    tmp_path = os.path.join(SPLATS_DIR, f"{uuid.uuid4().hex}.json")
+    with open(tmp_path, "w") as f:
+        json.dump(data, f)
+
+    prefix = f"{CLI_META_PREFIX}/{group_id}"
+    api = HfApi()
+    has_existing = any(f.startswith(prefix + "/") for f in api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset"))
+    operations = [CommitOperationDelete(path_in_repo=prefix + "/")] if has_existing else []
+    operations += [CommitOperationAdd(path_in_repo=f"{prefix}/group_meta.json", path_or_fileobj=tmp_path)]
+    api.create_commit(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", operations=operations,
+                       commit_message=f"cli meta group {group_id}: {len(meta_pieces)} piece(s)")
+    os.remove(tmp_path)
+
+
+def _leaf_ply_local_path(chunk_id, piece_idx):
+    """fetch_leaf_ply callback for assemble_metadata_piece -- resolves ONE
+    leaf's real .ply data, on demand, only ever called from
+    handle_cli_assemble. Downloads + decompresses + dequantizes exactly
+    like _download_pieces does for CLI_RAW_PREFIX, but for a single named
+    piece instead of a whole prefix's worth."""
+    from huggingface_hub import hf_hub_download
+
+    api = HfApi()
+    files = api.list_repo_files(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset")
+    prefix = f"{CLI_RAW_PREFIX}/{chunk_id}/"
+    ply_files = sorted(f for f in files if f.startswith(prefix + "pathfind_joined") and f.endswith(".ply.gz"))
+    if len(ply_files) == 1:
+        ply_rel = ply_files[0]
+    else:
+        ply_rel = f"{prefix}pathfind_joined_{piece_idx}.ply.gz"
+        if ply_rel not in ply_files:
+            raise RuntimeError(f"No raw .ply found for chunk {chunk_id} piece {piece_idx} (have: {ply_files})")
+
+    ply_gz_path = hf_hub_download(repo_id=CLI_JOIN_DATASET_REPO, repo_type="dataset", filename=ply_rel)
+    ply_path = ply_gz_path[:-len(".gz")]
+    with gzip.open(ply_gz_path, "rb") as f_in, open(ply_path, "wb") as f_out:
+        f_out.writelines(f_in)
+    _dequantize_ply(ply_path)
+    return ply_path
+
+
+def handle_cli_merge_group(group_a_id, group_b_id, new_group_id, progress=gr.Progress(track_tqdm=True)):
+    """Scripted/CLI: one binary-tree merge step -- bridges group_a and
+    group_b's own metadata-only pieces together via real DA3 tests (see
+    services.pipeline_runner.bridge_metadata_gpu / join_segments.
+    bridge_metadata), saving the result as a new group under
+    new_group_id. Its own separate @spaces.GPU call (see
+    handle_cli_run_chunk's docstring for why combining GPU calls in one
+    handler is unsafe).
+
+    group_a_id/group_b_id: either a raw chunk_id (a tree leaf, never
+    merged before -- see _load_leaf_meta_pieces) or a group_id a
+    previous cli_merge_group call produced. Must be REAL known-adjacent
+    groups (e.g. from a chain grown the same way tests/
+    staged_corridor_test.py does) -- known_adjacent_chunk_pairs here is
+    every (leaf id in A) x (leaf id in B) pair, so bridging only ever
+    tests A's pieces against B's, never re-verifying pairs within A or
+    within B that an earlier merge step already resolved (or
+    deliberately left, if genuinely disconnected).
+
+    Touches no point-cloud data at all -- only each leaf's own already-
+    saved metadata JSON (lat/lon/pose) and, for the real DA3 bridge
+    tests themselves, fresh-refetched pano images (same refetch_path
+    mechanism join_segments.py's real-point-cloud path already uses)."""
+    if not group_a_id or not group_b_id or not new_group_id:
+        raise gr.Error("group_a_id, group_b_id, and new_group_id are all required.")
+
+    import time
+    t0 = time.monotonic()
+    pieces_a = _load_group_meta_pieces(group_a_id)
+    pieces_b = _load_group_meta_pieces(group_b_id)
+    if not pieces_a:
+        raise gr.Error(f"Group {group_a_id!r} not found or empty -- run/merge it first.")
+    if not pieces_b:
+        raise gr.Error(f"Group {group_b_id!r} not found or empty -- run/merge it first.")
+    t_download = time.monotonic() - t0
+
+    ids_a = [_meta_piece_chunk_ids(mp) for mp in pieces_a]
+    ids_b = [_meta_piece_chunk_ids(mp) for mp in pieces_b]
+    meta_pieces = pieces_a + pieces_b
+    chunk_ids = ids_a + ids_b
+    known_adjacent_chunk_pairs = [(x, y) for sa in ids_a for x in sa for sb in ids_b for y in sb]
+
+    from services.pipeline_runner import bridge_metadata_gpu
+    t1 = time.monotonic()
+    try:
+        pieces, ids = bridge_metadata_gpu(meta_pieces, chunk_ids, known_adjacent_chunk_pairs)
+    except Exception as e:
+        raise gr.Error(f"Merging {group_a_id} + {group_b_id} failed: {e}")
+    t_bridge = time.monotonic() - t1
+
+    t2 = time.monotonic()
+    _save_group_meta_pieces(new_group_id, pieces)
+    t_save = time.monotonic() - t2
+
+    sizes = [len(id_list) for id_list in ids]
+    return (f"<p>Merged {group_a_id} ({len(pieces_a)} piece(s)) + {group_b_id} ({len(pieces_b)} piece(s)) -> "
+            f"{new_group_id}: {len(pieces)} piece(s) (chunks per piece: {sizes}) "
+            f"(download {t_download:.1f}s, bridge {t_bridge:.1f}s, save {t_save:.1f}s).</p>")
+
+
+def handle_cli_assemble(group_id, progress=gr.Progress(track_tqdm=True)):
+    """Scripted/CLI: resolves one group's metadata-only pieces into an
+    actual viewable point cloud -- the ONLY step in the whole tree-merge
+    flow that reads real .ply data (see join_segments.assemble_metadata_piece),
+    and the only one that isn't a GPU call at all (pure CPU: read each
+    leaf's own already-saved .ply, apply its composed rigid transform,
+    concatenate). Uploads the result to CLI_CHECKPOINT_PREFIX -- same
+    viewable/downloadable convention handle_cli_bridge_chunk's own
+    checkpoint uses.
+
+    Safe to call on ANY group at any point in the tree (not just the
+    final root) -- e.g. to sanity-check an intermediate merge looks
+    right before continuing up the tree."""
+    from street_builder.reconstruction.join_segments import assemble_metadata_piece
+
+    pieces = _load_group_meta_pieces(group_id)
+    if not pieces:
+        raise gr.Error(f"Group {group_id!r} not found or empty.")
+
+    import time
+    t0 = time.monotonic()
+    assembled = [assemble_metadata_piece(mp, _leaf_ply_local_path) for mp in pieces]
+    id_sets = [_meta_piece_chunk_ids(mp) for mp in pieces]
+    t_assemble = time.monotonic() - t0
+
+    t1 = time.monotonic()
+    urls = _upload_pieces(CLI_CHECKPOINT_PREFIX, assembled, id_sets,
+                           commit_message=f"cli assemble {group_id}: {len(assembled)} piece(s)")
+    t_upload = time.monotonic() - t1
+
+    links = "".join(f'<li><a href="{u}">{u}</a></li>' for u in urls)
+    return (f"<p>Assembled {group_id}: {len(assembled)} piece(s) "
+            f"(assemble {t_assemble:.1f}s, upload {t_upload:.1f}s).</p><ul>{links}</ul>")
+
+
 def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
     """Scripted/CLI: Prepare+Run for ONE chunk -- its own single
     @spaces.GPU call, kept SEPARATE from handle_cli_bridge_chunk's own
@@ -584,6 +839,22 @@ def build_tab():
         cli_status = gr.HTML()
         cli_reset_btn = gr.Button("Reset checkpoint (start a fresh merge, keeps raw chunks)")
 
+    with gr.Accordion("Scripted tree merge (CLI, experimental, large-scale)", open=False):
+        gr.Markdown(
+            "Binary-tree merge for many chunks at once: pair up chunks (or "
+            "already-merged groups) two at a time, metadata-only (no point "
+            "cloud moved until Assemble). A group id is either a raw "
+            "chunk_id (a leaf, from step 1 above) or a group_id a previous "
+            "merge produced."
+        )
+        cli_merge_group_a = gr.Textbox(label="Group A id (chunk_id or group_id)")
+        cli_merge_group_b = gr.Textbox(label="Group B id (chunk_id or group_id)")
+        cli_merge_new_group = gr.Textbox(label="New group id")
+        cli_merge_group_btn = gr.Button("Merge A + B -> new group (GPU bridge, metadata-only)")
+        cli_assemble_group = gr.Textbox(label="Group id to assemble into a viewable point cloud")
+        cli_assemble_btn = gr.Button("Assemble group (reads real .ply data, no GPU)")
+        cli_tree_status = gr.HTML()
+
     pathfind_prepare_btn.click(
         fn=handle_pathfind_prepare,
         inputs=[state],
@@ -647,4 +918,22 @@ def build_tab():
         inputs=[],
         outputs=[cli_status],
         api_name="cli_reset",
+    )
+
+    cli_merge_group_btn.click(
+        fn=handle_cli_merge_group,
+        inputs=[cli_merge_group_a, cli_merge_group_b, cli_merge_new_group],
+        outputs=[cli_tree_status],
+        api_name="cli_merge_group",
+        show_progress="minimal",
+        show_progress_on=[cli_tree_status],
+    )
+
+    cli_assemble_btn.click(
+        fn=handle_cli_assemble,
+        inputs=[cli_assemble_group],
+        outputs=[cli_tree_status],
+        api_name="cli_assemble",
+        show_progress="minimal",
+        show_progress_on=[cli_tree_status],
     )

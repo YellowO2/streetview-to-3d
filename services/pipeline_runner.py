@@ -103,6 +103,7 @@ def _gpu_dispatch(task, *args, **kwargs):
         "join_segments": _join_segments_impl,
         "pathfind_and_join": _run_pathfind_and_join_impl,
         "bridge_incremental": _bridge_incremental_impl,
+        "bridge_metadata": _bridge_metadata_impl,
     }[task]
     return impl(*args, **kwargs)
 
@@ -435,6 +436,72 @@ def _bridge_incremental_impl(existing_pieces, existing_ids, new_segments, new_ch
             return bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, deadline=deadline,
                                   chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
                                   refetch_path=lambda key, lat, lon: path_by_key.get(key), return_ids=True)
+    finally:
+        torch.cuda.empty_cache()
+
+
+def _frame_pose_positions_meta(meta_pieces):
+    """{key: (lat, lon)} across every given META piece's own frame_poses --
+    identical purpose to _frame_pose_positions, just adapted for meta
+    pieces' own 5-tuple shape (leaf_refs, path_edges, date, reached,
+    frame_poses), where frame_poses lives at index 4, not 6."""
+    positions = {}
+    for mp in meta_pieces:
+        frame_poses = mp[4]
+        for key, (_, _, _, lat, lon, _, _) in frame_poses.items():
+            positions[key] = (lat, lon)
+    return positions
+
+
+def bridge_metadata_gpu(meta_pieces, chunk_ids, known_adjacent_chunk_pairs, edge_max_dist_m=None, step_degrees=20):
+    """See _bridge_metadata_impl for the real docstring -- this is just the
+    thin dispatch wrapper (see this module's own docstring for why).
+    Prefetches every candidate pano (see _prefetch_bridge_panos) here,
+    OUTSIDE the GPU call, before dispatching -- same reasoning as
+    join_segments_gpu/bridge_incremental_gpu, just over meta pieces'
+    frame_poses instead of real segments'."""
+    path_by_key = _prefetch_bridge_panos(_frame_pose_positions_meta(meta_pieces))
+    return _gpu_dispatch("bridge_metadata", meta_pieces, chunk_ids, known_adjacent_chunk_pairs, path_by_key,
+                          edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees)
+
+
+def _bridge_metadata_impl(meta_pieces, chunk_ids, known_adjacent_chunk_pairs, path_by_key, edge_max_dist_m=None, step_degrees=20):
+    """Metadata-only sibling of _bridge_incremental_impl -- bridges a batch
+    of meta pieces (see join_segments.bridge_metadata) using real DA3
+    tests, restricted to known_adjacent_chunk_pairs exactly like
+    _bridge_incremental_impl (same reasoning: this runs at large-scale,
+    many-group-in-a-tree scope, where a blind all-pairs scan risks
+    wrongly bridging two groups that are merely geographically close but
+    not actually meant to connect). Used by street_builder/tab.py's
+    handle_cli_merge_group -- one binary-tree merge step, combining two
+    groups' worth of meta pieces (each group itself possibly still
+    several un-bridged fragments) into one new set of meta pieces, never
+    touching point-cloud-sized data (see join_segments.py's own module
+    docstring for the whole metadata-only design).
+
+    Returns (pieces, id_sets) -- same shape as bridge_incremental_gpu,
+    just meta pieces instead of real segments."""
+    import tempfile
+    import time
+
+    import torch
+    from services.da3_ops import bridge_test_edge as da3_bridge_test_edge
+    from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, bridge_metadata
+
+    if edge_max_dist_m is None:
+        edge_max_dist_m = BRIDGE_MAX_DIST_M
+
+    cfg = get_da3_config()
+    da3 = get_da3()
+    try:
+        with tempfile.TemporaryDirectory() as views_base:
+            def bridge_test_edge(path_a, path_b, test_id):
+                return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+
+            deadline = time.monotonic() + 200.0
+            return bridge_metadata(meta_pieces, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, deadline=deadline,
+                                    chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
+                                    refetch_path=lambda key, lat, lon: path_by_key.get(key), return_ids=True)
     finally:
         torch.cuda.empty_cache()
 
