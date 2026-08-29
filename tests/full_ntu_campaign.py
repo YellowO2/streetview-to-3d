@@ -86,11 +86,20 @@ def retry_predict(client, *args, api_name, retries=3, backoff_s=15.0):
             time.sleep(backoff_s)
 
 
-def run_remaining_chunks(client, all_chunks, boundary_positions):
+def run_remaining_chunks(client, all_chunks, boundary_positions, batch_size=None):
+    """Runs every not-yet-run chunk, or just the next `batch_size` of them
+    if given -- lets a caller check in after a bounded amount of work
+    (and roughly bounded wall-clock time) instead of committing to the
+    whole remaining set blind. Resumable regardless: which chunks are
+    "done" is always re-read from the dataset repo (see
+    already_run_chunk_ids), so running this in batches across several
+    separate invocations is exactly as safe as one big run."""
     by_id = {c["chunk_id"]: c for c in all_chunks}
     done = already_run_chunk_ids()
     todo = [c["chunk_id"] for c in all_chunks if c["chunk_id"] not in done]
-    print(f"\n{len(done)} chunk(s) already run, {len(todo)} remaining.")
+    if batch_size is not None:
+        todo = todo[:batch_size]
+    print(f"\n{len(done)} chunk(s) already run, {len(todo)} in this batch.")
 
     failed = []
     for idx, cid in enumerate(todo):
@@ -163,6 +172,10 @@ def main():
     parser.add_argument("--metadata", default=os.path.join(NTU_DIR, "fetch_metadata.json"))
     parser.add_argument("--cover", default=os.path.join(NTU_DIR, "date_cover.json"))
     parser.add_argument("--chunk-size", type=int, default=20, help="max dots per chunk")
+    parser.add_argument("--batch-size", type=int, default=None,
+                         help="run at most this many NEW chunks, then stop WITHOUT merging -- "
+                              "safe to re-run repeatedly (resumable) to check progress in bounded steps. "
+                              "Omit to run every remaining chunk then merge+assemble everything.")
     args = parser.parse_args()
 
     with open(args.metadata) as f:
@@ -180,8 +193,15 @@ def main():
     client = Client(args.space)
 
     t_start = time.monotonic()
-    run_chunk_ids = run_remaining_chunks(client, all_chunks, boundary_positions)
-    print(f"\n[timing] all chunk runs: {(time.monotonic() - t_start) / 60:.1f} min total")
+    run_chunk_ids = run_remaining_chunks(client, all_chunks, boundary_positions, batch_size=args.batch_size)
+    print(f"\n[timing] this batch's chunk runs: {(time.monotonic() - t_start) / 60:.1f} min total")
+
+    if args.batch_size is not None:
+        still_todo = len(all_chunks) - len(run_chunk_ids)
+        print(f"\nBatch done -- {len(run_chunk_ids)}/{len(all_chunks)} chunk(s) have raw output, "
+              f"{still_todo} remaining. Re-run with --batch-size to continue, or without it once "
+              f"everything's run to merge+assemble.")
+        return
 
     print(f"\n{len(run_chunk_ids)}/{len(all_chunks)} chunk(s) have raw output -- building merge forest.")
     t_merge = time.monotonic()
