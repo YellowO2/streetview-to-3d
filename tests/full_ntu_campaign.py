@@ -121,15 +121,46 @@ def run_remaining_chunks(client, all_chunks, boundary_positions, batch_size=None
     return sorted(already_run_chunk_ids())
 
 
+def existing_group_chunk_ids():
+    """{group_id: frozenset(chunk_ids)} for every group already saved
+    under cli_meta/ -- lets merge_forest skip re-doing a merge whose
+    exact result is already sitting there from an earlier (interrupted
+    or since-superseded) run, instead of blindly re-paying real
+    GPU-billed DA3 work for something already done. Checked against the
+    ACTUAL chunk coverage read back from the saved group, not just
+    whether the group_id happens to exist -- group ids are deterministic
+    given the same chunk_ids/known_adjacent_chunk_pairs inputs, but this
+    is a free, cheap safety check against ever silently trusting a
+    mismatched leftover (see this session's own cli_raw staleness bug
+    for exactly this class of mistake, just one level up)."""
+    from huggingface_hub import hf_hub_download
+
+    api = HfApi()
+    files = api.list_repo_files(repo_id=DATASET_REPO, repo_type="dataset")
+    group_ids = sorted({f.split("/")[1] for f in files if f.startswith("cli_meta/") and f.endswith("/group_meta.json")})
+    result = {}
+    for gid in group_ids:
+        path = hf_hub_download(repo_id=DATASET_REPO, repo_type="dataset", filename=f"cli_meta/{gid}/group_meta.json")
+        with open(path) as f:
+            data = json.load(f)
+        result[gid] = frozenset(ref[0] for piece in data["pieces"] for ref in piece["leaf_refs"])
+    return result
+
+
 def merge_forest(client, chunk_ids, known_adjacent_chunk_pairs):
     """Greedily pairs only REAL declared-adjacent groups at each level
     (N -> N/2 -> ... down to as few roots as the graph allows) -- see
     tests/tree_merge_test.py's own docstring for why list-position
-    pairing is wrong. Returns a list of final root group ids (usually 1,
-    more if the declared-adjacency graph itself has multiple connected
-    components -- see this script's own module docstring)."""
+    pairing is wrong. Resumable: a computed pairing whose target
+    group_id already exists in cli_meta/ WITH the exact same chunk
+    coverage is reused as-is rather than re-merged (see
+    existing_group_chunk_ids). Returns a list of final root group ids
+    (usually 1, more if the declared-adjacency graph itself has multiple
+    connected components -- see this script's own module docstring)."""
     leaf_pairs = {frozenset(p) for p in known_adjacent_chunk_pairs}
     group_chunk_ids = {cid: frozenset({cid}) for cid in chunk_ids}
+    existing = existing_group_chunk_ids()
+    print(f"\n{len(existing)} already-merged group(s) found in cli_meta/ -- reused wherever they match this run's pairing.")
 
     def groups_adjacent(ids_a, ids_b):
         return any(frozenset((x, y)) in leaf_pairs for x in ids_a for y in ids_b)
@@ -150,6 +181,12 @@ def merge_forest(client, chunk_ids, known_adjacent_chunk_pairs):
                 continue
             b = unmatched.pop(partner_idx)
             new_id = f"g_L{level_num}_{len(next_level)}"
+            expected_ids = group_chunk_ids[a] | group_chunk_ids[b]
+            if existing.get(new_id) == expected_ids:
+                print(f"--- {a} + {b} -> {new_id}: already merged, reusing (skipped GPU call) ---")
+                group_chunk_ids[new_id] = expected_ids
+                next_level.append(new_id)
+                continue
             print(f"--- merge {a} + {b} -> {new_id} ---")
             t0 = time.monotonic()
             status = retry_predict(client, a, b, new_id, json.dumps(known_adjacent_chunk_pairs), api_name="/cli_merge_group")
