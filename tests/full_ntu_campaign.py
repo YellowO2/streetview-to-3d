@@ -71,15 +71,29 @@ def already_run_chunk_ids():
     return ids
 
 
+class NoBridgeCandidates(Exception):
+    """A declared-adjacent pair genuinely had zero real candidates within
+    range -- a real-world coverage gap (e.g. the true boundary dot's pano
+    wasn't available for one side's assigned date, so that chunk's real
+    reconstructed node ended up anchored further away), not a bug.
+    Deterministic -- retrying changes nothing, unlike a transient
+    CancelledError -- so retry_predict raises this immediately instead of
+    burning 3 retries finding out again."""
+
+
 def retry_predict(client, *args, api_name, retries=3, backoff_s=15.0):
     """gradio_client calls occasionally hit a transient CancelledError
     (observed on a real run -- looked like a ZeroGPU queue hiccup, not a
     logic bug: the retry itself succeeded immediately after). Retries the
-    exact same call a few times before giving up for real."""
+    exact same call a few times before giving up for real -- except a
+    genuine NoBridgeCandidatesError (see NoBridgeCandidates above), which
+    is never transient and raises immediately."""
     for attempt in range(retries):
         try:
             return client.predict(*args, api_name=api_name)
         except Exception as e:
+            if "NoBridgeCandidatesError" in str(e):
+                raise NoBridgeCandidates(str(e)) from e
             print(f"    attempt {attempt + 1}/{retries} failed: {type(e).__name__}: {e}")
             if attempt == retries - 1:
                 raise
@@ -189,7 +203,20 @@ def merge_forest(client, chunk_ids, known_adjacent_chunk_pairs):
                 continue
             print(f"--- merge {a} + {b} -> {new_id} ---")
             t0 = time.monotonic()
-            status = retry_predict(client, a, b, new_id, json.dumps(known_adjacent_chunk_pairs), api_name="/cli_merge_group")
+            try:
+                status = retry_predict(client, a, b, new_id, json.dumps(known_adjacent_chunk_pairs), api_name="/cli_merge_group")
+            except NoBridgeCandidates:
+                # Declared adjacent by the dot graph, but genuinely no real
+                # candidate pair within range once actually reconstructed
+                # (e.g. the true boundary dot's pano was missing for one
+                # side's date) -- a real-world coverage gap, not a bug (see
+                # this session's own chunk14<->chunk31 investigation: 40m
+                # apart, just over BRIDGE_MAX_DIST_M). Leave both as
+                # separate pieces rather than crashing the whole campaign.
+                print(f"    {a} <-> {b}: genuine real-world gap (declared adjacent, but no real candidates in range) -- leaving separate.")
+                next_level.append(a)
+                next_level.append(b)
+                continue
             print(f"    {_summary(status)}")
             print(f"    [timing] {new_id}: {time.monotonic() - t0:.1f}s")
             group_chunk_ids[new_id] = group_chunk_ids[a] | group_chunk_ids[b]
