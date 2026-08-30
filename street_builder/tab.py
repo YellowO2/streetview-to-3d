@@ -550,20 +550,22 @@ def handle_cli_merge_group(group_a_id, group_b_id, new_group_id, known_adjacent_
     known_adjacent_pairs_str: JSON list of [chunk_id_a, chunk_id_b] --
     the REAL leaf-level declared-adjacent pairs (e.g. straight from
     global_dates.split_cover_into_chunks, same list tests/
-    full_ntu_campaign.py already has). Passed straight through to
-    bridge_metadata as known_adjacent_chunk_pairs -- an earlier version
-    of this handler computed the full (leaf in A) x (leaf in B) cross
-    product itself instead, which was wrong: once A/B grow past a
-    couple of leaves each, that cross product includes plenty of pairs
-    that were never actually geographically adjacent, and
-    bridge_metadata treats EVERY declared pair as required to have real
-    candidates -- confirmed the hard way on a real 121-chunk run (a
-    perfectly fine merge crashed with NoBridgeCandidatesError purely
-    from the cross-product blow-up at a deeper tree level). Passing the
-    real global list instead is always safe and needs no filtering down
-    to just A/B's own leaves first -- bridge_metadata's own
-    candidate_pairs() already only ever tests a declared pair that's
-    actually present on both sides of the current call.
+    full_ntu_campaign.py already has). Filtered down here to just the
+    pairs that actually connect a leaf in group_a to a leaf in group_b
+    (see relevant_pairs below) before being passed to bridge_metadata as
+    known_adjacent_chunk_pairs. Two earlier versions of this handler got
+    this wrong in opposite directions, both confirmed on a real 121-
+    chunk run: computing the full (leaf in A) x (leaf in B) cross
+    product itself included plenty of pairs that were never actually
+    geographically adjacent (crashed at a deeper tree level, groups with
+    many leaves each); passing the ENTIRE global list unfiltered instead
+    crashed even the very first, entirely valid chunk0+chunk1 merge --
+    bridge_metadata's own "was every declared pair satisfied" check
+    is scored against the WHOLE list handed to it, not just whichever
+    pairs happen to be relevant to the leaves present in this one call,
+    so ~120+ irrelevant declared pairs were being counted as unsatisfied
+    on every single call. Filtering to only the real pairs that bridge
+    THIS call's two groups is the only version of correct here.
 
     Touches no point-cloud data at all -- only each leaf's own already-
     saved metadata JSON (lat/lon/pose) and, for the real DA3 bridge
@@ -591,10 +593,27 @@ def handle_cli_merge_group(group_a_id, group_b_id, new_group_id, known_adjacent_
     meta_pieces = pieces_a + pieces_b
     chunk_ids = ids_a + ids_b
 
+    # bridge_metadata treats EVERY pair in known_adjacent_chunk_pairs as
+    # required to have real candidates somewhere in THIS call (raising
+    # NoBridgeCandidatesError otherwise) -- passing the whole global list
+    # unfiltered means the ~120+ declared pairs that have nothing to do
+    # with group_a/group_b's own leaves get wrongly counted as
+    # unsatisfied every single call (confirmed the hard way: even the
+    # very first, entirely valid chunk0+chunk1 merge raised, purely from
+    # the rest of the global list being irrelevant noise here). Restrict
+    # to only the real declared pairs that actually connect a leaf in A
+    # to a leaf in B -- scoped exactly the way _bridge_incremental_impl's
+    # own known_adjacent_chunk_pairs already is for its (new_chunk_id, x)
+    # pairs, just generalized to two arbitrary groups of leaves.
+    leaf_ids_a = {cid for s in ids_a for cid in s}
+    leaf_ids_b = {cid for s in ids_b for cid in s}
+    relevant_pairs = [(x, y) for x, y in known_adjacent_chunk_pairs
+                       if (x in leaf_ids_a and y in leaf_ids_b) or (y in leaf_ids_a and x in leaf_ids_b)]
+
     from services.pipeline_runner import bridge_metadata_gpu
     t1 = time.monotonic()
     try:
-        pieces, ids = bridge_metadata_gpu(meta_pieces, chunk_ids, known_adjacent_chunk_pairs)
+        pieces, ids = bridge_metadata_gpu(meta_pieces, chunk_ids, relevant_pairs)
     except Exception as e:
         raise gr.Error(f"Merging {group_a_id} + {group_b_id} failed: {e}")
     t_bridge = time.monotonic() - t1
