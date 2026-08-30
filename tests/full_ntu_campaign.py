@@ -152,7 +152,7 @@ def merge_forest(client, chunk_ids, known_adjacent_chunk_pairs):
             new_id = f"g_L{level_num}_{len(next_level)}"
             print(f"--- merge {a} + {b} -> {new_id} ---")
             t0 = time.monotonic()
-            status = retry_predict(client, a, b, new_id, api_name="/cli_merge_group")
+            status = retry_predict(client, a, b, new_id, json.dumps(known_adjacent_chunk_pairs), api_name="/cli_merge_group")
             print(f"    {_summary(status)}")
             print(f"    [timing] {new_id}: {time.monotonic() - t0:.1f}s")
             group_chunk_ids[new_id] = group_chunk_ids[a] | group_chunk_ids[b]

@@ -533,7 +533,8 @@ def _leaf_ply_local_path(chunk_id, piece_idx):
     return ply_path
 
 
-def handle_cli_merge_group(group_a_id, group_b_id, new_group_id, progress=gr.Progress(track_tqdm=True)):
+def handle_cli_merge_group(group_a_id, group_b_id, new_group_id, known_adjacent_pairs_str,
+                            progress=gr.Progress(track_tqdm=True)):
     """Scripted/CLI: one binary-tree merge step -- bridges group_a and
     group_b's own metadata-only pieces together via real DA3 tests (see
     services.pipeline_runner.bridge_metadata_gpu / join_segments.
@@ -544,13 +545,25 @@ def handle_cli_merge_group(group_a_id, group_b_id, new_group_id, progress=gr.Pro
 
     group_a_id/group_b_id: either a raw chunk_id (a tree leaf, never
     merged before -- see _load_leaf_meta_pieces) or a group_id a
-    previous cli_merge_group call produced. Must be REAL known-adjacent
-    groups (e.g. from a chain grown the same way tests/
-    staged_corridor_test.py does) -- known_adjacent_chunk_pairs here is
-    every (leaf id in A) x (leaf id in B) pair, so bridging only ever
-    tests A's pieces against B's, never re-verifying pairs within A or
-    within B that an earlier merge step already resolved (or
-    deliberately left, if genuinely disconnected).
+    previous cli_merge_group call produced.
+
+    known_adjacent_pairs_str: JSON list of [chunk_id_a, chunk_id_b] --
+    the REAL leaf-level declared-adjacent pairs (e.g. straight from
+    global_dates.split_cover_into_chunks, same list tests/
+    full_ntu_campaign.py already has). Passed straight through to
+    bridge_metadata as known_adjacent_chunk_pairs -- an earlier version
+    of this handler computed the full (leaf in A) x (leaf in B) cross
+    product itself instead, which was wrong: once A/B grow past a
+    couple of leaves each, that cross product includes plenty of pairs
+    that were never actually geographically adjacent, and
+    bridge_metadata treats EVERY declared pair as required to have real
+    candidates -- confirmed the hard way on a real 121-chunk run (a
+    perfectly fine merge crashed with NoBridgeCandidatesError purely
+    from the cross-product blow-up at a deeper tree level). Passing the
+    real global list instead is always safe and needs no filtering down
+    to just A/B's own leaves first -- bridge_metadata's own
+    candidate_pairs() already only ever tests a declared pair that's
+    actually present on both sides of the current call.
 
     Touches no point-cloud data at all -- only each leaf's own already-
     saved metadata JSON (lat/lon/pose) and, for the real DA3 bridge
@@ -558,6 +571,10 @@ def handle_cli_merge_group(group_a_id, group_b_id, new_group_id, progress=gr.Pro
     mechanism join_segments.py's real-point-cloud path already uses)."""
     if not group_a_id or not group_b_id or not new_group_id:
         raise gr.Error("group_a_id, group_b_id, and new_group_id are all required.")
+    try:
+        known_adjacent_chunk_pairs = [tuple(p) for p in json.loads(known_adjacent_pairs_str)]
+    except Exception as e:
+        raise gr.Error(f"Bad known_adjacent_pairs: {e}")
 
     import time
     t0 = time.monotonic()
@@ -573,7 +590,6 @@ def handle_cli_merge_group(group_a_id, group_b_id, new_group_id, progress=gr.Pro
     ids_b = [_meta_piece_chunk_ids(mp) for mp in pieces_b]
     meta_pieces = pieces_a + pieces_b
     chunk_ids = ids_a + ids_b
-    known_adjacent_chunk_pairs = [(x, y) for sa in ids_a for x in sa for sb in ids_b for y in sb]
 
     from services.pipeline_runner import bridge_metadata_gpu
     t1 = time.monotonic()
@@ -850,6 +866,7 @@ def build_tab():
         cli_merge_group_a = gr.Textbox(label="Group A id (chunk_id or group_id)")
         cli_merge_group_b = gr.Textbox(label="Group B id (chunk_id or group_id)")
         cli_merge_new_group = gr.Textbox(label="New group id")
+        cli_merge_known_pairs = gr.Textbox(label='Real leaf-level known-adjacent pairs, JSON e.g. [["chunk0","chunk1"],...]')
         cli_merge_group_btn = gr.Button("Merge A + B -> new group (GPU bridge, metadata-only)")
         cli_assemble_group = gr.Textbox(label="Group id to assemble into a viewable point cloud")
         cli_assemble_btn = gr.Button("Assemble group (reads real .ply data, no GPU)")
@@ -922,7 +939,7 @@ def build_tab():
 
     cli_merge_group_btn.click(
         fn=handle_cli_merge_group,
-        inputs=[cli_merge_group_a, cli_merge_group_b, cli_merge_new_group],
+        inputs=[cli_merge_group_a, cli_merge_group_b, cli_merge_new_group, cli_merge_known_pairs],
         outputs=[cli_tree_status],
         api_name="cli_merge_group",
         show_progress="minimal",

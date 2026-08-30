@@ -161,7 +161,7 @@ def main():
             new_id = f"g_L{level_num}_{len(next_level)}"
             print(f"\n--- merge {a} + {b} -> {new_id} ---")
             t0 = time.monotonic()
-            status = client.predict(a, b, new_id, api_name="/cli_merge_group")
+            status = client.predict(a, b, new_id, json.dumps(known_adjacent_chunk_pairs), api_name="/cli_merge_group")
             print(_summary(status))
             print(f"[timing] {new_id}: {time.monotonic() - t0:.1f}s")
             group_chunk_ids[new_id] = group_chunk_ids[a] | group_chunk_ids[b]
