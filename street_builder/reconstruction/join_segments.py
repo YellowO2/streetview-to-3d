@@ -57,15 +57,21 @@ class NoBridgeCandidatesError(RuntimeError):
 def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, refetch_path=None):
     """One pair's worth of bridge search: every (Ax, By) node pair within
     edge_max_dist_m, same-date-first then closest-first, up to
-    BRIDGE_MAX_ATTEMPTS real tests. ALWAYS merges using whichever attempt
-    came out best, however weak -- a clearly confident match (clears
-    BRIDGE_KEEP_RATE on both sides, no bad-consensus red flag) stops the
-    search early; otherwise every attempt is ranked and the best one
-    wins once the attempt budget/deadline is hit.
+    BRIDGE_MAX_ATTEMPTS real tests. Merges using whichever attempt came
+    out best -- a clearly confident match (clears BRIDGE_KEEP_RATE on
+    both sides, no bad-consensus red flag) stops the search early;
+    otherwise every attempt is ranked and the best one wins once the
+    attempt budget/deadline is hit -- UNLESS even the best available
+    attempt fails the sanity floor (avg_dev_a/avg_dev_b both under
+    BRIDGE_RIDICULOUS_DEV_M), in which case nothing merges: a genuinely
+    bad match doesn't get forced through just for being the least-bad of
+    a weak field, matching the Run step's own walk (which already never
+    accepts a genuinely failed edge test either).
     Returns (merged_segment, next_bridge_test_id, had_candidates).
     merged_segment is None if real candidates existed but every DA3
-    attempt on them came back unusable (a genuine per-attempt failure),
-    or if there were zero candidates at all. had_candidates distinguishes
+    attempt on them came back unusable or failed the sanity floor (a
+    genuine per-attempt failure), or if there were zero candidates at
+    all. had_candidates distinguishes
     those two None cases for the caller (bridge_pieces) -- whether THIS
     declared pair ever needs raising NoBridgeCandidatesError is decided
     there, only once EVERY piece-level pair sharing those two chunk ids
@@ -138,8 +144,9 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
         # (confident?, sane?, min keep-rate, -combined avg_dev) -- ranks
         # a genuinely good match first, then prefers a sane result over
         # a flagged one, then the best of what's left by keep-
-        # rate/deviation. Never disqualifies outright -- there's always
-        # a best available, and it's always used.
+        # rate/deviation. The best-ranked attempt still has to clear the
+        # sanity floor on its own (checked below) -- being the least-bad
+        # of a weak field isn't good enough by itself.
         rank_key = (passed and sane, sane, min(keep_a_ratio, keep_b_ratio), -(result["avg_dev_a"] + result["avg_dev_b"]))
         print(f"[bridge] {a_key} -> {b_key}: keep={ka}/{ta},{kb}/{tb} avg_dev={result['avg_dev_a']:.2f}m,{result['avg_dev_b']:.2f}m "
               f"{'OK' if passed and sane else ('weak' if sane else 'poor consensus')}")
@@ -148,7 +155,10 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
         if passed and sane:
             break
 
-    if best is None:
+    if best is None or not best[0][1]:
+        if best is not None:
+            print(f"[bridge] {a_date}+{b_date}: best available still failed the sanity floor "
+                  f"(avg_dev >= {BRIDGE_RIDICULOUS_DEV_M:.1f}m) -- leaving separate")
         return None, bridge_test_id, True
 
     _, result, a_key, b_key = best
@@ -353,7 +363,9 @@ def segments_to_meta_pieces(chunk_id, segments):
 
 def _try_bridge_meta(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, refetch_path=None):
     """Metadata-only sibling of _try_bridge -- see its own docstring for
-    the shared candidate search/ranking/refetch logic, identical here.
+    the shared candidate search/ranking/refetch logic (including the
+    sanity floor a merge must clear even as the best-ranked attempt),
+    identical here.
     The only real difference: _try_bridge concatenates a_pts/bridge_pts/
     b_pts into a new array; this composes the same b_to_a_R/b_to_a_t
     transform into each of b's own leaf_refs instead (point p in a
@@ -418,7 +430,10 @@ def _try_bridge_meta(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_t
         if passed and sane:
             break
 
-    if best is None:
+    if best is None or not best[0][1]:
+        if best is not None:
+            print(f"[bridge-meta] {a_date}+{b_date}: best available still failed the sanity floor "
+                  f"(avg_dev >= {BRIDGE_RIDICULOUS_DEV_M:.1f}m) -- leaving separate")
         return None, bridge_test_id, True
 
     _, result, a_key, b_key = best
