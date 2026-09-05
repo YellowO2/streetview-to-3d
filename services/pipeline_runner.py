@@ -48,16 +48,34 @@ try:
     # consistently similar (~20 dots), so a flat bump is simpler than a
     # dynamic per-task duration -- bump further if 180 still isn't enough.
     GPU_WINDOWED_DURATION_S = 180
+    # pathfind_and_join runs the walk AND the join/bridge phase
+    # sequentially in ONE call, sharing whatever window it gets -- giving
+    # it just GPU_WINDOWED_DURATION_S (sized for walk-alone/join-alone)
+    # would starve whichever phase runs second. Sized instead as the
+    # previous walk budget PLUS join's own standalone default (see
+    # join_segments.join_segments's own 200s default), so combining the
+    # two steps into one call doesn't cost either phase the time it'd
+    # get running separately.
+    RUN_AND_JOIN_DURATION_S = GPU_WINDOWED_DURATION_S + 200.0
     PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S
 
+    def _gpu_duration(task, *args, **kwargs):
+        """Per-call duration for the ONE @spaces.GPU-decorated dispatch
+        (see _gpu_dispatch's own docstring for why there's only one) --
+        every task gets the normal shared window except pathfind_and_join,
+        which needs room for both the walk AND a genuinely unhurried join
+        afterward (see RUN_AND_JOIN_DURATION_S)."""
+        return RUN_AND_JOIN_DURATION_S if task == "pathfind_and_join" else GPU_WINDOWED_DURATION_S
+
     if ON_SPACES:
-        GPU_DISPATCH = spaces.GPU(duration=GPU_WINDOWED_DURATION_S)
+        GPU_DISPATCH = spaces.GPU(duration=_gpu_duration)
     else:
         GPU_DISPATCH = lambda fn: fn
 except ImportError:
     GPU_DISPATCH = lambda fn: fn  # no-op outside HF Spaces
     ON_SPACES = False
     GPU_WINDOWED_DURATION_S = 180
+    RUN_AND_JOIN_DURATION_S = GPU_WINDOWED_DURATION_S + 200.0
     PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S
 
 _da3_config = None
@@ -529,10 +547,13 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
     an already-saved segments bundle, without redoing the whole (much
     more expensive) corridor search.
 
-    Splits the one GPU_WINDOWED time budget between the two phases
-    sequentially (corridor search first, then whatever's left over for
-    join/bridging) rather than each phase getting its own full budget --
-    they're sharing one real wall-clock window here, not two.
+    Splits ONE wall-clock window (RUN_AND_JOIN_DURATION_S, sized as the
+    walk's own normal budget PLUS join's own standalone default -- see
+    that constant's own comment) between the two phases sequentially:
+    corridor search first (still capped at the same PATHFIND_MAX_TIME_BUDGET_S
+    a plain walk gets), then whatever's left of the bigger window for
+    join/bridging -- which now amounts to roughly a full, unhurried join
+    budget rather than the walk's leftover scraps.
 
     Returns (segments, pieces) -- pieces is a list of (pts, cols,
     metadata) or None if there was only ever one segment (nothing to
@@ -550,7 +571,7 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
         edge_max_dist_m = BRIDGE_MAX_DIST_M
 
     t0 = time.monotonic()
-    hard_deadline = t0 + GPU_WINDOWED_DURATION_S - SAVE_BUFFER_S
+    hard_deadline = t0 + RUN_AND_JOIN_DURATION_S - SAVE_BUFFER_S
 
     cfg = get_da3_config()
     da3 = get_da3()

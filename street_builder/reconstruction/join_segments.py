@@ -24,16 +24,24 @@ from services.geo import haversine_m
 from street_builder.reconstruction.walk_graph import rigid_align
 
 # Relaxed keep-rate vs. the main walk's 0.6 -- bridging only needs SOME
-# real signal, and any real DA3 estimate beats independent GPS placement
-# regardless of how weak. Only decides when a match is confident enough
-# to stop searching early; never disqualifies a result from being used.
+# real signal. Decides when a match is confident enough to stop
+# searching early, and is part of ranking attempts against each other;
+# NOT the reject floor itself -- see BRIDGE_MIN_KEEP_RATE for that.
 BRIDGE_KEEP_RATE = 0.5
 # An average deviation-among-kept-views this large (not a single outlier
 # -- those get filtered out already, see services.da3_ops.bridge_test_edge) means the
-# surviving views still don't agree with each other, a real sign the
-# pair is worse than usual -- only used to break ties when ranking
-# attempts, never to discard a result outright.
+# surviving views still don't agree with each other -- a real sign the
+# pair is worse than usual. Part of the reject floor: even the best-
+# ranked attempt across a pair of pieces must clear this (both sides),
+# or the merge is rejected and the pieces stay separate.
 BRIDGE_RIDICULOUS_DEV_M = 2.0
+# Second half of the reject floor, alongside BRIDGE_RIDICULOUS_DEV_M --
+# deliberately much more lenient than BRIDGE_KEEP_RATE's 0.5 "confident"
+# bar: this only exists to catch a genuinely bad match (most of a
+# pano's views failing DA3's own consensus filter), not to demand a
+# strong one. Even the best-ranked attempt must clear BOTH this and the
+# deviation floor, or the merge is rejected.
+BRIDGE_MIN_KEEP_RATE = 1.0 / 3
 # Real DA3 calls spent trying to bridge one pair of pieces, capped
 # regardless of how many (Ax, By) node pairs qualify by distance.
 BRIDGE_MAX_ATTEMPTS = 10
@@ -62,14 +70,15 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     both sides, no bad-consensus red flag) stops the search early;
     otherwise every attempt is ranked and the best one wins once the
     attempt budget/deadline is hit -- UNLESS even the best available
-    attempt fails the sanity floor (avg_dev_a/avg_dev_b both under
-    BRIDGE_RIDICULOUS_DEV_M), in which case nothing merges: a genuinely
+    attempt fails the reject floor (avg_dev_a/avg_dev_b both under
+    BRIDGE_RIDICULOUS_DEV_M, AND both sides' keep-rate at or above
+    BRIDGE_MIN_KEEP_RATE), in which case nothing merges: a genuinely
     bad match doesn't get forced through just for being the least-bad of
     a weak field, matching the Run step's own walk (which already never
     accepts a genuinely failed edge test either).
     Returns (merged_segment, next_bridge_test_id, had_candidates).
     merged_segment is None if real candidates existed but every DA3
-    attempt on them came back unusable or failed the sanity floor (a
+    attempt on them came back unusable or failed the reject floor (a
     genuine per-attempt failure), or if there were zero candidates at
     all. had_candidates distinguishes
     those two None cases for the caller (bridge_pieces) -- whether THIS
@@ -145,7 +154,7 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
         # a genuinely good match first, then prefers a sane result over
         # a flagged one, then the best of what's left by keep-
         # rate/deviation. The best-ranked attempt still has to clear the
-        # sanity floor on its own (checked below) -- being the least-bad
+        # reject floor on its own (checked below) -- being the least-bad
         # of a weak field isn't good enough by itself.
         rank_key = (passed and sane, sane, min(keep_a_ratio, keep_b_ratio), -(result["avg_dev_a"] + result["avg_dev_b"]))
         print(f"[bridge] {a_key} -> {b_key}: keep={ka}/{ta},{kb}/{tb} avg_dev={result['avg_dev_a']:.2f}m,{result['avg_dev_b']:.2f}m "
@@ -155,10 +164,12 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
         if passed and sane:
             break
 
-    if best is None or not best[0][1]:
+    if best is not None:
+        _, best_sane, best_min_keep, _ = best[0]
+    if best is None or not best_sane or best_min_keep < BRIDGE_MIN_KEEP_RATE:
         if best is not None:
-            print(f"[bridge] {a_date}+{b_date}: best available still failed the sanity floor "
-                  f"(avg_dev >= {BRIDGE_RIDICULOUS_DEV_M:.1f}m) -- leaving separate")
+            print(f"[bridge] {a_date}+{b_date}: best available still failed the reject floor "
+                  f"(avg_dev >= {BRIDGE_RIDICULOUS_DEV_M:.1f}m or keep-rate < {BRIDGE_MIN_KEEP_RATE:.2f}) -- leaving separate")
         return None, bridge_test_id, True
 
     _, result, a_key, b_key = best
@@ -364,7 +375,7 @@ def segments_to_meta_pieces(chunk_id, segments):
 def _try_bridge_meta(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, refetch_path=None):
     """Metadata-only sibling of _try_bridge -- see its own docstring for
     the shared candidate search/ranking/refetch logic (including the
-    sanity floor a merge must clear even as the best-ranked attempt),
+    reject floor a merge must clear even as the best-ranked attempt),
     identical here.
     The only real difference: _try_bridge concatenates a_pts/bridge_pts/
     b_pts into a new array; this composes the same b_to_a_R/b_to_a_t
@@ -430,10 +441,12 @@ def _try_bridge_meta(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_t
         if passed and sane:
             break
 
-    if best is None or not best[0][1]:
+    if best is not None:
+        _, best_sane, best_min_keep, _ = best[0]
+    if best is None or not best_sane or best_min_keep < BRIDGE_MIN_KEEP_RATE:
         if best is not None:
-            print(f"[bridge-meta] {a_date}+{b_date}: best available still failed the sanity floor "
-                  f"(avg_dev >= {BRIDGE_RIDICULOUS_DEV_M:.1f}m) -- leaving separate")
+            print(f"[bridge-meta] {a_date}+{b_date}: best available still failed the reject floor "
+                  f"(avg_dev >= {BRIDGE_RIDICULOUS_DEV_M:.1f}m or keep-rate < {BRIDGE_MIN_KEEP_RATE:.2f}) -- leaving separate")
         return None, bridge_test_id, True
 
     _, result, a_key, b_key = best
