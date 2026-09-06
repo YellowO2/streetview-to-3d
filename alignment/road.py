@@ -44,9 +44,26 @@ from scipy import ndimage
 from scipy.spatial import cKDTree
 
 CELL = 0.25              # metres per top-down cell for road work
-ROAD_SAT_MAX = 0.08      # grey = (max channel - min channel) this small
-ROAD_VAL_LO = 0.20       # ...and not pitch black
-ROAD_VAL_HI = 0.70       # ...and not blown-out white (that is paint/sky)
+ROAD_SAT_MAX = 0.16      # grey, as (max - min) / max: a RATIO, not a difference.
+                         # Measured absolutely, a dark cell passes trivially --
+                         # small numbers cannot differ much -- while a sunlit
+                         # road of the same colour fails. Normalising by
+                         # brightness is what chroma keying does, and it is the
+                         # difference between the road being found in shadow and
+                         # not.
+ROAD_GREEN_MAX = 0.04    # ...and not vegetation. Grass is identified by its HUE
+                         # (green above both red and blue) rather than by how
+                         # saturated it is, so washed-out or shaded grass is
+                         # still rejected.
+ROAD_VAL_LO = 0.16       # ...and not pitch black
+ROAD_VAL_HI = 0.85       # ...and not blown-out white (that is paint/sky)
+RIDGE_TOL_CELLS = 1.0    # how far below the local maximum still counts as
+                         # "down the middle"
+MIN_ROAD_WIDTH_M = 2.5   # Footpaths and service lanes are the same grey as the
+                         # road and no colour test will ever separate them. They
+                         # are however NARROW, so they are removed by eroding
+                         # until they vanish and growing back only what survives
+                         # and still reaches the camera.
 ROAD_MIN_AREA = 150      # cells; drops speckle, keeps road slabs
 MIN_ROAD_HALF_WIDTH_M = 1.5   # a road is at least ~3 m across; a footpath is
                               # not. Measured on gap3: real road halves came
@@ -113,34 +130,32 @@ def cell_centres(mask, bounds, cell=CELL):
 def road_cells(pts_xz, pts_y, cols, bounds, cell=CELL, cams=None):
     """Road and white-paint cells for one piece.
 
-    Grey alone does not mean road: footpaths, kerbstones and paved
-    forecourts are grey too, and every one of them used to come back with
-    its own boundary traced as a kerb. Three things separate the road
-    from them, in order:
+    Three tests, in the order that matters:
 
-      width   -- a road admits a disc MIN_ROAD_HALF_WIDTH_M in radius;
-                 a path does not
-      the hole -- directly beneath a panorama is a blind spot, so a road
-                 can arrive as two blobs either side of a circular gap.
-                 That gap is missing data, not an edge, so it is filled
-                 and the halves rejoin as one road
-      the track -- of what survives, the road is the surface the camera
-                 actually drove along
+      COLOUR  -- grey, mid-brightness, not green. Greyness is measured as a
+                 ratio so it means the same thing in sun and in shadow.
+      SHAPE   -- anything narrower than a road is removed, because a footpath
+                 is exactly as grey as the road beside it.
+      TRACK   -- of what is left, the road is what the camera drove along.
 
-    `cams` are that camera track, as (N, 2) world XZ. Without it the
-    first two rules still apply and every wide enough surface is kept,
-    which is the best that can be done when the caller has no track.
+    Unobserved cells are bridged rather than treated as edges: the blind spot
+    beneath a panorama is missing data, not the end of the road.
 
-    White paint is thresholded per-piece (brightest few percent of
-    on-road cells) because exposure varies between panoramas -- a fixed
-    brightness cutoff finds nothing on darker captures.
+    `cams` is the piece's camera track as (N, 2) world XZ. Without it the
+    colour and width tests still apply and every road-like surface is kept.
+
+    White paint is thresholded per piece (brightest few percent of on-road
+    cells) because exposure varies between panoramas.
 
     Returns (road_mask, road_xz, white_xz)."""
     img, occ = top_down(pts_xz, pts_y, cols, bounds, cell)
-    sat = img.max(2) - img.min(2)
+    mx, mn = img.max(2), img.min(2)
+    sat = np.divide(mx - mn, np.maximum(mx, 1e-6))
     val = img.mean(2)
-    road = occ & (sat <= ROAD_SAT_MAX) & (val >= ROAD_VAL_LO) & (val <= ROAD_VAL_HI)
-    road = _select_road(road, occ, bounds, cell, cams)
+    green = img[:, :, 1] - np.maximum(img[:, :, 0], img[:, :, 2])
+    grey = (occ & (sat <= ROAD_SAT_MAX) & (green <= ROAD_GREEN_MAX)
+            & (val >= ROAD_VAL_LO) & (val <= ROAD_VAL_HI))
+    road = _select_road(grey, occ, bounds, cell, cams)
 
     near = ndimage.binary_dilation(road, iterations=2) & occ
     if near.sum() < 20:
@@ -150,32 +165,86 @@ def road_cells(pts_xz, pts_y, cols, bounds, cell=CELL, cams=None):
     return road, cell_centres(road, bounds, cell), cell_centres(white, bounds, cell)
 
 
+def _disc(radius_cells):
+    n = int(np.ceil(radius_cells))
+    yy, xx = np.mgrid[-n:n + 1, -n:n + 1]
+    return (xx ** 2 + yy ** 2) <= radius_cells ** 2
+
+
 def _select_road(grey, occ, bounds, cell, cams):
-    """The road, out of everything grey. See road_cells for the rules."""
-    lab, n = ndimage.label(grey)
-    if n == 0:
+    """The road, out of everything road-coloured. See road_cells."""
+    if not grey.any():
         return grey
-    wide = np.zeros_like(grey)
-    min_half = MIN_ROAD_HALF_WIDTH_M / cell
-    for bl in range(1, n + 1):
-        m = lab == bl
-        if m.sum() >= ROAD_MIN_AREA and ndimage.distance_transform_edt(m).max() >= min_half:
-            wide |= m
-    if not wide.any():
-        return wide
 
-    # fill the blind spot so a road split by it counts as one surface
-    blind = ndimage.binary_fill_holes(occ) & ~occ
-    bridged = wide | blind
-    if cams is None:
-        return bridged
+    # bridge the blind spot, so a road split by it stays one surface
+    hole = ndimage.binary_fill_holes(occ) & ~occ
+    lab, n = ndimage.label(ndimage.binary_closing(grey | hole, np.ones((3, 3))))
+    if n == 0:
+        return np.zeros_like(grey)
 
-    ci = np.column_stack([((cams[:, 0] - bounds[0]) / cell).astype(int),
-                          ((cams[:, 1] - bounds[2]) / cell).astype(int)])
-    lab2, _ = ndimage.label(bridged)
-    on = {int(lab2[a, b]) for a, b in ci
-          if 0 <= a < lab2.shape[0] and 0 <= b < lab2.shape[1] and lab2[a, b]}
-    return np.isin(lab2, sorted(on)) if on else bridged
+    ci = None
+    keep = set()
+    if cams is not None:
+        ci = np.column_stack([((cams[:, 0] - bounds[0]) / cell).astype(int),
+                              ((cams[:, 1] - bounds[2]) / cell).astype(int)])
+        keep = {int(lab[a, b]) for a, b in ci
+                if 0 <= a < lab.shape[0] and 0 <= b < lab.shape[1] and lab[a, b]}
+        # a region holding no observed road is the blind spot by itself
+        keep = {c for c in keep if (grey & (lab == c)).any()}
+    if not keep:
+        sizes = ndimage.sum(grey, lab, range(1, n + 1))
+        if sizes.max() < ROAD_MIN_AREA:
+            return np.zeros_like(grey)
+        keep = {int(np.argmax(sizes)) + 1}
+
+    road = ndimage.binary_fill_holes(
+        ndimage.binary_closing(np.isin(lab, sorted(keep)), np.ones((3, 3))))
+
+    # Drop what is too narrow to be a road. Eroding removes thin spurs
+    # outright; growing the survivor back inside the original mask returns
+    # the road to full width without bringing the spurs with it.
+    r = (MIN_ROAD_WIDTH_M / 2.0) / cell
+    core = ndimage.binary_erosion(road, _disc(r))
+    if ci is not None:
+        lab2, n2 = ndimage.label(core)
+        on = {int(lab2[a, b]) for a, b in ci
+              if 0 <= a < lab2.shape[0] and 0 <= b < lab2.shape[1] and lab2[a, b]}
+        if on:
+            core = np.isin(lab2, sorted(on))
+    if not core.any():
+        return np.zeros_like(grey)
+    for _ in range(int(r) + 3):
+        core = ndimage.binary_dilation(core) & road
+    return core
+
+
+def centreline(road_mask, bounds, cell=CELL, min_frac=0.35):
+    """Points down the middle of the road.
+
+    The kerb is a poor thing to track: it is one edge of the road, so every
+    error in the mask moves it, and a road bordered by unobserved space has
+    no kerb there at all. The centre is the average of both edges, so the
+    same errors largely cancel, and it survives one side being missing.
+
+    It is the ridge of the distance-to-edge map -- the cells furthest from
+    any edge, which is where the middle of a road is.
+    """
+    solid = ndimage.binary_fill_holes(
+        ndimage.binary_closing(road_mask, np.ones((7, 7))))
+    d = ndimage.distance_transform_edt(solid)
+    if not solid.any() or d.max() <= 0:
+        return np.zeros((0, 2))
+    # How far from the edge the middle is depends on how wide this road is,
+    # so the cut is a fraction of the widest point rather than a fixed
+    # distance -- a fixed one silently returns nothing on a narrow road.
+    # Keep the ridge PLATEAU, not just exact local maxima. Down the middle
+    # of a straight road many cells are equally far from both kerbs, and
+    # demanding an exact maximum picks a scatter of isolated cells out of
+    # that plateau -- 32 points from a 5466-cell road, far too few to trace.
+    ridge = solid & (d >= ndimage.maximum_filter(d, size=5) - RIDGE_TOL_CELLS) \
+        & (d >= min_frac * d.max())
+    ix, iz = np.nonzero(ridge)
+    return np.column_stack([bounds[0] + ix * cell, bounds[2] + iz * cell])
 
 
 # --------------------------------------------------------------------
