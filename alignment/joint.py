@@ -47,7 +47,7 @@ def drift_cap(n_nodes):
     count suggests. Three or more genuinely constrain the piece, and moving
     one of those far is a sign the fit is wrong, not that GPS was.
     """
-    return {1: 7.0, 2: 5.0}.get(n_nodes, 3.0)
+    return {1: 5.0, 2: 5.0}.get(n_nodes, 3.0)
 
 
 MAX_SLIDE_M = 8.0
