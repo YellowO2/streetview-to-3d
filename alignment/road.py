@@ -45,13 +45,8 @@ from scipy.spatial import cKDTree
 
 CELL = 0.25              # metres per top-down cell for road work
 ROAD_SAT_MAX = 0.08      # grey = (max channel - min channel) this small
-ROAD_VAL_PCT = (5, 85)   # ...and mid-brightness FOR THIS PIECE. Exposure varies
-                         # between panoramas, and a fixed cutoff punches holes in
-                         # a darker capture: piece_6's road came back as scattered
-                         # fragments worth 50 m2, each too narrow to survive the
-                         # width test, against 153 m2 read per-piece
-ROAD_VAL_LO = 0.20       # absolute guard rails around the percentiles, so a piece
-ROAD_VAL_HI = 0.70       # that is nearly all road cannot swallow its surroundings
+ROAD_VAL_LO = 0.20       # ...and not pitch black
+ROAD_VAL_HI = 0.70       # ...and not blown-out white (that is paint/sky)
 ROAD_MIN_AREA = 150      # cells; drops speckle, keeps road slabs
 MIN_ROAD_HALF_WIDTH_M = 1.5   # a road is at least ~3 m across; a footpath is
                               # not. Measured on gap3: real road halves came
@@ -144,12 +139,7 @@ def road_cells(pts_xz, pts_y, cols, bounds, cell=CELL, cams=None):
     img, occ = top_down(pts_xz, pts_y, cols, bounds, cell)
     sat = img.max(2) - img.min(2)
     val = img.mean(2)
-    if occ.sum() >= 50:
-        lo, hi = np.percentile(val[occ], ROAD_VAL_PCT)
-        lo, hi = max(lo, ROAD_VAL_LO), min(hi, ROAD_VAL_HI)
-    else:
-        lo, hi = ROAD_VAL_LO, ROAD_VAL_HI
-    road = occ & (sat <= ROAD_SAT_MAX) & (val >= lo) & (val <= hi)
+    road = occ & (sat <= ROAD_SAT_MAX) & (val >= ROAD_VAL_LO) & (val <= ROAD_VAL_HI)
     road = _select_road(road, occ, bounds, cell, cams)
 
     near = ndimage.binary_dilation(road, iterations=2) & occ
@@ -168,8 +158,7 @@ def _select_road(grey, occ, bounds, cell, cams):
     wide = np.zeros_like(grey)
     min_half = MIN_ROAD_HALF_WIDTH_M / cell
     for bl in range(1, n + 1):
-        # dark speckle inside a road is noise, not a hole in the tarmac
-        m = ndimage.binary_fill_holes(lab == bl)
+        m = lab == bl
         if m.sum() >= ROAD_MIN_AREA and ndimage.distance_transform_edt(m).max() >= min_half:
             wide |= m
     if not wide.any():
@@ -183,30 +172,10 @@ def _select_road(grey, occ, bounds, cell, cams):
 
     ci = np.column_stack([((cams[:, 0] - bounds[0]) / cell).astype(int),
                           ((cams[:, 1] - bounds[2]) / cell).astype(int)])
-    lab2, nlab = ndimage.label(bridged)
+    lab2, _ = ndimage.label(bridged)
     on = {int(lab2[a, b]) for a, b in ci
           if 0 <= a < lab2.shape[0] and 0 <= b < lab2.shape[1] and lab2[a, b]}
-    # A component holding no observed road is the blind spot on its own:
-    # the camera sits inside it and it never reached the tarmac around it.
-    # Returning that gives a mask of cells nothing was ever seen in --
-    # piece_6 came back as 392 cells containing zero points.
-    on = {c for c in on if (wide & (lab2 == c)).any()}
-    if not on:
-        # fall back to the observed road nearest the track
-        best, dist = None, np.inf
-        for c in range(1, nlab + 1):
-            m = wide & (lab2 == c)
-            if not m.any():
-                continue
-            wx, wz = np.nonzero(m)
-            d = np.min((wx[:, None] - ci[None, :, 0]) ** 2
-                       + (wz[:, None] - ci[None, :, 1]) ** 2)
-            if d < dist:
-                best, dist = c, d
-        if best is None:
-            return wide
-        on = {best}
-    return np.isin(lab2, sorted(on))
+    return np.isin(lab2, sorted(on)) if on else bridged
 
 
 # --------------------------------------------------------------------
