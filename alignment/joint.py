@@ -34,8 +34,22 @@ from alignment.kerb_align import (MAX_SEP_M, MIN_SEAM_PTS, SEAM_R,
                                   noise_floor, track_span)
 
 NEIGHBOUR_GAP_M = 16.0     # past this, two panoramas share too little ground
-GPS_WEIGHT = 0.30         # residual-metres charged per metre of camera drift
+GPS_WEIGHT = 0.030         # residual-metres charged per metre of camera drift
 NO_SEAM_PENALTY = 1.5      # charged when a neighbour drifts out of reach
+def drift_cap(n_nodes):
+    """How far a piece's cameras may be dragged off GPS, by node count.
+
+    Not one number for everything: what GPS knows about a piece depends on
+    how many places it saw it from. One node fixes a position and says
+    nothing about heading, so such a piece has to be free to swing. Two
+    nodes pin a direction but fit any similarity transform exactly, so
+    their zero residual means nothing and they deserve less trust than the
+    count suggests. Three or more genuinely constrain the piece, and moving
+    one of those far is a sign the fit is wrong, not that GPS was.
+    """
+    return {1: 7.0, 2: 5.0}.get(n_nodes, 3.0)
+
+
 MAX_SLIDE_M = 8.0
 SWEEPS = 4
 
@@ -77,6 +91,7 @@ class JointSolver:
         self.cams = cams
         self.pivot = {i: cams[i].mean(0) for i in self.ids}
         self.state = {i: np.zeros(3) for i in self.ids}       # deg, dx, dz
+        self.cap = {i: drift_cap(len(cams[i])) for i in self.ids}
         self.floor = floor if floor is not None else noise_floor(list(kerbs.values()))
         self.pairs = [(i, j) for (i, j), g in gaps.items() if g <= NEIGHBOUR_GAP_M]
 
@@ -142,6 +157,8 @@ class JointSolver:
                         if np.hypot(dx, dz) > MAX_SLIDE_M:
                             continue
                         st = np.array([deg, dx, dz])
+                        if self.drift(i, st) > self.cap[i]:
+                            continue
                         c = self.cost(i, st, cache)
                         if c is not None and c < best[0]:
                             best = (c, st)
