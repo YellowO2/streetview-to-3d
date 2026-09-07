@@ -20,7 +20,7 @@ import numpy as np
 
 from street_builder.reconstruction.join_segments import assemble_metadata_piece
 from street_builder.tab import _leaf_ply_local_path, _load_group_meta_pieces
-from postprocess.gps import fit_similarity_2d
+from postprocess.gps_fit.fit import fit_similarity_2d
 
 
 def write_ply(path, pts, cols):

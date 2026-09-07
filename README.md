@@ -51,7 +51,9 @@ The pipeline splits by what a stage needs to run:
 |---|---|
 | `services/` | fetching panoramas, DA3, the GPU runner |
 | `street_builder/` | **GPU stage.** Panoramas in, chunks of `.ply` + metadata out |
-| `postprocess/` | **CPU stage.** GPS fitting, then road alignment. No DA3, no GPU |
+| `postprocess/gps_fit/` | **CPU stage 1.** Which nodes form a piece, and where that piece sits in metres |
+| `postprocess/road_align/` | **CPU stage 2.** Correcting the heading, position and height GPS leaves wrong |
+| `postprocess/` | what both produce: `piece_transforms.json`, and rendering from it |
 | `visualise/` | the graph page, the point-cloud viewer, the segment selector |
 | `tools/` | one-off drivers, experiments and conversions. Nothing imports these |
 | `data/` | committed inputs |

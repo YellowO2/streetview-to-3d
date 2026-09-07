@@ -11,6 +11,7 @@ the result is one geographically contiguous patch, not scattered chunks.
 Usage:
     python -m tools.download_subset --group g_L16_0 --num-chunks 50 --out /tmp/subset.ply
 """
+from paths import NTU_DIR
 import argparse
 import json
 import os
@@ -21,7 +22,7 @@ from street_builder.build_graph.global_dates import split_cover_into_chunks
 from street_builder.reconstruction.join_segments import assemble_metadata_piece
 from street_builder.tab import _leaf_ply_local_path, _load_group_meta_pieces
 
-NTU_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu")
+NTU_DIR = NTU_DIR
 
 
 def _write_ply(path, pts, cols):

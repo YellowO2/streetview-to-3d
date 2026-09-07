@@ -31,7 +31,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
-from tools.piece_gps_test import build_node_adjacency
+from postprocess.gps_fit.discover_pieces import build_node_adjacency
 
 
 def main():

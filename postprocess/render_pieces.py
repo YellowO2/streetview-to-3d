@@ -7,7 +7,7 @@ the answer is one matrix per piece; rendering any subset of it should be
 reading files and multiplying, which is what this does. Rendering four
 pieces and rendering one differ only in how many files get read.
 
-Reads piece_transforms.json, so run postprocess.run_global_alignment on
+Reads piece_transforms.json, so run postprocess.road_align.run on
 the directory first.
 """
 import argparse
@@ -17,7 +17,7 @@ import numpy as np
 
 from postprocess.piece_transforms import load, report
 from postprocess.ply_io import write_ply
-from postprocess.run_road_align import _read_ply_points
+from postprocess.gps_fit.load_pieces import _read_ply_points
 
 
 def render(directory, piece_ids=None, out=None, log=print):

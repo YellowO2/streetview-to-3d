@@ -12,6 +12,7 @@ comparable across scripts/sessions/runs -- never compute your own
 per-piece or per-group origin for anything meant to be plotted or
 compared against other data.
 """
+from paths import NTU_DIR
 import json
 import os
 
@@ -19,7 +20,6 @@ import numpy as np
 
 from services.geo import latlon_to_local_m
 
-NTU_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu")
 
 with open(os.path.join(NTU_DIR, "fetch_metadata.json")) as _f:
     _points = json.load(_f)["points"]

@@ -14,6 +14,7 @@ chunk_id attribution.
 Usage:
     python -m tools.robust_gps_alignment --in /tmp/gps_alignment.json --seed chunk0
 """
+from paths import NTU_DIR
 import argparse
 import json
 import os
@@ -21,9 +22,9 @@ import os
 import numpy as np
 
 from street_builder.build_graph.global_dates import split_cover_into_chunks
-from postprocess.gps import fit_similarity_2d
+from postprocess.gps_fit.fit import fit_similarity_2d
 
-NTU_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu")
+NTU_DIR = NTU_DIR
 
 ACCEPT_THRESHOLD_M = 30.0
 

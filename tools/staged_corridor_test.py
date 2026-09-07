@@ -21,6 +21,7 @@ Usage:
     python tools/staged_corridor_test.py
     python tools/staged_corridor_test.py --max-chunks 4 --chunk-size 20
 """
+from paths import NTU_DIR
 import argparse
 import json
 import os
@@ -30,7 +31,7 @@ from gradio_client import Client
 
 from street_builder.build_graph.global_dates import split_cover_into_chunks
 
-NTU_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu")
+NTU_DIR = NTU_DIR
 
 
 def _summary(status_html):

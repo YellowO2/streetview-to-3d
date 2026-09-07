@@ -12,8 +12,8 @@ import os
 import numpy as np
 from PIL import Image
 
-from postprocess.road import CELL, direction_from_shape, road_cells, road_direction
-from postprocess.run_road_align import load_pieces
+from postprocess.road_align.road import CELL, direction_from_shape, road_cells, road_direction
+from postprocess.gps_fit.load_pieces import load_pieces
 
 
 def panel(img, mask):
@@ -41,7 +41,7 @@ def main():
               cams[:, 1].min() - args.margin, cams[:, 1].max() + args.margin)
     print(f"shared bounds {bounds[1]-bounds[0]:.0f} x {bounds[3]-bounds[2]:.0f} m\n")
 
-    from postprocess.road import top_down
+    from postprocess.road_align.road import top_down
     rows, masks = [], {}
     for i in ids:
         img, occ = top_down(*clouds[i], bounds, args.cell)

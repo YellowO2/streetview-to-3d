@@ -6,12 +6,13 @@ no real candidate on any date (never assigned) are shown in light gray.
 Usage:
     python -m tests.visualize_date_cover
 """
+from paths import NTU_DIR
 import json
 import os
 
 import matplotlib.pyplot as plt
 
-NTU_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu")
+NTU_DIR = NTU_DIR
 
 
 def main():

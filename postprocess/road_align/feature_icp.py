@@ -32,7 +32,7 @@ import numpy as np
 from scipy import ndimage
 from scipy.spatial import cKDTree
 
-from postprocess.road import CELL, road_cells, top_down
+from postprocess.road_align.road import CELL, road_cells, top_down
 
 SURFACE_BAND_M = 0.75    # points further than this from the road surface are
                          # grass hanging below the kerb, or things standing on

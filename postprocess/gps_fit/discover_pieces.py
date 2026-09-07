@@ -19,7 +19,7 @@ build chunks in the first place -- so cuts happen at real gaps in the
 walking path, not at arbitrary chunk boundaries.
 
 Usage:
-    python -m tools.piece_gps_test --in /tmp/gps_alignment.json
+    python -m postprocess.gps_fit.discover_pieces --in /tmp/gps_alignment.json
 """
 import argparse
 import json
@@ -27,12 +27,12 @@ import os
 
 import numpy as np
 
-from postprocess.gps import fit_similarity_2d
+from paths import NTU_DIR
+from postprocess.gps_fit.fit import fit_similarity_2d
 
 MIN_NODES = 3
 FIT_THRESHOLD_M = 20.0
 
-NTU_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu")
 
 
 def residuals_for(nodes):

@@ -18,6 +18,7 @@ Usage:
     python -m tools.full_ntu_campaign
     python -m tools.full_ntu_campaign --chunk-size 20
 """
+from paths import NTU_DIR
 import argparse
 import json
 import os
@@ -28,7 +29,7 @@ from huggingface_hub import HfApi
 
 from street_builder.build_graph.global_dates import split_cover_into_chunks
 
-NTU_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu")
+NTU_DIR = NTU_DIR
 DATASET_REPO = "potato-bug/ntu-reconstruction"
 
 

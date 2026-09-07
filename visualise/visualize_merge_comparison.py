@@ -9,6 +9,7 @@ raw members, or two clearly-unrelated raw clusters merged into one).
 Usage:
     python -m tests.visualize_merge_comparison
 """
+from paths import NTU_DIR
 import json
 import os
 
@@ -16,7 +17,7 @@ import matplotlib.pyplot as plt
 
 import street_builder.build_graph.fetch_nodes as fetch_nodes
 
-NTU_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu")
+NTU_DIR = NTU_DIR
 THRESHOLDS = [0.0, 5.0, 8.0]
 
 

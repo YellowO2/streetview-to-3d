@@ -26,13 +26,13 @@ import os
 
 import numpy as np
 
-from postprocess.camera_route import RouteFrame, route_curve
-from postprocess.extract_road_lines import road_lines
-from postprocess.feature_icp import extract_features
-from postprocess.fit_pieces_to_road import RoadFitter, horizontal_transform
+from postprocess.road_align.camera_route import RouteFrame, route_curve
+from postprocess.road_align.extract_road_lines import road_lines
+from postprocess.road_align.feature_icp import extract_features
+from postprocess.road_align.fit_pieces_to_road import RoadFitter, horizontal_transform
 from postprocess.piece_transforms import save as save_transforms
-from postprocess.run_road_align import load_pieces
-from postprocess.seat_pieces_on_surface import seat
+from postprocess.gps_fit.load_pieces import load_pieces
+from postprocess.road_align.seat_pieces_on_surface import seat
 
 MARGIN_M = 25.0
 
