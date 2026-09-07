@@ -62,6 +62,32 @@ The pipeline splits by what a stage needs to run:
 `splats/` is where each reconstruction run writes; it is created on import by
 `paths.py` and is empty until something runs.
 
+### Coordinate convention
+
+Everything in this repo is **Y-DOWN**: `+Y` points at the ground, not the sky.
+
+That is DA3's own computer-vision convention and it is never changed on the
+way through -- `load_pieces` scales height but does not flip it, and every
+transform downstream inherits it. `Documents/viewer.html` applies
+`geometry.rotateX(PI)` at display time, which is the only place the flip
+happens.
+
+| axis | direction |
+|---|---|
+| `+X` | east |
+| `+Y` | **down** |
+| `+Z` | north |
+
+X and Z are metres in the shared `GLOBAL_ORIGIN` frame (`gps_fit.fit.real_en`),
+so piece clouds, camera positions and the road polylines from `corridors` all
+compare directly.
+
+**Anything brought in from outside must be converted.** Google's per-panorama
+`elevation` is metres above sea level -- Y-UP -- so it has to be negated
+before it can be compared with our heights. Using it raw turns a hill into a
+hole, and a vertical fit against it then squeezes the real relief out of the
+scene while every individual number still looks plausible.
+
 ### How a reconstruction becomes an aligned scene
 
 ```

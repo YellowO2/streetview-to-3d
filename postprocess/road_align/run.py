@@ -12,30 +12,33 @@ The stages, and why they are in this order:
                  (road_align.node_center_to_road_line). Not pairwise: a piece
                  needs no neighbour, only a road, so dropping a piece from
                  the middle of a run cannot strand its neighbours.
-  3. VERTICAL    every piece seated on one road surface
-                 (road_align.align_slope_of_pieces). After the horizontal
-                 fit, never before -- otherwise it levels pieces against
-                 road that is not the same road yet.
+  3. VERTICAL    every piece seated on the real ground, from Google's
+                 per-panorama elevation (road_align.ground_elevation).
+                 After the horizontal fit, never before -- otherwise it
+                 levels pieces against road that is not the same road yet.
 
 Road polylines and camera positions are both in the shared GLOBAL_ORIGIN
 metre frame (gps_fit.fit.real_en), so they compare directly.
 """
 import argparse
+import json
 import os
 
 import numpy as np
 
-from postprocess.road_align.road_surface import extract_features
+from postprocess.road_align.road_surface import ground_near_track
 from postprocess.road_align.road_frames import build as build_frames
 from postprocess.road_align.node_center_to_road_line import seat_all
 from postprocess.piece_transforms import save as save_transforms
 from postprocess.gps_fit.load_pieces import load_pieces
 from postprocess.road_align.align_slope_of_pieces import seat
+from postprocess.road_align import ground_elevation
 
 MARGIN_M = 25.0
 
 
-def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2):
+def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
+          elevation=True):
     """Solve, and return ({piece: 4x4}, clouds, fits, per-piece diagnostics).
 
     The 4x4s here map ALREADY GPS-FITTED coordinates, because load_pieces
@@ -75,11 +78,25 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2):
         M = horiz[i]
         xz, y, co = clouds[i]
         moved[i] = (xz @ M[[0, 2]][:, [0, 2]].T + M[[0, 2], 3], y, co)
-    road_pts = {i: extract_features(moved[i], bounds,
-                                   cams=cams[i] @ horiz[i][[0, 2]][:, [0, 2]].T
-                                   + horiz[i][[0, 2], 3])[0] for i in ids}
+    road_pts = {i: ground_near_track(
+        moved[i], cams[i] @ horiz[i][[0, 2]][:, [0, 2]].T + horiz[i][[0, 2], 3])
+        for i in ids}
 
-    vert, report = seat({i: p for i, p in road_pts.items() if len(p)})
+    have = {i: p for i, p in road_pts.items() if len(p)}
+    if elevation:
+        latlons, keys = {}, []
+        for i in ids:
+            meta = json.load(open(os.path.join(directory, f"piece_{i}_meta.json")))
+            for k, v in meta.items():
+                latlons[k] = (v["lat"], v["lon"])
+                keys.append(k)
+        el = ground_elevation.fetch(keys, latlons, directory, log=log)
+        ground, resid = ground_elevation.surface(el, latlons)
+        log(f"\nground from {len(el)} panorama elevation(s), "
+            f"surface fits them to {resid:.2f} m")
+        vert, report = ground_elevation.seat_on(have, ground)
+    else:
+        vert, report = seat(have)
     log("")
     for i in ids:
         if i in report:
@@ -120,13 +137,18 @@ def main():
                          "to 2: a single-node piece has no heading of its own "
                          "and borrows one from a neighbour, and the results "
                          "were worse with them in.")
+    ap.add_argument("--no-elevation", action="store_true",
+                    help="set heights by fitting a surface to the pieces "
+                         "themselves instead of to Google's elevation. "
+                         "Circular, and it flattens real terrain.")
     ap.add_argument("--no-save", action="store_true",
                     help="solve without writing piece_transforms.json")
     args = ap.parse_args()
 
     ids = ([int(x) for x in args.pieces.split(",")] if args.pieces else None)
     transforms, clouds, fits, diagnostics = align(args.dir, ids, args.cell,
-                                                  min_nodes=args.min_nodes)
+                                                  min_nodes=args.min_nodes,
+                                                  elevation=not args.no_elevation)
 
     if not args.no_save:
         path = save_transforms(args.dir, fits, diagnostics,
