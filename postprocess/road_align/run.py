@@ -114,10 +114,11 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1):
     fitter.solve(log=log)
 
     log("\npiece   turn    slide   drift    cap    to road (L/C/R)   roads")
-    for i, (turn, slide, drift, d, rds) in fitter.report().items():
+    for i, (turn, slide, drift, d, rds, follower) in fitter.report().items():
         log(f"  {i:<5}{turn:+7.1f} {slide:7.2f}m {drift:6.2f}m "
             f"{fitter.cap[i]:5.1f}m   " + "/".join(f"{x:.2f}" for x in d)
-            + "   " + ",".join(str(r) for r in rds))
+            + "   " + ",".join(str(r) for r in rds)
+            + ("   (singleton, placed after)" if follower else ""))
 
     horiz = {i: horizontal_transform(fitter.state[i], fitter.pivot[i])
              for i in fitted}
@@ -139,11 +140,11 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1):
     for i in ids:
         d = {"matrix": (vert.get(i, np.eye(4)) @ horiz[i]).tolist()}
         if i in fit_report:
-            turn, slide, drift, to_road, rds = fit_report[i]
+            turn, slide, drift, to_road, rds, follower = fit_report[i]
             d["road"] = {"turn_deg": round(turn, 2), "slide_m": round(slide, 3),
                          "drift_m": round(drift, 3), "cap_m": fitter.cap[i],
                          "to_road_m": [round(float(x), 3) for x in to_road],
-                         "roads": rds}
+                         "roads": rds, "placed_after": follower}
         else:
             d["road"] = None            # no usable road lines; left at GPS
         if i in report:
