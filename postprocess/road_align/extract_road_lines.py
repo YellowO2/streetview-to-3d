@@ -32,7 +32,9 @@ from scipy.spatial import cKDTree
 from postprocess.road_align.kerb import kerb_curves
 from postprocess.road_align.road import CELL, centreline, road_cells
 
-MAX_OFFSET_M = 12.0      # a kerb is not this far from the middle of its road
+# A kerb is not this far from the middle of its road.
+MAX_OFFSET_M = 7.0
+CENTRE_PAD_M = 5.0       # of graph road line kept beyond the piece's own ends
 SMOOTH_PER_PT = 3.0
 STEP_M = 0.25
 MIN_SIDE_PTS = 12
@@ -44,25 +46,50 @@ BIN_M = 1.0
 def road_lines(piece, bounds, cams, frame, cell=CELL):
     """[left kerb, centre, right kerb] for one piece, or None.
 
-    `frame` is a camera_route.RouteFrame: it fixes which way is "along"
-    and therefore which kerb is the left one, consistently across pieces.
+    `frame` is a road's RouteFrame. It fixes which way is "along", and
+    therefore which kerb is the left one, consistently across pieces.
+
+    The centre is the GRAPH's road line, not the medial axis of the road
+    mask. The medial axis had to be inferred from the mask's shape and it
+    broke in two wherever the road curved -- only the first fragment was
+    used, so piece_12 described 28 m of a 45 m curve and threw the bend
+    away. Without the bend a straight remnant rotates freely and it took a
+    spurious -24 degrees. The graph's line is continuous over the whole
+    piece, so nothing fragments and nothing is discarded.
+
+    The kerbs are still fitted through the piece's OWN observed kerb
+    cells. The centre only labels each cell left or right and orders it
+    along the road -- it contributes no geometry of its own. That
+    separation is the point: the graph line is what GPS already knew, so
+    it can measure the observations but must never be the thing they are
+    matched against, or the fit just returns every piece to GPS.
     """
     from postprocess.road_align.feature_icp import extract_features
 
-    xz, y, cols = piece
-    mask, _, _ = road_cells(xz, y, cols, bounds, cell, cams=cams)
-    centres = kerb_curves(centreline(mask, bounds, cell))
     _, kerb_xyz, _ = extract_features(piece, bounds, cams=cams)
-    if not centres or len(kerb_xyz) < 8:
+    if len(kerb_xyz) < 8:
         return None
+    kerb_xz = kerb_xyz[:, [0, 2]]
 
-    centre = frame.orient(centres[0])
-    sides = kerb_sides(kerb_xyz[:, [0, 2]], centre)
+    centre = road_centre(frame, kerb_xz)
+    if centre is None:
+        return None
+    sides = kerb_sides(kerb_xz, centre)
     if len(sides) != 2:
         return None
     # left first, right second, in the route's own frame
     left, right = sorted(sides, key=lambda s: -frame.project(s)[1].mean())
     return [left, centre, right]
+
+
+def road_centre(frame, kerb_xz, pad=CENTRE_PAD_M):
+    """The stretch of the graph's road line this piece actually covers."""
+    along, _ = frame.project(kerb_xz)
+    seg = np.linalg.norm(np.diff(frame.route, axis=0), axis=1)
+    s = np.r_[0.0, np.cumsum(seg)]
+    keep = (s >= along.min() - pad) & (s <= along.max() + pad)
+    centre = frame.route[keep]
+    return centre if len(centre) >= 4 else None
 
 
 def kerb_sides(kerb_xz, centre_curve, max_offset_m=MAX_OFFSET_M, **kw):

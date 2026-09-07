@@ -30,10 +30,13 @@ from postprocess.road_align.camera_route import RouteFrame
 # distance is small; 12 m is wide enough for a dual carriageway's far side
 # and narrow enough not to claim the street one block over.
 NEAR_M = 12.0
-# How far either side of a road its own surface is taken to extend. Kerbs
-# are rejected past 12 m from the centre (extract_road_lines.MAX_OFFSET_M),
-# so anything beyond this cannot become one of the three lines anyway.
-HALF_WIDTH_M = 15.0
+# How far either side of a road its own surface is taken to extend. This is
+# what keeps a piece describing ONE road: at 15 m a side road stayed inside
+# the corridor, so the mask came out T-shaped, road_cells traced a boundary
+# around the branch mouth, and that mouth was fitted as a kerb (piece_9's
+# right "kerb" was an S-bend through a junction opening). Narrow enough to
+# hold one carriageway and its verges, and to leave a branch outside.
+HALF_WIDTH_M = 8.0
 STEP_M = 0.5
 SMOOTH_PER_DOT = 2.0
 MIN_DOTS = 4

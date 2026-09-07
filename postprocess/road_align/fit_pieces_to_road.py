@@ -33,7 +33,13 @@ from scipy.spatial import cKDTree
 BIN_M = 2.0              # along-route spacing the global curves are built at
 SMOOTH_PER_PT = 2.0
 MIN_BINS = 5
-ROLE_WEIGHTS = (1.0, 0.35, 1.0)      # left kerb, centre, right kerb
+# left kerb, centre, right kerb. The centre carries ZERO weight: it is now
+# the graph's own road line, identical for every piece on that road, so
+# matching a piece's centre to the pooled centre only ever pulls it back to
+# where GPS already put it. The kerbs are the observations, so they are the
+# whole cost. The centre is still carried through for splitting left from
+# right and for drawing.
+ROLE_WEIGHTS = (1.0, 0.0, 1.0)
 TURN_RANGE_DEG = 40.0
 TURN_STEP_DEG = 1.0
 SLIDE_STEP_M = 0.5
@@ -101,11 +107,12 @@ class RoadFitter:
     frames  {road: RouteFrame}
     """
 
-    def __init__(self, lines, cams, frames, weights=ROLE_WEIGHTS):
+    def __init__(self, lines, cams, frames, anchors=None, weights=ROLE_WEIGHTS):
         self.lines = {k: v for k, v in lines.items() if v is not None}
         self.frames = frames
         self.cams = cams
         self.weights = weights
+        self.anchors = anchors
         self.roads_of = {}
         for i, r in self.lines:
             self.roads_of.setdefault(i, []).append(r)
@@ -113,6 +120,18 @@ class RoadFitter:
         self.pieces_on = {}
         for i, r in self.lines:
             self.pieces_on.setdefault(r, []).append(i)
+        # Only anchors shape the curves. A piece GPS saw from one place
+        # cannot fit its own heading -- it borrows one from a neighbour --
+        # so pooling its kerbs into the curve lets it bend the very thing
+        # it is then measured against. Followers are placed afterwards
+        # against curves they had no part in.
+        self.anchor_ids = ([i for i in self.ids if i in anchors]
+                           if anchors is not None else list(self.ids))
+        if not self.anchor_ids:                  # nothing better to build on
+            self.anchor_ids = list(self.ids)
+        self.followers = [i for i in self.ids if i not in set(self.anchor_ids)]
+        self.builds = {r: [i for i in p if i in set(self.anchor_ids)]
+                       for r, p in self.pieces_on.items()}
         self.pivot = {i: cams[i].mean(0) for i in self.ids}
         self.cap = {i: drift_cap(len(cams[i])) for i in self.ids}
         self.state = {i: np.zeros(3) for i in self.ids}     # deg, dx, dz
@@ -130,12 +149,21 @@ class RoadFitter:
         return float(np.linalg.norm(q - self.cams[i], axis=1).mean())
 
     def global_curves(self):
-        """{road: [left, centre, right]}, each pooled from its own pieces."""
+        """{road: [left, centre, right]}, pooled from that road's anchors.
+
+        A road with no anchor on it yields no curves, so the followers
+        there stay where GPS put them rather than being fitted to a curve
+        made of nothing but other followers.
+        """
         out = {}
-        for road, pieces in self.pieces_on.items():
+        for road, pieces in self.builds.items():
+            if not pieces:
+                out[road] = [None, None, None]
+                continue
             out[road] = [fit_global_curve(
                 np.vstack([self.placed(i, road)[r] for i in pieces]),
-                self.frames[road]) for r in range(3)]
+                self.frames[road]) if self.weights[r] else None
+                for r in range(3)]
         return out
 
     def _trees(self):
@@ -161,6 +189,8 @@ class RoadFitter:
                     e = n = 0.0
                     for road in mine:
                         for r, w in zip(range(3), self.weights):
+                            if w == 0:
+                                continue
                             t = trees[road][r]
                             if t is None:
                                 continue
@@ -174,20 +204,34 @@ class RoadFitter:
         return best[1] if best else self.state[i]
 
     def solve(self, sweeps=SWEEPS, log=print):
+        """Anchors first, then the followers onto the settled curves."""
+        def line(tag, ids, extra=""):
+            return (f"  {tag}{extra}   " +
+                    "  ".join(f"{i}:{self.state[i][0]:+.0f}d"
+                              f"/{np.hypot(*self.state[i][1:]):.2f}m"
+                              for i in ids))
+
         for sweep in range(sweeps):
             trees = self._trees()
             moved = 0.0
-            for i in self.ids:
+            for i in self.anchor_ids:
                 st = self.best_for(i, trees)
                 moved = max(moved, float(np.abs(st - self.state[i]).max()))
                 self.state[i] = st
             if log:
-                log(f"  sweep {sweep + 1}: largest change {moved:.2f}   " +
-                    "  ".join(f"{i}:{self.state[i][0]:+.0f}d"
-                              f"/{np.hypot(*self.state[i][1:]):.2f}m"
-                              for i in self.ids))
+                log(line(f"sweep {sweep + 1}:", self.anchor_ids,
+                         f" largest change {moved:.2f}"))
             if moved < SETTLED:
                 break
+
+        if self.followers:
+            # one pass, against curves that are now fixed: a follower can
+            # move onto the road but can no longer move the road
+            trees = self._trees()
+            for i in self.followers:
+                self.state[i] = self.best_for(i, trees)
+            if log:
+                log(line("followers:", self.followers))
         return self.state
 
     def report(self):
@@ -204,11 +248,12 @@ class RoadFitter:
             d = []
             for r in range(3):
                 vals = [trees[road][r].query(self.placed(i, road)[r])[0].mean()
-                        for road in self.roads_of[i] if trees[road][r] is not None]
+                        for road in self.roads_of[i]
+                        if trees.get(road) and trees[road][r] is not None]
                 d.append(float(np.mean(vals)) if vals else np.nan)
             out[i] = (float(deg), float(np.hypot(dx, dz)),
                       self.drift(i, self.state[i]), d,
-                      sorted(self.roads_of[i]))
+                      sorted(self.roads_of[i]), i in self.followers)
         return out
 
 
