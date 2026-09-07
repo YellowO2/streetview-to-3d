@@ -1,18 +1,20 @@
-"""Align a set of pieces to one road and write them out as a single cloud.
+"""Align a set of pieces to the road network and write them out as one cloud.
 
     python -m alignment.run_global_alignment --dir /tmp/gap3_joined \
         --pieces 5,3,9,6 --out ~/Downloads/aligned.ply
 
 The stages, and why they are in this order:
 
-  1. ROUTE      one direction of travel for the whole run, from the camera
-                positions. Everything after this depends on "left" meaning
-                the same side of the road in every piece.
+  1. ROADS      the walking graph split into roads, each with its own
+                frame, and each piece matched to the roads it lies along
+                (road_align.road_frames). The frame fixes a direction of
+                travel, so "left" means the same side in every piece.
   2. LINES      each piece reduced to a left kerb, a centre and a right
-                kerb (alignment.extract_road_lines).
-  3. HORIZONTAL every piece turned and slid onto one set of three global
-                curves (alignment.fit_pieces_to_road). Not pairwise: a
-                piece needs no neighbour, only the road.
+                kerb -- once per road it lies along, from just the part of
+                it beside that road (road_align.extract_road_lines).
+  3. HORIZONTAL every piece turned and slid onto its roads' global curves
+                (road_align.fit_pieces_to_road). Not pairwise: a piece
+                needs no neighbour, only a road.
   4. VERTICAL   every piece seated on one road surface
                 (alignment.seat_pieces_on_surface). After the horizontal
                 fit, never before -- otherwise it levels pieces against
@@ -26,8 +28,8 @@ import os
 
 import numpy as np
 
-from postprocess.road_align.camera_route import RouteFrame, route_curve
 from postprocess.road_align.extract_road_lines import road_lines
+from postprocess.road_align.road_frames import build as build_frames, clip, near_cams
 from postprocess.road_align.feature_icp import extract_features
 from postprocess.road_align.fit_pieces_to_road import RoadFitter, horizontal_transform
 from postprocess.piece_transforms import save as save_transforms
@@ -35,6 +37,7 @@ from postprocess.gps_fit.load_pieces import load_pieces
 from postprocess.road_align.seat_pieces_on_surface import seat
 
 MARGIN_M = 25.0
+MIN_CLIPPED_PTS = 5000   # too little of the piece on this road to describe it
 
 
 def align(directory, piece_ids=None, cell=0.25, log=print):
@@ -54,34 +57,48 @@ def align(directory, piece_ids=None, cell=0.25, log=print):
     bounds = (allc[:, 0].min() - MARGIN_M, allc[:, 0].max() + MARGIN_M,
               allc[:, 1].min() - MARGIN_M, allc[:, 1].max() + MARGIN_M)
 
-    frame = RouteFrame(route_curve(allc))
-    log(f"route: {frame.length:.0f} m through {len(allc)} camera(s)\n")
+    curves, frames, on = build_frames(cams)
+    log(f"{len(curves)} road(s) carrying 2+ pieces: " +
+        ", ".join(f"road{r} {frames[r].length:.0f}m" for r in sorted(curves)) + "\n")
 
     lines, road_pts, skipped = {}, {}, []
     for i in ids:
         road_pts[i] = extract_features(clouds[i], bounds, cams=cams[i])[0]
-        got = road_lines(clouds[i], bounds, cams[i], frame, cell)
-        if got is None:
+        got = []
+        for r in on.get(i, []):
+            # each road sees only the part of the piece lying along it, so
+            # a piece at a junction yields a separate set of lines per road
+            # instead of one set describing the junction blob
+            sub, keep = clip(clouds[i], curves[r])
+            if keep.sum() < MIN_CLIPPED_PTS:
+                continue
+            c = near_cams(cams[i], curves[r])
+            b = (sub[0][:, 0].min() - MARGIN_M, sub[0][:, 0].max() + MARGIN_M,
+                 sub[0][:, 1].min() - MARGIN_M, sub[0][:, 1].max() + MARGIN_M)
+            found = road_lines(sub, b, c, frames[r], cell)
+            if found is not None:
+                lines[(i, r)] = found
+                got.append(r)
+        if not got:
             skipped.append(i)
             log(f"piece_{i}: no usable road lines, left at GPS")
             continue
-        lines[i] = got
-        log(f"piece_{i}: {len(cams[i])} node(s), left/centre/right = " +
-            "/".join(f"{np.linalg.norm(np.diff(c, axis=0), axis=1).sum():.0f}m"
-                     for c in got))
+        log(f"piece_{i}: {len(cams[i])} node(s) on road(s) "
+            f"{','.join(str(r) for r in got)}")
 
-    fitted = [i for i in ids if i in lines]
+    fitted = sorted({i for i, _ in lines})
     if len(fitted) < 2:
         raise SystemExit("fewer than 2 pieces yielded road lines")
 
     log("")
-    fitter = RoadFitter(lines, {i: cams[i] for i in fitted}, frame)
+    fitter = RoadFitter(lines, {i: cams[i] for i in fitted}, frames)
     fitter.solve(log=log)
 
-    log("\npiece   turn    slide   drift    cap    to road (L/C/R)")
-    for i, (turn, slide, drift, d) in fitter.report().items():
+    log("\npiece   turn    slide   drift    cap    to road (L/C/R)   roads")
+    for i, (turn, slide, drift, d, rds) in fitter.report().items():
         log(f"  {i:<5}{turn:+7.1f} {slide:7.2f}m {drift:6.2f}m "
-            f"{fitter.cap[i]:5.1f}m   " + "/".join(f"{x:.2f}" for x in d))
+            f"{fitter.cap[i]:5.1f}m   " + "/".join(f"{x:.2f}" for x in d)
+            + "   " + ",".join(str(r) for r in rds))
 
     horiz = {i: horizontal_transform(fitter.state[i], fitter.pivot[i])
              for i in fitted}
@@ -103,10 +120,11 @@ def align(directory, piece_ids=None, cell=0.25, log=print):
     for i in ids:
         d = {"matrix": (vert.get(i, np.eye(4)) @ horiz[i]).tolist()}
         if i in fit_report:
-            turn, slide, drift, to_road = fit_report[i]
+            turn, slide, drift, to_road, rds = fit_report[i]
             d["road"] = {"turn_deg": round(turn, 2), "slide_m": round(slide, 3),
                          "drift_m": round(drift, 3), "cap_m": fitter.cap[i],
-                         "to_road_m": [round(float(x), 3) for x in to_road]}
+                         "to_road_m": [round(float(x), 3) for x in to_road],
+                         "roads": rds}
         else:
             d["road"] = None            # no usable road lines; left at GPS
         if i in report:

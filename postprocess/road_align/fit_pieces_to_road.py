@@ -1,4 +1,5 @@
-"""Place every piece against ONE road, rather than against its neighbours.
+"""Place every piece against the ROADS it lies along, not against its
+neighbours.
 
 Matching piece to piece makes each placement answer only to whoever
 happens to be nearest. On gap3 that had piece_9 swinging round to meet
@@ -7,14 +8,18 @@ absent from its cost entirely. It also means a run only holds together if
 consecutive pieces overlap: drop the single-node piece from the middle
 and piece_5 had no partner left at all, so it simply froze at GPS.
 
-Here the whole run is described by three curves -- left kerb, centre,
-right kerb -- each running end to end, built by pooling the corresponding
-line from every piece. Each piece is then turned and slid to sit on those
-curves. Every piece answers to the same road, no piece needs a partner,
-and there is no ordering to choose.
+Here each road is described by three curves -- left kerb, centre, right
+kerb -- running its whole length, built by pooling the corresponding line
+from every piece on that road. Each piece is then turned and slid to sit
+on those curves. Every piece answers to the road, no piece needs a
+partner, and there is no ordering to choose.
+
+A piece lying along several roads (one at a junction, say) is scored
+against all of them at once and still solves a single rigid transform, so
+the roads negotiate rather than one of them winning by being picked first.
 
 The curves are rebuilt from the placed pieces and the pieces refitted, a
-few times over, so the road and the pieces agree by the end.
+few times over, so the roads and the pieces agree by the end.
 
 Kerbs count for roughly three times the centre. A kerb is observed
 directly; the centre is inferred from the road mask's shape, and the
@@ -87,23 +92,36 @@ def _rot(deg):
 
 
 class RoadFitter:
-    """lines: {piece: [left, centre, right]}, cams: {piece: (N,2) XZ}."""
+    """Fit every piece to the roads it lies along.
 
-    def __init__(self, lines, cams, frame, weights=ROLE_WEIGHTS):
-        self.ids = [i for i in lines if lines[i] is not None]
-        self.lines = lines
+    lines   {(piece, road): [left, centre, right]} -- a piece that lies
+            along three roads appears three times, and its ONE rigid
+            transform is scored against all three at once.
+    cams    {piece: (N,2) XZ}
+    frames  {road: RouteFrame}
+    """
+
+    def __init__(self, lines, cams, frames, weights=ROLE_WEIGHTS):
+        self.lines = {k: v for k, v in lines.items() if v is not None}
+        self.frames = frames
         self.cams = cams
-        self.frame = frame
         self.weights = weights
+        self.roads_of = {}
+        for i, r in self.lines:
+            self.roads_of.setdefault(i, []).append(r)
+        self.ids = sorted(self.roads_of)
+        self.pieces_on = {}
+        for i, r in self.lines:
+            self.pieces_on.setdefault(r, []).append(i)
         self.pivot = {i: cams[i].mean(0) for i in self.ids}
         self.cap = {i: drift_cap(len(cams[i])) for i in self.ids}
         self.state = {i: np.zeros(3) for i in self.ids}     # deg, dx, dz
 
-    def placed(self, i, st=None):
+    def placed(self, i, road, st=None):
         deg, dx, dz = self.state[i] if st is None else st
         R = _rot(deg)
         p = self.pivot[i]
-        return [(c - p) @ R.T + p + [dx, dz] for c in self.lines[i]]
+        return [(c - p) @ R.T + p + [dx, dz] for c in self.lines[(i, road)]]
 
     def drift(self, i, st):
         deg, dx, dz = st
@@ -112,15 +130,26 @@ class RoadFitter:
         return float(np.linalg.norm(q - self.cams[i], axis=1).mean())
 
     def global_curves(self):
-        return [fit_global_curve(np.vstack([self.placed(i)[r] for i in self.ids]),
-                                 self.frame) for r in range(3)]
+        """{road: [left, centre, right]}, each pooled from its own pieces."""
+        out = {}
+        for road, pieces in self.pieces_on.items():
+            out[road] = [fit_global_curve(
+                np.vstack([self.placed(i, road)[r] for i in pieces]),
+                self.frames[road]) for r in range(3)]
+        return out
+
+    def _trees(self):
+        return {road: [cKDTree(c) if c is not None else None for c in curves]
+                for road, curves in self.global_curves().items()}
 
     def best_for(self, i, trees):
         cap, pivot = self.cap[i], self.pivot[i]
+        mine = self.roads_of[i]
         best = None
         for deg in np.arange(-TURN_RANGE_DEG, TURN_RANGE_DEG + 1e-9, TURN_STEP_DEG):
             R = _rot(deg)
-            rot = [(c - pivot) @ R.T + pivot for c in self.lines[i]]
+            rot = {road: [(c - pivot) @ R.T + pivot
+                          for c in self.lines[(i, road)]] for road in mine}
             camrot = (self.cams[i] - pivot) @ R.T + pivot
             for dz in np.arange(-cap, cap + 1e-9, SLIDE_STEP_M):
                 for dx in np.arange(-cap, cap + 1e-9, SLIDE_STEP_M):
@@ -130,11 +159,13 @@ class RoadFitter:
                                       axis=1).mean() > cap:
                         continue
                     e = n = 0.0
-                    for r, w in zip(range(3), self.weights):
-                        if trees[r] is None:
-                            continue
-                        e += w * trees[r].query(rot[r] + [dx, dz])[0].mean()
-                        n += w
+                    for road in mine:
+                        for r, w in zip(range(3), self.weights):
+                            t = trees[road][r]
+                            if t is None:
+                                continue
+                            e += w * t.query(rot[road][r] + [dx, dz])[0].mean()
+                            n += w
                     if n == 0:
                         continue
                     v = e / n
@@ -144,8 +175,7 @@ class RoadFitter:
 
     def solve(self, sweeps=SWEEPS, log=print):
         for sweep in range(sweeps):
-            curves = self.global_curves()
-            trees = [cKDTree(c) if c is not None else None for c in curves]
+            trees = self._trees()
             moved = 0.0
             for i in self.ids:
                 st = self.best_for(i, trees)
@@ -161,16 +191,24 @@ class RoadFitter:
         return self.state
 
     def report(self):
-        """{piece: (turn, slide, drift, [left, centre, right] distances)}."""
-        trees = [cKDTree(c) if c is not None else None
-                 for c in self.global_curves()]
+        """{piece: (turn, slide, drift, [L, C, R] distances, [roads])}.
+
+        The three distances are averaged over the piece's roads, so a
+        piece answering to a junction reports how well it satisfies all
+        of them rather than the best one.
+        """
+        trees = self._trees()
         out = {}
         for i in self.ids:
             deg, dx, dz = self.state[i]
-            d = [trees[r].query(self.placed(i)[r])[0].mean()
-                 if trees[r] is not None else np.nan for r in range(3)]
+            d = []
+            for r in range(3):
+                vals = [trees[road][r].query(self.placed(i, road)[r])[0].mean()
+                        for road in self.roads_of[i] if trees[road][r] is not None]
+                d.append(float(np.mean(vals)) if vals else np.nan)
             out[i] = (float(deg), float(np.hypot(dx, dz)),
-                      self.drift(i, self.state[i]), d)
+                      self.drift(i, self.state[i]), d,
+                      sorted(self.roads_of[i]))
         return out
 
 

@@ -18,16 +18,23 @@ import json
 import math
 
 from paths import FETCHED_GRAPH
+from postprocess.gps_fit.fit import real_en
 
-EARTH_R = 6371000.0
+# How straight two corridors must meet to be one road through a junction.
+# A road can bend at a junction, but a right-angle turn into a side street
+# is a different road, and pairing those would thread one frame around a
+# corner where "left" flips sides.
+STRAIGHT_ENOUGH_DEG = 50.0
 
 
 def _metres(points):
-    """lat/lon -> local metres, equirectangular about the first point."""
-    lat0 = math.radians(points[0][0])
-    k = math.cos(lat0)
-    return [(math.radians(lon) * k * EARTH_R, math.radians(lat) * EARTH_R)
-            for lat, lon in points]
+    """lat/lon -> the shared GLOBAL_ORIGIN metre frame.
+
+    The same frame `load_pieces` puts camera positions in, so road
+    polylines and piece cameras are directly comparable without any
+    further transform.
+    """
+    return [real_en(lat, lon) for lat, lon in points]
 
 
 def _length(xy, nodes):
@@ -79,6 +86,103 @@ def decompose(adjacency):
                 walk.append(nxt[0])
             corridors.append(walk)
     return corridors
+
+
+def _heading(xy, a, b):
+    return math.atan2(xy[b][1] - xy[a][1], xy[b][0] - xy[a][0])
+
+
+def _turn(u, v):
+    """How far a road bends when leaving along u and arriving along v.
+
+    Both headings point OUTWARD from the shared junction, so continuing
+    straight makes them opposite; the turn is the departure from that.
+    """
+    d = abs(u - v) % (2 * math.pi)
+    return abs(math.pi - min(d, 2 * math.pi - d))
+
+
+def roads(graph, straight_deg=STRAIGHT_ENOUGH_DEG):
+    """Corridors chained through junctions into whole roads.
+
+    A corridor stops at every junction, which cuts a single street into a
+    dozen stubs -- too fine to define a road frame over. So at each
+    junction the corridor ends are paired up by how nearly they continue
+    each other, straightest pair first, and each chain becomes one road.
+
+    Returns [[node ids along the road], ...] as ordered walks. Unlike
+    corridors these are a road INVENTORY: a piece may lie along several,
+    and each gets its own frame.
+    """
+    corridors = decompose(graph["adjacency"])
+    xy = _metres(graph["points"])
+    # heading leaving each corridor at each of its two ends
+    out = [(_heading(xy, c[1], c[0]), _heading(xy, c[-2], c[-1]))
+           for c in corridors]
+
+    at = {}
+    for i, c in enumerate(corridors):
+        at.setdefault(c[0], []).append((i, 0))
+        at.setdefault(c[-1], []).append((i, 1))
+
+    parent = list(range(len(corridors)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    limit = math.radians(straight_deg)
+    for ends in at.values():
+        cand = []
+        for a in range(len(ends)):
+            for b in range(a + 1, len(ends)):
+                (ia, ea), (ib, eb) = ends[a], ends[b]
+                if ia == ib:
+                    continue
+                t = _turn(out[ia][ea], out[ib][eb])
+                if t < limit:
+                    cand.append((t, ia, ib))
+        used = set()
+        for _, ia, ib in sorted(cand):
+            # one continuation per corridor end: a crossroads pairs into
+            # two roads passing through, not four
+            if ia in used or ib in used:
+                continue
+            used.add(ia)
+            used.add(ib)
+            ra, rb = find(ia), find(ib)
+            if ra != rb:
+                parent[ra] = rb
+
+    groups = {}
+    for i in range(len(corridors)):
+        groups.setdefault(find(i), []).append(i)
+    return [_chain([corridors[i] for i in g]) for g in groups.values()]
+
+
+def _chain(parts):
+    """Stitch corridors sharing end dots into one ordered walk."""
+    parts = [list(p) for p in parts]
+    walk = parts.pop()
+    while parts:
+        for k, p in enumerate(parts):
+            if p[0] == walk[-1]:
+                walk += p[1:]
+            elif p[-1] == walk[-1]:
+                walk += p[::-1][1:]
+            elif p[-1] == walk[0]:
+                walk = p[:-1] + walk
+            elif p[0] == walk[0]:
+                walk = p[::-1][:-1] + walk
+            else:
+                continue
+            parts.pop(k)
+            break
+        else:
+            break        # a branching or looping group; keep what is ordered
+    return walk
 
 
 def summarise(graph):
