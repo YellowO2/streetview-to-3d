@@ -31,16 +31,23 @@ import numpy as np
 from postprocess.road_align.extract_road_lines import road_lines
 from postprocess.road_align.road_frames import build as build_frames, clip, near_cams
 from postprocess.road_align.feature_icp import extract_features
-from postprocess.road_align.fit_pieces_to_road import RoadFitter, horizontal_transform
+from postprocess.road_align.fit_pieces_to_road import (RoadFitter, drift_cap,
+                                                       horizontal_transform,
+                                                       _rot as _rot2,
+                                                       TURN_RANGE_DEG)
+from scipy.optimize import minimize
 from postprocess.piece_transforms import save as save_transforms
 from postprocess.gps_fit.load_pieces import load_pieces
+from scipy.spatial import cKDTree
 from postprocess.road_align.seat_pieces_on_surface import seat
 
 MARGIN_M = 25.0
+STRONG_NODES = 2         # above this, GPS measured the heading itself
 MIN_CLIPPED_PTS = 5000   # too little of the piece on this road to describe it
 
 
-def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1):
+def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1,
+          road_fit=True):
     """Solve, and return ({piece: 4x4}, clouds, fits, per-piece diagnostics).
 
     The 4x4s here map ALREADY GPS-FITTED coordinates, because load_pieces
@@ -67,63 +74,124 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1):
               allc[:, 1].min() - MARGIN_M, allc[:, 1].max() + MARGIN_M)
 
     curves, frames, on = build_frames(cams)
-    log(f"{len(curves)} road(s) carrying 2+ pieces: " +
-        ", ".join(f"road{r} {frames[r].length:.0f}m" for r in sorted(curves)) + "\n")
 
-    lines, road_pts, skipped = {}, {}, []
+    # STAGE 1 -- seat each piece on its road line.
+    #
+    # The cameras are that piece's own panorama GPS; the road line is the
+    # same GPS smoothed over every panorama on the road, so it is the less
+    # noisy of the two. How much freedom a piece gets depends on what GPS
+    # actually measured about it:
+    #
+    #   > STRONG_NODES cameras   translation only. GPS saw the piece from
+    #                            enough places to have measured its heading,
+    #                            so overruling that with the road line would
+    #                            replace a real measurement with a smoothed
+    #                            one.
+    #   <= STRONG_NODES cameras  rotation as well. GPS never measured a
+    #                            heading here at all -- two points fix a
+    #                            position and nothing else -- so the road
+    #                            line is the only thing that can supply one.
+    #
+    # Both are held near GPS by a soft (move/cap)^4 penalty rather than a
+    # hard limit, which also forbids the along-road slide an unpenalised fit
+    # runs away with: a road is featureless lengthwise, and one piece ran
+    # 34 m down the curve before this penalty existed.
+    nudge = {}
     for i in ids:
-        road_pts[i] = extract_features(clouds[i], bounds, cams=cams[i])[0]
-        got = []
-        for r in on.get(i, []):
-            # each road sees only the part of the piece lying along it, so
-            # a piece at a junction yields a separate set of lines per road
-            # instead of one set describing the junction blob
-            sub, keep = clip(clouds[i], curves[r])
-            if keep.sum() < MIN_CLIPPED_PTS:
-                continue
-            c = near_cams(cams[i], curves[r])
-            b = (sub[0][:, 0].min() - MARGIN_M, sub[0][:, 0].max() + MARGIN_M,
-                 sub[0][:, 1].min() - MARGIN_M, sub[0][:, 1].max() + MARGIN_M)
-            found = road_lines(sub, b, c, frames[r], cell)
-            if found is not None:
-                lines[(i, r)] = found
-                got.append(r)
-        if not got:
-            skipped.append(i)
-            log(f"piece_{i}: no usable road lines, left at GPS")
+        if not on.get(i):
+            nudge[i] = np.eye(4)
             continue
-        log(f"piece_{i}: {len(cams[i])} node(s) on road(s) "
-            f"{','.join(str(r) for r in got)}")
+        r = min(on[i], key=lambda r: cKDTree(curves[r]).query(cams[i])[0].mean())
+        tree, c = cKDTree(curves[r]), cams[i]
+        piv, cap = c.mean(0), drift_cap(len(c))
+        free_turn = len(c) <= STRONG_NODES
 
-    fitted = sorted({i for i, _ in lines})
-    if len(fitted) < 2:
-        raise SystemExit("fewer than 2 pieces yielded road lines")
+        def cost(p, tree=tree, c=c, piv=piv, cap=cap):
+            q = (c - piv) @ _rot2(p[0]).T + piv + p[1:]
+            return ((tree.query(q)[0] ** 2).mean()
+                    + (np.linalg.norm(q - c, axis=1).mean() / cap) ** 4)
 
-    log("")
-    # A piece GPS saw from a single place cannot fit its own heading, so
-    # its kerbs are the least trustworthy in the run. Keep them out of the
-    # curves: solve the multi-node pieces first, then slide the singletons
-    # onto the curves those produced.
-    anchors = {i for i in fitted if fits[i]["n"] > 1}
-    followers = sorted(set(fitted) - anchors)
-    if followers:
-        log(f"\n{len(anchors)} anchor(s) build the curves; "
-            f"{len(followers)} singleton(s) placed after: "
-            + ", ".join(f"piece_{i}" for i in followers))
-    fitter = RoadFitter(lines, {i: cams[i] for i in fitted}, frames, anchors)
-    fitter.solve(log=log)
+        best = None
+        turns = (np.arange(-TURN_RANGE_DEG, TURN_RANGE_DEG + 0.1, 2.0)
+                 if free_turn else [0.0])
+        for d in turns:
+            o = minimize(lambda t, d=d: cost(np.r_[d, t]), [0.0, 0.0],
+                         method="Nelder-Mead",
+                         options=dict(xatol=1e-2, fatol=1e-4, maxiter=400))
+            if best is None or o.fun < best[0]:
+                best = (o.fun, d, o.x)
+        _, deg, t = best
+        nudge[i] = horizontal_transform(np.r_[deg, t], piv)
+        log(f"  piece_{i:<3} {len(c)} node(s)  "
+            + (f"turn {deg:+5.0f} deg, " if free_turn else "no turn (GPS fixed it), ")
+            + f"shift {np.linalg.norm(t):.2f} m")
 
-    log("\npiece   turn    slide   drift    cap    to road (L/C/R)   roads")
-    for i, (turn, slide, drift, d, rds, follower) in fitter.report().items():
-        log(f"  {i:<5}{turn:+7.1f} {slide:7.2f}m {drift:6.2f}m "
-            f"{fitter.cap[i]:5.1f}m   " + "/".join(f"{x:.2f}" for x in d)
-            + "   " + ",".join(str(r) for r in rds)
-            + ("   (singleton, placed after)" if follower else ""))
+    gps = {i: cams[i].copy() for i in ids}          # kept only for reporting
+    raw = dict(clouds)
+    for i in ids:
+        M = nudge[i]
+        xz, y, co = clouds[i]
+        clouds[i] = (xz @ M[[0, 2]][:, [0, 2]].T + M[[0, 2], 3], y, co)
+        cams[i] = cams[i] @ M[[0, 2]][:, [0, 2]].T + M[[0, 2], 3]
+    log("stage 1, seated on the road line: "
+        + "  ".join(f"{i}:{np.linalg.norm(cams[i] - gps[i], axis=1).mean():.2f}m"
+                    for i in ids) + "\n")
 
-    horiz = {i: horizontal_transform(fitter.state[i], fitter.pivot[i])
-             for i in fitted}
-    for i in skipped:
-        horiz[i] = np.eye(4)
+    road_pts = {i: extract_features(clouds[i], bounds, cams=cams[i])[0]
+                for i in ids}
+
+    horiz = {i: np.eye(4) for i in ids}
+    if road_fit:
+        lines, skipped = {}, []
+        for i in ids:
+            got = []
+            for r in on.get(i, []):
+                # each road sees only the part of the piece lying along it,
+                # so a piece at a junction yields a separate set of lines per
+                # road instead of one set describing the junction blob
+                sub, keep = clip(clouds[i], curves[r])
+                if keep.sum() < MIN_CLIPPED_PTS:
+                    continue
+                c = near_cams(cams[i], curves[r])
+                b = (sub[0][:, 0].min() - MARGIN_M, sub[0][:, 0].max() + MARGIN_M,
+                     sub[0][:, 1].min() - MARGIN_M, sub[0][:, 1].max() + MARGIN_M)
+                found = road_lines(sub, b, c, frames[r], cell)
+                if found is not None:
+                    lines[(i, r)] = found
+                    got.append(r)
+            if not got:
+                skipped.append(i)
+                log(f"piece_{i}: no usable road lines, left where stage 1 put it")
+                continue
+            log(f"piece_{i}: {len(cams[i])} node(s) on road(s) "
+                f"{','.join(str(r) for r in got)}")
+
+        fitted = sorted({i for i, _ in lines})
+        if len(fitted) < 2:
+            raise SystemExit("fewer than 2 pieces yielded road lines")
+
+        anchors = {i for i in fitted if fits[i]["n"] > 1}
+        followers = sorted(set(fitted) - anchors)
+        if followers:
+            log(f"\n{len(anchors)} anchor(s) build the curves; "
+                f"{len(followers)} singleton(s) placed after: "
+                + ", ".join(f"piece_{i}" for i in followers))
+        log("")
+        fitter = RoadFitter(lines, {i: cams[i] for i in fitted}, frames, anchors)
+        fitter.solve(log=log)
+
+        log("\npiece   turn    slide   drift    cap    to road (L/C/R)   roads")
+        for i, (turn, slide, drift, d, rds, follower) in fitter.report().items():
+            log(f"  {i:<5}{turn:+7.1f} {slide:7.2f}m {drift:6.2f}m "
+                f"{fitter.cap[i]:5.1f}m   " + "/".join(f"{x:.2f}" for x in d)
+                + "   " + ",".join(str(r) for r in rds)
+                + ("   (singleton, placed after)" if follower else ""))
+        horiz.update({i: horizontal_transform(fitter.state[i], fitter.pivot[i])
+                      for i in fitted})
+        fit_report = fitter.report()
+    else:
+        log("\nkerb fit OFF -- stage 1 and seating only")
+        fit_report = {}
 
     moved_road = {i: road_pts[i] @ horiz[i][:3, :3].T + horiz[i][:3, 3]
                   for i in ids if len(road_pts[i])}
@@ -135,7 +203,6 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1):
         else:
             log(f"piece_{i}: too little road to seat, height left at GPS")
 
-    fit_report = fitter.report()
     diagnostics = {}
     for i in ids:
         d = {"matrix": (vert.get(i, np.eye(4)) @ horiz[i]).tolist()}
@@ -154,8 +221,9 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1):
             d["seating"] = None         # too little road to seat
         diagnostics[i] = d
 
-    return ({i: vert.get(i, np.eye(4)) @ horiz[i] for i in ids},
-            {i: clouds[i] for i in ids}, {i: fits[i] for i in ids},
+    # the nudge happened before the fit, so it sits innermost
+    return ({i: vert.get(i, np.eye(4)) @ horiz[i] @ nudge[i] for i in ids},
+            {i: raw[i] for i in ids}, {i: fits[i] for i in ids},
             diagnostics)
 
 
@@ -167,10 +235,13 @@ def main():
                     help="comma-separated piece ids (default: all in --dir)")
     ap.add_argument("--out", default=None, help="write the aligned cloud here")
     ap.add_argument("--cell", type=float, default=0.25)
-    ap.add_argument("--min-nodes", type=int, default=1,
+    ap.add_argument("--min-nodes", type=int, default=2,
                     help="drop pieces with fewer GPS nodes than this. Use 2 "
                          "to exclude singletons, whose heading GPS never "
-                         "measured and which borrow one from a neighbour.")
+                         "measured and which borrow one from a neighbour. "
+                         "Defaults to 2: a singleton bends the curves it is "
+                         "then fitted to, and the results were worse with "
+                         "them in.")
     ap.add_argument("--no-save", action="store_true",
                     help="solve without writing piece_transforms.json")
     args = ap.parse_args()
