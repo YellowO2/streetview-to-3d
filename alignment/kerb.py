@@ -41,6 +41,9 @@ DUP_FRAC = 0.7
 SMOOTH_PER_PT = 0.05
 MIN_CURVE_M = 3.0
 TANGENT_PTS = 5
+STAIRCASE_M = 1.0       # walk a traced chain at roughly this spacing first
+MIN_RADIUS_M = 8.0      # a kerb turns no tighter than this
+MAX_SMOOTH_STEPS = 7
 
 
 def kerb_curves(pts, step=0.25):
@@ -173,17 +176,65 @@ def stitch(chains):
     return kept
 
 
+def _resample(p, step):
+    """Walk a chain at a fixed spacing, averaging the cells passed through."""
+    d = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(p, axis=0), axis=1))]
+    if d[-1] < 2 * step:
+        return p
+    out = []
+    for t in np.arange(0, d[-1] + 1e-9, step):
+        near = np.abs(d - t) <= step
+        out.append(p[near].mean(0) if near.any() else p[np.argmin(np.abs(d - t))])
+    out = np.array(out)
+    return out[np.r_[True, np.linalg.norm(np.diff(out, axis=0), axis=1) > 1e-6]]
+
+
+def min_radius(c):
+    """Tightest turn anywhere along a curve, in metres."""
+    if len(c) < 5:
+        return np.inf
+    d1 = np.gradient(c, axis=0)
+    d2 = np.gradient(d1, axis=0)
+    num = np.abs(d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0])
+    den = (d1[:, 0] ** 2 + d1[:, 1] ** 2) ** 1.5
+    kappa = np.divide(num, den, out=np.zeros(len(c)), where=den > 1e-12)
+    k = np.percentile(kappa, 98)
+    return np.inf if k <= 1e-9 else 1.0 / k
+
+
 def fit(chain, step=0.25):
-    """Ordered points -> densely resampled smooth curve."""
+    """Ordered points -> a smooth curve a road edge could actually follow.
+
+    Two things stop the result looking pitted. Kerb cells sit on a grid, so
+    a traced chain steps horizontally, vertically or diagonally and turns
+    45 degrees at almost every point; at 0.25 m per step that reads as a
+    0.3 m turning radius. Walking the chain at about a metre first averages
+    that staircase away before the spline can follow it.
+
+    Then smoothing is raised until the curve stops turning tighter than a
+    kerb physically does. Fitting at one fixed smoothness instead lets the
+    spline chase every wobble in the boundary, and those wobbles are
+    extraction noise, not road.
+    """
     p = np.asarray(chain, float)
     p = p[np.r_[True, np.linalg.norm(np.diff(p, axis=0), axis=1) > 1e-6]]
     if len(p) < 4:
         return p
+    p = _resample(p, STAIRCASE_M)
+    if len(p) < 4:
+        return np.asarray(chain, float)
     length = float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
-    tck, _ = splprep([p[:, 0], p[:, 1]], s=SMOOTH_PER_PT * len(p),
-                     k=min(3, len(p) - 1))
-    x, y = splev(np.linspace(0, 1, max(int(length / step), 12)), tck)
-    return np.column_stack([x, y])
+    n = max(int(length / step), 12)
+    smooth = SMOOTH_PER_PT * len(p)
+    out = None
+    for _ in range(MAX_SMOOTH_STEPS):
+        tck, _ = splprep([p[:, 0], p[:, 1]], s=smooth, k=min(3, len(p) - 1))
+        x, y = splev(np.linspace(0, 1, n), tck)
+        out = np.column_stack([x, y])
+        if min_radius(out) >= MIN_RADIUS_M:
+            break
+        smooth *= 4.0
+    return out
 
 
 def thin(c, step=0.5):

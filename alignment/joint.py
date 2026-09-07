@@ -85,7 +85,7 @@ def _rot(deg):
 class JointSolver:
     """kerbs/cams: {piece_id: ...} in a shared LEVELLED 2D frame."""
 
-    def __init__(self, kerbs, cams, gaps, floor=None):
+    def __init__(self, kerbs, cams, gaps, floor=None, lock=None):
         self.ids = list(kerbs)
         self.kerbs = {i: [thin(c) for c in kerbs[i]] for i in self.ids}
         self.cams = cams
@@ -96,9 +96,19 @@ class JointSolver:
         self.pairs = [(i, j) for (i, j), g in gaps.items() if g <= NEIGHBOUR_GAP_M]
 
         # Which curve of one piece is the same road edge as which curve of
-        # the other is decided ONCE, from the GPS placement, and held. Let
-        # the search re-choose and it drifts onto the opposite kerb as the
-        # piece slides, then scores that as a fine join.
+        # the other is decided ONCE and held. Let the search re-choose and
+        # it drifts onto the opposite kerb as the piece slides, then scores
+        # that as a fine join.
+        #
+        # A caller that knows its curves are in a consistent order -- left
+        # kerb first, right kerb second, oriented the same way along the
+        # route -- should pass `lock` and pair them by index. Choosing by
+        # closest approach instead pairs whichever happens to be nearest,
+        # and that routinely marries one piece's left kerb to another's
+        # right.
+        if lock is not None:
+            self.lock = dict(lock)
+            return
         self.lock = {}
         for i, j in self.pairs:
             best = None
