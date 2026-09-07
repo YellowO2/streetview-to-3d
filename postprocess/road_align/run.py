@@ -40,7 +40,7 @@ MARGIN_M = 25.0
 MIN_CLIPPED_PTS = 5000   # too little of the piece on this road to describe it
 
 
-def align(directory, piece_ids=None, cell=0.25, log=print):
+def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1):
     """Solve, and return ({piece: 4x4}, clouds, fits, per-piece diagnostics).
 
     The 4x4s here map ALREADY GPS-FITTED coordinates, because load_pieces
@@ -49,6 +49,15 @@ def align(directory, piece_ids=None, cell=0.25, log=print):
     """
     fits, clouds = load_pieces(directory)
     ids = [i for i in (piece_ids or sorted(clouds)) if i in clouds]
+    if min_nodes > 1:
+        # Dropped before anything else, so a weak piece cannot shape a
+        # curve or be exported. It cannot affect the shared scale either:
+        # global_scale only counts pieces that fitted their own.
+        dropped = [i for i in ids if fits[i]["n"] < min_nodes]
+        ids = [i for i in ids if i not in set(dropped)]
+        if dropped:
+            log(f"dropped {len(dropped)} piece(s) with < {min_nodes} node(s): "
+                + ", ".join(f"piece_{i}" for i in dropped) + "\n")
     if len(ids) < 2:
         raise SystemExit(f"need at least 2 pieces, got {ids}")
 
@@ -91,7 +100,17 @@ def align(directory, piece_ids=None, cell=0.25, log=print):
         raise SystemExit("fewer than 2 pieces yielded road lines")
 
     log("")
-    fitter = RoadFitter(lines, {i: cams[i] for i in fitted}, frames)
+    # A piece GPS saw from a single place cannot fit its own heading, so
+    # its kerbs are the least trustworthy in the run. Keep them out of the
+    # curves: solve the multi-node pieces first, then slide the singletons
+    # onto the curves those produced.
+    anchors = {i for i in fitted if fits[i]["n"] > 1}
+    followers = sorted(set(fitted) - anchors)
+    if followers:
+        log(f"\n{len(anchors)} anchor(s) build the curves; "
+            f"{len(followers)} singleton(s) placed after: "
+            + ", ".join(f"piece_{i}" for i in followers))
+    fitter = RoadFitter(lines, {i: cams[i] for i in fitted}, frames, anchors)
     fitter.solve(log=log)
 
     log("\npiece   turn    slide   drift    cap    to road (L/C/R)   roads")
@@ -135,7 +154,8 @@ def align(directory, piece_ids=None, cell=0.25, log=print):
         diagnostics[i] = d
 
     return ({i: vert.get(i, np.eye(4)) @ horiz[i] for i in ids},
-            clouds, fits, diagnostics)
+            {i: clouds[i] for i in ids}, {i: fits[i] for i in ids},
+            diagnostics)
 
 
 def main():
@@ -146,12 +166,17 @@ def main():
                     help="comma-separated piece ids (default: all in --dir)")
     ap.add_argument("--out", default=None, help="write the aligned cloud here")
     ap.add_argument("--cell", type=float, default=0.25)
+    ap.add_argument("--min-nodes", type=int, default=1,
+                    help="drop pieces with fewer GPS nodes than this. Use 2 "
+                         "to exclude singletons, whose heading GPS never "
+                         "measured and which borrow one from a neighbour.")
     ap.add_argument("--no-save", action="store_true",
                     help="solve without writing piece_transforms.json")
     args = ap.parse_args()
 
     ids = ([int(x) for x in args.pieces.split(",")] if args.pieces else None)
-    transforms, clouds, fits, diagnostics = align(args.dir, ids, args.cell)
+    transforms, clouds, fits, diagnostics = align(args.dir, ids, args.cell,
+                                                 min_nodes=args.min_nodes)
 
     if not args.no_save:
         path = save_transforms(args.dir, fits, diagnostics,
