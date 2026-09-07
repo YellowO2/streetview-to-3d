@@ -9,11 +9,11 @@ The stages, and why they are in this order:
                  frame, and each piece matched to the roads it lies along
                  (road_align.road_frames).
   2. HORIZONTAL  every piece seated on its road's line
-                 (road_align.seat_on_road_line). Not pairwise: a piece
+                 (road_align.node_center_to_road_line). Not pairwise: a piece
                  needs no neighbour, only a road, so dropping a piece from
                  the middle of a run cannot strand its neighbours.
   3. VERTICAL    every piece seated on one road surface
-                 (road_align.seat_pieces_on_surface). After the horizontal
+                 (road_align.align_slope_of_pieces). After the horizontal
                  fit, never before -- otherwise it levels pieces against
                  road that is not the same road yet.
 
@@ -27,10 +27,10 @@ import numpy as np
 
 from postprocess.road_align.road_surface import extract_features
 from postprocess.road_align.road_frames import build as build_frames
-from postprocess.road_align.seat_on_road_line import seat_all
+from postprocess.road_align.node_center_to_road_line import seat_all
 from postprocess.piece_transforms import save as save_transforms
 from postprocess.gps_fit.load_pieces import load_pieces
-from postprocess.road_align.seat_pieces_on_surface import seat
+from postprocess.road_align.align_slope_of_pieces import seat
 
 MARGIN_M = 25.0
 

@@ -10,11 +10,15 @@ the camera car actually drove, so chaining them into roads gives a line
 per street that is smoother than any single piece's GPS and complete over
 the whole piece. Each piece is seated on the line of the road it drove.
 
-    road                       find the road surface in a piece
+    road_mask                  rasterise a piece top-down and pick out the
+                               grey patch its cameras stand on
+    road_surface               that mask reduced to road points and a thin
+                               kerb line
     road_frames                the roads, one frame each, and which piece
                                lies on which
-    seat_on_road_line          place every piece on its road's line
-    seat_pieces_on_surface     then set every height and tilt against one
+    node_center_to_road_line   place every piece's camera nodes on the line
+                               of the road it drove
+    align_slope_of_pieces      then set every height and tilt against one
                                shared surface
     run                        the stages in order
 
