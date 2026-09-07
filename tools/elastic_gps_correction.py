@@ -1,6 +1,6 @@
 """Elastic (pose-graph-style) drift correction.
 
-Per-island independent GPS fits (tests/piece_gps_test.py) already place
+Per-island independent GPS fits (tools/piece_gps_test.py) already place
 each island close to GPS -- within an island, DA3 didn't misbehave, it
 just drifted a bit, and the per-island fit already absorbs that. But
 each island's fit eats its own independent dose of GPS noise, so
@@ -21,7 +21,7 @@ This is a convex quadratic in the per-node translation, so it's one
 sparse linear solve -- no rotation search, no iteration.
 
 Usage:
-    python -m tests.elastic_gps_correction --in /tmp/gps_alignment.json \
+    python -m tools.elastic_gps_correction --in /tmp/gps_alignment.json \
         --pieces /tmp/gps_pieces_15c.json --out /tmp/gps_elastic.json
 """
 import argparse
@@ -31,7 +31,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
-from tests.piece_gps_test import build_node_adjacency
+from tools.piece_gps_test import build_node_adjacency
 
 
 def main():

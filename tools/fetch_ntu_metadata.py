@@ -15,8 +15,8 @@ kept ending up on mismatched dates), before ever downloading a single
 image.
 
 Usage:
-    python tests/fetch_ntu_metadata.py
-    python tests/fetch_ntu_metadata.py --refetch   # ignore any existing checkpoint
+    python tools/fetch_ntu_metadata.py
+    python tools/fetch_ntu_metadata.py --refetch   # ignore any existing checkpoint
 """
 import argparse
 import asyncio

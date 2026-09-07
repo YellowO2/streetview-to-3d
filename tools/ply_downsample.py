@@ -5,7 +5,7 @@ big assembled result down to something a Three.js viewer can actually
 load.
 
 Usage:
-    python -m tests.ply_downsample --in ~/Downloads/ntu_subset_35.ply \
+    python -m tools.ply_downsample --in ~/Downloads/ntu_subset_35.ply \
         --out ~/Downloads/ntu_viewer/points.ply --fraction 0.5
 """
 import argparse

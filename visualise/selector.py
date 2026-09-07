@@ -8,14 +8,14 @@ The page used to be produced by a script in /tmp, so when it needed a
 change there was nothing to rerun and the generated file had to be edited
 by hand -- which then no longer matched the template it came from. The
 node data lived only inside that HTML as well. Now the data is in data/
-and the page is regenerated from alignment.viz, so the template stays the
+and the page is regenerated from visualise.graph_page, so the template stays the
 single source and the HTML is a build artefact.
 
     python -m alignment.selector
     python -m http.server -d build 8000
 """
 import os
-from alignment import viz
+from visualise import graph_page as viz
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data", "selector_nodes.json")

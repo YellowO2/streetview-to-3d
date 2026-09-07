@@ -3,7 +3,7 @@ deployed street-view-to-3d Space -- see street_builder/tab.py's
 handle_cli_merge_group/handle_cli_assemble docstrings for the API this
 drives.
 
-Same chunk-growing logic as tests/staged_corridor_test.py (real
+Same chunk-growing logic as tools/staged_corridor_test.py (real
 known_adjacent_chunk_pairs, chained from one real pair), but instead of
 incrementally bridging chunk-by-chunk onto one growing point cloud
 (cli_bridge_chunk), pairs up N mutually-adjacent chunks into a binary
@@ -13,8 +13,8 @@ resolves the root into an actual point cloud. No point-cloud data moves
 until that last step, regardless of how many chunks are in the tree.
 
 Usage:
-    python tests/tree_merge_test.py
-    python tests/tree_merge_test.py --num-chunks 8 --chunk-size 20
+    python tools/tree_merge_test.py
+    python tools/tree_merge_test.py --num-chunks 8 --chunk-size 20
 """
 import argparse
 import json

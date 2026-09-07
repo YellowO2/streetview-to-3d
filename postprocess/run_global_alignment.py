@@ -26,12 +26,12 @@ import os
 
 import numpy as np
 
-from alignment.camera_route import RouteFrame, route_curve
-from alignment.extract_road_lines import road_lines
-from alignment.feature_icp import extract_features
-from alignment.fit_pieces_to_road import RoadFitter, horizontal_transform
-from alignment.run_road_align import load_pieces
-from alignment.seat_pieces_on_surface import seat
+from postprocess.camera_route import RouteFrame, route_curve
+from postprocess.extract_road_lines import road_lines
+from postprocess.feature_icp import extract_features
+from postprocess.fit_pieces_to_road import RoadFitter, horizontal_transform
+from postprocess.run_road_align import load_pieces
+from postprocess.seat_pieces_on_surface import seat
 
 MARGIN_M = 25.0
 
@@ -109,7 +109,7 @@ def main():
     transforms, clouds = align(args.dir, ids, args.cell)
 
     if args.out:
-        from tests.export_island_ply import write_ply
+        from postprocess.ply_io import write_ply
         pts, cols = [], []
         for i, T in transforms.items():
             xz, y, co = clouds[i]

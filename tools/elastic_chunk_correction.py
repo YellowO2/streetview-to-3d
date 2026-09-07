@@ -6,7 +6,7 @@ point cloud can never be split finer than itself -- see chunk_gps_test.py's
 docstring) instead of relying on a large edge weight to approximate it.
 
 x_i = node i's position under its chunk's own already-good fit
-      (tests/chunk_gps_test.py's fitted_en)
+      (tools/chunk_gps_test.py's fitted_en)
 y_i = x_i + delta[chunk(i)]   <- what we solve for
 
 For a real-adjacency edge between node i (chunk a) and node j (chunk b):
@@ -20,7 +20,7 @@ Every node also gets a weak GPS pull, purely as an anchor (otherwise the
 whole graph floats under a free global translation).
 
 Usage:
-    python -m tests.elastic_chunk_correction --in /tmp/gps_alignment.json \
+    python -m tools.elastic_chunk_correction --in /tmp/gps_alignment.json \
         --chunks /tmp/gps_chunks_15.json --out /tmp/gps_chunk_elastic.json
 """
 import argparse
@@ -30,7 +30,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
-from tests.piece_gps_test import build_node_adjacency
+from tools.piece_gps_test import build_node_adjacency
 
 
 def main():

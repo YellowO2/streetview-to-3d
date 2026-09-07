@@ -16,7 +16,7 @@ import gradio as gr
 import numpy as np
 from huggingface_hub import HfApi
 
-import viewers
+from visualise import viewers
 from paths import SPLATS_DIR
 from street_builder import main as street_main
 from street_builder.map_selection.tab import build_map_section, nodes_by_key

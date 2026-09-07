@@ -29,8 +29,8 @@ import numpy as np
 from scipy.interpolate import splprep, splev
 from scipy.spatial import cKDTree
 
-from alignment.kerb import kerb_curves
-from alignment.road import CELL, centreline, road_cells
+from postprocess.kerb import kerb_curves
+from postprocess.road import CELL, centreline, road_cells
 
 MAX_OFFSET_M = 12.0      # a kerb is not this far from the middle of its road
 SMOOTH_PER_PT = 3.0
@@ -47,7 +47,7 @@ def road_lines(piece, bounds, cams, frame, cell=CELL):
     `frame` is a camera_route.RouteFrame: it fixes which way is "along"
     and therefore which kerb is the left one, consistently across pieces.
     """
-    from alignment.feature_icp import extract_features
+    from postprocess.feature_icp import extract_features
 
     xz, y, cols = piece
     mask, _, _ = road_cells(xz, y, cols, bounds, cell, cams=cams)

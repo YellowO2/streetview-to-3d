@@ -12,7 +12,7 @@ wrong for our data:
    -> 65535) to fill the full range.
 
 Usage:
-    python -m tests.ply_to_las --in ~/Downloads/ntu_subset_35.ply --out ~/Downloads/ntu_subset_35.las
+    python -m tools.ply_to_las --in ~/Downloads/ntu_subset_35.ply --out ~/Downloads/ntu_subset_35.las
 """
 import argparse
 import os

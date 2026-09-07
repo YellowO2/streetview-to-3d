@@ -16,9 +16,9 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from street_builder.reconstruction.join_segments import _read_ply_points
-from tests.export_island_ply import write_ply
-from alignment.gps import fit_nodes, real_en
-from alignment.road import (CELL, align_piece, cell_centres, road_cells,
+from postprocess.ply_io import write_ply
+from postprocess.gps import fit_nodes, real_en
+from postprocess.road import (CELL, align_piece, cell_centres, road_cells,
                               solve_height)
 
 MIN_OVERLAP_CELLS = 100    # below this two pieces don't really share road

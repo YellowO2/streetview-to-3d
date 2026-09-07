@@ -9,7 +9,7 @@ declared-adjacent pairs restricted to the group's own leaf chunk ids, so
 the result is one geographically contiguous patch, not scattered chunks.
 
 Usage:
-    python -m tests.download_subset --group g_L16_0 --num-chunks 50 --out /tmp/subset.ply
+    python -m tools.download_subset --group g_L16_0 --num-chunks 50 --out /tmp/subset.ply
 """
 import argparse
 import json

@@ -1,4 +1,4 @@
-"""Exports one island (from tests/piece_gps_test.py's output) as a real,
+"""Exports one island (from tools/piece_gps_test.py's output) as a real,
 GPS-corrected .ply -- applies the island's own best-fit (rotation, scale,
 translation) on top of the group's already-bridged frame, so the result
 sits in its true GPS-implied position/orientation/scale rather than
@@ -10,7 +10,7 @@ first; a partially-included chunk has no way to extract just its
 contributing nodes' points from the chunk's already-merged raw .ply.
 
 Usage:
-    python -m tests.export_island_ply --island 12 --group g_L16_0 --out ~/Downloads/island12.ply
+    python -m tools.export_island_ply --island 12 --group g_L16_0 --out ~/Downloads/island12.ply
 """
 import argparse
 import json
@@ -20,7 +20,7 @@ import numpy as np
 
 from street_builder.reconstruction.join_segments import assemble_metadata_piece
 from street_builder.tab import _leaf_ply_local_path, _load_group_meta_pieces
-from alignment.gps import fit_similarity_2d
+from postprocess.gps import fit_similarity_2d
 
 
 def write_ply(path, pts, cols):

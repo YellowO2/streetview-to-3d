@@ -1,18 +1,18 @@
 """Sanity-checks a merged group's DA3 reconstruction against real GPS:
 fits ONE similarity transform (rotation + scale + translation -- unlike
-tests/gps.py's old per-segment _fit_rigid_2d, this is fit ONCE across the
+tools/gps.py's old per-segment _fit_rigid_2d, this is fit ONCE across the
 WHOLE bridged tree) mapping every node's local (x, z) position onto its
 real lat/lon (converted to local meters), then reports the residual
 (post-fit distance error) per node. A node whose DA3-reconstructed
 position doesn't match its real GPS position even after the best global
 fit is a real, uncorrectable inconsistency -- not just floating-point
 noise -- and points at a genuinely bad DA3 result for whatever chunk that
-node came from, since a bad LOCAL rigid fit (tests/gps.py) would have
+node came from, since a bad LOCAL rigid fit (tools/gps.py) would have
 silently absorbed it by re-anchoring each segment independently, but one
 global fit cannot.
 
 Usage:
-    python -m tests.validate_gps_alignment --group g_L18_0
+    python -m tools.validate_gps_alignment --group g_L18_0
 """
 import argparse
 import json
@@ -22,7 +22,7 @@ from huggingface_hub import HfApi, hf_hub_download
 
 from services.geo import latlon_to_local_m
 from street_builder.tab import CLI_JOIN_DATASET_REPO, CLI_RAW_PREFIX, _load_group_meta_pieces
-from alignment.gps import fit_similarity_2d
+from postprocess.gps import fit_similarity_2d
 
 
 def build_key_to_chunk_map():

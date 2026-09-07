@@ -19,7 +19,7 @@ build chunks in the first place -- so cuts happen at real gaps in the
 walking path, not at arbitrary chunk boundaries.
 
 Usage:
-    python -m tests.piece_gps_test --in /tmp/gps_alignment.json
+    python -m tools.piece_gps_test --in /tmp/gps_alignment.json
 """
 import argparse
 import json
@@ -27,7 +27,7 @@ import os
 
 import numpy as np
 
-from alignment.gps import fit_similarity_2d
+from postprocess.gps import fit_similarity_2d
 
 MIN_NODES = 3
 FIT_THRESHOLD_M = 20.0

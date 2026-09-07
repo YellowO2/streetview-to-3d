@@ -1,6 +1,6 @@
 """Look at what road alignment actually saw for particular pieces.
 
-    python -m tests.inspect_road_align --pieces 3,9,5 --out /tmp/inspect.png
+    python -m tools.inspect_road_align --pieces 3,9,5 --out /tmp/inspect.png
 
 For each piece: the top-down photo it works from, and the road it
 extracted from that photo. Renders every piece over the SAME bounds, so
@@ -12,8 +12,8 @@ import os
 import numpy as np
 from PIL import Image
 
-from alignment.road import CELL, direction_from_shape, road_cells, road_direction
-from alignment.run_road_align import load_pieces
+from postprocess.road import CELL, direction_from_shape, road_cells, road_direction
+from postprocess.run_road_align import load_pieces
 
 
 def panel(img, mask):
@@ -41,7 +41,7 @@ def main():
               cams[:, 1].min() - args.margin, cams[:, 1].max() + args.margin)
     print(f"shared bounds {bounds[1]-bounds[0]:.0f} x {bounds[3]-bounds[2]:.0f} m\n")
 
-    from alignment.road import top_down
+    from postprocess.road import top_down
     rows, masks = [], {}
     for i in ids:
         img, occ = top_down(*clouds[i], bounds, args.cell)

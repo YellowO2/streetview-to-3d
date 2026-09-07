@@ -43,6 +43,23 @@ python app.py
 
 Models (DA3) are downloaded from the Hugging Face Hub on first run and cached under `~/.cache/huggingface/`.
 
+## Layout
+
+The pipeline splits by what a stage needs to run:
+
+| | |
+|---|---|
+| `services/` | fetching panoramas, DA3, the GPU runner |
+| `street_builder/` | **GPU stage.** Panoramas in, chunks of `.ply` + metadata out |
+| `postprocess/` | **CPU stage.** GPS fitting, then road alignment. No DA3, no GPU |
+| `visualise/` | the graph page, the point-cloud viewer, the segment selector |
+| `tools/` | one-off drivers, experiments and conversions. Nothing imports these |
+| `data/` | committed inputs |
+| `images/` `splats/` `build/` `ntu/` | run outputs and fetched data, all ignored |
+
+`splats/` is where each reconstruction run writes; it is created on import by
+`paths.py` and is empty until something runs.
+
 ## Alignment
 
 Pieces are brought into one consistent scene in three stages, in `alignment/`:

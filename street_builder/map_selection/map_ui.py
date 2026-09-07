@@ -14,7 +14,7 @@ are the only markers that make sense to click next anyway.
 """
 import json
 
-from viewers import iframe as _iframe
+from visualise.viewers import iframe as _iframe
 
 _SUGGESTED_COLOR = "#ff9800"
 _SELECTED_COLOR = "#00c853"

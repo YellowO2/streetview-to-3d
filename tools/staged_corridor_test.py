@@ -4,7 +4,7 @@ handle_cli_run_chunk/handle_cli_bridge_chunk docstrings for the API this
 drives.
 
 Loads the pre-computed whole-NTU metadata + date cover (see
-tests/fetch_ntu_metadata.py, tests/inspect_global_date_cover.py) and
+tools/fetch_ntu_metadata.py, tools/inspect_global_date_cover.py) and
 splits it into connected, SINGLE-DATE chunks via
 global_dates.split_cover_into_chunks -- not the raw selection graph, so
 a chunk never straddles a date seam internally (see that function's own
@@ -18,8 +18,8 @@ all-at-once join. The checkpoint is already the final, viewable result
 after every call -- no separate finalize step needed.
 
 Usage:
-    python tests/staged_corridor_test.py
-    python tests/staged_corridor_test.py --max-chunks 4 --chunk-size 20
+    python tools/staged_corridor_test.py
+    python tools/staged_corridor_test.py --max-chunks 4 --chunk-size 20
 """
 import argparse
 import json

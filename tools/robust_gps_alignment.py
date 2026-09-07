@@ -1,5 +1,5 @@
 """Region-growing GPS alignment: a single least-squares fit across the
-whole tree (tests/validate_gps_alignment.py) gets dragged off by
+whole tree (tools/validate_gps_alignment.py) gets dragged off by
 whichever chunk is badly wrong, corrupting the fit for the GOOD half
 too. This instead seeds from one well-behaved chunk, greedily grows the
 "confirmed good" set along real chunk adjacency, refitting after each
@@ -7,12 +7,12 @@ accepted chunk, and STOPS (rejects) at any chunk whose nodes don't match
 the current fit -- that rejection point is the joint where the
 reconstruction actually breaks, not just "some node somewhere."
 
-Reads tests/validate_gps_alignment.py's own output (--out), which
+Reads tools/validate_gps_alignment.py's own output (--out), which
 already carries each node's raw da3_xz (pre-fit) and real_en, plus
 chunk_id attribution.
 
 Usage:
-    python -m tests.robust_gps_alignment --in /tmp/gps_alignment.json --seed chunk0
+    python -m tools.robust_gps_alignment --in /tmp/gps_alignment.json --seed chunk0
 """
 import argparse
 import json
@@ -21,7 +21,7 @@ import os
 import numpy as np
 
 from street_builder.build_graph.global_dates import split_cover_into_chunks
-from alignment.gps import fit_similarity_2d
+from postprocess.gps import fit_similarity_2d
 
 NTU_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ntu")
 

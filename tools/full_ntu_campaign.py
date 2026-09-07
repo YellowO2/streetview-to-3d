@@ -1,6 +1,6 @@
 """CLI driver for the full-NTU chunked reconstruction campaign: runs every
 still-ungenerated chunk from the whole-NTU date cover (see
-tests/fetch_ntu_metadata.py / tests/inspect_global_date_cover.py), then
+tools/fetch_ntu_metadata.py / tools/inspect_global_date_cover.py), then
 tree-merges every successfully-run chunk (metadata-only, see
 street_builder/tab.py's handle_cli_merge_group/handle_cli_assemble) down
 to as few connected root groups as the real declared-adjacency graph
@@ -15,8 +15,8 @@ whatever's already there and just continues. A chunk that fails to run
 rather than aborting the whole campaign.
 
 Usage:
-    python -m tests.full_ntu_campaign
-    python -m tests.full_ntu_campaign --chunk-size 20
+    python -m tools.full_ntu_campaign
+    python -m tools.full_ntu_campaign --chunk-size 20
 """
 import argparse
 import json
@@ -164,7 +164,7 @@ def existing_group_chunk_ids():
 def merge_forest(client, chunk_ids, known_adjacent_chunk_pairs):
     """Greedily pairs only REAL declared-adjacent groups at each level
     (N -> N/2 -> ... down to as few roots as the graph allows) -- see
-    tests/tree_merge_test.py's own docstring for why list-position
+    tools/tree_merge_test.py's own docstring for why list-position
     pairing is wrong. Resumable: a computed pairing whose target
     group_id already exists in cli_meta/ WITH the exact same chunk
     coverage is reused as-is rather than re-merged (see

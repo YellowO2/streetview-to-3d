@@ -12,7 +12,7 @@ Usage:
 import argparse
 import os
 
-import viewers
+from visualise import viewers
 
 
 def main():
