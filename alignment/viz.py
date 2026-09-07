@@ -91,8 +91,10 @@ TEMPLATE = r"""<!doctype html>
     border-radius: 6px; padding: 7px 12px; font-size: 12.5px; cursor: pointer; }
   .btn:hover { background: var(--gridline); }
   .count { font: 600 20px ui-monospace, monospace; }
-  .sel-list { font: 11px ui-monospace, monospace; color: var(--text-secondary); max-height: 40vh; overflow-y: auto;
-    background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 8px; white-space: pre-wrap; word-break: break-all; }
+  .sel-list { font: 11px/1.55 ui-monospace, monospace; color: var(--text-secondary);
+    flex: 1 1 auto; min-height: 180px; overflow-y: auto;
+    background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+    white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
   .status { font-size: 11.5px; color: var(--text-muted); }
 </style>
 </head>
