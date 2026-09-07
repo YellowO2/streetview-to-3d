@@ -12,7 +12,7 @@ import os
 import numpy as np
 from PIL import Image
 
-from postprocess.road_align.road import CELL, direction_from_shape, road_cells, road_direction
+from postprocess.road_align.road_mask import CELL, road_cells
 from postprocess.gps_fit.load_pieces import load_pieces
 
 
@@ -41,20 +41,16 @@ def main():
               cams[:, 1].min() - args.margin, cams[:, 1].max() + args.margin)
     print(f"shared bounds {bounds[1]-bounds[0]:.0f} x {bounds[3]-bounds[2]:.0f} m\n")
 
-    from postprocess.road_align.road import top_down
+    from postprocess.road_align.road_mask import top_down
     rows, masks = [], {}
     for i in ids:
         img, occ = top_down(*clouds[i], bounds, args.cell)
         mask, road, white = road_cells(*clouds[i], bounds, args.cell)
         masks[i] = mask
-        deg, agree, sharp = road_direction(road, white)
         f = fits[i]
         r = "n/a" if f["resid"] is None else f"{f['resid']:.2f}m"
-        a = "no paint" if agree is None else f"{agree:+.1f} deg"
         print(f"piece_{i}: {f['n']} node(s), GPS residual {r}, "
               f"{int(mask.sum())} road cell(s)")
-        print(f"   road direction {deg:.1f} deg, sharpness +-{sharp/2:.0f} deg, "
-              f"white line agrees within {a}")
         rows.append((i, *panel(img, mask)))
 
     print("\nshared road cells between pieces:")

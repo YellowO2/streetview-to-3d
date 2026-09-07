@@ -1,16 +1,14 @@
 """Which roads a piece lies along, and a frame for each of them.
 
-The aligner used to build ONE RouteFrame from every camera in the run and
-project all pieces onto it. That works for a single corridor and is
-meaningless on a campus: `route_curve` threads one snake through a network
-and most pieces end up measured against a curve belonging to a different
-street.
+One frame per road, not one for the whole run. A single frame threaded
+through every camera in a run describes a corridor adequately and a campus
+not at all: most pieces then get measured against a curve belonging to a
+different street.
 
 The graph already knows where the roads are, so the frame comes from the
-road rather than from the cameras. `corridors.roads` gives the inventory;
-each road gets its own frame, and a piece is fitted against every road it
-actually lies along. A piece straddling a junction stops being a special
-case -- it simply appears on two roads and answers to both at once.
+road rather than from the cameras. `corridors.roads` gives the inventory
+and each road gets its own frame, so a piece straddling a junction is not
+a special case -- it simply appears on two roads.
 
 Road polylines and camera positions are both in the shared GLOBAL_ORIGIN
 metre frame (`gps_fit.fit.real_en`), so they are directly comparable.
@@ -23,7 +21,6 @@ from scipy.spatial import cKDTree
 
 from paths import FETCHED_GRAPH
 from postprocess.corridors import _metres, roads
-from postprocess.road_align.camera_route import RouteFrame
 
 # A camera this close to a road polyline is standing on that road. Google's
 # dots sit on the driven line and a panorama is captured from it, so the
@@ -116,3 +113,44 @@ def near_cams(cams, curve, near_m=NEAR_M):
     """
     d = cKDTree(curve).query(cams)[0]
     return cams[d <= near_m] if (d <= near_m).any() else cams
+
+
+class RouteFrame:
+    """Distance along a road and offset to its left, for any point.
+
+    Everything downstream needs one agreed direction of travel: "left" is
+    meaningless until both a road and a piece are oriented the same way.
+    A road's own polyline supplies it.
+    """
+
+    def __init__(self, route):
+        route = np.asarray(route, float)
+        d = np.diff(route, axis=0)
+        self.tangent = d / np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-9)
+        self.mid = route[:-1] + d / 2
+        self.s = np.r_[0.0, np.cumsum(np.linalg.norm(d, axis=1))][:-1]
+        self.length = float(self.s[-1] + np.linalg.norm(d[-1]))
+        self.route = route
+        self._tree = cKDTree(self.mid)
+
+    def project(self, pts):
+        """(distance along the route, signed offset to its left)."""
+        _, k = self._tree.query(np.asarray(pts, float))
+        rel = pts - self.mid[k]
+        t = self.tangent[k]
+        along = self.s[k] + np.einsum("ij,ij->i", rel, t)
+        left = t[:, 0] * rel[:, 1] - t[:, 1] * rel[:, 0]
+        return along, left
+
+    def orient(self, curve):
+        """Turn a curve to run the way the vehicle drove.
+
+        A piece whose centreline was traced backwards has its left and
+        right kerbs swapped, and is then fitted to the wrong one.
+        """
+        curve = np.asarray(curve, float)
+        d = curve[-1] - curve[0]
+        if np.linalg.norm(d) < 1e-9:
+            return curve
+        _, k = self._tree.query(curve.mean(0))
+        return curve[::-1] if float(d @ self.tangent[k]) < 0 else curve

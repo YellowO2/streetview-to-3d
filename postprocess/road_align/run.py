@@ -25,7 +25,7 @@ import os
 
 import numpy as np
 
-from postprocess.road_align.feature_icp import extract_features
+from postprocess.road_align.road_surface import extract_features
 from postprocess.road_align.road_frames import build as build_frames
 from postprocess.road_align.seat_on_road_line import seat_all
 from postprocess.piece_transforms import save as save_transforms
