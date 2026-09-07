@@ -32,11 +32,10 @@ import json
 import os
 import time
 
-from services.geo import haversine_m
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
-from street_builder.build_graph.build_graph import TOP_PANOS_PER_DOT, build_corridor_graphs
+from street_builder.build_graph.build_graph import TOP_PANOS_PER_DOT, _cap_bucket_for_date, build_corridor_graphs
 from street_builder.map_selection.candidates import apple_tile_panos
 
 # Where prepare_pathfind_from_cover_chunk downloads the whole-NTU metadata +
@@ -231,9 +230,7 @@ def prepare_pathfind_from_cover_chunk(dots, date, top_per_dot=TOP_PANOS_PER_DOT)
     dot_candidates = {}
     for d in dots:
         lat, lon = global_points[d]
-        same_date = [n for n in global_buckets.get(str(d), []) if n["date"] == date]
-        same_date.sort(key=lambda n: haversine_m(lat, lon, n["lat"], n["lon"]))
-        capped = same_date[:top_per_dot]
+        capped = _cap_bucket_for_date(global_buckets.get(str(d), []), date, lat, lon, top_per_dot)
         if capped:
             dot_candidates[local_index[d]] = capped
     if not dot_candidates:

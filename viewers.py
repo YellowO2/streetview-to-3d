@@ -59,7 +59,7 @@ def build_pointcloud_viewer(ply_url: str | None = None) -> str:
 }}}}
 </script></head><body>
 <div id="loading">{loading_msg}</div>
-<div id="hint">drag to orbit · scroll to zoom · drop a .ply to preview it</div>
+<div id="hint">drag to orbit · scroll to zoom · WASD/QE to fly · shift to move faster · +/- for point size · drop a .ply to preview it</div>
 <div id="dropzone">Drop .ply to preview</div>
 <script type="module">
 import * as THREE from 'three';
@@ -79,6 +79,36 @@ controls.enableDamping = true;
 
 const loader = new PLYLoader();
 let currentPoints = null;
+let flySpeed = 1;  // units/sec, rescaled per-geometry in showGeometry so it's never a crawl or a blur regardless of point-cloud scale
+
+const keys = new Set();
+addEventListener('keydown', e => {{
+    keys.add(e.code);
+    if ((e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_') && currentPoints) {{
+        const factor = (e.key === '+' || e.key === '=') ? 1.2 : 1 / 1.2;
+        currentPoints.material.size = Math.max(currentPoints.material.size * factor, 0.0001);
+    }}
+}});
+addEventListener('keyup', e => keys.delete(e.code));
+addEventListener('blur', () => keys.clear());
+
+const forward = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), move = new THREE.Vector3();
+function applyFlyMovement(dt) {{
+    move.set(0, 0, 0);
+    camera.getWorldDirection(forward);
+    right.crossVectors(forward, up).normalize();
+    if (keys.has('KeyW')) move.add(forward);
+    if (keys.has('KeyS')) move.sub(forward);
+    if (keys.has('KeyD')) move.add(right);
+    if (keys.has('KeyA')) move.sub(right);
+    if (keys.has('KeyE') || keys.has('Space')) move.add(up);
+    if (keys.has('KeyQ')) move.sub(up);
+    if (move.lengthSq() === 0) return;
+    const speed = flySpeed * (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 3 : 1);
+    move.normalize().multiplyScalar(speed * dt);
+    camera.position.add(move);
+    controls.target.add(move);
+}}
 
 function showGeometry(geometry) {{
     // DA3's raw point cloud comes out in a Y-down/Z-forward (computer-vision)
@@ -109,6 +139,7 @@ function showGeometry(geometry) {{
     camera.far = sphere.radius * 20 || 10000;
     camera.updateProjectionMatrix();
     controls.update();
+    flySpeed = (sphere.radius || 5) * 0.35;
 
     document.getElementById('loading').classList.add('gone');
 }}
@@ -141,7 +172,12 @@ addEventListener('resize', () => {{
     camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
 }});
-const tick = () => {{ controls.update(); renderer.render(scene, camera); }};
+const clock = new THREE.Clock();
+const tick = () => {{
+    applyFlyMovement(Math.min(clock.getDelta(), 0.1));
+    controls.update();
+    renderer.render(scene, camera);
+}};
 renderer.setAnimationLoop(tick);
 document.addEventListener('visibilitychange', () => {{
     renderer.setAnimationLoop(document.hidden ? null : tick);

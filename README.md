@@ -43,6 +43,61 @@ python app.py
 
 Models (DA3) are downloaded from the Hugging Face Hub on first run and cached under `~/.cache/huggingface/`.
 
+## Alignment
+
+Pieces are brought into one consistent scene in three stages, in `alignment/`:
+
+```
+DA3 alignment  ->  GPS alignment  ->  road alignment
+```
+
+GPS gets every piece roughly right but leaves visible seams: pieces sit
+at slightly different heights and slightly off sideways, and a piece
+built from a single panorama can face almost any direction (one GPS
+point pins a position but says nothing about a heading).
+
+**Road alignment** (`alignment/road.py`, run over a set of pieces with
+`python -m alignment.run_road_align --dir <pieces> --out out.ply`)
+closes those seams using the road surface itself:
+
+1. **Look straight down at each piece.** For every ground cell keep the
+   colour of its highest point — a plain top-down photo, no filtering.
+2. **Grey cells are road.** That gives each piece's road as a 2D shape.
+3. **Measure which way that road runs.** A road is long and thin, so its
+   direction is the angle at which it is narrowest measured across. The
+   painted white line is fitted separately as an independent check.
+4. **Decide whether the heading may be touched**, by comparing the road
+   direction against the piece's *own* GPS camera track:
+   - they agree → GPS already got it right, leave it alone
+   - they disagree → the heading is wrong, solve for it
+   - no track at all (single-node piece) → nothing ever constrained the
+     heading, solve for it
+5. **Slide sideways across the road** until the two road shapes overlap.
+   The kerbs make this sharp.
+6. **Shift up or down** until the two road surfaces sit at the same height.
+7. **Leave the along-road direction alone.** A straight road looks
+   identical at every point along its own length, so nothing in the
+   imagery can determine it — GPS keeps that one, permanently.
+
+Three things this design exists to avoid, each found by measurement:
+
+- **Neighbouring pieces legitimately differ in heading.** Where the road
+  curves, two pieces can be 9° apart while each matches its own GPS
+  track to within 1°. Treating that as error drags pieces ~10 m off GPS,
+  hence the step-4 self-check rather than a node-count rule.
+- **Overlap area cannot determine rotation.** On a straight road it
+  varies by ~0.03 IoU across ±20°. Headings are solved by matching road
+  *directions* (sharp to a few degrees); overlap is used only to pick
+  between the two 180°-opposed choices.
+- **Pieces are aligned to their single best-overlapping neighbour**, not
+  to everything placed so far — against the union, a piece with a small
+  genuine overlap slides sideways onto some other road entirely. A
+  correction larger than a few times the piece's own GPS residual is
+  rejected as exactly that failure.
+
+A panorama's blind spot leaves a hole in the middle of its own road;
+every step above is written to tolerate it.
+
 ## Dev notes
 
 **Solo-score vs. pairwise DA3 experiment** (2026-08-19, real data, see `tests/debug_solo_score_experiment.py`):
