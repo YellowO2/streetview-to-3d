@@ -19,12 +19,25 @@ on disk. This pulls down a chosen subset and writes it in the layout
 NTU-specific on purpose: it knows this one dataset repo and this one graph.
 The alignment pipeline itself stays unaware of where pieces came from.
 
-A chunk needs no splitting to become a piece. `pathfind_metadata.json` is
-already exactly the {key: {position, rotation, lat, lon, ...}} shape a
-piece_*_meta.json has, and the chunk's cloud is already one reconstruction
-in one DA3 frame -- which is the unit load_pieces GPS-fits. So a piece here
-IS a chunk, renamed. (`discover_pieces` regroups chunks by GPS quality;
-that is a separate concern and nothing downstream requires it.)
+A chunk is NOT a piece. `discover_pieces` splits a chunk wherever its own
+nodes stop fitting their own GPS, so one chunk can hold several pieces --
+chunk22 holds three, and only 2 of its 19 nodes belong to the one that was
+asked for. Fetching the chunk whole and treating it as a piece forces all
+three to share a single rigid transform, which is exactly what the split
+existed to prevent: it sprawled 20 m off the road and reported a 22.9 m
+GPS residual.
+
+So --pieces writes one output piece per (selected piece, chunk) pair,
+carrying only that piece's nodes.
+
+The cloud cannot be split that precisely: a chunk's .ply is one merged
+reconstruction with no per-point labels, so which node a point came from
+is not recorded anywhere. Points are assigned to their NEAREST CAMERA
+instead, in the chunk's own DA3 frame, which is where the cameras and the
+points already share coordinates. That is an approximation of a boundary
+that was never stored -- but the pieces it separates are ones that do not
+belong in a common frame anyway, so a few metres of misattribution at the
+seam costs far less than keeping them welded together.
 """
 import argparse
 import gzip
@@ -156,7 +169,29 @@ def index(chunks=None, api=None):
     return out
 
 
-def fetch(chunk_ids, out_dir, api=None):
+def _split(pts, cols, meta, groups):
+    """[(piece id, meta subset, point mask), ...] for one chunk.
+
+    `groups` maps node key -> the piece it belongs to. Points follow their
+    nearest camera, in the chunk's own DA3 frame.
+    """
+    keys = list(meta)
+    if not any(k in groups for k in keys):
+        return []
+    # the tree must hold EVERY camera in the chunk, not just the wanted
+    # ones -- otherwise a point beside a discarded node still finds a
+    # wanted node as its nearest and the whole cloud comes through
+    cam = np.array([meta[k]["position"] for k in keys])
+    nearest = cKDTree(cam).query(pts)[1]
+    out = []
+    for pid in sorted({groups[k] for k in keys if k in groups}):
+        idx = [j for j, k in enumerate(keys) if groups.get(k) == pid]
+        mask = np.isin(nearest, idx)
+        out.append((pid, {keys[j]: meta[keys[j]] for j in idx}, mask))
+    return out
+
+
+def fetch(chunk_ids, out_dir, api=None, groups=None):
     """Write chosen chunks as piece_N.ply + piece_N_meta.json in `out_dir`.
 
     The metadata is symlinked and only the cloud is written for real: a
@@ -165,29 +200,49 @@ def fetch(chunk_ids, out_dir, api=None):
     already exactly what we want and copying it would just be a second copy
     of every file on a disk that has to hold the clouds too.
     """
+    from postprocess.ply_io import write_ply
+    from street_builder.reconstruction.join_segments import _read_ply_points
+
     api = api or _api()
     files = chunk_files(api)
     os.makedirs(out_dir, exist_ok=True)
-    written, total = {}, 0
-    for n, cid in enumerate(sorted(chunk_ids)):
+    written, total, n = {}, 0, 0
+    for cid in sorted(chunk_ids):
         if cid not in files:
             print(f"  {cid}: not in the repo, skipped")
             continue
         ply_rel, meta_rel = files[cid]
-        ply = os.path.join(out_dir, f"piece_{n}.ply")
-        with gzip.open(_download(ply_rel), "rb") as f_in, open(ply, "wb") as f_out:
+        raw = os.path.join(out_dir, f".{cid}.ply")
+        with gzip.open(_download(ply_rel), "rb") as f_in, open(raw, "wb") as f_out:
             shutil.copyfileobj(f_in, f_out)
-        _dequantize(ply)
-        meta_dst = os.path.join(out_dir, f"piece_{n}_meta.json")
-        if os.path.lexists(meta_dst):
-            os.unlink(meta_dst)
-        os.symlink(os.path.realpath(_download(meta_rel)), meta_dst)
-        meta = json.load(open(meta_dst))
-        written[n] = cid
-        total += os.path.getsize(ply)
-        print(f"  piece_{n} <- {cid}  ({len(meta)} node(s), "
-              f"{os.path.getsize(ply) / 1e6:.0f} MB)")
-    print(f"  {total / 1e6:.0f} MB of cloud written; metadata symlinked")
+        _dequantize(raw)
+        meta = json.load(open(_download(meta_rel)))
+
+        if groups is None:                       # whole chunk, unsplit
+            os.replace(raw, os.path.join(out_dir, f"piece_{n}.ply"))
+            with open(os.path.join(out_dir, f"piece_{n}_meta.json"), "w") as f:
+                json.dump(meta, f)
+            written[n] = cid
+            total += os.path.getsize(os.path.join(out_dir, f"piece_{n}.ply"))
+            print(f"  piece_{n} <- {cid}  ({len(meta)} node(s))")
+            n += 1
+            continue
+
+        pts, cols = _read_ply_points(raw)
+        parts = _split(pts, cols, meta, groups)
+        for pid, sub, mask in parts:
+            out = os.path.join(out_dir, f"piece_{n}.ply")
+            write_ply(out, pts[mask], cols[mask])
+            with open(os.path.join(out_dir, f"piece_{n}_meta.json"), "w") as f:
+                json.dump(sub, f)
+            written[n] = f"{cid}:{pid}"
+            total += os.path.getsize(out)
+            print(f"  piece_{n} <- {cid} piece {pid}  ({len(sub)} of {len(meta)} "
+                  f"node(s), {int(mask.sum()):,} of {len(pts):,} points, "
+                  f"{os.path.getsize(out) / 1e6:.0f} MB)")
+            n += 1
+        os.remove(raw)
+    print(f"  {total / 1e6:.0f} MB written")
     with open(os.path.join(out_dir, "chunk_ids.json"), "w") as f:
         json.dump(written, f, indent=2)      # which chunk each piece came from
     return written
@@ -206,6 +261,7 @@ def main():
     args = ap.parse_args()
 
     api = _api()
+    groups = None            # None = take each chunk whole, no splitting
     if args.list or args.roads:
         idx = index(api=api)
         by_road = {}
@@ -226,12 +282,16 @@ def main():
     elif args.pieces:
         ids = [x.strip() for x in args.pieces.split(",") if x.strip()]
         want = chunks_for_pieces(ids)
-        print(f"{len(ids)} piece(s) -> {len(want)} chunk(s)")
+        with open(os.path.join(DATA_DIR, "selector_nodes.json")) as f:
+            groups = {n["key"]: str(n["group"]) for n in json.load(f)
+                      if str(n["group"]) in set(ids)}
+        print(f"{len(ids)} piece(s) -> {len(want)} chunk(s), "
+              f"{len(groups)} node(s) kept")
     else:
         raise SystemExit("give --list, --roads, --chunks or --pieces")
 
     print(f"fetching {len(want)} chunk(s) into {args.out}")
-    fetch(want, args.out, api=api)
+    fetch(want, args.out, api=api, groups=groups)
     print(f"\nnow:  python -m postprocess.road_align.run --dir {args.out}")
 
 

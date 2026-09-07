@@ -55,7 +55,10 @@ def fetch(keys, latlons, cache_dir, log=print):
         if (n + 1) % 25 == 0:
             json.dump(cache, open(path, "w"))
     json.dump(cache, open(path, "w"))
-    return {k: v for k, v in cache.items() if v is not None}
+    # only what was ASKED for: the cache is shared with any other run over
+    # the same directory, so returning all of it hands back elevations for
+    # panoramas this caller has no position for
+    return {k: cache[k] for k in keys if cache.get(k) is not None}
 
 
 def surface(elevations, latlons, degree=SURFACE_DEGREE):
