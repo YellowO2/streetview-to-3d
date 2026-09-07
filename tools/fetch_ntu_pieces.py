@@ -4,6 +4,9 @@ NTU's reconstruction is ~900 MB and lives in a dataset repo, so it is not
 on disk. This pulls down a chosen subset and writes it in the layout
 `postprocess.gps_fit.load_pieces` expects.
 
+    # pieces picked in build/gap_selector.html, pasted straight in
+    python -m tools.fetch_ntu_pieces --pieces 12,13,14,GAP_9 --out /tmp/ntu_bit
+
     # what is there, and which road each chunk sits on (metadata only, fast)
     python -m tools.fetch_ntu_pieces --list
 
@@ -35,7 +38,7 @@ from scipy.spatial import cKDTree
 from postprocess.corridors import _metres, roads
 from postprocess.gps_fit.fit import real_en
 from postprocess.road_align.road_frames import smooth
-from paths import FETCHED_GRAPH
+from paths import DATA_DIR, FETCHED_GRAPH
 
 REPO = "potato-bug/ntu-reconstruction"
 RAW_PREFIX = "cli_raw"
@@ -63,6 +66,27 @@ def chunk_files(api=None):
         if meta in files:
             out[d.split("/", 1)[1] + suffix] = (f, meta)
     return out
+
+
+def chunks_for_pieces(piece_ids):
+    """Which chunks hold the nodes of these selector pieces.
+
+    The selector page deals in pieces, which are groupings of NODES; the
+    repo stores chunks. data/selector_nodes.json records both for every
+    node, so it is the map between them.
+
+    A piece can need more than one chunk, and a chunk can serve more than
+    one piece -- so this returns the union, and the fetched set may cover
+    more ground than the pieces asked for.
+    """
+    with open(os.path.join(DATA_DIR, "selector_nodes.json")) as f:
+        nodes = json.load(f)
+    want = {str(p) for p in piece_ids}
+    known = {str(n["group"]) for n in nodes}
+    missing = want - known
+    if missing:
+        raise SystemExit(f"no such piece(s): {', '.join(sorted(missing))}")
+    return {n["chunk_id"] for n in nodes if str(n["group"]) in want}
 
 
 def _download(rel):
@@ -175,6 +199,9 @@ def main():
                     help="index every chunk and print which roads it is on")
     ap.add_argument("--roads", help="comma-separated road ids to fetch")
     ap.add_argument("--chunks", help="comma-separated chunk ids to fetch")
+    ap.add_argument("--pieces",
+                    help="comma-separated selector piece ids, as copied out of "
+                         "build/gap_selector.html")
     ap.add_argument("--out", default="/tmp/ntu_pieces")
     args = ap.parse_args()
 
@@ -196,8 +223,12 @@ def main():
                 for c in by_road.get(r, [])}
     elif args.chunks:
         want = set(args.chunks.split(","))
+    elif args.pieces:
+        ids = [x.strip() for x in args.pieces.split(",") if x.strip()]
+        want = chunks_for_pieces(ids)
+        print(f"{len(ids)} piece(s) -> {len(want)} chunk(s)")
     else:
-        raise SystemExit("give --list, --roads or --chunks")
+        raise SystemExit("give --list, --roads, --chunks or --pieces")
 
     print(f"fetching {len(want)} chunk(s) into {args.out}")
     fetch(want, args.out, api=api)
