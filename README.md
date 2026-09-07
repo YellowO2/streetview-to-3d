@@ -62,6 +62,30 @@ The pipeline splits by what a stage needs to run:
 `splats/` is where each reconstruction run writes; it is created on import by
 `paths.py` and is empty until something runs.
 
+### How a reconstruction becomes an aligned scene
+
+```
+google_graph.json                    every Google panorama in the area, and how they link
+  ↓  ask Google and Apple what imagery is at each spot
+downsampled_and_fetched_graph.json   corridor resampled to dots + a pano census (metadata only)
+  ↓  pick dates, pick a corridor
+graph.json                           the nodes actually reconstructed
+  ↓  street_builder (GPU) — uploads to HuggingFace, not local
+piece_*.ply + piece_*_meta.json      DA3 geometry, and each camera's DA3 position beside its lat/lon
+  ↓  postprocess.gps_fit             that pairing is what makes the fit possible
+  ↓  postprocess.road_align          heading, position, then height and tilt
+piece_transforms.json                one 4x4 per piece: stored .ply -> world metres
+```
+
+Solving is slow and the answer is small, so it is saved rather than baked
+into a merged cloud. `postprocess.render_pieces` builds any subset from it
+without solving.
+
+Full NTU is not stored locally — it lives on HuggingFace under
+`cli_raw/<chunk_id>/`. Alignment currently assumes the pieces form ONE
+corridor; a campus is a network, so aligning all of NTU needs corridors
+split at junctions first.
+
 ## Alignment
 
 Pieces are brought into one consistent scene in three stages, in `alignment/`:
