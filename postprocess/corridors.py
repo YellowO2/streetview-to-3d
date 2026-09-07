@@ -14,6 +14,7 @@ GPS-fit merging, so they straddle junctions freely; the road and the piece
 are different shapes, and no cut of this graph makes one contain the other.
 """
 import argparse
+import heapq
 import json
 import math
 
@@ -25,6 +26,12 @@ from postprocess.gps_fit.fit import real_en
 # is a different road, and pairing those would thread one frame around a
 # corner where "left" flips sides.
 STRAIGHT_ENOUGH_DEG = 50.0
+
+# An edge is redundant if you can already get between its ends by a route
+# no more than this much longer. 1.15 keeps genuine loops (going the long
+# way round even a small roundabout is far more than 15% further) and drops
+# only chords that duplicate the road they parallel.
+DETOUR_SLACK = 1.15
 
 
 def _metres(points):
@@ -41,13 +48,72 @@ def _length(xy, nodes):
     return sum(math.dist(xy[a], xy[b]) for a, b in zip(nodes, nodes[1:]))
 
 
-def decompose(adjacency):
+def drop_redundant_edges(adj, xy, slack=DETOUR_SLACK):
+    """Remove edges that duplicate a route the graph already has.
+
+    Google's coverage links a dot both to its neighbour and, often, to the
+    one past it -- the two-hop path and the chord across it. That makes
+    both ends degree-3 with nothing branching off them, and it is the real
+    reason a smooth unbranched arc came out cut into five corridors: the
+    breaks were chords, not junctions.
+
+    An edge whose ends are already joined by a route barely longer than
+    itself carries no connectivity the graph lacks, so it goes. A genuine
+    loop survives -- going the long way round even a small roundabout is
+    far more than `slack` further than cutting across it.
+
+    Longest edges are tested first, so when a chord and the road it
+    parallels are both candidates it is the chord that loses.
+    """
+    near = {n: set(v) for n, v in adj.items()}
+
+    def d(a, b):
+        return math.dist(xy[a], xy[b])
+
+    edges = sorted({(a, b) for a, vs in adj.items() for b in vs if a < b},
+                   key=lambda e: -d(*e))
+    for a, b in edges:
+        if b not in near[a]:
+            continue
+        if _detour(a, b, near, d, slack * d(a, b)) is not None:
+            near[a].discard(b)
+            near[b].discard(a)
+    return {n: sorted(v) for n, v in near.items()}
+
+
+def _detour(a, b, near, d, limit):
+    """Shortest a->b route NOT using the edge a-b, or None beyond `limit`."""
+    dist = {a: 0.0}
+    pq = [(0.0, a)]
+    while pq:
+        cost, n = heapq.heappop(pq)
+        if n == b:
+            return cost
+        if cost > limit or cost > dist.get(n, math.inf):
+            continue
+        for m in near[n]:
+            if (n == a and m == b) or (n == b and m == a):
+                continue
+            nd = cost + d(n, m)
+            if nd < dist.get(m, math.inf) and nd <= limit:
+                dist[m] = nd
+                heapq.heappush(pq, (nd, m))
+    return None
+
+
+def decompose(adjacency, xy=None):
     """[[node ids along a corridor], ...] covering every edge exactly once.
 
     Corridors are returned as ordered walks. Two corridors may share an end
     dot (a junction); no edge appears in two corridors.
+
+    Pass `xy` (dot positions in metres) to strip redundant chord edges
+    first, so a dot counts as a junction only where something really
+    branches off. Without it every duplicated link reads as a junction.
     """
     adj = {int(k): [int(v) for v in vs] for k, vs in adjacency.items()}
+    if xy is not None:
+        adj = drop_redundant_edges(adj, xy)
     is_junction = {n: len(vs) != 2 for n, vs in adj.items()}
     seen = set()          # undirected edges already claimed
 
@@ -114,8 +180,8 @@ def roads(graph, straight_deg=STRAIGHT_ENOUGH_DEG):
     corridors these are a road INVENTORY: a piece may lie along several,
     and each gets its own frame.
     """
-    corridors = decompose(graph["adjacency"])
     xy = _metres(graph["points"])
+    corridors = decompose(graph["adjacency"], xy)
     # heading leaving each corridor at each of its two ends
     out = [(_heading(xy, c[1], c[0]), _heading(xy, c[-2], c[-1]))
            for c in corridors]
@@ -187,8 +253,8 @@ def _chain(parts):
 
 def summarise(graph):
     """(corridors, [{nodes, length_m}, ...]) for a fetched-graph dict."""
-    corridors = decompose(graph["adjacency"])
     xy = _metres(graph["points"])
+    corridors = decompose(graph["adjacency"], xy)
     stats = [{"nodes": len(c), "length_m": _length(xy, c)} for c in corridors]
     return corridors, stats
 
