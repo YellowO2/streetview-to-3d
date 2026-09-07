@@ -6,7 +6,7 @@ no real candidate on any date (never assigned) are shown in light gray.
 Usage:
     python -m tests.visualize_date_cover
 """
-from paths import NTU_DIR
+from paths import FETCHED_GRAPH, NTU_DIR
 import json
 import os
 
@@ -16,7 +16,7 @@ NTU_DIR = NTU_DIR
 
 
 def main():
-    with open(os.path.join(NTU_DIR, "fetch_metadata.json")) as f:
+    with open(FETCHED_GRAPH) as f:
         points = json.load(f)["points"]
     with open(os.path.join(NTU_DIR, "date_cover.json")) as f:
         cover = {int(k): v for k, v in json.load(f).items()}

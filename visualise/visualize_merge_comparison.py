@@ -9,7 +9,7 @@ raw members, or two clearly-unrelated raw clusters merged into one).
 Usage:
     python -m tests.visualize_merge_comparison
 """
-from paths import NTU_DIR
+from paths import GOOGLE_GRAPH, NTU_DIR
 import json
 import os
 
@@ -22,7 +22,7 @@ THRESHOLDS = [0.0, 5.0, 8.0]
 
 
 def main():
-    with open(os.path.join(NTU_DIR, "graph_full.json")) as f:
+    with open(GOOGLE_GRAPH) as f:
         g = json.load(f)
     nodes, key_edges = g["nodes"], [tuple(e) for e in g["edges"]]
     by_key = {n["key"]: n for n in nodes}

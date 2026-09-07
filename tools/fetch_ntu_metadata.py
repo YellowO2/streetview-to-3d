@@ -18,7 +18,7 @@ Usage:
     python tools/fetch_ntu_metadata.py
     python tools/fetch_ntu_metadata.py --refetch   # ignore any existing checkpoint
 """
-from paths import NTU_DIR
+from paths import FETCHED_GRAPH, GOOGLE_GRAPH, NTU_DIR
 import argparse
 import asyncio
 import json
@@ -30,9 +30,9 @@ from services.streetview_fetch import fetch_pano_by_id, format_date
 from street_builder.build_graph.fetch_nodes import POINT_MAX_DIST_M, corridor_points
 from street_builder.map_selection.candidates import MAX_NODES, apple_tile_panos, nearby_nodes, node_key
 
-GRAPH_PATH = os.path.join(NTU_DIR, "graph_full.json")
-CHECKPOINT_PATH = os.path.join(NTU_DIR, "fetch_metadata.partial.json")
-OUT_PATH = os.path.join(NTU_DIR, "fetch_metadata.json")
+GRAPH_PATH = GOOGLE_GRAPH
+CHECKPOINT_PATH = os.path.join(NTU_DIR, "downsampled_and_fetched_graph.partial.json")
+OUT_PATH = FETCHED_GRAPH
 CHECKPOINT_EVERY = 25
 
 

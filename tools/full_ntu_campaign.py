@@ -18,7 +18,7 @@ Usage:
     python -m tools.full_ntu_campaign
     python -m tools.full_ntu_campaign --chunk-size 20
 """
-from paths import NTU_DIR
+from paths import FETCHED_GRAPH, NTU_DIR
 import argparse
 import json
 import os
@@ -234,7 +234,7 @@ def merge_forest(client, chunk_ids, known_adjacent_chunk_pairs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--space", default="potato-bug/street-view-to-3d")
-    parser.add_argument("--metadata", default=os.path.join(NTU_DIR, "fetch_metadata.json"))
+    parser.add_argument("--metadata", default=FETCHED_GRAPH)
     parser.add_argument("--cover", default=os.path.join(NTU_DIR, "date_cover.json"))
     parser.add_argument("--chunk-size", type=int, default=20, help="max dots per chunk")
     parser.add_argument("--batch-size", type=int, default=None,

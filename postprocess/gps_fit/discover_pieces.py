@@ -27,7 +27,7 @@ import os
 
 import numpy as np
 
-from paths import NTU_DIR
+from paths import FETCHED_GRAPH, NTU_DIR
 from postprocess.gps_fit.fit import fit_similarity_2d
 
 MIN_NODES = 3
@@ -101,7 +101,7 @@ def build_node_adjacency(data, warn_tolerance_m=10.0):
     beyond warn_tolerance_m is just flagged as suspicious, not dropped."""
     from scipy.spatial import cKDTree
 
-    with open(os.path.join(NTU_DIR, "fetch_metadata.json")) as f:
+    with open(FETCHED_GRAPH) as f:
         m = json.load(f)
     points = m["points"]
     dot_adjacency = {int(k): v for k, v in m["adjacency"].items()}

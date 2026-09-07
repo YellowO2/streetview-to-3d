@@ -11,7 +11,7 @@ the result is one geographically contiguous patch, not scattered chunks.
 Usage:
     python -m tools.download_subset --group g_L16_0 --num-chunks 50 --out /tmp/subset.ply
 """
-from paths import NTU_DIR
+from paths import FETCHED_GRAPH, NTU_DIR
 import argparse
 import json
 import os
@@ -82,7 +82,7 @@ def main():
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
-    with open(os.path.join(NTU_DIR, "fetch_metadata.json")) as f:
+    with open(FETCHED_GRAPH) as f:
         m = json.load(f)
     points = m["points"]
     adjacency = {int(k): v for k, v in m["adjacency"].items()}

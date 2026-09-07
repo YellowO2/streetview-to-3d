@@ -14,7 +14,7 @@ chunk_id attribution.
 Usage:
     python -m tools.robust_gps_alignment --in /tmp/gps_alignment.json --seed chunk0
 """
-from paths import NTU_DIR
+from paths import FETCHED_GRAPH, NTU_DIR
 import argparse
 import json
 import os
@@ -34,7 +34,7 @@ def apply_fit(R, scale, t, pts):
 
 
 def chunk_adjacency():
-    with open(os.path.join(NTU_DIR, "fetch_metadata.json")) as f:
+    with open(FETCHED_GRAPH) as f:
         m = json.load(f)
     points = m["points"]
     adjacency = {int(k): v for k, v in m["adjacency"].items()}

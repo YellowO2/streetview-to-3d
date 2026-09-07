@@ -5,14 +5,14 @@ ntu/fetch_metadata.json.
 Usage:
     python tests/inspect_global_date_cover.py
 """
-from paths import NTU_DIR
+from paths import FETCHED_GRAPH, NTU_DIR
 import json
 import os
 
 from street_builder.build_graph.date_ranking import rank_dates
 from street_builder.build_graph.global_dates import build_date_cover, connected_components
 
-META_PATH = os.path.join(NTU_DIR, "fetch_metadata.json")
+META_PATH = FETCHED_GRAPH
 OUT_PATH = os.path.join(NTU_DIR, "date_cover.json")
 
 
