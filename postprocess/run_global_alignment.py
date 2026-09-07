@@ -30,6 +30,7 @@ from postprocess.camera_route import RouteFrame, route_curve
 from postprocess.extract_road_lines import road_lines
 from postprocess.feature_icp import extract_features
 from postprocess.fit_pieces_to_road import RoadFitter, horizontal_transform
+from postprocess.piece_transforms import save as save_transforms
 from postprocess.run_road_align import load_pieces
 from postprocess.seat_pieces_on_surface import seat
 
@@ -37,7 +38,12 @@ MARGIN_M = 25.0
 
 
 def align(directory, piece_ids=None, cell=0.25, log=print):
-    """Returns {piece: 4x4 world transform}, plus the pieces it loaded."""
+    """Solve, and return ({piece: 4x4}, clouds, fits, per-piece diagnostics).
+
+    The 4x4s here map ALREADY GPS-FITTED coordinates, because load_pieces
+    applies the GPS fit as it loads. `piece_transforms.save` composes the
+    two so the file that lands on disk stands on its own.
+    """
     fits, clouds = load_pieces(directory)
     ids = [i for i in (piece_ids or sorted(clouds)) if i in clouds]
     if len(ids) < 2:
@@ -92,7 +98,26 @@ def align(directory, piece_ids=None, cell=0.25, log=print):
         else:
             log(f"piece_{i}: too little road to seat, height left at GPS")
 
-    return {i: vert.get(i, np.eye(4)) @ horiz[i] for i in ids}, clouds
+    fit_report = fitter.report()
+    diagnostics = {}
+    for i in ids:
+        d = {"matrix": (vert.get(i, np.eye(4)) @ horiz[i]).tolist()}
+        if i in fit_report:
+            turn, slide, drift, to_road = fit_report[i]
+            d["road"] = {"turn_deg": round(turn, 2), "slide_m": round(slide, 3),
+                         "drift_m": round(drift, 3), "cap_m": fitter.cap[i],
+                         "to_road_m": [round(float(x), 3) for x in to_road]}
+        else:
+            d["road"] = None            # no usable road lines; left at GPS
+        if i in report:
+            d["seating"] = {"height_m": round(report[i][0], 3),
+                            "tilt_deg": round(report[i][1], 2)}
+        else:
+            d["seating"] = None         # too little road to seat
+        diagnostics[i] = d
+
+    return ({i: vert.get(i, np.eye(4)) @ horiz[i] for i in ids},
+            clouds, fits, diagnostics)
 
 
 def main():
@@ -103,10 +128,17 @@ def main():
                     help="comma-separated piece ids (default: all in --dir)")
     ap.add_argument("--out", default=None, help="write the aligned cloud here")
     ap.add_argument("--cell", type=float, default=0.25)
+    ap.add_argument("--no-save", action="store_true",
+                    help="solve without writing piece_transforms.json")
     args = ap.parse_args()
 
     ids = ([int(x) for x in args.pieces.split(",")] if args.pieces else None)
-    transforms, clouds = align(args.dir, ids, args.cell)
+    transforms, clouds, fits, diagnostics = align(args.dir, ids, args.cell)
+
+    if not args.no_save:
+        path = save_transforms(args.dir, fits, diagnostics,
+                               meta={"cell_m": args.cell})
+        print(f"\nwrote {path}")
 
     if args.out:
         from postprocess.ply_io import write_ply
