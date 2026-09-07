@@ -182,6 +182,9 @@ def _load_global_cover():
     global _global_metadata, _global_cover
     if _global_metadata is None:
         from huggingface_hub import hf_hub_download
+        # Deliberately still fetch_metadata.json: this is the name in the
+        # HuggingFace dataset, which a local rename does not change. It is
+        # the same file local code calls downsampled_and_fetched_graph.json.
         meta_path = hf_hub_download(repo_id=GLOBAL_DATASET_REPO, repo_type="dataset", filename="global/fetch_metadata.json")
         cover_path = hf_hub_download(repo_id=GLOBAL_DATASET_REPO, repo_type="dataset", filename="global/date_cover.json")
         with open(meta_path) as f:

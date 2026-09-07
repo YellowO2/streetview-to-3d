@@ -1,6 +1,6 @@
 """Sanity-check report for the global (whole-NTU) date cover -- pure
 metadata, no GPU. Run after tests/fetch_ntu_metadata.py has produced
-ntu/fetch_metadata.json.
+ntu/downsampled_and_fetched_graph.json.
 
 Usage:
     python tests/inspect_global_date_cover.py

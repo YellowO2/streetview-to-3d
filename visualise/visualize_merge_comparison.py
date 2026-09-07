@@ -1,6 +1,6 @@
 """Sanity check for corridor_points' merge logic -- no network calls,
 just re-derives dots at several merge thresholds straight from the
-cached raw selection graph (ntu/graph_full.json) and plots the RAW
+cached raw selection graph (ntu/google_graph.json) and plots the RAW
 (pre-merge) nodes as a light backdrop with each threshold's MERGED
 centroids overlaid, so a merge that's clustering the wrong things is
 visible directly (e.g. a centroid sitting off to the side of its own
