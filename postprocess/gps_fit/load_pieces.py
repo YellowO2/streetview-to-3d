@@ -21,17 +21,6 @@ from postprocess.gps_fit.fit import fit_nodes, real_en
 # (1.43 and 1.70) came from the only two pieces with residuals above 1 m.
 GOOD_FIT_RESIDUAL_M = 0.25
 
-# DA3's Y axis points DOWN, so a cloud loaded as-is is upside down: a camera
-# sits ~2.5 m above the road, yet only 13-46% of the points around it came
-# out below it, where an upright scene gives 80-90%. Nothing downstream had
-# ever accounted for this. It is a property of the reconstructor's frame,
-# not of any one piece, so it is corrected once, here, at the point the
-# cloud is first put into metres -- and it explains a long trail of
-# symptoms: road heights correlating NEGATIVELY with real terrain, the
-# vertical seating needing 30 m shifts and 15 deg tilts to compensate, and
-# a hill whose shape was right while the whole scene was inverted.
-Y_SIGN = -1.0
-
 def load_pieces(directory):
     """Each piece's GPS fit + point cloud, all in the shared GLOBAL_ORIGIN
     frame. A single-node piece cannot fit its own rotation/scale, so it
@@ -93,7 +82,7 @@ def load_pieces(directory):
 
         pts, cols = _read_ply_points(os.path.join(directory, f"piece_{i}.ply"))
         xz = pts[:, [0, 2]] @ f["R"].T * scale + f["t"]
-        clouds[i] = (xz, pts[:, 1] * scale * Y_SIGN, cols)
+        clouds[i] = (xz, pts[:, 1] * scale, cols)
     return fits, clouds
 
 

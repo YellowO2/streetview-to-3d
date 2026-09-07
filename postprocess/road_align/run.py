@@ -25,7 +25,7 @@ import os
 
 import numpy as np
 
-from postprocess.road_align.road_surface import ground_near_track
+from postprocess.road_align.road_surface import extract_features
 from postprocess.road_align.road_frames import build as build_frames
 from postprocess.road_align.node_center_to_road_line import seat_all
 from postprocess.piece_transforms import save as save_transforms
@@ -75,9 +75,9 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2):
         M = horiz[i]
         xz, y, co = clouds[i]
         moved[i] = (xz @ M[[0, 2]][:, [0, 2]].T + M[[0, 2], 3], y, co)
-    road_pts = {i: ground_near_track(
-        moved[i], cams[i] @ horiz[i][[0, 2]][:, [0, 2]].T + horiz[i][[0, 2], 3])
-        for i in ids}
+    road_pts = {i: extract_features(moved[i], bounds,
+                                   cams=cams[i] @ horiz[i][[0, 2]][:, [0, 2]].T
+                                   + horiz[i][[0, 2], 3])[0] for i in ids}
 
     vert, report = seat({i: p for i, p in road_pts.items() if len(p)})
     log("")
