@@ -17,6 +17,7 @@ import numpy as np
 from huggingface_hub import HfApi
 
 from visualise import viewers
+import area
 from paths import SPLATS_DIR
 from street_builder import main as street_main
 from street_builder.map_selection.tab import build_map_section, nodes_by_key
@@ -29,6 +30,14 @@ from street_builder.map_selection.tab import build_map_section, nodes_by_key
 # Variables and secrets) with write access -- a Space has no Hub write
 # access by default. HfApi() picks that env var up automatically.
 CLI_JOIN_DATASET_REPO = "potato-bug/ntu-reconstruction"
+
+
+def _run_dir(prep):
+    """A fresh output directory with the area centre recorded in it, so the
+    pieces it receives can be placed later."""
+    path = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    area.save(path, *prep["center"])
+    return path
 
 
 def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
@@ -58,7 +67,8 @@ def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
 
     progress(0, desc="Gathering + downloading candidates...")
     try:
-        prep = street_main.prepare_pathfind(start, goals, corridor_edges)
+        prep = street_main.prepare_pathfind(start, goals, corridor_edges,
+                                            (state["lat"], state["lon"]))
     except Exception as e:
         raise gr.Error(f"Prepare failed: {e}")
 
@@ -91,7 +101,7 @@ def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
 
     try:
         segments = street_main.run_prepared_pathfind_segments(prep)
-        output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+        output_dir = _run_dir(prep)
         results = street_main.save_pathfind_segments(segments, output_dir)
         bundle_path = street_main.save_segments_bundle(segments, output_dir)
     except Exception as e:
@@ -113,7 +123,7 @@ def handle_pathfind_run_and_join(prep, progress=gr.Progress(track_tqdm=True)):
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
     try:
-        output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+        output_dir = _run_dir(prep)
         results, segments, bundle_path = street_main.run_prepared_pathfind(prep, output_dir)
     except Exception as e:
         raise gr.Error(f"Run + Join failed: {e}")
@@ -154,7 +164,7 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
         raise gr.Error("Only one segment -- nothing to join.")
 
     try:
-        output_dir = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+        output_dir = _run_dir(prep)
         results = street_main.save_joined_pathfind(segments, output_dir)
     except Exception as e:
         raise gr.Error(f"Join failed: {e}")
@@ -724,7 +734,8 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
             start = tuple(payload["start"])
             goals = [tuple(g) for g in payload["goals"]]
             edges = [(tuple(a), tuple(b)) for a, b in payload["edges"]]
-            prep = street_main.prepare_pathfind(start, goals, edges)
+            prep = street_main.prepare_pathfind(start, goals, edges,
+                                                tuple(payload.get("center", start)))
         new_segments = street_main.run_prepared_pathfind_segments(prep, protected_positions=protected_positions)
     except Exception as e:
         raise gr.Error(f"Chunk {chunk_id} failed: {e}")

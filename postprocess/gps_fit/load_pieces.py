@@ -12,7 +12,7 @@ import os
 import numpy as np
 
 from street_builder.reconstruction.join_segments import _read_ply_points
-from postprocess.gps_fit.fit import fit_nodes, real_en
+from postprocess.gps_fit.fit import fit_nodes, load_origin, real_en
 
 # Trust a piece's own fitted scale only if its GPS fit is this good.
 # Scale is the worst-determined part of a similarity fit, so a piece with
@@ -40,6 +40,7 @@ def load_pieces(directory):
     else; scaling only two axes of three leaves every piece squashed
     vertically, which quietly corrupts every slope and height in the
     scene."""
+    load_origin(directory)
     metas = {}
     for name in sorted(os.listdir(directory)):
         if name.endswith("_meta.json"):

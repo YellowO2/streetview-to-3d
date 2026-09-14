@@ -49,9 +49,10 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from postprocess.corridors import _metres, roads
-from postprocess.gps_fit.fit import real_en
+from postprocess.gps_fit.fit import real_en, use_origin
 from postprocess.road_align.road_frames import smooth
 from paths import DATA_DIR, FETCHED_GRAPH
+import area
 
 REPO = "potato-bug/ntu-reconstruction"
 RAW_PREFIX = "cli_raw"
@@ -148,12 +149,19 @@ def _dequantize(path):
         f.write(s.tobytes())
 
 
+def ntu_center():
+    """NTU's first dot. Every NTU transform ever solved is measured from it,
+    so it is the area centre for anything cut out of this dataset."""
+    return tuple(json.load(open(FETCHED_GRAPH))["points"][0])
+
+
 def index(chunks=None, api=None):
     """{chunk id: (metadata dict, [road ids it lies on])}.
 
     Metadata only -- kilobytes per chunk against tens of megabytes for a
     cloud, so the whole campus can be indexed before deciding what to pull.
     """
+    use_origin(*ntu_center())
     graph = json.load(open(FETCHED_GRAPH))
     xy = np.array(_metres(graph["points"]))
     lines = {i: smooth(xy[w]) for i, w in enumerate(roads(graph))}
@@ -206,6 +214,7 @@ def fetch(chunk_ids, out_dir, api=None, groups=None):
     api = api or _api()
     files = chunk_files(api)
     os.makedirs(out_dir, exist_ok=True)
+    area.save(out_dir, *ntu_center())
     written, total, n = {}, 0, 0
     for cid in sorted(chunk_ids):
         if cid not in files:

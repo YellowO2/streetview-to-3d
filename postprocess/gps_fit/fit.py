@@ -1,37 +1,43 @@
-"""Single shared home for the GPS-fitting math every gps_*/piece_*/
-export_*_test script in this directory needs -- fit_similarity_2d was
-copy-pasted into five separate files before this existed (a real source
-of bugs: e.g. two scripts picking a DIFFERENT local-meters origin for
-the same node produces "real_en" values that aren't actually comparable,
-even though both look like valid coordinates). Import from here instead
-of redefining it.
+"""The GPS-fitting math shared across postprocess, and the one metre frame
+every module measures in.
 
-GLOBAL_ORIGIN is fixed (NTU's own dot 0) specifically so that EVERY
-script's real_en values live in the same shared local-meters frame,
-comparable across scripts/sessions/runs -- never compute your own
-per-piece or per-group origin for anything meant to be plotted or
-compared against other data.
+Positions are metres east/north of an ORIGIN that belongs to the AREA, not
+to any one run: piece_transforms.json stores coordinates relative to it, so
+deriving it from whichever pieces happen to be loaded would silently
+invalidate every transform already saved. A reconstruction writes the area's
+centre to area.json; `load_origin` reads it back, and nothing measures
+anything before that.
 """
-from paths import FETCHED_GRAPH, NTU_DIR
-import json
-import os
-
 import numpy as np
 
+import area
 from services.geo import latlon_to_local_m
 
+_origin = None
 
-with open(FETCHED_GRAPH) as _f:
-    _points = json.load(_f)["points"]
-GLOBAL_ORIGIN_LAT, GLOBAL_ORIGIN_LON = _points[0]
+
+def use_origin(lat, lon):
+    """Set the frame directly. Prefer load_origin; this is for callers that
+    have the centre in hand rather than on disk."""
+    global _origin
+    _origin = (float(lat), float(lon))
+    return _origin
+
+
+def load_origin(directory):
+    """Set the frame from the area.json written beside a directory's pieces."""
+    return use_origin(*area.load(directory))
+
+
+def origin():
+    if _origin is None:
+        raise RuntimeError("no area origin set -- call load_origin(directory)")
+    return _origin
 
 
 def real_en(lat, lon):
-    """(lat, lon) -> local ENU meters relative to the ONE shared
-    GLOBAL_ORIGIN -- use this everywhere instead of calling
-    latlon_to_local_m directly with a locally-chosen origin, so every
-    script's output lives in the same comparable frame."""
-    return latlon_to_local_m(lat, lon, GLOBAL_ORIGIN_LAT, GLOBAL_ORIGIN_LON)
+    """(lat, lon) -> metres east/north of the area origin."""
+    return latlon_to_local_m(lat, lon, *origin())
 
 
 def fit_similarity_2d(src, dst):
@@ -54,13 +60,9 @@ def fit_similarity_2d(src, dst):
 
 
 def fit_nodes(nodes, da3_field="da3_xz", lat_field="lat", lon_field="lon"):
-    """Fits one group's own nodes to GPS, all in the SAME shared
-    GLOBAL_ORIGIN frame. nodes: list of dicts, each with da3_field (a
-    [x, z] pair) and lat_field/lon_field. Returns (R, scale, t,
-    real_en_arr, fitted_en_arr, residuals_arr) -- residuals are
-    origin-invariant (real-world distances, not affected by which
-    origin was chosen), but real_en/fitted_en are only meaningful
-    compared against ANOTHER group's if both used this same function."""
+    """Fit one group's nodes to their GPS. nodes: dicts carrying da3_field
+    (an [x, z] pair) and lat_field/lon_field. Returns (R, scale, t, real_en,
+    fitted_en, residuals)."""
     src = np.array([n[da3_field] for n in nodes])
     dst = np.array([real_en(n[lat_field], n[lon_field]) for n in nodes])
     R, scale, t = fit_similarity_2d(src, dst)

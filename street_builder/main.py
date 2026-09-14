@@ -118,7 +118,7 @@ def _download_date_graphs(date_graphs):
     return ready_graphs, node_entries
 
 
-def prepare_pathfind(start, goals, corridor_edges) -> dict:
+def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
     """CPU/network only, no GPU -- gathers candidates along the corridor,
     splits them into isolated per-date graphs, and downloads every node
     any of them reference. Split out from the GPU step specifically so
@@ -130,6 +130,8 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
     what can let it go stale before schedule() is ever reached.
 
     start: (lat, lon) -- the fixed start node's real position.
+    center: (lat, lon) -- the searched coordinate that defined this area.
+    Carried through untouched; postprocess measures every position from it.
     goals: [(lat, lon), ...] -- every other selected node.
     corridor_edges: [((lat1, lon1), (lat2, lon2)), ...] -- the REAL,
     already-confirmed edges of the clicked selection graph (from Street
@@ -168,6 +170,7 @@ def prepare_pathfind(start, goals, corridor_edges) -> dict:
         "points": points,
         "adjacency": adjacency,
         "start": start,
+        "center": center,
         "goals": goals,
         "top_dates": [g["date"] for g in ready_graphs],
     }
@@ -262,6 +265,7 @@ def prepare_pathfind_from_cover_chunk(dots, date, top_per_dot=TOP_PANOS_PER_DOT)
 
     start = tuple(local_points[0])
     goals = [tuple(p) for p in local_points[1:]]
+    center = tuple(metadata["points"][0])
     print(f"prepare_pathfind_from_cover_chunk: done in {time.monotonic() - t0:.1f}s")
     return {
         "date_graphs": ready_graphs,
@@ -269,6 +273,7 @@ def prepare_pathfind_from_cover_chunk(dots, date, top_per_dot=TOP_PANOS_PER_DOT)
         "points": local_points,
         "adjacency": local_adjacency,
         "start": start,
+        "center": center,
         "goals": goals,
         "top_dates": [g["date"] for g in ready_graphs],
     }

@@ -19,7 +19,7 @@ import json
 import math
 
 from paths import FETCHED_GRAPH
-from postprocess.gps_fit.fit import real_en
+from postprocess.gps_fit.fit import real_en, use_origin
 
 # How straight two corridors must meet to be one road through a junction.
 # A road can bend at a junction, but a right-angle turn into a side street
@@ -266,6 +266,7 @@ def main():
     args = ap.parse_args()
 
     graph = json.load(open(args.graph))
+    use_origin(*graph["points"][0])
     corridors, stats = summarise(graph)
     lengths = sorted(s["length_m"] for s in stats)
     covered = len({n for c in corridors for n in c})
