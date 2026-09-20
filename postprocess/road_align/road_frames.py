@@ -65,9 +65,9 @@ def build(cams, graph=None, near_m=NEAR_M):
 
     curves  {road id: (N,2) smoothed polyline}
     frames  {road id: RouteFrame}
-    on      {piece: [road ids]}, only roads the piece has a camera on,
-            and only roads carrying at least two pieces -- a road with one
-            piece has nothing to align that piece against.
+    on      {piece: [road ids]}, the roads the piece has a camera on. The
+            line comes from Google's graph, not from the other pieces, so a
+            piece alone on a road can still be seated against it.
     """
     graph = graph or json.load(open(FETCHED_GRAPH))
     xy = np.array(_metres(graph["points"]))
@@ -80,12 +80,6 @@ def build(cams, graph=None, near_m=NEAR_M):
     trees = {rid: cKDTree(c) for rid, c in curves.items()}
     on = {i: [rid for rid, t in trees.items()
               if (t.query(c)[0] <= near_m).any()] for i, c in cams.items()}
-
-    count = {}
-    for rids in on.values():
-        for rid in rids:
-            count[rid] = count.get(rid, 0) + 1
-    on = {i: [r for r in rids if count[r] >= 2] for i, rids in on.items()}
 
     used = {r for rids in on.values() for r in rids}
     curves = {r: c for r, c in curves.items() if r in used}

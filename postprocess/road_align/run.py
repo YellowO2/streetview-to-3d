@@ -33,6 +33,7 @@ from postprocess.piece_transforms import save as save_transforms
 from postprocess.gps_fit.load_pieces import load_pieces
 from postprocess.road_align.align_slope_of_pieces import seat
 from postprocess.road_align import ground_elevation
+import area
 
 MARGIN_M = 25.0
 
@@ -56,16 +57,16 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
         if dropped:
             log(f"dropped {len(dropped)} piece(s) with < {min_nodes} node(s): "
                 + ", ".join(f"piece_{i}" for i in dropped) + "\n")
-    if len(ids) < 2:
-        raise SystemExit(f"need at least 2 pieces, got {ids}")
+    if not ids:
+        raise ValueError("no pieces to place")
 
     cams = {i: fits[i]["cams"] for i in ids}
     allc = np.vstack([cams[i] for i in ids])
     bounds = (allc[:, 0].min() - MARGIN_M, allc[:, 0].max() + MARGIN_M,
               allc[:, 1].min() - MARGIN_M, allc[:, 1].max() + MARGIN_M)
 
-    curves, frames, on = build_frames(cams)
-    log(f"{len(curves)} road(s) carrying 2+ pieces: "
+    curves, frames, on = build_frames(cams, area.load_graph(directory))
+    log(f"{len(curves)} road(s): "
         + ", ".join(f"road{r} {frames[r].length:.0f}m" for r in sorted(curves))
         + "\n")
 

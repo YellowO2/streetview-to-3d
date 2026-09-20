@@ -8,6 +8,7 @@ then this module's own prepare/run/join controls underneath it, wired
 against the same shared `state` map_selection's handlers already update.
 """
 import gzip
+import html as html_lib
 import json
 import os
 import uuid
@@ -19,6 +20,7 @@ from huggingface_hub import HfApi
 from visualise import viewers
 import area
 from paths import SPLATS_DIR
+from postprocess import pipeline
 from street_builder import main as street_main
 from street_builder.map_selection.tab import build_map_section, nodes_by_key
 
@@ -37,6 +39,7 @@ def _run_dir(prep):
     pieces it receives can be placed later."""
     path = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     area.save(path, *prep["center"])
+    area.save_graph(path, prep["points"], prep["adjacency"])
     return path
 
 
@@ -128,7 +131,7 @@ def handle_pathfind_run_and_join(prep, progress=gr.Progress(track_tqdm=True)):
     except Exception as e:
         raise gr.Error(f"Run + Join failed: {e}")
 
-    return viewers.labeled_download_links(results), segments, bundle_path
+    return viewers.labeled_download_links(results), segments, bundle_path, output_dir
 
 
 def handle_pathfind_load_segments(file_path):
@@ -170,6 +173,31 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
         raise gr.Error(f"Join failed: {e}")
 
     return viewers.labeled_download_links(results)
+
+
+def handle_postprocess(run_dir, progress=gr.Progress(track_tqdm=True)):
+    """Step 3: place the run's pieces into one scene. No GPU.
+
+    Everything up to here reconstructs geometry; this is what decides
+    where that geometry actually sits -- see postprocess.pipeline.
+    """
+    if not run_dir:
+        raise gr.Error("Nothing reconstructed yet -- press \"Run + Join\" first.")
+
+    lines = []
+    def log(msg=""):
+        lines.append(str(msg))
+        print(msg)
+
+    progress(0, desc="Placing pieces...")
+    try:
+        ply = pipeline.process(run_dir, log=log)
+    except Exception as e:
+        raise gr.Error(f"Post-processing failed: {e}")
+
+    report = "<pre>" + html_lib.escape("\n".join(lines)) + "</pre>"
+    return (viewers.build_pointcloud_viewer(viewers.file_url(ply))
+            + viewers.labeled_download_links([("aligned scene", ply)]) + report)
 
 
 CLI_CHECKPOINT_PREFIX = "cli_join/current"
@@ -834,22 +862,27 @@ def build_tab():
     with gr.Row(equal_height=True):
         with gr.Column(scale=0, min_width=140):
             # Auto-path across the whole clicked graph (branches/loops
-            # included). Split into three steps -- prepare (gather +
-            # download, no GPU), run (the actual GPU search), join (fit +
-            # merge multiple segments, no GPU) -- so the GPU-triggering
-            # click is its own fresh interaction instead of following a
-            # long download inside one combined request (see
-            # handle_pathfind_run's docstring), and re-testing/tuning the
-            # join step doesn't require re-running the expensive GPU search
-            # each time (see handle_pathfind_join's docstring).
+            # included). Prepare is separate and has no GPU, so the
+            # GPU-triggering click is its own fresh interaction rather than
+            # following a long download inside one request -- the ZeroGPU
+            # proxy token expires on wall-clock time.
+            #
+            # Run and Join are also available as two separate GPU calls,
+            # which is what to use when tuning join/bridging against an
+            # already-computed search. They are hidden because the combined
+            # call is what an ordinary reconstruction wants: one DA3 model
+            # load instead of two, and it reuses the panoramas already on
+            # disk, which a separate Join call has to re-fetch.
             pathfind_prepare_btn = gr.Button("1. Prepare auto-path (experimental)")
-            pathfind_run_btn = gr.Button("2. Run auto-path")
-            pathfind_join_btn = gr.Button("3. Join segments")
-            pathfind_run_join_btn = gr.Button("2+3. Run + Join (one GPU call)")
+            pathfind_run_btn = gr.Button("2. Run auto-path", visible=False)
+            pathfind_join_btn = gr.Button("3. Join segments", visible=False)
+            pathfind_run_join_btn = gr.Button("2. Run + Join (one GPU call)")
+            pathfind_post_btn = gr.Button("3. Place into one scene (no GPU)")
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
     pathfind_segments_state = gr.State(None)
+    pathfind_dir_state = gr.State(None)
 
     with gr.Row(equal_height=True):
         # Produced by Run -- everything Join needs (prep + segments),
@@ -857,7 +890,8 @@ def build_tab():
         # next time (a later session, or after tweaking join_segments.py):
         # just re-upload it below and press "Load segments".
         pathfind_segments_file = gr.File(label="Segments file (from Run, for Join later)", interactive=False)
-        with gr.Column():
+        # Only useful with the hidden Join button, so hidden with it.
+        with gr.Column(visible=False):
             pathfind_segments_upload = gr.File(label="...or load a previously downloaded segments file", file_types=[".pkl"], type="filepath")
             pathfind_load_btn = gr.Button("Load segments")
 
@@ -937,7 +971,16 @@ def build_tab():
     pathfind_run_join_btn.click(
         fn=handle_pathfind_run_and_join,
         inputs=[pathfind_prep_state],
-        outputs=[reconstruct_view, pathfind_segments_state, pathfind_segments_file],
+        outputs=[reconstruct_view, pathfind_segments_state, pathfind_segments_file,
+                 pathfind_dir_state],
+        show_progress="minimal",
+        show_progress_on=[reconstruct_view],
+    )
+
+    pathfind_post_btn.click(
+        fn=handle_postprocess,
+        inputs=[pathfind_dir_state],
+        outputs=[reconstruct_view],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
     )
