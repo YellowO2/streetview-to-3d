@@ -50,8 +50,7 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
     ids = [i for i in (piece_ids or sorted(clouds)) if i in clouds]
     if min_nodes > 1:
         # Dropped before anything else, so a weak piece cannot be exported
-        # or shape anything. It cannot affect the shared scale either:
-        # global_scale only counts pieces that fitted their own.
+        # or shape anything.
         dropped = [i for i in ids if fits[i]["n"] < min_nodes]
         ids = [i for i in ids if i not in set(dropped)]
         if dropped:

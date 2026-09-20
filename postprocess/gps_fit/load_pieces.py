@@ -12,14 +12,8 @@ import numpy as np
 
 from reconstruct.join_segments import _read_ply_points
 import scene as scene_mod
+from config import DA3_UNITS_TO_METRES
 from postprocess.gps_fit.fit import fit_nodes, use_origin, real_en
-
-# Trust a piece's own fitted scale only if its GPS fit is this good.
-# Scale is the worst-determined part of a similarity fit, so a piece with
-# a poor fit reports a badly wrong one -- measured here, every piece with
-# a residual under 0.2 m agreed on 1.23-1.30, while the only two outliers
-# (1.43 and 1.70) came from the only two pieces with residuals above 1 m.
-GOOD_FIT_RESIDUAL_M = 0.25
 
 def load_pieces(directory):
     """Each piece's GPS fit + point cloud, all in the shared GLOBAL_ORIGIN
@@ -27,18 +21,18 @@ def load_pieces(directory):
     borrows them from the nearest multi-node piece -- its heading is then
     recovered properly by road alignment, which is the whole point.
 
-    Every piece is scaled by ONE shared factor, not by its own. DA3
-    reconstructs all of them in the same units, so a genuine per-piece
-    scale difference should not exist; what the per-piece fits actually
-    measure is how noisy each piece's GPS was. Letting each piece keep
-    its own turns that noise into geometry -- pieces come out different
-    sizes, and no amount of moving them will ever make them meet.
+    Every piece is scaled by the SAME measured constant
+    (config.DA3_UNITS_TO_METRES), never by its own fitted scale. DA3
+    reconstructs every piece in the same units, so a real per-piece
+    difference does not exist -- what a per-piece fit measures is how
+    noisy that piece's GPS was. Letting each keep its own turns that
+    noise into geometry, and deriving one factor from the run's own
+    pieces makes the world a different size depending on which pieces
+    you happened to select.
 
-    The shared factor is taken from the pieces whose GPS fit is good,
-    and it is applied to HEIGHT as well as to x and z. It converts DA3
-    units to metres, and the height is in DA3 units like everything
-    else; scaling only two axes of three leaves every piece squashed
-    vertically, which quietly corrupts every slope and height in the
+    It applies to HEIGHT as well as x and z: height is in DA3 units like
+    everything else, and scaling only two axes of three leaves every
+    piece squashed vertically, quietly corrupting every slope in the
     scene."""
     sc = scene_mod.Scene.load(directory)
     use_origin(*sc.origin)
@@ -66,7 +60,7 @@ def load_pieces(directory):
         fits[i].update(R=R, scale=scale, t=c - scale * (R @ fits[i]["da3"]),
                        borrowed_from=near)
 
-    scale = global_scale(fits)
+    scale = DA3_UNITS_TO_METRES
     clouds = {}
     for i in fits:
         # keep each piece's own rotation, but re-solve its offset for the
@@ -81,12 +75,3 @@ def load_pieces(directory):
         clouds[i] = (xz, pts[:, 1] * scale, cols)
     return fits, clouds
 
-
-def global_scale(fits):
-    """One DA3-units-to-metres factor for the whole scene, averaged over
-    the pieces whose GPS fit was good enough to have measured it."""
-    good = [f["scale"] for f in fits.values()
-            if f["resid"] is not None and f["resid"] <= GOOD_FIT_RESIDUAL_M]
-    if not good:
-        good = [f["scale"] for f in fits.values() if f["resid"] is not None]
-    return float(np.median(good))
