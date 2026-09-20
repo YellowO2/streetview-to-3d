@@ -47,7 +47,7 @@ def nodes_from_scene(directory):
             continue
         for m in members:
             n = sc.nodes[m]
-            out[n.key] = {"da3_xz": [n.position[0], n.position[2]],
+            out[n.key] = {"da3_xz": list(n.da3_xz),
                           "real_en": list(real_en(n.pano.lat, n.pano.lon)),
                           "piece": i}
     return out

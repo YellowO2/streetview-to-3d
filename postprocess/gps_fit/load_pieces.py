@@ -39,14 +39,14 @@ def load_pieces(directory, min_confidence=None):
     for i, members in enumerate(groups):
         nodes = [sc.nodes[m] for m in members]
         cams = np.array([real_en(n.pano.lat, n.pano.lon) for n in nodes])
-        src = np.array([[n.position[0], n.position[2]] for n in nodes])
+        src = np.array([[n.camera[0], n.camera[2]] for n in nodes])
         if len(nodes) == 1:
             singles.append(i)
             fits[i] = {"cams": cams, "n": 1, "resid": None, "src_xz": src,
                        "members": members}
             continue
-        R, _, t = fit_similarity_2d(src * scale, cams)
-        res = np.linalg.norm(src * scale @ R.T + t - cams, axis=1)
+        R, _, t = fit_similarity_2d(src, cams)
+        res = np.linalg.norm(src @ R.T + t - cams, axis=1)
         fits[i] = {"R": R, "scale": scale, "t": t, "cams": cams, "n": len(nodes),
                    "resid": float(np.median(res)), "src_xz": src, "members": members}
 
@@ -56,19 +56,19 @@ def load_pieces(directory, min_confidence=None):
         near = min(multi, key=lambda j: np.linalg.norm(fits[j]["cams"] - c, axis=1).min())
         R = fits[near]["R"]
         fits[i].update(R=R, scale=scale, borrowed_from=near,
-                       t=c - scale * (R @ fits[i]["src_xz"][0]))
+                       t=c - R @ fits[i]["src_xz"][0])
 
     clouds = {}
     for i, f in fits.items():
         # each piece keeps its own rotation, but its offset is re-solved so
         # its cameras still land on their GPS positions
-        f["t"] = (f["cams"] - scale * (f["src_xz"] @ f["R"].T)).mean(0)
+        f["t"] = (f["cams"] - f["src_xz"] @ f["R"].T).mean(0)
         # where the cameras END UP, which is not where GPS put them: the fit
         # spreads its residual across them, and the cloud follows these, not
         # the GPS points
-        f["placed"] = f["src_xz"] @ f["R"].T * scale + f["t"]
+        f["placed"] = f["src_xz"] @ f["R"].T + f["t"]
         pts, cols = _read_cloud(directory, sc, f["members"])
-        xz = pts[:, [0, 2]] @ f["R"].T * scale + f["t"]
+        xz = pts[:, [0, 2]] * scale @ f["R"].T + f["t"]
         clouds[i] = (xz, pts[:, 1] * scale, cols)
     return fits, clouds
 
