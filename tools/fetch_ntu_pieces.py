@@ -52,7 +52,7 @@ from postprocess.corridors import _metres, roads
 from postprocess.gps_fit.fit import real_en, use_origin
 from postprocess.road_align.road_frames import smooth
 from paths import DATA_DIR, FETCHED_GRAPH
-import area
+import scene as scene_mod
 
 REPO = "potato-bug/ntu-reconstruction"
 RAW_PREFIX = "cli_raw"
@@ -162,8 +162,8 @@ def index(chunks=None, api=None):
     cloud, so the whole campus can be indexed before deciding what to pull.
     """
     use_origin(*ntu_center())
-    graph = json.load(open(FETCHED_GRAPH))
-    xy = np.array(_metres(graph["points"]))
+    graph = scene_mod.Graph.read(FETCHED_GRAPH)
+    xy = np.array(_metres(graph.points))
     lines = {i: smooth(xy[w]) for i, w in enumerate(roads(graph))}
     trees = {i: cKDTree(c) for i, c in lines.items() if len(c) >= 4}
 
@@ -200,13 +200,10 @@ def _split(pts, cols, meta, groups):
 
 
 def fetch(chunk_ids, out_dir, api=None, groups=None):
-    """Write chosen chunks as piece_N.ply + piece_N_meta.json in `out_dir`.
+    """Write chosen chunks into `out_dir` as a scene.
 
-    The metadata is symlinked and only the cloud is written for real: a
-    .ply.gz has to be decompressed and dequantised before anything can read
-    it, so it cannot be shared with the download cache, but the metadata is
-    already exactly what we want and copying it would just be a second copy
-    of every file on a disk that has to hold the clouds too.
+    This is the adapter from the Hub's own layout (a .ply.gz plus a
+    per-node metadata JSON per chunk) into a scene postprocess can read.
     """
     from postprocess.ply_io import write_ply
     from street_builder.reconstruction.join_segments import _read_ply_points
@@ -214,9 +211,11 @@ def fetch(chunk_ids, out_dir, api=None, groups=None):
     api = api or _api()
     files = chunk_files(api)
     os.makedirs(out_dir, exist_ok=True)
-    area.save(out_dir, *ntu_center())
     ntu_graph = json.load(open(FETCHED_GRAPH))
-    area.save_graph(out_dir, ntu_graph["points"], ntu_graph["adjacency"])
+    sc = scene_mod.Scene(
+        center=list(ntu_center()),
+        graph=scene_mod.Graph(points=ntu_graph["points"],
+                              adjacency=ntu_graph["adjacency"]))
     written, total, n = {}, 0, 0
     for cid in sorted(chunk_ids):
         if cid not in files:
@@ -230,11 +229,12 @@ def fetch(chunk_ids, out_dir, api=None, groups=None):
         meta = json.load(open(_download(meta_rel)))
 
         if groups is None:                       # whole chunk, unsplit
-            os.replace(raw, os.path.join(out_dir, f"piece_{n}.ply"))
-            with open(os.path.join(out_dir, f"piece_{n}_meta.json"), "w") as f:
-                json.dump(meta, f)
+            name = f"piece_{n}.ply"
+            os.replace(raw, os.path.join(out_dir, name))
+            sc.pieces.append(scene_mod.Piece(ply=name,
+                                             nodes=scene_mod.from_metadata(meta)))
             written[n] = cid
-            total += os.path.getsize(os.path.join(out_dir, f"piece_{n}.ply"))
+            total += os.path.getsize(os.path.join(out_dir, name))
             print(f"  piece_{n} <- {cid}  ({len(meta)} node(s))")
             n += 1
             continue
@@ -242,10 +242,11 @@ def fetch(chunk_ids, out_dir, api=None, groups=None):
         pts, cols = _read_ply_points(raw)
         parts = _split(pts, cols, meta, groups)
         for pid, sub, mask in parts:
-            out = os.path.join(out_dir, f"piece_{n}.ply")
+            name = f"piece_{n}.ply"
+            out = os.path.join(out_dir, name)
             write_ply(out, pts[mask], cols[mask])
-            with open(os.path.join(out_dir, f"piece_{n}_meta.json"), "w") as f:
-                json.dump(sub, f)
+            sc.pieces.append(scene_mod.Piece(ply=name,
+                                             nodes=scene_mod.from_metadata(sub)))
             written[n] = f"{cid}:{pid}"
             total += os.path.getsize(out)
             print(f"  piece_{n} <- {cid} piece {pid}  ({len(sub)} of {len(meta)} "
@@ -253,6 +254,7 @@ def fetch(chunk_ids, out_dir, api=None, groups=None):
                   f"{os.path.getsize(out) / 1e6:.0f} MB)")
             n += 1
         os.remove(raw)
+    sc.save(out_dir)
     print(f"  {total / 1e6:.0f} MB written")
     with open(os.path.join(out_dir, "chunk_ids.json"), "w") as f:
         json.dump(written, f, indent=2)      # which chunk each piece came from

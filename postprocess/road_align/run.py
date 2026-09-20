@@ -21,7 +21,6 @@ Road polylines and camera positions are both in the shared GLOBAL_ORIGIN
 metre frame (gps_fit.fit.real_en), so they compare directly.
 """
 import argparse
-import json
 import os
 
 import numpy as np
@@ -33,7 +32,7 @@ from postprocess.piece_transforms import save as save_transforms
 from postprocess.gps_fit.load_pieces import load_pieces
 from postprocess.road_align.align_slope_of_pieces import seat
 from postprocess.road_align import ground_elevation
-import area
+import scene as scene_mod
 
 MARGIN_M = 25.0
 
@@ -46,6 +45,7 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
     applies the GPS fit as it loads. `piece_transforms.save` composes the
     two so the file that lands on disk stands on its own.
     """
+    sc = scene_mod.Scene.load(directory)
     fits, clouds = load_pieces(directory)
     ids = [i for i in (piece_ids or sorted(clouds)) if i in clouds]
     if min_nodes > 1:
@@ -65,7 +65,7 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
     bounds = (allc[:, 0].min() - MARGIN_M, allc[:, 0].max() + MARGIN_M,
               allc[:, 1].min() - MARGIN_M, allc[:, 1].max() + MARGIN_M)
 
-    curves, frames, on = build_frames(cams, area.load_graph(directory))
+    curves, frames, on = build_frames(cams, sc.graph)
     log(f"{len(curves)} road(s): "
         + ", ".join(f"road{r} {frames[r].length:.0f}m" for r in sorted(curves))
         + "\n")
@@ -87,10 +87,9 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
     if elevation:
         latlons, keys = {}, []
         for i in ids:
-            meta = json.load(open(os.path.join(directory, f"piece_{i}_meta.json")))
-            for k, v in meta.items():
-                latlons[k] = (v["lat"], v["lon"])
-                keys.append(k)
+            for n in sc.pieces[i].nodes:
+                latlons[n.key] = (n.lat, n.lon)
+                keys.append(n.key)
         el = ground_elevation.fetch(keys, latlons, directory, log=log)
         ground, resid = ground_elevation.surface(el, latlons)
         log(f"\nground from {len(el)} panorama elevation(s), "
@@ -128,7 +127,7 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dir", default="/tmp/gap3_joined",
-                    help="directory of piece_*.ply and piece_*_meta.json")
+                    help="directory holding a scene.json and its clouds")
     ap.add_argument("--pieces", default=None,
                     help="comma-separated piece ids (default: all in --dir)")
     ap.add_argument("--out", default=None, help="write the aligned cloud here")

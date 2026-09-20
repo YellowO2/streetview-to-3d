@@ -16,16 +16,14 @@ available: a merged cloud has no per-point record of which panorama it
 came from.
 """
 import argparse
-import json
 import os
-import shutil
 
 import numpy as np
 from scipy.spatial import cKDTree
 
-import area
+import scene as scene_mod
 from postprocess.gps_fit.discover_pieces import FIT_THRESHOLD_M, resolve, residuals_for
-from postprocess.gps_fit.fit import load_origin, real_en
+from postprocess.gps_fit.fit import real_en, use_origin
 from postprocess.ply_io import write_ply
 from street_builder.reconstruction.join_segments import _read_ply_points
 
@@ -34,11 +32,11 @@ from street_builder.reconstruction.join_segments import _read_ply_points
 ADJACENT_M = 25.0
 
 
-def _nodes(meta):
+def _for_resolve(nodes):
     """{key: node} in the shape discover_pieces.resolve expects."""
-    return {k: {"da3_xz": [v["position"][0], v["position"][2]],
-                "real_en": list(real_en(v["lat"], v["lon"]))}
-            for k, v in meta.items()}
+    return {n.key: {"da3_xz": [n.position[0], n.position[2]],
+                    "real_en": list(real_en(n.lat, n.lon))}
+            for n in nodes}
 
 
 def _adjacency(nodes):
@@ -58,58 +56,51 @@ def _adjacency(nodes):
     return adj
 
 
-def split_piece(meta, threshold):
-    """[{key: node}, ...] -- the piece, broken where it stops fitting."""
-    nodes = _nodes(meta)
-    return resolve(nodes, _adjacency(nodes), threshold=threshold)
+def split_piece(nodes, threshold):
+    """[set of keys, ...] -- the piece, broken where it stops fitting."""
+    prepared = _for_resolve(nodes)
+    return [set(part) for part in
+            resolve(prepared, _adjacency(prepared), threshold=threshold)]
 
 
-def _residual(meta):
-    nodes = list(_nodes(meta).values())
-    if len(nodes) < 2:
+def _residual(nodes):
+    prepared = list(_for_resolve(nodes).values())
+    if len(prepared) < 2:
         return None
-    res, _ = residuals_for(nodes)
+    res, _ = residuals_for(prepared)
     return float(np.median(res))
 
 
 def split(directory, out_dir, threshold=FIT_THRESHOLD_M, log=print):
-    """Rewrite a pieces directory with every piece broken where it must be."""
-    load_origin(directory)
+    """Write a copy of a scene with every piece broken where it must be."""
+    sc = scene_mod.Scene.load(directory)
+    use_origin(*sc.origin)
     os.makedirs(out_dir, exist_ok=True)
-    for name in (area.FILENAME, area.GRAPH):
-        shutil.copy(os.path.join(directory, name), out_dir)
+    out = scene_mod.Scene(center=sc.center, graph=sc.graph)
 
-    metas = {}
-    for name in sorted(os.listdir(directory)):
-        if name.endswith("_meta.json"):
-            i = int(name.split("_")[1])
-            metas[i] = json.load(open(os.path.join(directory, name)))
-
-    n = 0
-    for i, meta in sorted(metas.items()):
-        parts = split_piece(meta, threshold)
-        before = _residual(meta)
-        pts, cols = _read_ply_points(os.path.join(directory, f"piece_{i}.ply"))
-        keys = list(meta)
-        cams = np.array([meta[k]["position"] for k in keys])
+    for i, piece in enumerate(sc.pieces):
+        parts = split_piece(piece.nodes, threshold)
+        before = _residual(piece.nodes)
+        pts, cols = _read_ply_points(os.path.join(directory, piece.ply))
+        cams = np.array([n.position for n in piece.nodes])
         nearest = cKDTree(cams).query(pts)[1]
 
-        log(f"piece_{i}: {len(meta)} node(s), residual "
+        log(f"{piece.ply}: {len(piece)} node(s), residual "
             f"{'n/a' if before is None else f'{before:.1f} m'} -> {len(parts)} piece(s)")
-        for part in sorted(parts, key=lambda p: -len(p)):
-            sub = {k: meta[k] for k in part}
-            idx = [j for j, k in enumerate(keys) if k in part]
-            mask = np.isin(nearest, idx)
-            write_ply(os.path.join(out_dir, f"piece_{n}.ply"), pts[mask], cols[mask])
-            with open(os.path.join(out_dir, f"piece_{n}_meta.json"), "w") as f:
-                json.dump(sub, f)
-            after = _residual(sub)
-            log(f"   piece_{n}: {len(sub):>3} node(s), residual "
+        for part in sorted(parts, key=len, reverse=True):
+            nodes = [n for n in piece.nodes if n.key in part]
+            keep = [j for j, n in enumerate(piece.nodes) if n.key in part]
+            mask = np.isin(nearest, keep)
+            name = f"piece_{len(out.pieces)}.ply"
+            write_ply(os.path.join(out_dir, name), pts[mask], cols[mask])
+            out.pieces.append(scene_mod.Piece(ply=name, nodes=nodes))
+            after = _residual(nodes)
+            log(f"   {name}: {len(nodes):>3} node(s), residual "
                 f"{'n/a' if after is None else f'{after:.2f} m'}, "
                 f"{int(mask.sum()):,} point(s)")
-            n += 1
-    log(f"{len(metas)} piece(s) -> {n}")
-    return n
+    out.save(out_dir)
+    log(f"{len(sc.pieces)} piece(s) -> {len(out.pieces)}")
+    return len(out.pieces)
 
 
 def main():

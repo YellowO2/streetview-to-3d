@@ -19,6 +19,7 @@ import json
 import math
 
 from paths import FETCHED_GRAPH
+import scene as scene_mod
 from postprocess.gps_fit.fit import real_en, use_origin
 
 # How straight two corridors must meet to be one road through a junction.
@@ -180,8 +181,8 @@ def roads(graph, straight_deg=STRAIGHT_ENOUGH_DEG):
     corridors these are a road INVENTORY: a piece may lie along several,
     and each gets its own frame.
     """
-    xy = _metres(graph["points"])
-    corridors = decompose(graph["adjacency"], xy)
+    xy = _metres(graph.points)
+    corridors = decompose(graph.adjacency, xy)
     # heading leaving each corridor at each of its two ends
     out = [(_heading(xy, c[1], c[0]), _heading(xy, c[-2], c[-1]))
            for c in corridors]
@@ -253,8 +254,8 @@ def _chain(parts):
 
 def summarise(graph):
     """(corridors, [{nodes, length_m}, ...]) for a fetched-graph dict."""
-    xy = _metres(graph["points"])
-    corridors = decompose(graph["adjacency"], xy)
+    xy = _metres(graph.points)
+    corridors = decompose(graph.adjacency, xy)
     stats = [{"nodes": len(c), "length_m": _length(xy, c)} for c in corridors]
     return corridors, stats
 
@@ -265,8 +266,8 @@ def main():
     ap.add_argument("--out", help="write corridors as JSON")
     args = ap.parse_args()
 
-    graph = json.load(open(args.graph))
-    use_origin(*graph["points"][0])
+    graph = scene_mod.Graph.read(args.graph)
+    use_origin(*graph.points[0])
     corridors, stats = summarise(graph)
     lengths = sorted(s["length_m"] for s in stats)
     covered = len({n for c in corridors for n in c})

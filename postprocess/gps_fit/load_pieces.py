@@ -6,13 +6,13 @@ those panoramas' GPS gives the rotation, scale and offset that put it in
 the world -- and doing that for every piece puts them all in the SAME
 world, which is what makes aligning them to each other possible at all.
 """
-import json
 import os
 
 import numpy as np
 
 from street_builder.reconstruction.join_segments import _read_ply_points
-from postprocess.gps_fit.fit import fit_nodes, load_origin, real_en
+import scene as scene_mod
+from postprocess.gps_fit.fit import fit_nodes, use_origin, real_en
 
 # Trust a piece's own fitted scale only if its GPS fit is this good.
 # Scale is the worst-determined part of a similarity fit, so a piece with
@@ -40,27 +40,22 @@ def load_pieces(directory):
     else; scaling only two axes of three leaves every piece squashed
     vertically, which quietly corrupts every slope and height in the
     scene."""
-    load_origin(directory)
-    metas = {}
-    for name in sorted(os.listdir(directory)):
-        if name.endswith("_meta.json"):
-            i = int(name.split("_")[1])
-            metas[i] = json.load(open(os.path.join(directory, name)))
+    sc = scene_mod.Scene.load(directory)
+    use_origin(*sc.origin)
 
     fits, singles = {}, []
-    for i, meta in metas.items():
-        keys = list(meta)
-        cams = np.array([real_en(meta[k]["lat"], meta[k]["lon"]) for k in keys])
-        if len(keys) == 1:
+    for i, piece in enumerate(sc.pieces):
+        cams = np.array([real_en(n.lat, n.lon) for n in piece.nodes])
+        if len(piece) == 1:
             singles.append(i)
             fits[i] = {"cams": cams, "n": 1, "resid": None,
-                       "da3": np.array(meta[keys[0]]["position"])[[0, 2]]}
+                       "da3": np.array(piece.nodes[0].position)[[0, 2]]}
             continue
-        nodes = [{"da3_xz": [meta[k]["position"][0], meta[k]["position"][2]],
-                  "lat": meta[k]["lat"], "lon": meta[k]["lon"]} for k in keys]
+        nodes = [{"da3_xz": [n.position[0], n.position[2]],
+                  "lat": n.lat, "lon": n.lon} for n in piece.nodes]
         R, scale, t, _, _, res = fit_nodes(nodes)
         fits[i] = {"R": R, "scale": scale, "t": t, "cams": cams,
-                   "n": len(keys), "resid": float(np.median(res)),
+                   "n": len(piece), "resid": float(np.median(res)),
                    "src_xz": np.array([n["da3_xz"] for n in nodes])}
 
     multi = [i for i in fits if fits[i]["n"] > 1]
@@ -81,7 +76,7 @@ def load_pieces(directory):
         src = f["da3"][None, :] if f["n"] == 1 else f["src_xz"]
         f["t"] = (f["cams"] - scale * (src @ f["R"].T)).mean(0)
 
-        pts, cols = _read_ply_points(os.path.join(directory, f"piece_{i}.ply"))
+        pts, cols = _read_ply_points(os.path.join(directory, sc.pieces[i].ply))
         xz = pts[:, [0, 2]] @ f["R"].T * scale + f["t"]
         clouds[i] = (xz, pts[:, 1] * scale, cols)
     return fits, clouds

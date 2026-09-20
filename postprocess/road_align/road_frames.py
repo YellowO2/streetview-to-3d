@@ -10,16 +10,14 @@ road rather than from the cameras. `corridors.roads` gives the inventory
 and each road gets its own frame, so a piece straddling a junction is not
 a special case -- it simply appears on two roads.
 
-Road polylines and camera positions are both in the shared GLOBAL_ORIGIN
-metre frame (`gps_fit.fit.real_en`), so they are directly comparable.
+Road polylines and camera positions are both in the scene's metre frame
+(`gps_fit.fit.real_en`), so they are directly comparable.
 """
-import json
 
 import numpy as np
 from scipy.interpolate import splprep, splev
 from scipy.spatial import cKDTree
 
-from paths import FETCHED_GRAPH
 from postprocess.corridors import _metres, roads
 
 # A camera this close to a road polyline is standing on that road. Google's
@@ -60,7 +58,7 @@ def smooth(polyline, step=STEP_M):
     return np.column_stack([x, y])
 
 
-def build(cams, graph=None, near_m=NEAR_M):
+def build(cams, graph, near_m=NEAR_M):
     """(curves, frames, on) for a set of pieces.
 
     curves  {road id: (N,2) smoothed polyline}
@@ -69,8 +67,7 @@ def build(cams, graph=None, near_m=NEAR_M):
             line comes from Google's graph, not from the other pieces, so a
             piece alone on a road can still be seated against it.
     """
-    graph = graph or json.load(open(FETCHED_GRAPH))
-    xy = np.array(_metres(graph["points"]))
+    xy = np.array(_metres(graph.points))
     curves = {}
     for rid, walk in enumerate(roads(graph)):
         c = smooth(xy[walk])

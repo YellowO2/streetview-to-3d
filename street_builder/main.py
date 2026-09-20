@@ -362,15 +362,33 @@ def _save_joined_pieces(pieces, output_dir) -> list[tuple[str, str]]:
     its own .ply + metadata JSON. Usually one piece (everything bridged
     into one connected result); more than one means bridging left some
     genuinely unconnected regions separate -- each still gets its own
-    valid, independently-placed output rather than being forced together."""
+    valid, independently-placed output rather than being forced together.
+
+    Also records each piece in the directory's scene, when there is one --
+    postprocess reads that. The CLI campaign path has no scene and uploads
+    these files to the Hub as they are, which is why the per-piece metadata
+    JSON is still written either way.
+    """
+    import scene as scene_mod
     os.makedirs(output_dir, exist_ok=True)
+    try:
+        sc = scene_mod.Scene.load(output_dir)
+    except FileNotFoundError:
+        sc = None
+
     results = []
     for i, (pts, cols, metadata) in enumerate(pieces):
         suffix = "" if len(pieces) == 1 else f"_{i}"
-        ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_joined{suffix}.ply"))
+        name = f"pathfind_joined{suffix}.ply"
+        ply = save_pointcloud(pts, cols, os.path.join(output_dir, name))
         save_reconstruction_metadata(metadata, output_dir, suffix=suffix)
+        if sc is not None:
+            sc.pieces.append(scene_mod.Piece(ply=name,
+                                             nodes=scene_mod.from_metadata(metadata)))
         results.append((f"path (joined piece {i}, {len(metadata)} nodes)" if len(pieces) > 1
                          else f"path (joined, {len(metadata)} nodes)", ply))
+    if sc is not None:
+        sc.save(output_dir)
     return results
 
 

@@ -32,7 +32,7 @@ DATA_DIR = os.path.join(PROJECT_ROOT, "data")         # committed inputs
 BUILD_DIR = os.path.join(PROJECT_ROOT, "build")       # generated pages
 
 # Where exported piece sets live: one directory per selection, holding
-# piece_*.ply, piece_*_meta.json and, once solved, piece_transforms.json.
+# a scene.json, its clouds, and once solved piece_transforms.json.
 # Overridable so the same code can read a local set or a mounted one.
 PIECES_DIR = os.environ.get("PIECES_DIR", os.path.join(PROJECT_ROOT, "pieces"))
 

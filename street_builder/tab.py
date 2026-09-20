@@ -18,7 +18,7 @@ import numpy as np
 from huggingface_hub import HfApi
 
 from visualise import viewers
-import area
+import scene as scene_mod
 from paths import SPLATS_DIR
 from postprocess import pipeline
 from street_builder import main as street_main
@@ -35,11 +35,15 @@ CLI_JOIN_DATASET_REPO = "potato-bug/ntu-reconstruction"
 
 
 def _run_dir(prep):
-    """A fresh output directory with the area centre recorded in it, so the
-    pieces it receives can be placed later."""
+    """A fresh output directory, opened as a scene so the pieces it receives
+    can be placed later. See scene.py for what a scene holds."""
     path = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    area.save(path, *prep["center"])
-    area.save_graph(path, prep["points"], prep["adjacency"])
+    scene_mod.Scene(
+        center=list(prep["center"]),
+        graph=scene_mod.Graph(points=[list(p) for p in prep["points"]],
+                              adjacency={str(k): list(v)
+                                         for k, v in prep["adjacency"].items()}),
+    ).save(path)
     return path
 
 
