@@ -5,6 +5,7 @@ wired against the same shared `state` that section's handlers update.
 """
 import html as html_lib
 import os
+import shutil
 import uuid
 
 import gradio as gr
@@ -161,6 +162,8 @@ def handle_postprocess(run_dir, progress=gr.Progress(track_tqdm=True)):
 
     Everything up to here reconstructs geometry; this is what decides
     where that geometry actually sits -- see postprocess.pipeline.
+
+    Returns the viewer plus the whole scene as one zip.
     """
     if not run_dir:
         raise gr.Error("Nothing reconstructed yet -- press \"Run + Join\" first.")
@@ -176,9 +179,13 @@ def handle_postprocess(run_dir, progress=gr.Progress(track_tqdm=True)):
     except Exception as e:
         raise gr.Error(f"Post-processing failed: {e}")
 
+    # The Space's own disk is wiped whenever it restarts, so the scene is
+    # handed back as a file rather than left behind as a link to it.
+    bundle = shutil.make_archive(run_dir.rstrip("/"), "zip", run_dir)
+
     report = "<pre>" + html_lib.escape("\n".join(lines)) + "</pre>"
-    return (viewers.build_pointcloud_viewer(viewers.file_url(ply))
-            + viewers.labeled_download_links([("aligned scene", ply)]) + report)
+    return (viewers.build_pointcloud_viewer(viewers.file_url(ply)) + report,
+            bundle)
 
 
 def build_main_tab():
@@ -215,6 +222,7 @@ def build_main_tab():
         # next time (a later session, or after tweaking join_segments.py):
         # just re-upload it below and press "Load segments".
         pathfind_segments_file = gr.File(label="Segments file (from Run, for Join later)", interactive=False)
+        scene_file = gr.File(label="The placed scene (scene.json + one .ply per node)", interactive=False)
         # Only useful with the hidden Join button, so hidden with it.
         with gr.Column(visible=False):
             pathfind_segments_upload = gr.File(label="...or load a previously downloaded segments file", file_types=[".pkl"], type="filepath")
@@ -268,7 +276,7 @@ def build_main_tab():
     pathfind_post_btn.click(
         fn=handle_postprocess,
         inputs=[pathfind_dir_state],
-        outputs=[reconstruct_view],
+        outputs=[reconstruct_view, scene_file],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
     )
