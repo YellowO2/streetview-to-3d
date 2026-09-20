@@ -3,6 +3,12 @@ spaces
 aiohttp
 numpy
 scipy
+
+# depth_anything_3 imports these but does not declare them (checked against
+# its pyproject: addict in model/da3.py and utils/registry.py, tqdm in
+# model/utils/gs_renderer.py -- both on the import path of its own api).
+addict
+tqdm
 opencv-python
 pillow
 huggingface_hub
