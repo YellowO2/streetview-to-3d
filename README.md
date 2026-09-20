@@ -45,19 +45,24 @@ Models (DA3) are downloaded from the Hugging Face Hub on first run and cached un
 
 ## Layout
 
-The pipeline splits by what a stage needs to run:
+One folder per stage of the pipeline:
 
 | | |
 |---|---|
-| `services/` | fetching panoramas, DA3, the GPU runner |
-| `street_builder/` | **GPU stage.** Panoramas in, chunks of `.ply` + metadata out |
-| `postprocess/gps_fit/` | **CPU stage 1.** Which nodes form a piece, and where that piece sits in metres |
-| `postprocess/road_align/` | **CPU stage 2.** Correcting the heading, position and height GPS leaves wrong |
-| `postprocess/` | what both produce: `piece_transforms.json`, and rendering from it |
-| `visualise/` | the graph page, the point-cloud viewer, the segment selector |
+| `ui/` | the map, the buttons, the point-cloud viewer |
+| `streets/` | which panoramas exist in an area, what links to what, on which dates |
+| `reconstruct/` | **the GPU stage.** Panoramas in, point clouds out |
+| `postprocess/` | **the CPU stage.** Fit to GPS, split, align, write one scene |
+| `services/` | fetching panoramas, DA3, the ZeroGPU runner — used by every stage |
+| `scene.py` | what travels between the stages; see its docstring |
+| `visualise/` | the graph page and the segment selector |
 | `tools/` | one-off drivers, experiments and conversions. Nothing imports these |
 | `data/` | committed inputs |
 | `images/` `splats/` `build/` `ntu/` | run outputs and fetched data, all ignored |
+
+The folders are the pipeline stages, in order. `services/` and `scene.py`
+are the two exceptions: infrastructure every stage calls, and the data
+every stage passes along.
 
 `splats/` is where each reconstruction run writes; it is created on import by
 `paths.py` and is empty until something runs.
@@ -96,7 +101,7 @@ google_graph.json                    every Google panorama in the area, and how 
 downsampled_and_fetched_graph.json   corridor resampled to dots + a pano census (metadata only)
   ↓  pick dates, pick a corridor
 graph.json                           the nodes actually reconstructed
-  ↓  street_builder (GPU) — uploads to HuggingFace, not local
+  ↓  reconstruct (GPU) — uploads to HuggingFace, not local
 piece_*.ply + piece_*_meta.json      DA3 geometry, and each camera's DA3 position beside its lat/lon
   ↓  postprocess.gps_fit             that pairing is what makes the fit possible
   ↓  postprocess.road_align          heading, position, then height and tilt
@@ -179,7 +184,7 @@ every step above is written to tolerate it.
 - DA3 model load: **8.93s**
 - Solo-score call: avg **1.36s**
 - Pairwise call: avg **1.99s**
-- Used to calibrate `SECONDS_PER_DOT_ESTIMATE = 6.0` in `street_builder/reconstruction/walk_graph.py`.
+- Used to calibrate `SECONDS_PER_DOT_ESTIMATE = 6.0` in `reconstruct/walk_graph.py`.
 
 ## Planned
 
@@ -193,7 +198,7 @@ raw panoramas.
   without re-running Prepare/Run.
 - A separate later pass: fetch those panos, clean them (remove cars/
   people), then re-run just the join/reconstruction step
-  (`street_builder/reconstruction/join_segments.py`) against the cleaned
+  (`reconstruct/join_segments.py`) against the cleaned
   images.
 
 ## Acknowledgments

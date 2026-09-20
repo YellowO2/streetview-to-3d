@@ -132,7 +132,7 @@ async def download_pano_by_id(pano_id, zoom: int = _DOWNLOAD_ZOOM):
 
 async def download_images_for_nodes(nodes: list[dict], zoom: int = _DOWNLOAD_ZOOM) -> list[str]:
     """Download/cache images for an ordered list of {id, ...} node dicts (the
-    shape both pano_to_meta's neighbor entries and street_builder's exported
+    shape both pano_to_meta's neighbor entries and reconstruct's exported
     chain nodes share). The one place both the single-pano tab's support-pano
     gathering and the street-builder reconstruction script should go through,
     instead of each keeping a separate download implementation."""

@@ -14,14 +14,14 @@ are the only markers that make sense to click next anyway.
 """
 import json
 
-from visualise.viewers import iframe as _iframe
+from ui.viewers import iframe as _iframe
 
 _SUGGESTED_COLOR = "#ff9800"
 _SELECTED_COLOR = "#00c853"
 _EDGE_COLOR = "#9aa0a6"
 _RADIUS_COLOR = "#2979ff"
 
-_MESSAGE_TYPE = "street_builder_node_click"
+_MESSAGE_TYPE = "map_node_click"
 
 
 def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom=17, view=None, radius_m=None):
@@ -135,7 +135,7 @@ NODES.forEach(function(n) {{
   }}
   marker.bindPopup(label);
   marker.on('click', function() {{
-    console.log('[street_builder] marker clicked, posting to parent:', n.key);
+    console.log('[map] marker clicked, posting to parent:', n.key);
     var c = m.getCenter();
     window.parent.postMessage({{
       type: {json.dumps(_MESSAGE_TYPE)},

@@ -1,5 +1,5 @@
 """Gradio wiring for the street-builder pathfind/reconstruction flow: given
-an already-picked graph of nodes (see street_builder/map_selection/tab.py's
+an already-picked graph of nodes (see ui/map_selection/tab.py's
 build_map_section), prepare candidates, run the corridor search, and join
 segments into a final point cloud.
 
@@ -17,12 +17,12 @@ import gradio as gr
 import numpy as np
 from huggingface_hub import HfApi
 
-from visualise import viewers
+from ui import viewers
 import scene as scene_mod
 from paths import SPLATS_DIR
 from postprocess import pipeline
-from street_builder import main as street_main
-from street_builder.map_selection.tab import build_map_section, nodes_by_key
+from reconstruct import build as street_main
+from ui.map_selection.tab import build_map_section, nodes_by_key
 
 # Where the scripted CLI flow pushes its running state and final results --
 # Hub-native storage (fast up/download,
@@ -329,7 +329,7 @@ def _download_pieces(prefix):
     deals with either (see _upload_pieces' own docstring for why the
     file's compressed/quantized on disk in the first place)."""
     from huggingface_hub import hf_hub_download
-    from street_builder.reconstruction.join_segments import output_to_piece
+    from reconstruct.join_segments import output_to_piece
 
     api = HfApi()
     try:
@@ -388,7 +388,7 @@ def _upload_pieces(prefix, pieces, id_sets, commit_message):
     output also goes through, unquantized/uncompressed, for a person
     who might open it directly in an external viewer)."""
     from huggingface_hub import CommitOperationAdd, CommitOperationDelete
-    from street_builder.reconstruction.join_segments import pieces_to_output
+    from reconstruct.join_segments import pieces_to_output
 
     results = pieces_to_output(pieces, id_sets=id_sets)
     run_id = uuid.uuid4().hex
@@ -683,7 +683,7 @@ def handle_cli_assemble(group_id, progress=gr.Progress(track_tqdm=True)):
     Safe to call on ANY group at any point in the tree (not just the
     final root) -- e.g. to sanity-check an intermediate merge looks
     right before continuing up the tree."""
-    from street_builder.reconstruction.join_segments import assemble_metadata_piece
+    from reconstruct.join_segments import assemble_metadata_piece
 
     pieces = _load_group_meta_pieces(group_id)
     if not pieces:
@@ -711,7 +711,7 @@ def handle_cli_run_chunk(payload_str, progress=gr.Progress(track_tqdm=True)):
     GPU call on purpose. An earlier version combined prepare+run+bridge
     into one handler and hit 'Expired ZeroGPU proxy token' on the very
     first chunk -- exactly the documented failure mode this whole app
-    otherwise avoids everywhere else (see street_builder/main.py's own
+    otherwise avoids everywhere else (see reconstruct/build.py's own
     module docstring): a second @spaces.GPU call inside the same request
     can fire after the first one's proxy token has already gone stale.
     Two separate client calls (two separate button clicks/gradio_client
@@ -860,7 +860,7 @@ def handle_cli_reset():
     return "<p>Checkpoint cleared.</p>"
 
 
-def build_tab():
+def build_main_tab():
     state, map_view, selection_view = build_map_section()
 
     with gr.Row(equal_height=True):

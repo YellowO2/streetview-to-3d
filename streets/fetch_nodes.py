@@ -3,7 +3,7 @@ import asyncio
 
 from services.geo import haversine_m
 from services.streetview_fetch import fetch_pano_by_id, format_date
-from street_builder.map_selection.candidates import MAX_NODES, apple_tile_panos, nearby_nodes, node_key
+from ui.map_selection.candidates import MAX_NODES, apple_tile_panos, nearby_nodes, node_key
 
 # Catchment radius for candidate lookup around each real selection-graph
 # node. Real Street View node spacing is commonly ~10-20m, so this is
@@ -56,7 +56,7 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
     ...]} -- the corridor's own real dot-to-dot structure, independent of
     which real panos end up at either dot. This is what the pathfind
     algorithm walks dot-by-dot over (see
-    street_builder/reconstruction/walk_graph.py).
+    reconstruct/walk_graph.py).
     """
     raw_points: list[tuple[float, float]] = []
     raw_index_by_latlon: dict[tuple[float, float], int] = {}

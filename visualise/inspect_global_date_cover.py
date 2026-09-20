@@ -9,8 +9,8 @@ from paths import FETCHED_GRAPH, NTU_DIR
 import json
 import os
 
-from street_builder.build_graph.date_ranking import rank_dates
-from street_builder.build_graph.global_dates import build_date_cover, connected_components
+from streets.date_ranking import rank_dates
+from streets.global_dates import build_date_cover, connected_components
 
 META_PATH = FETCHED_GRAPH
 OUT_PATH = os.path.join(NTU_DIR, "date_cover.json")

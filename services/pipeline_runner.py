@@ -1,10 +1,10 @@
 """GPU-wrapped pipeline runners: DA3-only point cloud generation, plus
-street_builder's corridor pathfinding/join tasks. Also owns the
+reconstruct's corridor pathfinding/join tasks. Also owns the
 ZeroGPU/@spaces.GPU decorator setup, since that setup exists purely to wrap
 these calls.
 
 get_da3() is the single DA3Model singleton for this whole app --
-street_builder's handlers call through here, rather than each loading a
+reconstruct's handlers call through here, rather than each loading a
 separate copy.
 
 There is exactly ONE @spaces.GPU-decorated function in this whole module
@@ -12,7 +12,7 @@ There is exactly ONE @spaces.GPU-decorated function in this whole module
 ModelInference.run_inference, everything else is plain Python calling into
 it), instead of one decorated function per task. Every public run_*_gpu
 function below is a thin, undecorated wrapper that calls _gpu_dispatch
-with its own task name -- callers (app.py, street_builder/main.py,
+with its own task name -- callers (app.py, reconstruct/build.py,
 tests/) don't need to change at all, since these functions keep their
 same names/signatures. The actual per-task work lives in the _run_*_impl
 functions, plain Python, called only from inside _gpu_dispatch where a
@@ -154,7 +154,7 @@ def _run_pointcloud_impl(target_depth_path, output_dir, support_paths=None, step
 
 
 def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20, protected_positions=None):
-    """See street_builder/main.py's module docstring for why the whole
+    """See reconstruct/build.py's module docstring for why the whole
     pathfind search runs inside one GPU call, not several."""
     return _gpu_dispatch("pathfind_reconstruction", date_graphs, points, adjacency, start_lat, start_lon,
                           step_degrees=step_degrees, protected_positions=protected_positions)
@@ -162,12 +162,12 @@ def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, s
 
 def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20, protected_positions=None):
     """This function's only job is to hand the actual algorithm
-    (street_builder/reconstruction/walk_graph.py) a way to test one edge,
+    (reconstruct/walk_graph.py) a way to test one edge,
     using the shared cached DA3 model (see get_da3) -- it knows nothing
     about corridors, dates, or coverage itself.
 
     date_graphs: already ranked/capped/isolated per date, dot_candidates
-    shape -- see street_builder/build_graph/build_graph.py's
+    shape -- see streets/build_graph.py's
     build_corridor_graphs. adjacency: the corridor's shared dot-to-dot
     structural graph, same source. protected_positions: passed straight
     through to run_pathfind_reconstruction -- see its own docstring.
@@ -212,8 +212,8 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
 
     import torch
     from services.da3_ops import bridge_test_edge as da3_bridge_test_edge, rate_pano as da3_rate_pano, test_edge as da3_test_edge
-    from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, bridge_pieces
-    from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
+    from reconstruct.join_segments import BRIDGE_MAX_DIST_M, bridge_pieces
+    from reconstruct.walk_graph import run_pathfind_reconstruction
 
     t0 = time.monotonic()
     hard_deadline = t0 + GPU_WINDOWED_DURATION_S - SAVE_BUFFER_S
@@ -270,7 +270,7 @@ def _refetch_bridge_pano(key, lat, lon):
     already does for its own Apple re-fetch."""
     from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
     from services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
-    from street_builder.map_selection.candidates import apple_tile_panos
+    from ui.map_selection.candidates import apple_tile_panos
 
     source, pano_id = key.split(":", 1)
     try:
@@ -334,7 +334,7 @@ def join_segments_gpu(segments, edge_max_dist_m=None, step_degrees=20,
 def _join_segments_impl(segments, path_by_key, edge_max_dist_m=None, step_degrees=20,
                          chunk_ids=None, known_adjacent_chunk_pairs=None):
     """The join step's bridging search (see
-    street_builder/reconstruction/join_segments.py) -- its own separate
+    reconstruct/join_segments.py) -- its own separate
     task from pathfind_reconstruction's, since bridging only needs each
     segment's own already-confirmed nodes (no candidate pool, no
     corridor/date data), not anything from the corridor search itself.
@@ -364,7 +364,7 @@ def _join_segments_impl(segments, path_by_key, edge_max_dist_m=None, step_degree
 
     import torch
     from services.da3_ops import bridge_test_edge as da3_bridge_test_edge
-    from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
+    from reconstruct.join_segments import BRIDGE_MAX_DIST_M, join_segments
 
     if edge_max_dist_m is None:
         edge_max_dist_m = BRIDGE_MAX_DIST_M
@@ -418,7 +418,7 @@ def _bridge_incremental_impl(existing_pieces, existing_ids, new_segments, new_ch
     matching existing_pieces' current ids 1:1, since those may already be
     merged unions) that the corridor's real graph says new_chunk_id
     touches -- from the caller's own known_adjacent_chunk_pairs (see
-    street_builder.map_selection.candidates.split_into_chunks).
+    ui.map_selection.candidates.split_into_chunks).
 
     Returns (pieces, id_sets) -- same shape as existing_pieces/
     existing_ids, ready to feed straight back into the next call. Once no
@@ -434,7 +434,7 @@ def _bridge_incremental_impl(existing_pieces, existing_ids, new_segments, new_ch
 
     import torch
     from services.da3_ops import bridge_test_edge as da3_bridge_test_edge
-    from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, bridge_pieces
+    from reconstruct.join_segments import BRIDGE_MAX_DIST_M, bridge_pieces
 
     if edge_max_dist_m is None:
         edge_max_dist_m = BRIDGE_MAX_DIST_M
@@ -490,7 +490,7 @@ def _bridge_metadata_impl(meta_pieces, chunk_ids, known_adjacent_chunk_pairs, pa
     _bridge_incremental_impl (same reasoning: this runs at large-scale,
     many-group-in-a-tree scope, where a blind all-pairs scan risks
     wrongly bridging two groups that are merely geographically close but
-    not actually meant to connect). Used by street_builder/tab.py's
+    not actually meant to connect). Used by ui/tab.py's
     handle_cli_merge_group -- one binary-tree merge step, combining two
     groups' worth of meta pieces (each group itself possibly still
     several un-bridged fragments) into one new set of meta pieces, never
@@ -504,7 +504,7 @@ def _bridge_metadata_impl(meta_pieces, chunk_ids, known_adjacent_chunk_pairs, pa
 
     import torch
     from services.da3_ops import bridge_test_edge as da3_bridge_test_edge
-    from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, bridge_metadata
+    from reconstruct.join_segments import BRIDGE_MAX_DIST_M, bridge_metadata
 
     if edge_max_dist_m is None:
         edge_max_dist_m = BRIDGE_MAX_DIST_M
@@ -564,8 +564,8 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
 
     import torch
     from services.da3_ops import bridge_test_edge as da3_bridge_test_edge, rate_pano as da3_rate_pano, test_edge as da3_test_edge
-    from street_builder.reconstruction.join_segments import BRIDGE_MAX_DIST_M, join_segments
-    from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
+    from reconstruct.join_segments import BRIDGE_MAX_DIST_M, join_segments
+    from reconstruct.walk_graph import run_pathfind_reconstruction
 
     if edge_max_dist_m is None:
         edge_max_dist_m = BRIDGE_MAX_DIST_M

@@ -1,5 +1,5 @@
 """CLI driver for binary-tree, metadata-only chunk merging against a
-deployed street-view-to-3d Space -- see street_builder/tab.py's
+deployed street-view-to-3d Space -- see ui/tab.py's
 handle_cli_merge_group/handle_cli_assemble docstrings for the API this
 drives.
 
@@ -24,7 +24,7 @@ import time
 
 from gradio_client import Client
 
-from street_builder.build_graph.global_dates import split_cover_into_chunks
+from streets.global_dates import split_cover_into_chunks
 
 NTU_DIR = NTU_DIR
 

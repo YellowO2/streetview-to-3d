@@ -142,7 +142,7 @@ def run_pathfind_reconstruction(
     """Two-phase pathfind.
 
     - Phase 1 (map_date): per date graph, walk dot-by-dot over the shared
-      corridor adjacency (see street_builder/build_graph/fetch_nodes.py --
+      corridor adjacency (see streets/fetch_nodes.py --
       dot i's structural neighbors, independent of which real panos end
       up at either dot). The FIRST time a dot is ever looked at (as a walk
       target OR a seed), it's rated (see rate_pano below) and keeps its
@@ -223,7 +223,7 @@ def run_pathfind_reconstruction(
 
     Segments are NOT stitched together -- each is DA3's own arbitrary
     frame; joining/bridging is entirely the caller's job (see
-    street_builder/reconstruction/join_segments.py's bridge_pieces,
+    reconstruct/join_segments.py's bridge_pieces,
     which reconciles pieces using real DA3 tests, and join_segments,
     which GPS-fits whatever's left over -- both run in their own later
     GPU call, not this one, since bridging needs no data this function

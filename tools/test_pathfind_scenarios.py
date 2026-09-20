@@ -1,5 +1,5 @@
 """Reusable end-to-end test harness for the pathfind algorithm
-(street_builder/reconstruction/walk_graph.py): a list of mock scenarios
+(reconstruct/walk_graph.py): a list of mock scenarios
 (dots/dot_candidates/adjacency/fail-pairs), each run through the REAL
 algorithm with a fake test_edge callback (a deterministic pass/fail table
 -- no GPU, no DA3, since the algorithm has zero GPU dependency after the
@@ -15,7 +15,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
+from reconstruct.walk_graph import run_pathfind_reconstruction
 
 M_PER_DEG_LAT = 111320.0
 

@@ -21,7 +21,7 @@ import time
 import numpy as np
 
 from services.geo import haversine_m
-from street_builder.reconstruction.walk_graph import rigid_align
+from reconstruct.walk_graph import rigid_align
 
 # Relaxed keep-rate vs. the main walk's 0.6 -- bridging only needs SOME
 # real signal. Decides when a match is confident enough to stop

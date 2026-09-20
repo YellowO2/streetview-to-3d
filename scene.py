@@ -144,7 +144,7 @@ class Scene:
 
 
 def from_metadata(metadata):
-    """([Node], [Edge]) from street_builder's per-panorama metadata.
+    """([Node], [Edge]) from the reconstruction's per-panorama metadata.
 
     Each node's metadata lists its own links, so an edge appears twice --
     once from each end. They are collapsed to one Edge here.

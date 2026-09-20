@@ -21,7 +21,7 @@ import numpy as np
 from huggingface_hub import HfApi, hf_hub_download
 
 from services.geo import latlon_to_local_m
-from street_builder.tab import CLI_JOIN_DATASET_REPO, CLI_RAW_PREFIX, _load_group_meta_pieces
+from ui.tab import CLI_JOIN_DATASET_REPO, CLI_RAW_PREFIX, _load_group_meta_pieces
 from postprocess.gps_fit.fit import fit_similarity_2d
 
 

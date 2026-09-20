@@ -1,14 +1,14 @@
 """One-time real-data experiment (kept for reference, NOT wired into the
 live app): does a candidate's solo DA3 self-consistency score predict
 pairwise DA3 success? And what does one real DA3 call actually cost,
-wall-clock? See street_builder/reconstruction/walk_graph.py's
+wall-clock? See reconstruct/walk_graph.py's
 SECONDS_PER_DOT_ESTIMATE -- this is where its real-data calibration
 comes from.
 
 Not a pytest module -- GPU calls only run via a live Gradio queue on HF
 Spaces (ZeroGPU), so re-running this for real requires temporarily
 wiring run_debug_solo_score_experiment() into a button in
-street_builder/tab.py again (same pattern debug_solo_score_experiment_gpu
+ui/tab.py again (same pattern debug_solo_score_experiment_gpu
 below already follows), calling it, then removing the wiring again.
 
 Results from the original run (2026-08-19, 3 real adjacent dot pairs on
@@ -30,8 +30,8 @@ import os
 
 from services.pipeline_runner import GPU_DISPATCH, get_da3_config
 from services.streetview_fetch import run_async
-from street_builder.build_graph.build_graph import build_corridor_graphs
-from street_builder.main import DEFAULT_STEP_DEGREES, _download_all
+from streets.build_graph import build_corridor_graphs
+from reconstruct.build import DEFAULT_STEP_DEGREES, _download_all
 
 # One real corridor (13 clicked nodes) known to have a dense Apple
 # LookAround date (2026-06-16) with genuine multi-candidate dots, and

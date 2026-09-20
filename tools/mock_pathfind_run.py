@@ -1,12 +1,12 @@
 """One-shot real-data pathfind test: fetch real metadata for a list of
 clicked pano IDs, build the real isolated per-date graphs (same functions
 prepare_pathfind uses), then run the real pathfind algorithm
-(street_builder/reconstruction/walk_graph.py) with a fake test_edge
+(reconstruct/walk_graph.py) with a fake test_edge
 callback (no GPU needed -- the algorithm has zero GPU dependency) and
 print a clean summary.
 
 Usage: edit NODE_IDS below (first = start, rest = goals), then:
-    ./.venv/bin/python3 scripts/mock_pathfind_run.py
+    ./.venv/bin/python3 tools/mock_pathfind_run.py
 
 FAIL_IDS: pano-id pairs to force-fail (simulating a known real DA3
 result). Leave empty for "everything succeeds" (best case, tests search
@@ -22,8 +22,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from street_builder.build_graph.build_graph import build_corridor_graphs
-from street_builder.reconstruction.walk_graph import run_pathfind_reconstruction
+from streets.build_graph import build_corridor_graphs
+from reconstruct.walk_graph import run_pathfind_reconstruction
 
 # ---- edit these for a new run -----------------------------------------
 NODE_IDS = [

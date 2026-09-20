@@ -1,6 +1,6 @@
 """Quick visual sanity check for the whole-NTU date cover -- one dot per
 corridor point, colored by which real capture date build_date_cover
-assigned it (see street_builder/build_graph/global_dates.py). Dots with
+assigned it (see streets/global_dates.py). Dots with
 no real candidate on any date (never assigned) are shown in light gray.
 
 Usage:

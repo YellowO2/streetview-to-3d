@@ -1,4 +1,4 @@
-"""Shared geo helpers -- used by app.py's single-pano flow and street_builder/."""
+"""Shared geo helpers -- used by app.py's single-pano flow and reconstruct/."""
 import math
 import re
 

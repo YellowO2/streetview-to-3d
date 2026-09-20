@@ -1,6 +1,6 @@
-"""HTML/iframe builders for street_builder's point-cloud viewer and result
+"""HTML/iframe builders for the point-cloud viewer and result
 download links. `iframe()` is the canonical sandboxed iframe wrapper --
-street_builder/map_ui.py imports it from here too, rather than keeping its
+reconstruct/map_ui.py imports it from here too, rather than keeping its
 own copy.
 """
 import html as html_lib

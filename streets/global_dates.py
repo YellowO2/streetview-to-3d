@@ -1,6 +1,6 @@
 """Pick which real capture date covers which dot, for the WHOLE corridor
 at once, from metadata alone (no GPU, no images downloaded) -- see
-street_builder/ARCHITECTURE.md section 2.2 for where this fits.
+reconstruct/ARCHITECTURE.md section 2.2 for where this fits.
 
 Why this exists: the old per-chunk design let each chunk independently
 rank its own top-N dates by LOCAL coverage. Two adjacent chunks can

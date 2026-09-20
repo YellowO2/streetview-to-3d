@@ -1,8 +1,8 @@
 """Turn fetch_nodes' per-dot candidate buckets into isolated, per-date
 graphs (no GPU, no validation)."""
 from services.geo import haversine_m
-from street_builder.build_graph.date_ranking import DATE_TOP_N, date_connects, rank_dates
-from street_builder.build_graph.fetch_nodes import fetch_corridor_nodes
+from streets.date_ranking import DATE_TOP_N, date_connects, rank_dates
+from streets.fetch_nodes import fetch_corridor_nodes
 
 # Per dot, per date, how many of that date's own closest panos to keep.
 # This is the actual fix for a dense capture date (Apple's ~1.2m frame
@@ -37,7 +37,7 @@ def build_corridor_graphs(corridor_edges, start_lat, start_lon, goals,
     any date.
 
     A dot IS a real selection-graph node (see fetch_nodes.corridor_points)
-    -- the pathfind algorithm (street_builder/reconstruction/walk_graph.py)
+    -- the pathfind algorithm (reconstruct/walk_graph.py)
     walks the shared dot-to-dot adjacency directly (dot i to its real
     structural neighbors, branching wherever the corridor itself
     branches), no distance-based fallback needed since each dot is

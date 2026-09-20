@@ -1,4 +1,4 @@
-"""Extracts street_builder's own point-cloud viewer (viewers.py's
+"""Extracts reconstruct's own point-cloud viewer (viewers.py's
 build_pointcloud_viewer) as a plain, standalone .html file -- no Gradio,
 no app.py, no server. It's already a complete self-contained HTML
 document under the hood; Gradio just wraps it in an <iframe> for
@@ -12,7 +12,7 @@ Usage:
 import argparse
 import os
 
-from visualise import viewers
+from ui import viewers
 
 
 def main():

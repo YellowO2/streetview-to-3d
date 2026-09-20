@@ -18,9 +18,9 @@ import os
 
 import numpy as np
 
-from street_builder.build_graph.global_dates import split_cover_into_chunks
-from street_builder.reconstruction.join_segments import assemble_metadata_piece
-from street_builder.tab import _leaf_ply_local_path, _load_group_meta_pieces
+from streets.global_dates import split_cover_into_chunks
+from reconstruct.join_segments import assemble_metadata_piece
+from ui.tab import _leaf_ply_local_path, _load_group_meta_pieces
 
 NTU_DIR = NTU_DIR
 

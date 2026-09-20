@@ -10,7 +10,7 @@ import os
 
 import numpy as np
 
-from street_builder.reconstruction.join_segments import _read_ply_points
+from reconstruct.join_segments import _read_ply_points
 import scene as scene_mod
 from postprocess.gps_fit.fit import fit_nodes, use_origin, real_en
 

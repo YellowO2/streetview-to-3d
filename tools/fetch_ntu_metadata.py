@@ -27,8 +27,8 @@ import time
 
 from services.geo import haversine_m
 from services.streetview_fetch import fetch_pano_by_id, format_date
-from street_builder.build_graph.fetch_nodes import POINT_MAX_DIST_M, corridor_points
-from street_builder.map_selection.candidates import MAX_NODES, apple_tile_panos, nearby_nodes, node_key
+from streets.fetch_nodes import POINT_MAX_DIST_M, corridor_points
+from ui.map_selection.candidates import MAX_NODES, apple_tile_panos, nearby_nodes, node_key
 
 GRAPH_PATH = GOOGLE_GRAPH
 CHECKPOINT_PATH = os.path.join(NTU_DIR, "downsampled_and_fetched_graph.partial.json")

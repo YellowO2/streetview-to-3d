@@ -21,7 +21,7 @@ import os
 
 import numpy as np
 
-from street_builder.build_graph.global_dates import split_cover_into_chunks
+from streets.global_dates import split_cover_into_chunks
 from postprocess.gps_fit.fit import fit_similarity_2d
 
 NTU_DIR = NTU_DIR

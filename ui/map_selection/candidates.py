@@ -1,5 +1,5 @@
 """Low-level fetch of real Street View / Look Around panoramas near a
-location. Used by the map picker and by street_builder/build_graph/.
+location. Used by the map picker and by streets/.
 """
 from streetlevel import streetview
 from streetlevel.geo import wgs84_to_tile_coord
@@ -190,7 +190,7 @@ def split_into_chunks(nodes, edges, chunk_size=DEFAULT_CHUNK_SIZE):
     """Split a node/edge graph (e.g. expand_area's output) into connected
     chunks of roughly chunk_size nodes each -- so a large-scale
     selection (a whole campus) can be processed as many independent,
-    GPU-call-sized pieces (see street_builder.main.prepare_pathfind)
+    GPU-call-sized pieces (see reconstruct.build.prepare_pathfind)
     instead of one huge corridor that would blow past a single GPU
     call's own constraints.
 
@@ -212,7 +212,7 @@ def split_into_chunks(nodes, edges, chunk_size=DEFAULT_CHUNK_SIZE):
     str, "nodes": [...], "corridor_edges": [...], "start": (lat, lon),
     "goals": [(lat, lon), ...]}, ...] -- each chunk's own start/goals/
     corridor_edges are exactly what
-    street_builder.main.prepare_pathfind(start, goals, corridor_edges)
+    reconstruct.build.prepare_pathfind(start, goals, corridor_edges)
     needs. known_adjacent_chunk_pairs: [(chunk_id_a, chunk_id_b), ...]
     -- every pair of chunks connected by at least one real edge in the
     original graph (see join_segments.bridge_pieces, which this feeds

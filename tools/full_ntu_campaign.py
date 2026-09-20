@@ -2,7 +2,7 @@
 still-ungenerated chunk from the whole-NTU date cover (see
 tools/fetch_ntu_metadata.py / tools/inspect_global_date_cover.py), then
 tree-merges every successfully-run chunk (metadata-only, see
-street_builder/tab.py's handle_cli_merge_group/handle_cli_assemble) down
+ui/tab.py's handle_cli_merge_group/handle_cli_assemble) down
 to as few connected root groups as the real declared-adjacency graph
 allows, and assembles the largest one into the viewable checkpoint
 (cli_join/current).
@@ -27,7 +27,7 @@ import time
 from gradio_client import Client
 from huggingface_hub import HfApi
 
-from street_builder.build_graph.global_dates import split_cover_into_chunks
+from streets.global_dates import split_cover_into_chunks
 
 NTU_DIR = NTU_DIR
 DATASET_REPO = "potato-bug/ntu-reconstruction"

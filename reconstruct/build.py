@@ -3,15 +3,15 @@ together for the UI (tab.py calls into this):
 
 1. build_graph.build_corridor_graphs: gather candidate panos along the
    real click-graph and split into up to DATE_TOP_N isolated, capped
-   per-date graphs (no GPU) -- see street_builder/build_graph/.
+   per-date graphs (no GPU) -- see streets/.
 2. Download every node referenced by any of those graphs (network, cached).
 3. run_pathfind_reconstruction_gpu: ONE GPU call -- the corridor-search
-   algorithm (street_builder/reconstruction/walk_graph.py) runs entirely
+   algorithm (reconstruct/walk_graph.py) runs entirely
    inside it, producing possibly-several disconnected segments.
 4. join_segments_gpu: a SEPARATE GPU call -- bridges segments together
    with real DA3 tests where possible, then GPS-fits + merges whatever's
    still separate into one final point cloud (see
-   street_builder/reconstruction/join_segments.py). Split from step 3
+   reconstruct/join_segments.py). Split from step 3
    deliberately: bridging only needs each segment's own already-
    confirmed nodes, nothing from the corridor search itself, so keeping
    it separate lets Join (and bridging behavior) be re-run/re-tuned
@@ -35,12 +35,12 @@ import time
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
-from street_builder.build_graph.build_graph import TOP_PANOS_PER_DOT, _cap_bucket_for_date, build_corridor_graphs
-from street_builder.map_selection.candidates import apple_tile_panos
+from streets.build_graph import TOP_PANOS_PER_DOT, _cap_bucket_for_date, build_corridor_graphs
+from ui.map_selection.candidates import apple_tile_panos
 
 # Where prepare_pathfind_from_cover_chunk downloads the whole-NTU metadata +
 # date cover from (see tests/fetch_ntu_metadata.py,
-# tests/inspect_global_date_cover.py, street_builder/build_graph/
+# tests/inspect_global_date_cover.py, streets/
 # global_dates.py -- these were produced ONCE, offline, not something a
 # real chunk run recomputes). Same dataset repo the CLI checkpoint flow
 # already uses (see tab.py's CLI_JOIN_DATASET_REPO).
@@ -293,7 +293,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
 
     Returns (results, segments, bundle_path): results is [(label,
     ply_path), ...] -- one per segment (see
-    street_builder/reconstruction/walk_graph.py for what a "segment" is),
+    reconstruct/walk_graph.py for what a "segment" is),
     plus one "joined" entry per still-separate piece (see
     join_segments.join_segments -- multiple pieces means bridging left
     some genuinely unconnected, not an error) when there's more than one

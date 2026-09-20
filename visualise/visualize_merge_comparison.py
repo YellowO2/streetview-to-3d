@@ -15,7 +15,7 @@ import os
 
 import matplotlib.pyplot as plt
 
-import street_builder.build_graph.fetch_nodes as fetch_nodes
+import streets.fetch_nodes as fetch_nodes
 
 NTU_DIR = NTU_DIR
 THRESHOLDS = [0.0, 5.0, 8.0]

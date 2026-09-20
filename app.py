@@ -22,11 +22,11 @@ import pillow_heif
 pillow_heif.register_heif_opener()
 
 from paths import IMAGES_DIR, SPLATS_DIR
-from street_builder.tab import build_tab as build_street_builder_tab
-from street_builder.map_selection.tab import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
+from ui.tab import build_main_tab
+from ui.map_selection.tab import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
 
 with gr.Blocks(title="Street Builder") as demo:
-    build_street_builder_tab()
+    build_main_tab()
 
 
 if __name__ == "__main__":

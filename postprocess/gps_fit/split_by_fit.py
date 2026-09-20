@@ -25,7 +25,7 @@ import scene as scene_mod
 from postprocess.gps_fit.discover_pieces import FIT_THRESHOLD_M, resolve, residuals_for
 from postprocess.gps_fit.fit import real_en, use_origin
 from postprocess.ply_io import write_ply
-from street_builder.reconstruction.join_segments import _read_ply_points
+from reconstruct.join_segments import _read_ply_points
 
 # Street View dots sit ~10 m apart, so cameras further apart than this are
 # not neighbours and a cut between them is free.

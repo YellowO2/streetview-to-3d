@@ -111,7 +111,7 @@ def _download(rel):
 def _dequantize(path):
     """Inverse of the upload's quantisation, in place; no-op if not quantised.
 
-    Kept here rather than imported from street_builder.tab, which pulls in
+    Kept here rather than imported from ui.tab, which pulls in
     Gradio and the whole reconstruction UI just to reach one function.
     """
     with open(path, "rb") as f:
@@ -206,7 +206,7 @@ def fetch(chunk_ids, out_dir, api=None, groups=None):
     per-node metadata JSON per chunk) into a scene postprocess can read.
     """
     from postprocess.ply_io import write_ply
-    from street_builder.reconstruction.join_segments import _read_ply_points
+    from reconstruct.join_segments import _read_ply_points
 
     api = api or _api()
     files = chunk_files(api)

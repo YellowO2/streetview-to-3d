@@ -2,7 +2,7 @@
 worth building a real graph for -- coverage ranking + structural
 reachability, no GPU, no DA3. This is a "build the candidate pool"
 concern, not "solve the graph" (see
-street_builder/reconstruction/walk_graph.py for the actual algorithm).
+reconstruct/walk_graph.py for the actual algorithm).
 """
 from services.geo import haversine_m
 

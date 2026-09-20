@@ -1,6 +1,6 @@
 """Gradio wiring for the map-picking section: load an area, optionally
 auto-expand it, then click markers to extend a graph of real Google
-Street View nodes. Exposes build_map_section() for street_builder/tab.py
+Street View nodes. Exposes build_map_section() for ui/tab.py
 to mount, plus nodes_by_key() (shared state-shape helper) for its pathfind
 handlers to use.
 
@@ -21,10 +21,10 @@ import gradio as gr
 
 from services.geo import extract_lat_lon
 from services.streetview_fetch import fetch_pano_by_id, run_async
-from street_builder.map_selection import candidates as candidates_mod
-from street_builder.map_selection import map_ui
+from ui.map_selection import candidates as candidates_mod
+from ui.map_selection import map_ui
 
-BRIDGE_ELEM_ID = "street_builder_bridge"
+BRIDGE_ELEM_ID = "map_bridge"
 
 # CSS-hidden rather than Gradio's own visible=False: some frontends don't
 # render conditionally-hidden components into the DOM at all, which would
@@ -34,19 +34,19 @@ BRIDGE_CSS = f"#{BRIDGE_ELEM_ID} {{ position: fixed !important; width: 1px !impo
 
 BRIDGE_HEAD_SCRIPT = f"""
 <script>
-console.log('[street_builder] bridge listener registered');
+console.log('[map] bridge listener registered');
 window.addEventListener('message', function(ev) {{
   if (!ev.data || ev.data.type !== {json.dumps(map_ui._MESSAGE_TYPE)}) return;
-  console.log('[street_builder] message received from map iframe:', ev.data);
+  console.log('[map] message received from map iframe:', ev.data);
   var el = document.querySelector('#{BRIDGE_ELEM_ID} textarea, #{BRIDGE_ELEM_ID} input');
   if (!el) {{
-    console.error('[street_builder] bridge element #{BRIDGE_ELEM_ID} not found in DOM');
+    console.error('[map] bridge element #{BRIDGE_ELEM_ID} not found in DOM');
     return;
   }}
   el.value = JSON.stringify(ev.data);
   el.dispatchEvent(new Event('input', {{bubbles: true}}));
   el.dispatchEvent(new Event('change', {{bubbles: true}}));
-  console.log('[street_builder] dispatched input+change on bridge element, value:', el.value);
+  console.log('[map] dispatched input+change on bridge element, value:', el.value);
 }});
 </script>
 """
@@ -223,7 +223,7 @@ def handle_bridge_message(payload_str, state):
     # Printed server-side (visible in the terminal running `python app.py`,
     # not the browser console) -- confirms whether Gradio's .change() ever
     # actually fires, independent of anything happening in the browser.
-    print(f"[street_builder] handle_bridge_message called, payload={payload_str!r}")
+    print(f"[map] handle_bridge_message called, payload={payload_str!r}")
 
     if not payload_str or state.get("lat") is None:
         return _map_html(state), _summary_markdown(state), state, ""
@@ -295,7 +295,7 @@ def handle_clear(state):
 
 def build_map_section():
     """Builds the load/expand/click-picker UI and wires its own handlers.
-    Returns (state, map_view, selection_view) -- street_builder/tab.py's
+    Returns (state, map_view, selection_view) -- ui/tab.py's
     build_tab() reads `state` as input for its own (pathfind) handlers,
     and mounts its own controls below map_view/selection_view."""
     state = gr.State(_empty_state())
@@ -324,7 +324,7 @@ def build_map_section():
     bridge = gr.Textbox(elem_id=BRIDGE_ELEM_ID, show_label=False, container=False)
 
     with gr.Row(equal_height=True):
-        selection_view = gr.Markdown(_summary_markdown(_empty_state()), elem_id="street_builder_selection")
+        selection_view = gr.Markdown(_summary_markdown(_empty_state()), elem_id="map_selection")
         with gr.Column(scale=0, min_width=140):
             clear_btn = gr.Button("Clear selection")
 
