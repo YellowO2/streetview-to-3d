@@ -383,8 +383,8 @@ def _save_joined_pieces(pieces, output_dir) -> list[tuple[str, str]]:
         ply = save_pointcloud(pts, cols, os.path.join(output_dir, name))
         save_reconstruction_metadata(metadata, output_dir, suffix=suffix)
         if sc is not None:
-            sc.pieces.append(scene_mod.Piece(ply=name,
-                                             nodes=scene_mod.from_metadata(metadata)))
+            nodes, edges = scene_mod.from_metadata(metadata)
+            sc.pieces.append(scene_mod.Piece(ply=name, nodes=nodes, edges=edges))
         results.append((f"path (joined piece {i}, {len(metadata)} nodes)" if len(pieces) > 1
                          else f"path (joined, {len(metadata)} nodes)", ply))
     if sc is not None:

@@ -12,6 +12,8 @@ FAIL_IDS: pano-id pairs to force-fail (simulating a known real DA3
 result). Leave empty for "everything succeeds" (best case, tests search
 logic only). Set RANDOM_FAIL_RATE instead for an unbiased randomized run.
 """
+KEPT_VIEWS, TOTAL_VIEWS = 9, 12   # a plausible pass, so edges carry a score
+
 import asyncio
 import os
 import sys
@@ -81,7 +83,10 @@ def make_fake_test_edge(test_log, tested_pairs, rng=None):
         if not tested_pairs[pair]:
             return None
         pose = (np.zeros(3), np.eye(3))
-        return pose, pose, np.zeros((2, 3)), np.zeros((2, 3))
+        pts = cols = np.zeros((2, 3))
+        views = {id_a: (KEPT_VIEWS, TOTAL_VIEWS), id_b: (KEPT_VIEWS, TOTAL_VIEWS)}
+        return (pose, pose, pts, cols,
+                {id_a: pts, id_b: pts}, {id_a: cols, id_b: cols}, views)
     return fake_test_edge
 
 
@@ -139,7 +144,7 @@ def main():
     print(f"{len(test_log)} test call(s), {len(segments)} segment(s)")
     for pts, cols, path_edges, date, reached_all, node_positions, frame_poses in segments:
         print(f"  date={date}: {len(path_edges)} hop(s), {'FULL' if reached_all else 'partial'} coverage")
-        for a, b in path_edges:
+        for a, b, *_ in path_edges:
             print(f"    {a} -> {b}")
 
 

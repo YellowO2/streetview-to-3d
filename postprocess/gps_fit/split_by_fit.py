@@ -93,7 +93,9 @@ def split(directory, out_dir, threshold=FIT_THRESHOLD_M, log=print):
             mask = np.isin(nearest, keep)
             name = f"piece_{len(out.pieces)}.ply"
             write_ply(os.path.join(out_dir, name), pts[mask], cols[mask])
-            out.pieces.append(scene_mod.Piece(ply=name, nodes=nodes))
+            # an edge leaving the part is exactly the link being cut
+            inside = [e for e in piece.edges if e.a in part and e.b in part]
+            out.pieces.append(scene_mod.Piece(ply=name, nodes=nodes, edges=inside))
             after = _residual(nodes)
             log(f"   {name}: {len(nodes):>3} node(s), residual "
                 f"{'n/a' if after is None else f'{after:.2f} m'}, "

@@ -381,6 +381,8 @@ def run_pathfind_reconstruction(
             to_pts = per_pano_pts.get(to_id, np.zeros((0, 3)))
             to_cols = per_pano_cols.get(to_id, np.zeros((0, 3)))
             to_kept, to_total = per_pano_views.get(to_id, (0, 0))
+            from_kept, from_total = per_pano_views.get(os.path.basename(from_path), (0, 0))
+            edge = (from_key, to_key, [from_kept, from_total], [to_kept, to_total])
 
             if from_dot not in confirmed:
                 # Bootstrap: from_dot has no piece yet at all -- only
@@ -389,8 +391,6 @@ def run_pathfind_reconstruction(
                 # pairwise result founds the piece directly for BOTH
                 # sides, no rigid_align needed yet (both poses already
                 # share this call's own frame).
-                from_id = os.path.basename(from_path)
-                from_kept, from_total = per_pano_views.get(from_id, (0, 0))
                 pid = next_piece_id[0]
                 next_piece_id[0] += 1
                 confirmed[from_dot] = {"key": from_key, "path": from_path, "lat": from_lat, "lon": from_lon,
@@ -400,7 +400,7 @@ def run_pathfind_reconstruction(
                 confirmed[to_dot] = {"key": to_key, "path": to_path, "lat": to_lat, "lon": to_lon,
                                       "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_b, "piece_id": pid,
                                       "n_views_kept": to_kept, "n_views_total": to_total}
-                piece_data[pid]["path_edges"].append((from_key, to_key))
+                piece_data[pid]["path_edges"].append(edge)
                 print(f"[{date}] {from_key} -> {to_key}: OK ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
                 return True
 
@@ -422,7 +422,7 @@ def run_pathfind_reconstruction(
             pd = piece_data[pid]
             pd["pts"] = np.concatenate([pd["pts"], to_pts @ seg_R.T + seg_t], axis=0)
             pd["cols"] = np.concatenate([pd["cols"], to_cols], axis=0)
-            pd["path_edges"].append((from_key, to_key))
+            pd["path_edges"].append(edge)
             confirmed[to_dot] = {"key": to_key, "path": to_path, "lat": to_lat, "lon": to_lon,
                                   "seg_R": seg_R, "seg_t": seg_t, "pose": pose_b, "piece_id": pid,
                                   "n_views_kept": to_kept, "n_views_total": to_total}

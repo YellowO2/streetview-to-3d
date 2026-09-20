@@ -231,8 +231,8 @@ def fetch(chunk_ids, out_dir, api=None, groups=None):
         if groups is None:                       # whole chunk, unsplit
             name = f"piece_{n}.ply"
             os.replace(raw, os.path.join(out_dir, name))
-            sc.pieces.append(scene_mod.Piece(ply=name,
-                                             nodes=scene_mod.from_metadata(meta)))
+            nodes, edges = scene_mod.from_metadata(meta)
+            sc.pieces.append(scene_mod.Piece(ply=name, nodes=nodes, edges=edges))
             written[n] = cid
             total += os.path.getsize(os.path.join(out_dir, name))
             print(f"  piece_{n} <- {cid}  ({len(meta)} node(s))")
@@ -245,8 +245,8 @@ def fetch(chunk_ids, out_dir, api=None, groups=None):
             name = f"piece_{n}.ply"
             out = os.path.join(out_dir, name)
             write_ply(out, pts[mask], cols[mask])
-            sc.pieces.append(scene_mod.Piece(ply=name,
-                                             nodes=scene_mod.from_metadata(sub)))
+            nodes, edges = scene_mod.from_metadata(sub)
+            sc.pieces.append(scene_mod.Piece(ply=name, nodes=nodes, edges=edges))
             written[n] = f"{cid}:{pid}"
             total += os.path.getsize(out)
             print(f"  piece_{n} <- {cid} piece {pid}  ({len(sub)} of {len(meta)} "

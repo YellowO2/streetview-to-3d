@@ -51,13 +51,46 @@ class Node:
 
 
 @dataclass
+class Edge:
+    """A link DA3 actually reconstructed, between two nodes of one piece.
+
+    keep_a/keep_b are (views kept, views total) for each end IN THE JOINT
+    test -- how well the two panoramas agreed with each other, as opposed
+    to how coherent either was alone. A piece is exactly a run of nodes
+    joined by edges like these, so where the edges stop is where DA3 ran
+    out of confidence.
+    """
+    a: str
+    b: str
+    keep_a: list[int] | None = None
+    keep_b: list[int] | None = None
+
+    @property
+    def confidence(self):
+        """The weaker end's keep rate -- a link is only as good as that."""
+        rates = [k[0] / k[1] for k in (self.keep_a, self.keep_b) if k and k[1]]
+        return min(rates) if rates else None
+
+
+@dataclass
 class Piece:
-    """One cloud that moves as a single rigid body."""
+    """One cloud that moves as a single rigid body.
+
+    A graph, not a bag: `edges` are the links DA3 confirmed. Edges live
+    here rather than on each Node because the relation is symmetric, and
+    stored once it cannot disagree with itself.
+    """
     ply: str
     nodes: list[Node]
+    edges: list[Edge] = field(default_factory=list)
 
     def __len__(self):
         return len(self.nodes)
+
+    def neighbours(self, key):
+        """{neighbour key: Edge} for one node."""
+        return {(e.b if e.a == key else e.a): e
+                for e in self.edges if key in (e.a, e.b)}
 
 
 @dataclass
@@ -105,14 +138,29 @@ class Scene:
         return cls(center=d["center"],
                    graph=Graph(**d["graph"]),
                    pieces=[Piece(ply=p["ply"],
-                                 nodes=[Node(**n) for n in p["nodes"]])
+                                 nodes=[Node(**n) for n in p["nodes"]],
+                                 edges=[Edge(**e) for e in p.get("edges", [])])
                            for p in d["pieces"]])
 
 
 def from_metadata(metadata):
-    """[Node] from street_builder's per-panorama reconstruction metadata."""
-    return [Node(key=k, lat=v["lat"], lon=v["lon"],
-                 position=list(v["position"]), rotation=v.get("rotation"),
-                 date=v.get("date"), views_kept=v.get("n_views_kept"),
-                 views_total=v.get("n_views_total"))
-            for k, v in metadata.items()]
+    """([Node], [Edge]) from street_builder's per-panorama metadata.
+
+    Each node's metadata lists its own links, so an edge appears twice --
+    once from each end. They are collapsed to one Edge here.
+    """
+    nodes = [Node(key=k, lat=v["lat"], lon=v["lon"],
+                  position=list(v["position"]), rotation=v.get("rotation"),
+                  date=v.get("date"), views_kept=v.get("n_views_kept"),
+                  views_total=v.get("n_views_total"))
+             for k, v in metadata.items()]
+
+    edges, seen = [], set()
+    for a, v in metadata.items():
+        for b, keep in (v.get("links") or {}).items():
+            if b not in metadata or (b, a) in seen:
+                continue
+            seen.add((a, b))
+            edges.append(Edge(a=a, b=b, keep_a=keep,
+                              keep_b=(metadata[b].get("links") or {}).get(a)))
+    return nodes, edges
