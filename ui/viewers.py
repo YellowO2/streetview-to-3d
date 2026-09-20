@@ -186,26 +186,12 @@ document.addEventListener('visibilitychange', () => {{
     return iframe(doc)
 
 
-def labeled_download_links(items_in: list[tuple[str, str | None]]) -> str:
-    """Download-link list for a set of labeled .ply results (multiple
-    segments from greedy/pathfind reconstruction, etc). No live viewer
-    here -- download each and drag it into the point-cloud viewer above
-    to compare visually."""
-    items = []
-    for label, path in items_in:
-        if path:
-            items.append(
-                f'<li style="margin:4px 0"><a href="{file_url(path)}" download '
-                f'style="color:#8ab4f8">{html_lib.escape(label)}</a></li>'
-            )
-        else:
-            items.append(
-                f'<li style="margin:4px 0;color:#888">{html_lib.escape(label)} — no views survived</li>'
-            )
-    return (
-        '<div style="padding:12px;background:#1e1e2e;border-radius:8px">'
-        '<p style="color:#aaa;margin:0 0 8px;font:13px sans-serif">'
-        "Results — download each and drag it into the viewer above to compare:</p>"
-        f'<ul style="margin:0;padding-left:20px;font:13px sans-serif;list-style:none">{"".join(items)}</ul>'
-        "</div>"
-    )
+def summary(lines, note=None) -> str:
+    """A plain result list, with an optional line on what to do next."""
+    items = "".join(f'<li style="margin:4px 0">{html_lib.escape(str(l))}</li>'
+                    for l in lines)
+    tail = (f'<p style="color:#aaa;margin:8px 0 0;font:13px sans-serif">'
+            f'{html_lib.escape(note)}</p>' if note else "")
+    return (f'<div style="padding:12px;background:#1e1e2e;border-radius:8px">'
+            f'<ul style="margin:0;padding-left:20px;font:13px sans-serif;'
+            f'list-style:none;color:#ddd">{items}</ul>{tail}</div>')

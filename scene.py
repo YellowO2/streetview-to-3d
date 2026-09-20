@@ -135,7 +135,10 @@ class Scene:
 
         groups = {}
         for i, n in enumerate(self.nodes):
-            if n.ply is not None:
+            # membership is having a DA3 pose, not points: a node whose
+            # points were already laid down by another run still stands in
+            # this piece's frame and still constrains its fit
+            if n.position is not None:
                 groups.setdefault(find(i), []).append(i)
         return list(groups.values())
 

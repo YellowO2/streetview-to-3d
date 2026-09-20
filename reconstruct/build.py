@@ -270,7 +270,7 @@ def open_scene(prep, output_dir):
     return sc
 
 
-def _save_joined_pieces(pieces, output_dir, catalog) -> list[tuple[str, str]]:
+def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
     """Fill the scene's nodes in with what the reconstruction produced.
 
     A node already exists for every place; this writes each one's points,
@@ -312,7 +312,7 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[tuple[str, str]]:
             if a in placed and b in placed:
                 sc.edges.append(scene_mod.Edge(a=placed[a], b=placed[b],
                                                keep_a=keep_a, keep_b=keep_b))
-        results.append((f"piece {p_i} ({len(placed)} node(s))", None))
+        results.append(f"piece {p_i}: {len(placed)} node(s)")
 
     sc.save(output_dir)
     return results

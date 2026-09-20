@@ -70,8 +70,10 @@ def load_pieces(directory, min_confidence=None):
 
 
 def _read_cloud(directory, sc, members):
-    """One piece's points, from the nodes that make it up."""
+    """One piece's points, from the nodes of it that have any."""
     read = [_read_ply_points(os.path.join(directory, sc.nodes[m].ply))
-            for m in members]
+            for m in members if sc.nodes[m].ply]
+    if not read:
+        return np.zeros((0, 3)), np.zeros((0, 3))
     return (np.concatenate([p for p, _ in read]),
             np.concatenate([c for _, c in read]))

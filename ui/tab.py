@@ -75,7 +75,9 @@ def handle_reconstruct(prep, progress=gr.Progress(track_tqdm=True)):
     except Exception as e:
         raise gr.Error(f"Reconstruct failed: {e}")
 
-    return viewers.labeled_download_links(results), output_dir
+    return viewers.summary(results, 'Reconstructed. Press "3. Place into one '
+                           "scene\" to fit it to the map -- that step hands back "
+                           "the whole scene as a download."), output_dir
 
 def handle_postprocess(run_dir, progress=gr.Progress(track_tqdm=True)):
     """Step 3: place the run's pieces into one scene. No GPU.
