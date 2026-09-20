@@ -46,30 +46,6 @@ Models (DA3) are downloaded from the Hugging Face Hub on first run and cached un
 For a stage-by-stage description of how the pipeline works, see
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Layout
-
-One folder per stage of the pipeline:
-
-| | |
-|---|---|
-| `ui/` | the map, the buttons, the point-cloud viewer |
-| `build_street_graph/` | which panoramas exist in an area, what links to what, on which dates |
-| `reconstruct/` | **the GPU stage.** Panoramas in, point clouds out |
-| `postprocess/` | **the CPU stage.** Fit to GPS, split, align, write one scene |
-| `services/` | fetching panoramas, DA3, the ZeroGPU runner — used by every stage |
-| `scene.py` | what travels between the stages; see its docstring |
-| `visualise/` | the graph page and the segment selector |
-| `tools/` | one-off drivers, experiments and conversions. Nothing imports these |
-| `data/` | committed inputs |
-| `images/` `splats/` `build/` `ntu/` | run outputs and fetched data, all ignored |
-
-The folders are the pipeline stages, in order. `services/` and `scene.py`
-are the two exceptions: infrastructure every stage calls, and the data
-every stage passes along.
-
-`splats/` is where each reconstruction run writes; it is created on import by
-`paths.py` and is empty until something runs.
-
 ### Coordinate convention
 
 Everything in this repo is **Y-DOWN**: `+Y` points at the ground, not the sky.
@@ -115,10 +91,6 @@ Solving is slow and the answer is small, so it is saved rather than baked
 into a merged cloud. `postprocess.render_pieces` builds any subset from it
 without solving.
 
-Full NTU is not stored locally — it lives on HuggingFace under
-`cli_raw/<chunk_id>/`. Alignment currently assumes the pieces form ONE
-corridor; a campus is a network, so aligning all of NTU needs corridors
-split at junctions first.
 
 ## Alignment
 
@@ -174,6 +146,32 @@ Three things this design exists to avoid, each found by measurement:
 
 A panorama's blind spot leaves a hole in the middle of its own road;
 every step above is written to tolerate it.
+
+## Checking a whole reconstruction against GPS
+
+How well a merged reconstruction matches reality, and the DA3-to-metres
+scale, are both measured the same way -- off node metadata alone, no point
+clouds:
+
+```bash
+python -m tools.validate_gps_alignment --group g_L16_0 --out /tmp/fit.json
+python -m postprocess.gps_fit.discover_pieces --in /tmp/fit.json --out /tmp/islands.json
+python -m visualise.graph_page --in /tmp/islands.json --group-field island \
+    --pos-field fitted_en --ref-field real_en --out /tmp/islands.html
+```
+
+`discover_pieces` cuts each chunk where its own nodes stop fitting their
+GPS, then merges adjacent pieces back wherever the combined fit still
+holds. On NTU's 117 chunks that gives 52 islands fitting to 3.5 m median,
+against 330 m for one transform across the whole tree.
+
+Fitting the largest islands is what measures the scale: the five biggest
+(544 nodes between them) agree on **1.31** to within 0.04. Smaller islands
+bias it upward -- over a short track GPS noise is large next to the
+baseline, which inflates the apparent scale.
+
+Note the pipeline itself uses only the cutting half (`resolve`, via
+`postprocess/gps_fit/split_by_fit.py`). The merge-back is CLI-only.
 
 ## Dev notes
 
