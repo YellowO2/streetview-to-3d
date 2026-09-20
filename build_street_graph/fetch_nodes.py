@@ -130,15 +130,18 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
     rule resolves the rare case of a pano sitting within range of two
     real dots at once.
 
-    Returns (buckets, points, adjacency): buckets is {point_index: [{key,
-    source, id, lat, lon, date}, ...]} -- each dot's own separate set of
-    panos, not one shared pool. points is the corridor's own real node
-    list. adjacency is the dot-to-dot structural graph (see
-    corridor_points).
+    Returns (buckets, points, adjacency, elevations): buckets is
+    {point_index: [{key, source, id, lat, lon, date}, ...]} -- each dot's
+    own separate set of panos, not one shared pool. points is the
+    corridor's own real node list. adjacency is the dot-to-dot structural
+    graph (see corridor_points). elevations is metres above sea level per
+    dot, which every pano lookup already returns -- taking it here is what
+    saves placement from re-fetching every panorama later just to read it.
     """
     points, adjacency = corridor_points(edges)
 
     buckets = {i: [] for i in range(len(points))}
+    elevations = [None] * len(points)
     seen_google_ids = set()
     seen_apple_ids = set()
 
@@ -159,6 +162,8 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
                 continue
             if not meta:
                 continue
+            if elevations[i] is None:
+                elevations[i] = meta.get("elevation")
             for entry in meta["dates"]:
                 buckets[i].append({
                     "key": node_key("google", entry["id"]), "source": "google", "id": entry["id"],
@@ -176,10 +181,12 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
             if haversine_m(lat, lon, p.lat, p.lon) > max_dist_m:
                 continue
             seen_apple_ids.add(p.id)
+            if elevations[i] is None:
+                elevations[i] = p.elevation
             buckets[i].append({
                 "key": node_key("apple", p.id), "source": "apple", "id": p.id,
                 "lat": p.lat, "lon": p.lon, "date": format_date(p.date),
                 "_pano": p,  # kept for download_lookaround (needs the object, not just the id)
             })
 
-    return buckets, points, adjacency
+    return buckets, points, adjacency, elevations

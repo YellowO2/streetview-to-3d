@@ -136,7 +136,7 @@ def run_debug_solo_score_experiment() -> str:
     start = (metas[DEBUG_NODE_IDS[0]]["lat"], metas[DEBUG_NODE_IDS[0]]["lon"])
     goals = [(metas[pid]["lat"], metas[pid]["lon"]) for pid in DEBUG_NODE_IDS[1:]]
 
-    date_graphs, points, adjacency = build_corridor_graphs(edges, start[0], start[1], goals)
+    date_graphs, points, adjacency, _ = build_corridor_graphs(edges, start[0], start[1], goals)
     date_graph = next((g for g in date_graphs if g["date"] == DEBUG_DATE), None)
     if date_graph is None:
         raise ValueError(f"date {DEBUG_DATE} not found among this corridor's top dates -- corridor data may have changed")

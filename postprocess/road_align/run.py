@@ -13,7 +13,7 @@ The stages, and why they are in this order:
                  needs no neighbour, only a road, so dropping a piece from
                  the middle of a run cannot strand its neighbours.
   3. VERTICAL    every piece seated on the real ground, from Google's
-                 per-panorama elevation (road_align.ground_elevation).
+                 dot elevations (road_align.ground_elevation).
                  After the horizontal fit, never before -- otherwise it
                  levels pieces against road that is not the same road yet.
 
@@ -84,14 +84,8 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
 
     have = {i: p for i, p in road_pts.items() if len(p)}
     if elevation:
-        latlons, keys = {}, []
-        for i in ids:
-            for n in sc.pieces[i].nodes:
-                latlons[n.key] = (n.lat, n.lon)
-                keys.append(n.key)
-        el = ground_elevation.fetch(keys, latlons, directory, log=log)
-        ground, resid = ground_elevation.surface(el, latlons)
-        log(f"\nground from {len(el)} panorama elevation(s), "
+        ground, resid, n_dots = ground_elevation.surface(sc.graph)
+        log(f"\nground from {n_dots} dot elevation(s), "
             f"surface fits them to {resid:.2f} m")
         vert, report = ground_elevation.seat_on(have, ground)
     else:

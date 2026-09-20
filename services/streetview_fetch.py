@@ -74,6 +74,7 @@ def pano_to_meta(pano):
         "lat": pano.lat,
         "lon": pano.lon,
         "date": format_date(pano.date),
+        "elevation": pano.elevation,
         "neighbors": neighbors,
         "dates": dates,
         "heading": pano.heading,

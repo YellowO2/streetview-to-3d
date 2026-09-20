@@ -109,7 +109,7 @@ def main():
     goals = [(metas[pid]["lat"], metas[pid]["lon"]) for pid in NODE_IDS[1:]]
 
     print(f"\n=== building isolated per-date graphs (network calls to Google/Apple) ===")
-    date_graphs, points, adjacency = build_corridor_graphs(corridor_edges, start[0], start[1], goals)
+    date_graphs, points, adjacency, _ = build_corridor_graphs(corridor_edges, start[0], start[1], goals)
     n_candidates_by_date = {g["date"]: sum(len(b) for b in g["dot_candidates"].values()) for g in date_graphs}
     print(f"{len(points)} corridor spine point(s), {len(date_graphs)} date graph(s) built:")
     for i, g in enumerate(date_graphs, 1):

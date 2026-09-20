@@ -149,7 +149,7 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
         raise ValueError("Need at least one confirmed edge tracing the route.")
     start_lat, start_lon = start
 
-    date_graphs, points, adjacency = build_corridor_graphs(corridor_edges, start_lat, start_lon, goals)
+    date_graphs, points, adjacency, elevations = build_corridor_graphs(corridor_edges, start_lat, start_lon, goals)
     if not date_graphs:
         raise ValueError("No date reaches from the start toward any goal -- not enough connected candidates.")
 
@@ -169,6 +169,7 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
         "node_entries": node_entries,
         "points": points,
         "adjacency": adjacency,
+        "elevations": elevations,
         "start": start,
         "center": center,
         "goals": goals,

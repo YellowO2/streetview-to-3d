@@ -25,7 +25,8 @@ def _run_dir(prep):
         center=list(prep["center"]),
         graph=scene_mod.Graph(points=[list(p) for p in prep["points"]],
                               adjacency={str(k): list(v)
-                                         for k, v in prep["adjacency"].items()}),
+                                         for k, v in prep["adjacency"].items()},
+                              elevations=prep["elevations"]),
     ).save(path)
     return path
 

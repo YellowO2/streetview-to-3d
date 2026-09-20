@@ -49,14 +49,14 @@ def build_corridor_graphs(corridor_edges, start_lat, start_lon, goals,
     date_ranking.date_connects) -- checked AFTER capping, since
     reachability depends on which dots actually end up with candidates.
 
-    Returns (date_graphs, points, adjacency). date_graphs: [{"date": str,
+    Returns (date_graphs, points, adjacency, elevations). date_graphs: [{"date": str,
     "dot_candidates": {dot_index: [panos]}}, ...], ranked best first, each
     graph already isolated to its own date and containing only its own
     non-empty dots. points/adjacency: shared across every date graph --
     the corridor's own dot positions and structure (see
     fetch_nodes.corridor_points).
     """
-    buckets, points, adjacency = fetch_corridor_nodes(corridor_edges)
+    buckets, points, adjacency, elevations = fetch_corridor_nodes(corridor_edges)
     ranked_dates = rank_dates(buckets)
 
     date_graphs = []
@@ -78,4 +78,4 @@ def build_corridor_graphs(corridor_edges, start_lat, start_lon, goals,
 
         date_graphs.append({"date": date, "dot_candidates": dot_candidates})
 
-    return date_graphs, points, adjacency
+    return date_graphs, points, adjacency, elevations

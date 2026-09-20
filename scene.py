@@ -100,9 +100,14 @@ class Piece:
 
 @dataclass
 class Graph:
-    """Street View's dots and how they link."""
+    """Street View's dots, how they link, and how high the ground is.
+
+    elevations are metres above sea level per dot, straight from the pano
+    lookup that found each one -- Y-UP, unlike everything downstream.
+    """
     points: list[list[float]]
     adjacency: dict[str, list[int]]
+    elevations: list[float | None] | None = None
 
 
     @classmethod

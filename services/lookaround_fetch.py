@@ -60,6 +60,7 @@ def apple_pano_to_meta(pano):
         "lat": pano.lat,
         "lon": pano.lon,
         "date": format_date(pano.date),
+        "elevation": pano.elevation,
         "neighbors": [],
         "dates": [],
         "heading": pano.heading,
