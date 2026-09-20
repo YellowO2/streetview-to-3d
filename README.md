@@ -43,6 +43,9 @@ python app.py
 
 Models (DA3) are downloaded from the Hugging Face Hub on first run and cached under `~/.cache/huggingface/`.
 
+For a stage-by-stage description of how the pipeline works, see
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Layout
 
 One folder per stage of the pipeline:
