@@ -83,9 +83,9 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
 
     have = {i: p for i, p in road_pts.items() if len(p)}
     if elevation:
-        ground, resid, n_dots = ground_elevation.surface(sc)
-        log(f"\nground from {n_dots} node elevation(s), "
-            f"surface fits them to {resid:.2f} m")
+        ground, resid, n_dots = ground_elevation.surface(sc, curves, frames, on)
+        log(f"\nground from {n_dots} node elevation(s) along "
+            f"{len(curves)} road(s), profiles fit them to {resid:.2f} m")
         vert, report = ground_elevation.seat_on(have, ground)
     else:
         vert, report = seat(have)
