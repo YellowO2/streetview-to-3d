@@ -63,6 +63,10 @@ def load_pieces(directory, min_confidence=None):
         # each piece keeps its own rotation, but its offset is re-solved so
         # its cameras still land on their GPS positions
         f["t"] = (f["cams"] - scale * (f["src_xz"] @ f["R"].T)).mean(0)
+        # where the cameras END UP, which is not where GPS put them: the fit
+        # spreads its residual across them, and the cloud follows these, not
+        # the GPS points
+        f["placed"] = f["src_xz"] @ f["R"].T * scale + f["t"]
         pts, cols = _read_cloud(directory, sc, f["members"])
         xz = pts[:, [0, 2]] @ f["R"].T * scale + f["t"]
         clouds[i] = (xz, pts[:, 1] * scale, cols)

@@ -58,7 +58,10 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
     if not ids:
         raise ValueError("no pieces to place")
 
-    cams = {i: fits[i]["cams"] for i in ids}
+    # the cameras as the cloud actually carries them. Seating against their
+    # GPS positions instead measures nothing: the road line is splined
+    # through those very points, so they start on it by construction.
+    cams = {i: fits[i]["placed"] for i in ids}
     allc = np.vstack([cams[i] for i in ids])
     bounds = (allc[:, 0].min() - MARGIN_M, allc[:, 0].max() + MARGIN_M,
               allc[:, 1].min() - MARGIN_M, allc[:, 1].max() + MARGIN_M)
