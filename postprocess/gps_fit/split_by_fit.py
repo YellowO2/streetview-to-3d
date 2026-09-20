@@ -9,11 +9,7 @@ Cutting the piece where the drift exceeds a threshold turns the problem
 into one we can solve -- a bend inside a piece becomes a gap between two
 pieces, and road alignment closes gaps.
 
-    python -m postprocess.gps_fit.split_by_fit --dir DIR --out DIR_SPLIT
-
-Points follow their nearest camera, which is the best attribution
-available: a merged cloud has no per-point record of which panorama it
-came from.
+    python -m postprocess.gps_fit.split_by_fit --dir DIR
 """
 import argparse
 import os
@@ -24,8 +20,6 @@ from scipy.spatial import cKDTree
 import scene as scene_mod
 from postprocess.gps_fit.discover_pieces import FIT_THRESHOLD_M, resolve, residuals_for
 from postprocess.gps_fit.fit import real_en, use_origin
-from postprocess.ply_io import write_ply
-from reconstruct.join_segments import _read_ply_points
 
 # Street View dots sit ~10 m apart, so cameras further apart than this are
 # not neighbours and a cut between them is free.
@@ -71,48 +65,42 @@ def _residual(nodes):
     return float(np.median(res))
 
 
-def split(directory, out_dir, threshold=FIT_THRESHOLD_M, log=print):
-    """Write a copy of a scene with every piece broken where it must be."""
+def split(directory, threshold=FIT_THRESHOLD_M, log=print):
+    """Regroup a scene's nodes so no piece spans a break in the fit.
+
+    Nothing is copied or rewritten: points belong to nodes, so breaking a
+    piece is entirely a matter of which nodes are listed together. The
+    scene is saved back over itself with the new grouping.
+    """
     sc = scene_mod.Scene.load(directory)
     use_origin(*sc.origin)
-    os.makedirs(out_dir, exist_ok=True)
     out = scene_mod.Scene(center=sc.center, graph=sc.graph)
 
-    for i, piece in enumerate(sc.pieces):
+    for piece in sc.pieces:
         parts = split_piece(piece.nodes, threshold)
         before = _residual(piece.nodes)
-        pts, cols = _read_ply_points(os.path.join(directory, piece.ply))
-        cams = np.array([n.position for n in piece.nodes])
-        nearest = cKDTree(cams).query(pts)[1]
-
-        log(f"{piece.ply}: {len(piece)} node(s), residual "
+        log(f"{len(piece)} node(s), residual "
             f"{'n/a' if before is None else f'{before:.1f} m'} -> {len(parts)} piece(s)")
         for part in sorted(parts, key=len, reverse=True):
             nodes = [n for n in piece.nodes if n.key in part]
-            keep = [j for j, n in enumerate(piece.nodes) if n.key in part]
-            mask = np.isin(nearest, keep)
-            name = f"piece_{len(out.pieces)}.ply"
-            write_ply(os.path.join(out_dir, name), pts[mask], cols[mask])
             # an edge leaving the part is exactly the link being cut
             inside = [e for e in piece.edges if e.a in part and e.b in part]
-            out.pieces.append(scene_mod.Piece(ply=name, nodes=nodes, edges=inside))
+            out.pieces.append(scene_mod.Piece(nodes=nodes, edges=inside))
             after = _residual(nodes)
-            log(f"   {name}: {len(nodes):>3} node(s), residual "
-                f"{'n/a' if after is None else f'{after:.2f} m'}, "
-                f"{int(mask.sum()):,} point(s)")
-    out.save(out_dir)
+            log(f"   piece {len(out.pieces) - 1}: {len(nodes):>3} node(s), residual "
+                f"{'n/a' if after is None else f'{after:.2f} m'}")
+    out.save(directory)
     log(f"{len(sc.pieces)} piece(s) -> {len(out.pieces)}")
     return len(out.pieces)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--dir", required=True, help="directory of piece_*.ply")
-    ap.add_argument("--out", required=True, help="where to write the split set")
+    ap.add_argument("--dir", required=True, help="a scene directory")
     ap.add_argument("--threshold", type=float, default=FIT_THRESHOLD_M,
                     help="metres a node may sit from its GPS before it is cut off")
     args = ap.parse_args()
-    split(os.path.expanduser(args.dir), os.path.expanduser(args.out), args.threshold)
+    split(os.path.expanduser(args.dir), args.threshold)
 
 
 if __name__ == "__main__":

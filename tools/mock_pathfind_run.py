@@ -138,12 +138,21 @@ def main():
         test_edge = make_fake_test_edge(test_log, tested_pairs)
         print(f"\n=== running pathfind (test_edge mocked, FAIL_IDS={FAIL_IDS or 'none -- everything succeeds'}) ===")
 
-    segments = run_pathfind_reconstruction(fake_date_graphs, points, adjacency, start[0], start[1], test_edge)
+    def fake_rate_pano(path):
+        """Every pano rates the same and brings its own one-node cloud, so
+        the walk behaves exactly as it does with a real DA3 behind it."""
+        pts = cols = np.zeros((2, 3))
+        return KEPT_VIEWS, (np.zeros(3), np.eye(3)), pts, cols, KEPT_VIEWS, TOTAL_VIEWS
+
+    segments = run_pathfind_reconstruction(fake_date_graphs, points, adjacency,
+                                           start[0], start[1], test_edge,
+                                           rate_pano=fake_rate_pano)
 
     print(f"\n=== RESULT ===")
     print(f"{len(test_log)} test call(s), {len(segments)} segment(s)")
-    for pts, cols, path_edges, date, reached_all, node_positions, frame_poses in segments:
-        print(f"  date={date}: {len(path_edges)} hop(s), {'FULL' if reached_all else 'partial'} coverage")
+    for clouds, path_edges, date, reached_all, node_positions, frame_poses in segments:
+        print(f"  date={date}: {len(clouds)} node(s), {len(path_edges)} hop(s), "
+              f"{'FULL' if reached_all else 'partial'} coverage")
         for a, b, *_ in path_edges:
             print(f"    {a} -> {b}")
 

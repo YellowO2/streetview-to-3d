@@ -88,7 +88,7 @@ def _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_i
     -> protected_indices) that must end up in the result if reconstructed
     at all, in ANY date.
 
-    chosen/all_pieces: (pts, cols, path_edges, node_positions, covered,
+    chosen/all_pieces: (clouds, path_edges, node_positions, covered,
     frame_poses, dots, date) tuples -- id()-based membership check
     throughout, NOT ==, since these tuples hold numpy arrays (pts/cols)
     that make `==` ambiguous/raise. Returns (chosen, leftover_uncovered),
@@ -100,7 +100,7 @@ def _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_i
 
     chosen_dots = set()
     for p in chosen:
-        chosen_dots |= p[6]  # p[6] == dots
+        chosen_dots |= p[5]  # p[5] == dots
     missing = protected_indices - chosen_dots
     if not missing:
         return chosen, leftover_uncovered
@@ -112,11 +112,11 @@ def _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_i
             break
         if id(p) in chosen_ids:
             continue
-        overlap = p[6] & missing
+        overlap = p[5] & missing
         if overlap:
             chosen.append(p)
             chosen_ids.add(id(p))
-            leftover_uncovered = leftover_uncovered - p[4]  # p[4] == covered
+            leftover_uncovered = leftover_uncovered - p[3]  # p[3] == covered
             missing -= overlap
             rescued += 1
     if rescued:
@@ -133,7 +133,7 @@ def run_pathfind_reconstruction(
     start_lat: float,
     start_lon: float,
     test_edge,
-    rate_pano=None,
+    rate_pano,
     point_cover_tolerance_m: float = 15.0,
     max_time_budget_s: float = 220.0,
     early_exit_segments: int = 4,
@@ -206,7 +206,7 @@ def run_pathfind_reconstruction(
       an existing piece (see test_and_confirm), not the whole pairwise
       result. The only GPU-touching thing this function calls for real
       connectivity.
-    - rate_pano(path) -> (score, pose, pts, cols), optional. A candidate's
+    - rate_pano(path) -> (score, pose, pts, cols). A candidate's
       solo DA3 self-consistency score (higher = more internally coherent,
       correlates with real pairwise success -- see
       tests/debug_solo_score_experiment.py for the real-data validation:
@@ -216,8 +216,11 @@ def run_pathfind_reconstruction(
       get rated lazily -- only the first time the walk actually reaches
       that dot, never upfront for dots that end up skipped entirely -- the
       best-scored one is tried first for pairwise tests AND becomes that
-      dot's guaranteed fallback one-node piece (see ensure_piece). None
-      (default) skips rating entirely, preserving the given candidate
+      dot's guaranteed fallback one-node piece (see ensure_piece). It is
+      what makes every node own its own points: a dot always enters the
+      result through its own solo cloud or its own slice of a pairwise
+      one, never through a joint cloud covering two panoramas at once.
+      Was optional, preserving the given candidate
       order -- but then a dot that never pairs with anything is dropped
       instead of falling back to a solo piece (old behavior).
 
@@ -251,7 +254,7 @@ def run_pathfind_reconstruction(
     a location that WAS reconstructed somewhere but lost the coverage
     competition.
 
-    Returns [(pts, cols, path_edges, date, reached_all, node_positions,
+    Returns [(clouds, path_edges, date, reached_all, node_positions,
     frame_poses), ...], phase 2's (set_cover's) chosen pieces.
     reached_all: whole corridor covered. node_positions: {key:
     np.ndarray(3,)}, DA3's placement in that piece's own frame.
@@ -297,7 +300,7 @@ def run_pathfind_reconstruction(
             reorder, or the deadline's already passed (graceful degrade,
             not a wasted call). Doesn't rate a lone candidate itself here
             (nothing to sort) -- ensure_piece rates it on demand instead."""
-            if rate_pano is None or len(candidates) <= 1 or time.monotonic() >= deadline:
+            if len(candidates) <= 1 or time.monotonic() >= deadline:
                 return candidates
             scored = [(rate_one(c)[0], c) for c in candidates]
             scored.sort(key=lambda sc: sc[0], reverse=True)
@@ -313,10 +316,10 @@ def run_pathfind_reconstruction(
             how a later successful edge replaces/merges this baseline with
             higher-quality jointly-reconstructed data, rather than adding
             to it. No-op (dot stays un-piece'd, old drop-on-failure
-            behavior) if rate_pano wasn't provided, the deadline's passed,
+            behavior) if the deadline's passed,
             there's nothing to rate for this dot on this date, or DA3
             produced no pose at all for the best candidate."""
-            if dot in confirmed or rate_pano is None or time.monotonic() >= deadline:
+            if dot in confirmed or time.monotonic() >= deadline:
                 return
             t0 = time.monotonic()
             raw_candidates = dot_candidates.get(dot, [])
@@ -334,7 +337,7 @@ def run_pathfind_reconstruction(
             confirmed[dot] = {"key": key, "path": path, "lat": lat, "lon": lon,
                                "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose, "piece_id": pid,
                                "n_views_kept": n_kept, "n_views_total": n_total}
-            piece_data[pid] = {"pts": pts, "cols": cols, "path_edges": []}
+            piece_data[pid] = {"clouds": {key: (pts, cols)}, "path_edges": []}
 
         def covered_points(dots):
             """A dot's own point is always covered by itself. Any OTHER
@@ -384,26 +387,6 @@ def run_pathfind_reconstruction(
             from_kept, from_total = per_pano_views.get(os.path.basename(from_path), (0, 0))
             edge = (from_key, to_key, [from_kept, from_total], [to_kept, to_total])
 
-            if from_dot not in confirmed:
-                # Bootstrap: from_dot has no piece yet at all -- only
-                # possible when rate_pano wasn't provided (ensure_piece
-                # guarantees this otherwise, see visit). This edge's own
-                # pairwise result founds the piece directly for BOTH
-                # sides, no rigid_align needed yet (both poses already
-                # share this call's own frame).
-                pid = next_piece_id[0]
-                next_piece_id[0] += 1
-                confirmed[from_dot] = {"key": from_key, "path": from_path, "lat": from_lat, "lon": from_lon,
-                                        "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_a, "piece_id": pid,
-                                        "n_views_kept": from_kept, "n_views_total": from_total}
-                piece_data[pid] = {"pts": pts, "cols": cols, "path_edges": []}
-                confirmed[to_dot] = {"key": to_key, "path": to_path, "lat": to_lat, "lon": to_lon,
-                                      "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose_b, "piece_id": pid,
-                                      "n_views_kept": to_kept, "n_views_total": to_total}
-                piece_data[pid]["path_edges"].append(edge)
-                print(f"[{date}] {from_key} -> {to_key}: OK ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
-                return True
-
             pf = confirmed[from_dot]
             pid = pf["piece_id"]
             if to_dot in confirmed and confirmed[to_dot]["piece_id"] == pid:
@@ -420,8 +403,7 @@ def run_pathfind_reconstruction(
             seg_R = pf["seg_R"] @ local_R
             seg_t = pf["seg_R"] @ local_t + pf["seg_t"]
             pd = piece_data[pid]
-            pd["pts"] = np.concatenate([pd["pts"], to_pts @ seg_R.T + seg_t], axis=0)
-            pd["cols"] = np.concatenate([pd["cols"], to_cols], axis=0)
+            pd["clouds"][to_key] = (to_pts @ seg_R.T + seg_t, to_cols)
             pd["path_edges"].append(edge)
             confirmed[to_dot] = {"key": to_key, "path": to_path, "lat": to_lat, "lon": to_lon,
                                   "seg_R": seg_R, "seg_t": seg_t, "pose": pose_b, "piece_id": pid,
@@ -431,25 +413,16 @@ def run_pathfind_reconstruction(
             return True
 
         def try_target(from_dot, to_dot, to_candidates):
-            """Try to_candidates (best solo-score first) against from_dot's
-            established candidate, if it has one yet (from ensure_piece,
-            or an earlier successful edge); if from_dot has no piece at
-            all (only possible when rate_pano wasn't provided), also
-            rate-sort ITS OWN candidates and try best-from x best-to
-            first, falling back down each list -- the old bootstrap path.
-            First success wins."""
-            if from_dot in confirmed:
-                c = confirmed[from_dot]
-                for key, path, lat, lon in rate_sorted(to_candidates):
-                    if test_and_confirm(from_dot, c["key"], c["path"], c["lat"], c["lon"], to_dot, key, path, lat, lon):
-                        return True
+            """Try to_candidates, best solo-score first, against from_dot's
+            established candidate. from_dot always has one by now --
+            ensure_piece runs on every dot the walk reaches. First success
+            wins."""
+            if from_dot not in confirmed:
                 return False
-            from_candidates = rate_sorted(dot_candidates.get(from_dot, []))
-            to_candidates_sorted = rate_sorted(to_candidates)
-            for fk, fpath, flat, flon in from_candidates:
-                for key, path, lat, lon in to_candidates_sorted:
-                    if test_and_confirm(from_dot, fk, fpath, flat, flon, to_dot, key, path, lat, lon):
-                        return True
+            c = confirmed[from_dot]
+            for key, path, lat, lon in rate_sorted(to_candidates):
+                if test_and_confirm(from_dot, c["key"], c["path"], c["lat"], c["lon"], to_dot, key, path, lat, lon):
+                    return True
             return False
 
         queue = deque()
@@ -458,9 +431,7 @@ def run_pathfind_reconstruction(
             """Give `dot` its one chance to reach every structural
             neighbor out of it. `dot` and every candidate dot looked at
             below get ensure_piece'd first, as a best-effort fallback
-            piece for each -- but try_target still works even when that
-            didn't produce one (rate_pano not provided), via its own
-            bootstrap fallback. No flood-past-empty-dot fallback: a dot
+            piece for each. No flood-past-empty-dot fallback: a dot
             is a real selection-graph node (not an interpolated sample
             point), so a failed/empty structural neighbor is a genuine
             dead end for that date here, not skipped past. Each dot is
@@ -537,7 +508,7 @@ def run_pathfind_reconstruction(
             # _rescue_protected_pieces for exact dot matching instead of
             # approximate real-distance matching against a node's own
             # (differently-sourced) reported lat/lon.
-            pieces.append((pd["pts"], pd["cols"], pd["path_edges"], node_positions, covered_points(dots), frame_poses, set(dots)))
+            pieces.append((pd["clouds"], pd["path_edges"], node_positions, covered_points(dots), frame_poses, set(dots)))
         return pieces, tests_used[0]
 
     def set_cover(pieces, total_points):
@@ -549,12 +520,12 @@ def run_pathfind_reconstruction(
         chosen = []
         pool = list(pieces)
         while uncovered and pool:
-            pool.sort(key=lambda p: len(p[4] & uncovered), reverse=True)
+            pool.sort(key=lambda p: len(p[3] & uncovered), reverse=True)
             top = pool[0]
-            if not (top[4] & uncovered):
+            if not (top[3] & uncovered):
                 break
             chosen.append(top)
-            uncovered -= top[4]
+            uncovered -= top[3]
             pool.pop(0)
         return chosen, uncovered
 
@@ -594,8 +565,8 @@ def run_pathfind_reconstruction(
 
     reached_all = not leftover_uncovered
     segments = [
-        (pts, cols, path_edges, date, reached_all, node_positions, frame_poses)
-        for pts, cols, path_edges, node_positions, covered, frame_poses, dots, date in chosen
+        (clouds, path_edges, date, reached_all, node_positions, frame_poses)
+        for clouds, path_edges, node_positions, covered, frame_poses, dots, date in chosen
     ]
 
     print(f"pathfind: {total_tests} attempts total, {len(date_graphs)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")
@@ -604,7 +575,7 @@ def run_pathfind_reconstruction(
     # actually pulling its weight, or just have the OPTION to but never
     # using it -- "N date(s) considered" above only says how many got
     # walked, not whether the CHOSEN combination actually crossed dates.
-    dates_used = sorted({s[3] for s in segments})
+    dates_used = sorted({s[2] for s in segments})
     if len(dates_used) > 1:
         print(f"pathfind: set_cover MIXED {len(dates_used)} different dates across the chosen segments: {dates_used}")
     elif len(date_graphs) > 1:

@@ -8,12 +8,17 @@ One scene.json beside the clouds holds everything that is not geometry:
     graph      the street graph the area was reconstructed from. Road
                alignment measures against lines built from it, so an area
                carries its own rather than borrowing one dataset's.
-    pieces     each cloud and, for every panorama that built it, where DA3
-               put the camera beside where the camera really was. That
-               pairing is what makes the GPS fit possible.
+    pieces     which nodes DA3 managed to reconstruct together, and how
+               confident it was about each link
+
+Points belong to NODES, not to pieces: DA3 only ever reconstructs one or
+two panoramas at a time, and a node's own points enter the result exactly
+once, so the smallest thing that was ever independently reconstructed is
+one panorama. A piece owns no bytes -- it is a grouping of nodes, and
+regrouping them costs nothing.
 
 A piece is identified by its position in the list; nothing carries an id,
-because splitting renumbers pieces and no id survives it.
+because regrouping renumbers pieces and no id survives it.
 """
 import json
 import os
@@ -24,8 +29,8 @@ FILENAME = "scene.json"
 
 @dataclass
 class Node:
-    """One panorama: where DA3 put it, where it really is, and how much of
-    DA3's own reconstruction of it survived.
+    """One panorama: its own points, where DA3 put it, where it really is,
+    and how much of DA3's own reconstruction of it survived.
 
     views_kept out of views_total is DA3's solo score for this panorama --
     how many of its own views passed the consensus filter. Measured against
@@ -37,6 +42,7 @@ class Node:
     lat: float
     lon: float
     position: list[float]
+    ply: str | None = None
     rotation: list[list[float]] | None = None
     date: str | None = None
     views_kept: int | None = None
@@ -74,13 +80,12 @@ class Edge:
 
 @dataclass
 class Piece:
-    """One cloud that moves as a single rigid body.
+    """The nodes that move as one rigid body.
 
     A graph, not a bag: `edges` are the links DA3 confirmed. Edges live
     here rather than on each Node because the relation is symmetric, and
     stored once it cannot disagree with itself.
     """
-    ply: str
     nodes: list[Node]
     edges: list[Edge] = field(default_factory=list)
 
@@ -137,9 +142,8 @@ class Scene:
             d = json.load(f)
         return cls(center=d["center"],
                    graph=Graph(**d["graph"]),
-                   pieces=[Piece(ply=p["ply"],
-                                 nodes=[Node(**n) for n in p["nodes"]],
-                                 edges=[Edge(**e) for e in p.get("edges", [])])
+                   pieces=[Piece(nodes=[Node(**n) for n in p["nodes"]],
+                                 edges=[Edge(**e) for e in p["edges"]])
                            for p in d["pieces"]])
 
 
@@ -150,7 +154,8 @@ def from_metadata(metadata):
     once from each end. They are collapsed to one Edge here.
     """
     nodes = [Node(key=k, lat=v["lat"], lon=v["lon"],
-                  position=list(v["position"]), rotation=v.get("rotation"),
+                  position=list(v["position"]), ply=v.get("ply"),
+                  rotation=v.get("rotation"),
                   date=v.get("date"), views_kept=v.get("n_views_kept"),
                   views_total=v.get("n_views_total"))
              for k, v in metadata.items()]

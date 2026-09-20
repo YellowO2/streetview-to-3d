@@ -147,36 +147,15 @@ Three things this design exists to avoid, each found by measurement:
 A panorama's blind spot leaves a hole in the middle of its own road;
 every step above is written to tolerate it.
 
-## Checking a whole reconstruction against GPS
-
-How well a merged reconstruction matches reality, and the DA3-to-metres
-scale, are both measured the same way -- off node metadata alone, no point
-clouds:
-
-```bash
-python -m tools.validate_gps_alignment --group g_L16_0 --out /tmp/fit.json
-python -m postprocess.gps_fit.discover_pieces --in /tmp/fit.json --out /tmp/islands.json
-python -m visualise.graph_page --in /tmp/islands.json --group-field island \
-    --pos-field fitted_en --ref-field real_en --out /tmp/islands.html
-```
-
-`discover_pieces` cuts each chunk where its own nodes stop fitting their
-GPS, then merges adjacent pieces back wherever the combined fit still
-holds. On NTU's 117 chunks that gives 52 islands fitting to 3.5 m median,
-against 330 m for one transform across the whole tree.
-
-Note the pipeline itself uses only the cutting half (`resolve`, via
-`postprocess/gps_fit/split_by_fit.py`). The merge-back is CLI-only.
-
-### The DA3-to-metres constant
+## The DA3-to-metres constant
 
 `config.DA3_UNITS_TO_METRES` is measured, not guessed. To re-measure it:
 
 ```bash
-python -m tools.measure_da3_scale --group g_L16_0 --sweep
+python -m tools.measure_da3_scale --scene splats/<run id> --sweep
 ```
 
-It cuts each chunk where its own nodes stop matching their GPS, fits every
+It cuts each piece where its own nodes stop matching their GPS, fits every
 surviving piece of 4+ nodes alone, and prints the spread per cut. Take the
 value where the mean meets the median -- that is where nothing is left
 skewing the sample. On NTU it holds at 1.33-1.35 across cuts from 12 m

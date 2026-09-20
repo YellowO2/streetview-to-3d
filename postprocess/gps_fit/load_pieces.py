@@ -15,6 +15,13 @@ import scene as scene_mod
 from config import DA3_UNITS_TO_METRES
 from postprocess.gps_fit.fit import fit_nodes, use_origin, real_en
 
+def _read_nodes(directory, piece):
+    """One piece's cloud, from the nodes that make it up."""
+    read = [_read_ply_points(os.path.join(directory, n.ply)) for n in piece.nodes]
+    return (np.concatenate([p for p, _ in read]),
+            np.concatenate([c for _, c in read]))
+
+
 def load_pieces(directory):
     """Each piece's GPS fit + point cloud, all in the shared GLOBAL_ORIGIN
     frame. A single-node piece cannot fit its own rotation/scale, so it
@@ -70,7 +77,7 @@ def load_pieces(directory):
         src = f["da3"][None, :] if f["n"] == 1 else f["src_xz"]
         f["t"] = (f["cams"] - scale * (src @ f["R"].T)).mean(0)
 
-        pts, cols = _read_ply_points(os.path.join(directory, sc.pieces[i].ply))
+        pts, cols = _read_nodes(directory, sc.pieces[i])
         xz = pts[:, [0, 2]] @ f["R"].T * scale + f["t"]
         clouds[i] = (xz, pts[:, 1] * scale, cols)
     return fits, clouds

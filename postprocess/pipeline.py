@@ -19,16 +19,14 @@ from postprocess.gps_fit.split_by_fit import split
 from postprocess.ply_io import write_ply
 from postprocess.road_align.run import align
 
-PIECES = "pieces"        # where the split pieces land
 OUT_PLY = "aligned.ply"
 
 
 def process(run_dir, threshold=FIT_THRESHOLD_M, min_nodes=2, log=print):
     """Run everything after the GPU. Returns the path of the written cloud."""
     run_dir = os.path.expanduser(run_dir)
-    pieces = os.path.join(run_dir, PIECES)
-    split(run_dir, pieces, threshold=threshold, log=log)
-    transforms, clouds, _, _ = align(pieces, min_nodes=min_nodes, log=log)
+    split(run_dir, threshold=threshold, log=log)
+    transforms, clouds, _, _ = align(run_dir, min_nodes=min_nodes, log=log)
 
     pts, cols = [], []
     for i, T in transforms.items():

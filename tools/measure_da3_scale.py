@@ -7,7 +7,7 @@ reconstruction reports a scale inflated by its own bend. So each chunk is
 first cut wherever its own nodes stop matching their GPS, and only the
 surviving pieces are fitted.
 
-    python -m tools.measure_da3_scale --group g_L16_0
+    python -m tools.measure_da3_scale --scene splats/<run id>
 
 Pieces under MIN_NODES are ignored: a 2-node fit is exactly determined and
 so reports zero residual whatever the data, and a 3-node one barely
@@ -25,49 +25,48 @@ import json
 
 import numpy as np
 
-from postprocess.gps_fit.fit import fit_similarity_2d
+import scene as scene_mod
+from postprocess.gps_fit.fit import fit_similarity_2d, real_en, use_origin
 from postprocess.gps_fit.discover_pieces import resolve
 from postprocess.gps_fit.split_by_fit import _adjacency
-from services.geo import latlon_to_local_m
 
 MIN_NODES = 4
 THRESHOLDS = (12, 8, 5, 3, 2, 1.5, 1.0, 0.75)
 
 
-def nodes_from_group(group_id):
-    """{key: {da3_xz, real_en, chunk_id}} for every node in a merged group."""
-    from ui.tab import _load_group_meta_pieces
-    from tools.validate_gps_alignment import build_key_to_chunk_map
+def nodes_from_scene(directory):
+    """{key: {da3_xz, real_en, piece}} for every node in a scene.
 
-    key_to_chunk = build_key_to_chunk_map()
+    Each piece is measured on its own: its DA3 frame is its own, so only
+    nodes inside one piece are comparable.
+    """
+    sc = scene_mod.Scene.load(directory)
+    use_origin(*sc.origin)
     out = {}
-    for _, _, _, _, frame_poses in _load_group_meta_pieces(group_id):
-        keys = list(frame_poses)
-        if len(keys) < MIN_NODES:
+    for i, piece in enumerate(sc.pieces):
+        if len(piece) < MIN_NODES:
             continue
-        lat0, lon0 = frame_poses[keys[0]][3], frame_poses[keys[0]][4]
-        for k in keys:
-            pos, _, _, lat, lon, *_ = frame_poses[k]
-            out[k] = {"da3_xz": [pos[0], pos[2]],
-                      "real_en": list(latlon_to_local_m(lat, lon, lat0, lon0)),
-                      "chunk_id": key_to_chunk.get(k)}
+        for n in piece.nodes:
+            out[n.key] = {"da3_xz": [n.position[0], n.position[2]],
+                          "real_en": list(real_en(n.lat, n.lon)),
+                          "piece": i}
     return out
 
 
 def nodes_from_file(path):
-    """The same, from a validate_gps_alignment dump."""
+    """The same, from a per-node fit dump keyed by node."""
     with open(path) as f:
         return {d["key"]: d for d in json.load(f)}
 
 
 def scales(nodes, threshold):
     """Every surviving piece's own DA3-to-metres estimate."""
-    by_chunk = {}
+    by_piece = {}
     for k, d in nodes.items():
-        by_chunk.setdefault(d.get("chunk_id"), {})[k] = d
+        by_piece.setdefault(d.get("piece", d.get("chunk_id")), {})[k] = d
 
     out = []
-    for group in by_chunk.values():
+    for group in by_piece.values():
         for piece in resolve(group, _adjacency(group), threshold=threshold):
             if len(piece) < MIN_NODES:
                 continue
@@ -82,14 +81,14 @@ def scales(nodes, threshold):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--group", help="a merged group id on the Hub, e.g. g_L16_0")
-    src.add_argument("--in", dest="in_path", help="a validate_gps_alignment dump")
+    src.add_argument("--scene", help="a scene directory")
+    src.add_argument("--in", dest="in_path", help="a per-node fit dump")
     ap.add_argument("--threshold", type=float, default=0.75,
                     help="metres a node may sit from its GPS before it is cut off")
     ap.add_argument("--sweep", action="store_true", help="one row per threshold")
     args = ap.parse_args()
 
-    nodes = nodes_from_file(args.in_path) if args.in_path else nodes_from_group(args.group)
+    nodes = nodes_from_file(args.in_path) if args.in_path else nodes_from_scene(args.scene)
     print(f"{len(nodes)} node(s)\n")
     print(f"{'cut':>6} {'pieces':>7} {'nodes':>6} {'median':>8} {'mean':>8} {'sd':>7}")
     for th in (THRESHOLDS if args.sweep else (args.threshold,)):

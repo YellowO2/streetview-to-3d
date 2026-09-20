@@ -319,25 +319,35 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
     return results, segments, bundle_path
 
 
+def _stack(clouds):
+    """One (points, colors) array pair from a piece's per-node clouds."""
+    import numpy as np
+    pts = [c[0] for c in clouds.values()]
+    cols = [c[1] for c in clouds.values()]
+    return (np.concatenate(pts) if pts else np.zeros((0, 3)),
+            np.concatenate(cols) if cols else np.zeros((0, 3)))
+
+
 def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:
-    """Saves each segment's own point cloud as its own .ply, no GPU, no
-    fitting/joining. Returns [(label, ply_path), ...] previews."""
+    """Saves each segment as one preview .ply. No GPU, no fitting/joining.
+    A preview only -- the real output keeps every node's points apart, see
+    _save_joined_pieces. Returns [(label, ply_path), ...]."""
     os.makedirs(output_dir, exist_ok=True)
     results = []
-    for i, (pts, cols, path_edges, date, reached, node_positions, frame_poses) in enumerate(segments):
+    for i, (clouds, path_edges, date, reached, node_positions, frame_poses) in enumerate(segments):
         status = "full corridor covered" if reached else "partial"
         label = f"path (date {date}, {len(path_edges)} hops, {status})"
+        pts, cols = _stack(clouds)
         ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_{i}.ply"))
         results.append((label, ply))
     return results
 
 
 def save_joined_pathfind(segments, output_dir, chunk_ids=None, known_adjacent_chunk_pairs=None) -> list[tuple[str, str]]:
-    """Bridges (real DA3 tests between segment boundaries) via join_segments.py,
-    saves each still-separate piece plus a metadata JSON alongside it
-    (see save_reconstruction_metadata), returns [(label, ply_path), ...]
-    -- one entry per piece (usually 1, more if bridging genuinely
-    couldn't connect everything -- see join_segments.join_segments). Its
+    """Bridges (real DA3 tests between segment boundaries) via join_segments.py
+    and records each still-separate piece in the scene (see
+    _save_joined_pieces). Usually one piece; more means bridging genuinely
+    couldn't connect everything -- see join_segments.join_segments. Its
     own GPU call (join_segments_gpu), separate from the corridor
     search's -- safe to call repeatedly against the same already-computed
     segments while tuning the join/bridging step, without re-running the
@@ -358,54 +368,33 @@ def save_joined_pathfind(segments, output_dir, chunk_ids=None, known_adjacent_ch
 
 
 def _save_joined_pieces(pieces, output_dir) -> list[tuple[str, str]]:
-    """Saves each (points, colors, metadata) piece from join_segments as
-    its own .ply + metadata JSON. Usually one piece (everything bridged
-    into one connected result); more than one means bridging left some
-    genuinely unconnected regions separate -- each still gets its own
-    valid, independently-placed output rather than being forced together.
+    """Saves each piece from join_segments into the directory's scene.
 
-    Also records each piece in the directory's scene, when there is one --
-    postprocess reads that. The CLI campaign path has no scene and uploads
-    these files to the Hub as they are, which is why the per-piece metadata
-    JSON is still written either way.
+    One .ply per NODE, not per piece: DA3 only ever reconstructs one or
+    two panoramas at a time and a node's points enter the result exactly
+    once, so a node is the smallest thing ever independently produced.
+    A piece owns no file of its own -- it is a grouping of nodes, and
+    regrouping later costs nothing.
+
+    Usually one piece (everything bridged into one connected result);
+    more than one means bridging left some genuinely unconnected regions
+    separate.
     """
     import scene as scene_mod
     os.makedirs(output_dir, exist_ok=True)
-    try:
-        sc = scene_mod.Scene.load(output_dir)
-    except FileNotFoundError:
-        sc = None
+    sc = scene_mod.Scene.load(output_dir)
 
     results = []
-    for i, (pts, cols, metadata) in enumerate(pieces):
-        suffix = "" if len(pieces) == 1 else f"_{i}"
-        name = f"pathfind_joined{suffix}.ply"
-        ply = save_pointcloud(pts, cols, os.path.join(output_dir, name))
-        save_reconstruction_metadata(metadata, output_dir, suffix=suffix)
-        if sc is not None:
-            nodes, edges = scene_mod.from_metadata(metadata)
-            sc.pieces.append(scene_mod.Piece(ply=name, nodes=nodes, edges=edges))
-        results.append((f"path (joined piece {i}, {len(metadata)} nodes)" if len(pieces) > 1
-                         else f"path (joined, {len(metadata)} nodes)", ply))
-    if sc is not None:
-        sc.save(output_dir)
+    for i, (clouds, metadata) in enumerate(pieces):
+        nodes, edges = scene_mod.from_metadata(metadata)
+        for node in nodes:
+            pts, cols = clouds[node.key]
+            node.ply = f"node_{len(sc.pieces)}_{node.key.replace(':', '_')}.ply"
+            save_pointcloud(pts, cols, os.path.join(output_dir, node.ply))
+        sc.pieces.append(scene_mod.Piece(nodes=nodes, edges=edges))
+        results.append((f"piece {i} ({len(nodes)} node(s))", None))
+    sc.save(output_dir)
     return results
-
-
-def save_reconstruction_metadata(metadata: dict, output_dir, suffix: str = "") -> str:
-    """Saves join_segments' per-node metadata (real lat/lon/date) as a
-    small JSON file alongside the point cloud -- enough to know which
-    real pano/location produced which region of the reconstruction
-    without storing the images themselves (always re-fetchable from
-    source by key). suffix: distinguishes multiple still-separate pieces
-    from one join_segments call (see _save_joined_pieces) -- empty for
-    the common single-piece case."""
-    import json
-    os.makedirs(output_dir, exist_ok=True)
-    path = os.path.join(output_dir, f"pathfind_metadata{suffix}.json")
-    with open(path, "w") as f:
-        json.dump(metadata, f, indent=2)
-    return path
 
 
 def save_segments_bundle(segments, output_dir) -> str:
