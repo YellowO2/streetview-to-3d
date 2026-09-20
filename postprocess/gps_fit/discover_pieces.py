@@ -31,7 +31,7 @@ from paths import FETCHED_GRAPH, NTU_DIR
 from postprocess.gps_fit.fit import fit_similarity_2d
 
 MIN_NODES = 3
-FIT_THRESHOLD_M = 20.0
+FIT_THRESHOLD_M = 12.0
 
 
 
@@ -82,6 +82,13 @@ def resolve(nodes_by_key, node_adj, threshold=FIT_THRESHOLD_M, min_nodes=MIN_NOD
 
     if not bad_keys:
         return [dict(nodes_by_key)]
+    if not good_keys:
+        # Nothing fits, so there is no good side to cut the bad one away
+        # from, and recursing would hand this same set straight back --
+        # the old infinite loop. Drop the single worst node instead, which
+        # always makes the next call smaller.
+        worst = max(zip(keys, residuals), key=lambda kr: kr[1])[0]
+        good_keys, bad_keys = set(keys) - {worst}, {worst}
 
     results = []
     for comp in connected_components(good_keys, node_adj):

@@ -215,6 +215,8 @@ def fetch(chunk_ids, out_dir, api=None, groups=None):
     files = chunk_files(api)
     os.makedirs(out_dir, exist_ok=True)
     area.save(out_dir, *ntu_center())
+    ntu_graph = json.load(open(FETCHED_GRAPH))
+    area.save_graph(out_dir, ntu_graph["points"], ntu_graph["adjacency"])
     written, total, n = {}, 0, 0
     for cid in sorted(chunk_ids):
         if cid not in files:

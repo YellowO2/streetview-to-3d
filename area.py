@@ -9,6 +9,7 @@ import json
 import os
 
 FILENAME = "area.json"
+GRAPH = "graph.json"
 
 
 def save(directory, lat, lon):
@@ -29,3 +30,27 @@ def load(directory):
     with open(path) as f:
         centre = json.load(f)["center"]
     return centre["lat"], centre["lon"]
+
+
+def save_graph(directory, points, adjacency):
+    """The area's own street graph: every dot and what it links to.
+
+    Road alignment measures against these lines, so an area has to carry
+    its own graph rather than borrow one dataset's.
+    """
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, GRAPH)
+    with open(path, "w") as f:
+        json.dump({"points": [list(p) for p in points],
+                   "adjacency": {str(k): list(v) for k, v in adjacency.items()}}, f)
+    return path
+
+
+def load_graph(directory):
+    path = os.path.join(directory, GRAPH)
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"{path} is missing -- road alignment has no lines to align to "
+            "without the street graph this area was reconstructed from.")
+    with open(path) as f:
+        return json.load(f)
