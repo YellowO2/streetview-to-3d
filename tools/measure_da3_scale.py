@@ -27,15 +27,14 @@ import numpy as np
 
 import scene as scene_mod
 from postprocess.gps_fit.fit import fit_similarity_2d, real_en, use_origin
-from postprocess.gps_fit.discover_pieces import resolve
-from postprocess.gps_fit.split_by_fit import _adjacency
+from postprocess.gps_fit.discover_pieces import resolve, _adjacency
 
 MIN_NODES = 4
 THRESHOLDS = (12, 8, 5, 3, 2, 1.5, 1.0, 0.75)
 
 
 def nodes_from_scene(directory):
-    """{key: {da3_xz, real_en, piece}} for every node in a scene.
+    """{key: {da3_xz, real_en, piece}} for every reconstructed node.
 
     Each piece is measured on its own: its DA3 frame is its own, so only
     nodes inside one piece are comparable.
@@ -43,12 +42,13 @@ def nodes_from_scene(directory):
     sc = scene_mod.Scene.load(directory)
     use_origin(*sc.origin)
     out = {}
-    for i, piece in enumerate(sc.pieces):
-        if len(piece) < MIN_NODES:
+    for i, members in enumerate(sc.pieces()):
+        if len(members) < MIN_NODES:
             continue
-        for n in piece.nodes:
+        for m in members:
+            n = sc.nodes[m]
             out[n.key] = {"da3_xz": [n.position[0], n.position[2]],
-                          "real_en": list(real_en(n.lat, n.lon)),
+                          "real_en": list(real_en(n.pano.lat, n.pano.lon)),
                           "piece": i}
     return out
 

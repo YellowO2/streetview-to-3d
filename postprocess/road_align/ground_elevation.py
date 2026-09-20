@@ -6,10 +6,10 @@ datum at all. Fitting a surface through the pieces' own heights instead is
 circular, and on a hill it squeezes the relief out of the scene while every
 individual number still looks plausible.
 
-Every pano lookup returns an `elevation`, so the street graph already
-carries one per dot from when the area was built -- an outside measurement
-of the same ground, covering the whole area rather than only the dots that
-reconstructed.
+Every pano lookup returns an `elevation`, so each node already carries the
+ground height at its own spot from when the area was built -- an outside
+measurement of the same ground, and it is there whether or not DA3 managed
+to reconstruct anything at that node.
 
     SIGN. Google's elevation is metres above sea level, Y-UP. This repo is
     Y-DOWN (see the README). Elevations are negated on the way in, here, so
@@ -23,23 +23,23 @@ from postprocess.gps_fit.fit import real_en
 SURFACE_DEGREE = 3       # terrain is a smooth landform; the ROAD over it is not
 
 
-def surface(graph, degree=SURFACE_DEGREE):
+def surface(scene, degree=SURFACE_DEGREE):
     """A smooth ground surface over an area, in THIS repo's Y-down metres.
 
     Returns f(xz) -> height, the fit's own residual so a caller can see
     whether the landform is smooth enough to be described this way, and how
-    many dots it was built from.
+    many nodes it was built from.
     """
     from postprocess.road_align.align_slope_of_pieces import _design, _robust
 
-    known = [(p, e) for p, e in zip(graph.points, graph.elevations or [])
-             if e is not None]
+    known = [(n.pano.lat, n.pano.lon, n.pano.elevation) for n in scene.nodes
+             if n.pano.elevation is not None]
     if len(known) < 4:
         raise ValueError(
-            f"only {len(known)} dot(s) in this area have a ground height -- "
+            f"only {len(known)} node(s) in this area have a ground height -- "
             "not enough to fit a surface through")
-    E = np.array([real_en(*p) for p, _ in known])
-    H = -np.array([e for _, e in known])              # Y-UP -> Y-DOWN
+    E = np.array([real_en(lat, lon) for lat, lon, _ in known])
+    H = -np.array([e for _, _, e in known])           # Y-UP -> Y-DOWN
     ptp = lambda a: float(a.max() - a.min())
     ctr = E.mean(0)
     scale = max(ptp(E[:, 0]), ptp(E[:, 1]), 1.0)

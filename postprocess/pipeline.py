@@ -1,11 +1,11 @@
 """Everything after the GPU, as one call.
 
-A reconstruction run leaves a directory of clouds that are each internally
-consistent but individually placed. This turns that into one scene:
+A reconstruction leaves a scene whose nodes each hold their own points, in
+whatever frame DA3 built them. This works out where those points belong:
 
-  SPLIT   break any piece where DA3 stopped agreeing with its own GPS
-  ALIGN   seat every piece on its road and on the real ground
-  WRITE   one .ply
+  ALIGN   seat every piece on its road and on the real ground, writing
+          each node's own transform back into the scene
+  WRITE   one .ply of the result
 
     python -m postprocess.pipeline --dir splats/<run id>
 """
@@ -14,18 +14,15 @@ import os
 
 import numpy as np
 
-from postprocess.gps_fit.discover_pieces import FIT_THRESHOLD_M
-from postprocess.gps_fit.split_by_fit import split
 from postprocess.ply_io import write_ply
 from postprocess.road_align.run import align
 
 OUT_PLY = "aligned.ply"
 
 
-def process(run_dir, threshold=FIT_THRESHOLD_M, min_nodes=2, log=print):
-    """Run everything after the GPU. Returns the path of the written cloud."""
+def process(run_dir, min_nodes=2, log=print):
+    """Place a reconstruction. Returns the path of the written cloud."""
     run_dir = os.path.expanduser(run_dir)
-    split(run_dir, threshold=threshold, log=log)
     transforms, clouds, _, _ = align(run_dir, min_nodes=min_nodes, log=log)
 
     pts, cols = [], []
@@ -42,11 +39,9 @@ def process(run_dir, threshold=FIT_THRESHOLD_M, min_nodes=2, log=print):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dir", required=True, help="a reconstruction run's directory")
-    ap.add_argument("--threshold", type=float, default=FIT_THRESHOLD_M,
-                    help="metres a node may sit from its GPS before it is cut off")
     ap.add_argument("--min-nodes", type=int, default=2)
     args = ap.parse_args()
-    process(args.dir, args.threshold, args.min_nodes)
+    process(args.dir, args.min_nodes)
 
 
 if __name__ == "__main__":

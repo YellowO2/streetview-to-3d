@@ -28,7 +28,6 @@ import numpy as np
 from postprocess.road_align.road_surface import ground_near_track
 from postprocess.road_align.road_frames import build as build_frames
 from postprocess.road_align.node_center_to_road_line import seat_all
-from postprocess.piece_transforms import save as save_transforms
 from postprocess.gps_fit.load_pieces import load_pieces
 from postprocess.road_align.align_slope_of_pieces import seat
 from postprocess.road_align import ground_elevation
@@ -38,12 +37,12 @@ MARGIN_M = 25.0
 
 
 def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
-          elevation=True):
+          elevation=True, save=True):
     """Solve, and return ({piece: 4x4}, clouds, fits, per-piece diagnostics).
 
-    The 4x4s here map ALREADY GPS-FITTED coordinates, because load_pieces
-    applies the GPS fit as it loads. `piece_transforms.save` composes the
-    two so the file that lands on disk stands on its own.
+    The 4x4s returned map ALREADY GPS-FITTED coordinates, because
+    load_pieces applies the GPS fit as it loads. What is saved onto each
+    node composes the two, so a node's matrix stands on its own.
     """
     sc = scene_mod.Scene.load(directory)
     fits, clouds = load_pieces(directory)
@@ -64,7 +63,7 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
     bounds = (allc[:, 0].min() - MARGIN_M, allc[:, 0].max() + MARGIN_M,
               allc[:, 1].min() - MARGIN_M, allc[:, 1].max() + MARGIN_M)
 
-    curves, frames, on = build_frames(cams, sc.graph)
+    curves, frames, on = build_frames(cams, sc)
     log(f"{len(curves)} road(s): "
         + ", ".join(f"road{r} {frames[r].length:.0f}m" for r in sorted(curves))
         + "\n")
@@ -84,8 +83,8 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
 
     have = {i: p for i, p in road_pts.items() if len(p)}
     if elevation:
-        ground, resid, n_dots = ground_elevation.surface(sc.graph)
-        log(f"\nground from {n_dots} dot elevation(s), "
+        ground, resid, n_dots = ground_elevation.surface(sc)
+        log(f"\nground from {n_dots} node elevation(s), "
             f"surface fits them to {resid:.2f} m")
         vert, report = ground_elevation.seat_on(have, ground)
     else:
@@ -112,14 +111,36 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
                         if i in report else None)
         diagnostics[i] = d
 
-    return ({i: vert.get(i, np.eye(4)) @ horiz[i] for i in ids},
-            {i: clouds[i] for i in ids}, {i: fits[i] for i in ids},
-            diagnostics)
+    transforms = {i: vert.get(i, np.eye(4)) @ horiz[i] for i in ids}
+    if save:
+        for i in ids:
+            M = np.asarray(gps_transform(fits[i]))
+            for m in fits[i]["members"]:
+                sc.nodes[m].transform = (transforms[i] @ M).tolist()
+        sc.save(directory)
+    return (transforms, {i: clouds[i] for i in ids},
+            {i: fits[i] for i in ids}, diagnostics)
+
+
+def gps_transform(fit):
+    """The GPS fit as a 4x4: a node's stored ply -> world metres.
+
+    load_pieces applies this while loading, so a transform solved on top of
+    it only maps already-fitted coordinates. Composing the two is what lets
+    a node's saved matrix stand alone.
+    """
+    R, s, t = fit["R"], float(fit["scale"]), fit["t"]
+    T = np.eye(4)
+    T[0, 0], T[0, 2] = s * R[0, 0], s * R[0, 1]
+    T[2, 0], T[2, 2] = s * R[1, 0], s * R[1, 1]
+    T[1, 1] = s
+    T[0, 3], T[2, 3] = t[0], t[1]
+    return T
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--dir", default="/tmp/gap3_joined",
+    ap.add_argument("--dir", required=True,
                     help="directory holding a scene.json and its clouds")
     ap.add_argument("--pieces", default=None,
                     help="comma-separated piece ids (default: all in --dir)")
@@ -135,18 +156,14 @@ def main():
                          "themselves instead of to Google's elevation. "
                          "Circular, and it flattens real terrain.")
     ap.add_argument("--no-save", action="store_true",
-                    help="solve without writing piece_transforms.json")
+                    help="solve without writing the answer back into the scene")
     args = ap.parse_args()
 
     ids = ([int(x) for x in args.pieces.split(",")] if args.pieces else None)
     transforms, clouds, fits, diagnostics = align(args.dir, ids, args.cell,
                                                   min_nodes=args.min_nodes,
-                                                  elevation=not args.no_elevation)
-
-    if not args.no_save:
-        path = save_transforms(args.dir, fits, diagnostics,
-                               meta={"cell_m": args.cell})
-        print(f"\nwrote {path}")
+                                                  elevation=not args.no_elevation,
+                                                  save=not args.no_save)
 
     if args.out:
         from postprocess.ply_io import write_ply

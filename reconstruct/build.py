@@ -97,12 +97,18 @@ def _download_date_graphs(date_graphs):
     that was never populated, same skip-one handling either way);
     node_entries -- flat (key, path, lat, lon, date) list across ALL
     graphs, for join_segments' GPS lookup (see join_segments.join_segments);
-    orientations -- {key: [heading, pitch, roll]} in radians, the source's
-    own measurement of which way each camera faced."""
+    catalog -- {pano key: {dot, source, id, lat, lon, date, heading, pitch,
+    roll}} for every candidate, whichever date it belongs to. It is what
+    lets a reconstructed pano be matched back to the place it came from,
+    since which date wins is not decided until the walk is over."""
     all_nodes = [n for g in date_graphs for bucket in g["dot_candidates"].values() for n in bucket]
     keys = [n["key"] for n in all_nodes]
-    orientations = {n["key"]: [n.get("heading"), n.get("pitch"), n.get("roll")]
-                    for n in all_nodes}
+    catalog = {n["key"]: {"dot": dot, "source": n["source"], "id": n["id"],
+                          "lat": n["lat"], "lon": n["lon"], "date": n.get("date"),
+                          "heading": n.get("heading"), "pitch": n.get("pitch"),
+                          "roll": n.get("roll")}
+               for g in date_graphs for dot, bucket in g["dot_candidates"].items()
+               for n in bucket}
     paths = run_async(_download_all(all_nodes))
     path_by_key = {key: path for key, path in zip(keys, paths) if path}
 
@@ -119,7 +125,7 @@ def _download_date_graphs(date_graphs):
         if dot_candidates:
             ready_graphs.append({"date": g["date"], "dot_candidates": dot_candidates})
 
-    return ready_graphs, node_entries, orientations
+    return ready_graphs, node_entries, catalog
 
 
 def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
@@ -163,7 +169,7 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
     for g in date_graphs:
         for dot, bucket in g["dot_candidates"].items():
             print(f"  [candidates] date={g['date']} dot={dot}: {[n['key'] for n in bucket]}")
-    ready_graphs, node_entries, orientations = _download_date_graphs(date_graphs)
+    ready_graphs, node_entries, catalog = _download_date_graphs(date_graphs)
     if not ready_graphs:
         raise ValueError("Nothing downloaded successfully -- can't reconstruct.")
 
@@ -174,7 +180,7 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
         "points": points,
         "adjacency": adjacency,
         "elevations": elevations,
-        "orientations": orientations,
+        "catalog": catalog,
         "start": start,
         "center": center,
         "goals": goals,
@@ -265,7 +271,7 @@ def prepare_pathfind_from_cover_chunk(dots, date, top_per_dot=TOP_PANOS_PER_DOT)
     date_graphs = [{"date": date, "dot_candidates": dot_candidates}]
     n_candidates = sum(len(bucket) for bucket in dot_candidates.values())
     print(f"prepare_pathfind_from_cover_chunk: {n_candidates} candidate(s) across {len(dot_candidates)} dot(s), date={date}")
-    ready_graphs, node_entries, orientations = _download_date_graphs(date_graphs)
+    ready_graphs, node_entries, catalog = _download_date_graphs(date_graphs)
     if not ready_graphs:
         raise ValueError("Nothing downloaded successfully -- can't reconstruct.")
 
@@ -280,7 +286,7 @@ def prepare_pathfind_from_cover_chunk(dots, date, top_per_dot=TOP_PANOS_PER_DOT)
         "adjacency": local_adjacency,
         "start": start,
         "center": center,
-        "orientations": orientations,
+        "catalog": catalog,
         "goals": goals,
         "top_dates": [g["date"] for g in ready_graphs],
     }
@@ -321,7 +327,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
     results = save_pathfind_segments(segments, output_dir)
     bundle_path = save_segments_bundle(segments, output_dir)
     if pieces is not None:
-        results.extend(_save_joined_pieces(pieces, output_dir, prep.get("orientations")))
+        results.extend(_save_joined_pieces(pieces, output_dir, prep["catalog"]))
     print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
     return results, segments, bundle_path
 
@@ -350,7 +356,7 @@ def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:
     return results
 
 
-def save_joined_pathfind(segments, output_dir, chunk_ids=None, known_adjacent_chunk_pairs=None) -> list[tuple[str, str]]:
+def save_joined_pathfind(segments, output_dir, catalog, chunk_ids=None, known_adjacent_chunk_pairs=None) -> list[tuple[str, str]]:
     """Bridges (real DA3 tests between segment boundaries) via join_segments.py
     and records each still-separate piece in the scene (see
     _save_joined_pieces). Usually one piece; more means bridging genuinely
@@ -369,39 +375,84 @@ def save_joined_pathfind(segments, output_dir, chunk_ids=None, known_adjacent_ch
     t0 = time.monotonic()
     os.makedirs(output_dir, exist_ok=True)
     pieces = join_segments_gpu(segments, chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
-    results = _save_joined_pieces(pieces, output_dir)
+    results = _save_joined_pieces(pieces, output_dir, catalog)
     print(f"save_joined_pathfind: done in {time.monotonic() - t0:.1f}s")
     return results
 
 
-def _save_joined_pieces(pieces, output_dir, orientations=None) -> list[tuple[str, str]]:
-    """Saves each piece from join_segments into the directory's scene.
+def open_scene(prep, output_dir):
+    """A scene holding every place this run will try to reconstruct.
 
-    One .ply per NODE, not per piece: DA3 only ever reconstructs one or
-    two panoramas at a time and a node's points enter the result exactly
-    once, so a node is the smallest thing ever independently produced.
-    A piece owns no file of its own -- it is a grouping of nodes, and
-    regrouping later costs nothing.
-
-    Usually one piece (everything bridged into one connected result);
-    more than one means bridging left some genuinely unconnected regions
-    separate. orientations: {key: [heading, pitch, roll]} from prepare,
-    the source's own measurement of which way each camera faced.
+    One node per dot that has a candidate, carrying the best-ranked pano
+    we know of there -- so the nodes, their adjacency and the road lines
+    all exist before the GPU runs. Reconstruction fills in the rest.
     """
     import scene as scene_mod
-    os.makedirs(output_dir, exist_ok=True)
+    best, elevations = {}, prep.get("elevations") or []
+    for key, c in prep["catalog"].items():
+        best.setdefault(c["dot"], (key, c))
+
+    order = sorted(best)                       # dot index -> node index
+    index = {dot: i for i, dot in enumerate(order)}
+    nodes = []
+    for dot in order:
+        _, c = best[dot]
+        nodes.append(scene_mod.Node(pano=scene_mod.Pano(
+            source=c["source"], id=c["id"], lat=c["lat"], lon=c["lon"],
+            date=c["date"], heading=c["heading"], pitch=c["pitch"], roll=c["roll"],
+            elevation=elevations[dot] if dot < len(elevations) else None)))
+
+    adjacency = {str(index[d]): sorted(index[n] for n in ns if n in index)
+                 for d, ns in prep["adjacency"].items() if d in index}
+    sc = scene_mod.Scene(center=list(prep["center"]), nodes=nodes, adjacency=adjacency)
+    sc.save(output_dir)
+    return sc
+
+
+def _save_joined_pieces(pieces, output_dir, catalog) -> list[tuple[str, str]]:
+    """Fill the scene's nodes in with what the reconstruction produced.
+
+    A node already exists for every place; this writes each one's points,
+    the pano that actually filled it, and DA3's camera pose. One .ply per
+    NODE: DA3 reconstructs one or two panoramas at a time and a node's
+    points enter exactly once, so a panorama is the smallest thing ever
+    independently produced.
+
+    Edges are recorded by node index, which is what makes a piece a
+    connected component rather than something stored.
+    """
+    import scene as scene_mod
+    from reconstruct.join_segments import _piece_edges
     sc = scene_mod.Scene.load(output_dir)
+    node_of_dot = {catalog[n.key]["dot"]: i
+                   for i, n in enumerate(sc.nodes) if n.key in catalog}
 
     results = []
-    for i, (clouds, metadata) in enumerate(pieces):
-        nodes, edges = scene_mod.from_metadata(metadata)
-        for node in nodes:
-            pts, cols = clouds[node.key]
-            node.ply = f"node_{len(sc.pieces)}_{node.key.replace(':', '_')}.ply"
-            node.heading, node.pitch, node.roll = (orientations or {}).get(node.key, (None, None, None))
-            save_pointcloud(pts, cols, os.path.join(output_dir, node.ply))
-        sc.pieces.append(scene_mod.Piece(nodes=nodes, edges=edges))
-        results.append((f"piece {i} ({len(nodes)} node(s))", None))
+    for p_i, (clouds, metadata) in enumerate(pieces):
+        placed = {}
+        for key, m in metadata.items():
+            c = catalog.get(key)
+            if c is None or c["dot"] not in node_of_dot:
+                continue
+            i = node_of_dot[c["dot"]]
+            node = sc.nodes[i]
+            node.pano = scene_mod.Pano(
+                source=c["source"], id=c["id"], lat=m["lat"], lon=m["lon"],
+                date=m.get("date"), elevation=node.pano.elevation,
+                heading=c["heading"], pitch=c["pitch"], roll=c["roll"],
+                views_kept=m.get("n_views_kept"), views_total=m.get("n_views_total"))
+            node.position = list(m["position"])
+            node.rotation = m.get("rotation")
+            node.ply = f"node_{i}.ply"
+            save_pointcloud(*clouds[key], os.path.join(output_dir, node.ply))
+            placed[key] = i
+
+        for a, b, keep_a, keep_b in _piece_edges(metadata):
+            if a in placed and b in placed:
+                sc.edges.append(scene_mod.Edge(a=placed[a], b=placed[b],
+                                               keep_a=keep_a, keep_b=keep_b))
+        results.append((f"piece {p_i} ({len(placed)} node(s))", None))
+
     sc.save(output_dir)
     return results
 

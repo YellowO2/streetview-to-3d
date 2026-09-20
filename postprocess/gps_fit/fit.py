@@ -2,7 +2,7 @@
 every module measures in.
 
 Positions are metres east/north of an ORIGIN that belongs to the AREA, not
-to any one run: piece_transforms.json stores coordinates relative to it, so
+to any one run: every solved transform is stored relative to it, so
 deriving it from whichever pieces happen to be loaded would silently
 invalidate every transform already saved. A reconstruction writes the area's
 centre in its scene.json; `load_origin` reads it back, and nothing

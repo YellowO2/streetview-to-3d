@@ -18,7 +18,7 @@ import numpy as np
 from scipy.interpolate import splprep, splev
 from scipy.spatial import cKDTree
 
-from postprocess.corridors import _metres, roads
+from postprocess.corridors import _dots, _metres, roads
 
 # A camera this close to a road polyline is standing on that road. Google's
 # dots sit on the driven line and a panorama is captured from it, so the
@@ -67,7 +67,7 @@ def build(cams, graph, near_m=NEAR_M):
             line comes from Google's graph, not from the other pieces, so a
             piece alone on a road can still be seated against it.
     """
-    xy = np.array(_metres(graph.points))
+    xy = np.array(_metres(_dots(graph)))
     curves = {}
     for rid, walk in enumerate(roads(graph)):
         c = smooth(xy[walk])

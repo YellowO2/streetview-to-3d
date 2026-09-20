@@ -35,6 +35,25 @@ FIT_THRESHOLD_M = 12.0
 
 
 
+ADJACENT_M = 25.0        # Street View dots sit ~10 m apart
+
+
+def _adjacency(nodes):
+    """Who walks next to whom, from GPS alone.
+
+    A piece's own cameras trace the path they were captured along, so
+    proximity recovers the walking order without needing the street graph.
+    """
+    from scipy.spatial import cKDTree
+    keys = list(nodes)
+    pos = np.array([nodes[k]["real_en"] for k in keys])
+    adj = {k: set() for k in keys}
+    for i, j in cKDTree(pos).query_pairs(ADJACENT_M):
+        adj[keys[i]].add(keys[j])
+        adj[keys[j]].add(keys[i])
+    return adj
+
+
 def residuals_for(nodes):
     if len(nodes) < 2:
         return None, None

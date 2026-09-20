@@ -10,7 +10,6 @@ import uuid
 import gradio as gr
 
 from ui import viewers
-import scene as scene_mod
 from paths import SPLATS_DIR
 from postprocess import pipeline
 from reconstruct import build as street_main
@@ -18,16 +17,10 @@ from ui.map_selection.tab import build_map_section, nodes_by_key
 
 
 def _run_dir(prep):
-    """A fresh output directory, opened as a scene so the pieces it receives
-    can be placed later. See scene.py for what a scene holds."""
+    """A fresh output directory, opened as a scene holding every place this
+    run will try to reconstruct. See scene.py for what a scene holds."""
     path = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
-    scene_mod.Scene(
-        center=list(prep["center"]),
-        graph=scene_mod.Graph(points=[list(p) for p in prep["points"]],
-                              adjacency={str(k): list(v)
-                                         for k, v in prep["adjacency"].items()},
-                              elevations=prep["elevations"]),
-    ).save(path)
+    street_main.open_scene(prep, path)
     return path
 
 
@@ -156,7 +149,7 @@ def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
 
     try:
         output_dir = _run_dir(prep)
-        results = street_main.save_joined_pathfind(segments, output_dir)
+        results = street_main.save_joined_pathfind(segments, output_dir, prep["catalog"])
     except Exception as e:
         raise gr.Error(f"Join failed: {e}")
 

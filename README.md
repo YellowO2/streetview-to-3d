@@ -81,10 +81,10 @@ downsampled_and_fetched_graph.json   corridor resampled to dots + a pano census 
   ↓  pick dates, pick a corridor
 graph.json                           the nodes actually reconstructed
   ↓  reconstruct (GPU) — uploads to HuggingFace, not local
-piece_*.ply + piece_*_meta.json      DA3 geometry, and each camera's DA3 position beside its lat/lon
+scene.json + one .ply per node       DA3 geometry, and each camera's DA3 position beside its pano's lat/lon
   ↓  postprocess.gps_fit             that pairing is what makes the fit possible
   ↓  postprocess.road_align          heading, position, then height and tilt
-piece_transforms.json                one 4x4 per piece: stored .ply -> world metres
+scene.json, now with a transform per node   its stored .ply -> world metres
 ```
 
 Solving is slow and the answer is small, so it is saved rather than baked
