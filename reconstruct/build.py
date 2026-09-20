@@ -326,8 +326,12 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
 
     results = save_pathfind_segments(segments, output_dir)
     bundle_path = save_segments_bundle(segments, output_dir)
-    if pieces is not None:
-        results.extend(_save_joined_pieces(pieces, output_dir, prep["catalog"]))
+    if pieces is None:
+        # a lone segment has nothing to bridge TO, but it is still a piece,
+        # and the scene is only filled in by saving one
+        from reconstruct.join_segments import pieces_to_output
+        pieces = pieces_to_output(segments)
+    results.extend(_save_joined_pieces(pieces, output_dir, prep["catalog"]))
     print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
     return results, segments, bundle_path
 
