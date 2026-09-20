@@ -167,7 +167,7 @@ def _run_pathfind_reconstruction_impl(date_graphs, points, adjacency, start_lat,
     about corridors, dates, or coverage itself.
 
     date_graphs: already ranked/capped/isolated per date, dot_candidates
-    shape -- see streets/build_graph.py's
+    shape -- see build_street_graph/build_graph.py's
     build_corridor_graphs. adjacency: the corridor's shared dot-to-dot
     structural graph, same source. protected_positions: passed straight
     through to run_pathfind_reconstruction -- see its own docstring.

@@ -27,7 +27,7 @@ import time
 from gradio_client import Client
 from huggingface_hub import HfApi
 
-from streets.global_dates import split_cover_into_chunks
+from build_street_graph.global_dates import split_cover_into_chunks
 
 NTU_DIR = NTU_DIR
 DATASET_REPO = "potato-bug/ntu-reconstruction"

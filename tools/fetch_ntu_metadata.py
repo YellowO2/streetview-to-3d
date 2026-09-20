@@ -27,7 +27,7 @@ import time
 
 from services.geo import haversine_m
 from services.streetview_fetch import fetch_pano_by_id, format_date
-from streets.fetch_nodes import POINT_MAX_DIST_M, corridor_points
+from build_street_graph.fetch_nodes import POINT_MAX_DIST_M, corridor_points
 from ui.map_selection.candidates import MAX_NODES, apple_tile_panos, nearby_nodes, node_key
 
 GRAPH_PATH = GOOGLE_GRAPH

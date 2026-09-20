@@ -29,7 +29,7 @@ import time
 
 from gradio_client import Client
 
-from streets.global_dates import split_cover_into_chunks
+from build_street_graph.global_dates import split_cover_into_chunks
 
 NTU_DIR = NTU_DIR
 

@@ -30,7 +30,7 @@ import os
 
 from services.pipeline_runner import GPU_DISPATCH, get_da3_config
 from services.streetview_fetch import run_async
-from streets.build_graph import build_corridor_graphs
+from build_street_graph.build_graph import build_corridor_graphs
 from reconstruct.build import DEFAULT_STEP_DEGREES, _download_all
 
 # One real corridor (13 clicked nodes) known to have a dense Apple

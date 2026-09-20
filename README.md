@@ -53,7 +53,7 @@ One folder per stage of the pipeline:
 | | |
 |---|---|
 | `ui/` | the map, the buttons, the point-cloud viewer |
-| `streets/` | which panoramas exist in an area, what links to what, on which dates |
+| `build_street_graph/` | which panoramas exist in an area, what links to what, on which dates |
 | `reconstruct/` | **the GPU stage.** Panoramas in, point clouds out |
 | `postprocess/` | **the CPU stage.** Fit to GPS, split, align, write one scene |
 | `services/` | fetching panoramas, DA3, the ZeroGPU runner — used by every stage |

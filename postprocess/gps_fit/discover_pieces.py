@@ -14,7 +14,7 @@ if everything still fits; otherwise that boundary stays cut. Repeats
 from every not-yet-claimed piece until everything is assigned.
 
 Node-level adjacency (not just chunk-level) comes from the SAME real
-dot-adjacency graph streets/global_dates.py uses to
+dot-adjacency graph build_street_graph/global_dates.py uses to
 build chunks in the first place -- so cuts happen at real gaps in the
 walking path, not at arbitrary chunk boundaries.
 

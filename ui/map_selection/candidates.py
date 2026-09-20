@@ -1,5 +1,5 @@
 """Low-level fetch of real Street View / Look Around panoramas near a
-location. Used by the map picker and by streets/.
+location. Used by the map picker and by build_street_graph/.
 """
 from streetlevel import streetview
 from streetlevel.geo import wgs84_to_tile_coord

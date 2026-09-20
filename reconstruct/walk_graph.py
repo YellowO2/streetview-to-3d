@@ -142,7 +142,7 @@ def run_pathfind_reconstruction(
     """Two-phase pathfind.
 
     - Phase 1 (map_date): per date graph, walk dot-by-dot over the shared
-      corridor adjacency (see streets/fetch_nodes.py --
+      corridor adjacency (see build_street_graph/fetch_nodes.py --
       dot i's structural neighbors, independent of which real panos end
       up at either dot). The FIRST time a dot is ever looked at (as a walk
       target OR a seed), it's rated (see rate_pano below) and keeps its

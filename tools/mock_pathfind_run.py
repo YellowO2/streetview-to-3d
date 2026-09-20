@@ -22,7 +22,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from streets.build_graph import build_corridor_graphs
+from build_street_graph.build_graph import build_corridor_graphs
 from reconstruct.walk_graph import run_pathfind_reconstruction
 
 # ---- edit these for a new run -----------------------------------------

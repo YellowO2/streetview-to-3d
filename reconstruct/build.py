@@ -3,7 +3,7 @@ together for the UI (tab.py calls into this):
 
 1. build_graph.build_corridor_graphs: gather candidate panos along the
    real click-graph and split into up to DATE_TOP_N isolated, capped
-   per-date graphs (no GPU) -- see streets/.
+   per-date graphs (no GPU) -- see build_street_graph/.
 2. Download every node referenced by any of those graphs (network, cached).
 3. run_pathfind_reconstruction_gpu: ONE GPU call -- the corridor-search
    algorithm (reconstruct/walk_graph.py) runs entirely
@@ -35,12 +35,12 @@ import time
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
-from streets.build_graph import TOP_PANOS_PER_DOT, _cap_bucket_for_date, build_corridor_graphs
+from build_street_graph.build_graph import TOP_PANOS_PER_DOT, _cap_bucket_for_date, build_corridor_graphs
 from ui.map_selection.candidates import apple_tile_panos
 
 # Where prepare_pathfind_from_cover_chunk downloads the whole-NTU metadata +
 # date cover from (see tests/fetch_ntu_metadata.py,
-# tests/inspect_global_date_cover.py, streets/
+# tests/inspect_global_date_cover.py, build_street_graph/
 # global_dates.py -- these were produced ONCE, offline, not something a
 # real chunk run recomputes). Same dataset repo the CLI checkpoint flow
 # already uses (see tab.py's CLI_JOIN_DATASET_REPO).
