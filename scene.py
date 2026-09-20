@@ -37,6 +37,10 @@ class Node:
     real pairings (see the README): a score of 6 predicted 33% pairwise
     success, 13 and above predicted 100%. It is the one confidence number
     the reconstruction already knows about a single node.
+
+    heading/pitch/roll are radians, and are the source's own measurement of
+    which way the camera faced -- absolute, unlike `rotation`, which is
+    DA3's and is only meaningful against the other nodes of the same piece.
     """
     key: str
     lat: float
@@ -47,6 +51,9 @@ class Node:
     date: str | None = None
     views_kept: int | None = None
     views_total: int | None = None
+    heading: float | None = None
+    pitch: float | None = None
+    roll: float | None = None
 
     @property
     def confidence(self):
@@ -109,13 +116,13 @@ class Graph:
     adjacency: dict[str, list[int]]
     elevations: list[float | None] | None = None
 
-
     @classmethod
     def read(cls, path):
         """From a standalone graph file, which may carry more than this."""
         with open(path) as f:
             d = json.load(f)
-        return cls(points=d["points"], adjacency=d["adjacency"])
+        return cls(points=d["points"], adjacency=d["adjacency"],
+                   elevations=d.get("elevations"))
 
 
 @dataclass
@@ -159,8 +166,7 @@ def from_metadata(metadata):
     once from each end. They are collapsed to one Edge here.
     """
     nodes = [Node(key=k, lat=v["lat"], lon=v["lon"],
-                  position=list(v["position"]), ply=v.get("ply"),
-                  rotation=v.get("rotation"),
+                  position=list(v["position"]), rotation=v.get("rotation"),
                   date=v.get("date"), views_kept=v.get("n_views_kept"),
                   views_total=v.get("n_views_total"))
              for k, v in metadata.items()]

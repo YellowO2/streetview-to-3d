@@ -96,9 +96,13 @@ def _download_date_graphs(date_graphs):
     dropped entirely -- the walk algorithm treats it exactly like a dot
     that was never populated, same skip-one handling either way);
     node_entries -- flat (key, path, lat, lon, date) list across ALL
-    graphs, for join_segments' GPS lookup (see join_segments.join_segments)."""
+    graphs, for join_segments' GPS lookup (see join_segments.join_segments);
+    orientations -- {key: [heading, pitch, roll]} in radians, the source's
+    own measurement of which way each camera faced."""
     all_nodes = [n for g in date_graphs for bucket in g["dot_candidates"].values() for n in bucket]
     keys = [n["key"] for n in all_nodes]
+    orientations = {n["key"]: [n.get("heading"), n.get("pitch"), n.get("roll")]
+                    for n in all_nodes}
     paths = run_async(_download_all(all_nodes))
     path_by_key = {key: path for key, path in zip(keys, paths) if path}
 
@@ -115,7 +119,7 @@ def _download_date_graphs(date_graphs):
         if dot_candidates:
             ready_graphs.append({"date": g["date"], "dot_candidates": dot_candidates})
 
-    return ready_graphs, node_entries
+    return ready_graphs, node_entries, orientations
 
 
 def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
@@ -159,7 +163,7 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
     for g in date_graphs:
         for dot, bucket in g["dot_candidates"].items():
             print(f"  [candidates] date={g['date']} dot={dot}: {[n['key'] for n in bucket]}")
-    ready_graphs, node_entries = _download_date_graphs(date_graphs)
+    ready_graphs, node_entries, orientations = _download_date_graphs(date_graphs)
     if not ready_graphs:
         raise ValueError("Nothing downloaded successfully -- can't reconstruct.")
 
@@ -170,6 +174,7 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
         "points": points,
         "adjacency": adjacency,
         "elevations": elevations,
+        "orientations": orientations,
         "start": start,
         "center": center,
         "goals": goals,
@@ -260,7 +265,7 @@ def prepare_pathfind_from_cover_chunk(dots, date, top_per_dot=TOP_PANOS_PER_DOT)
     date_graphs = [{"date": date, "dot_candidates": dot_candidates}]
     n_candidates = sum(len(bucket) for bucket in dot_candidates.values())
     print(f"prepare_pathfind_from_cover_chunk: {n_candidates} candidate(s) across {len(dot_candidates)} dot(s), date={date}")
-    ready_graphs, node_entries = _download_date_graphs(date_graphs)
+    ready_graphs, node_entries, orientations = _download_date_graphs(date_graphs)
     if not ready_graphs:
         raise ValueError("Nothing downloaded successfully -- can't reconstruct.")
 
@@ -275,6 +280,7 @@ def prepare_pathfind_from_cover_chunk(dots, date, top_per_dot=TOP_PANOS_PER_DOT)
         "adjacency": local_adjacency,
         "start": start,
         "center": center,
+        "orientations": orientations,
         "goals": goals,
         "top_dates": [g["date"] for g in ready_graphs],
     }
@@ -315,7 +321,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
     results = save_pathfind_segments(segments, output_dir)
     bundle_path = save_segments_bundle(segments, output_dir)
     if pieces is not None:
-        results.extend(_save_joined_pieces(pieces, output_dir))
+        results.extend(_save_joined_pieces(pieces, output_dir, prep.get("orientations")))
     print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
     return results, segments, bundle_path
 
@@ -368,7 +374,7 @@ def save_joined_pathfind(segments, output_dir, chunk_ids=None, known_adjacent_ch
     return results
 
 
-def _save_joined_pieces(pieces, output_dir) -> list[tuple[str, str]]:
+def _save_joined_pieces(pieces, output_dir, orientations=None) -> list[tuple[str, str]]:
     """Saves each piece from join_segments into the directory's scene.
 
     One .ply per NODE, not per piece: DA3 only ever reconstructs one or
@@ -379,7 +385,8 @@ def _save_joined_pieces(pieces, output_dir) -> list[tuple[str, str]]:
 
     Usually one piece (everything bridged into one connected result);
     more than one means bridging left some genuinely unconnected regions
-    separate.
+    separate. orientations: {key: [heading, pitch, roll]} from prepare,
+    the source's own measurement of which way each camera faced.
     """
     import scene as scene_mod
     os.makedirs(output_dir, exist_ok=True)
@@ -391,6 +398,7 @@ def _save_joined_pieces(pieces, output_dir) -> list[tuple[str, str]]:
         for node in nodes:
             pts, cols = clouds[node.key]
             node.ply = f"node_{len(sc.pieces)}_{node.key.replace(':', '_')}.ply"
+            node.heading, node.pitch, node.roll = (orientations or {}).get(node.key, (None, None, None))
             save_pointcloud(pts, cols, os.path.join(output_dir, node.ply))
         sc.pieces.append(scene_mod.Piece(nodes=nodes, edges=edges))
         results.append((f"piece {i} ({len(nodes)} node(s))", None))

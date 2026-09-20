@@ -168,6 +168,8 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
                 buckets[i].append({
                     "key": node_key("google", entry["id"]), "source": "google", "id": entry["id"],
                     "lat": gc["lat"], "lon": gc["lon"], "date": entry["label"],
+                    "heading": meta.get("heading"), "pitch": meta.get("pitch"),
+                    "roll": meta.get("roll"),
                 })
 
         try:
@@ -186,6 +188,7 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
             buckets[i].append({
                 "key": node_key("apple", p.id), "source": "apple", "id": p.id,
                 "lat": p.lat, "lon": p.lon, "date": format_date(p.date),
+                "heading": p.heading, "pitch": p.pitch, "roll": p.roll,
                 "_pano": p,  # kept for download_lookaround (needs the object, not just the id)
             })
 
