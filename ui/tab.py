@@ -59,6 +59,17 @@ def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
     n = len(prep["node_entries"])
     return prep, f"<p>Prepared {n} candidate(s) across {len(prep['top_dates'])} date(s). Ready — press \"Reconstruct\".</p>"
 
+def _bundle(run_dir):
+    """The whole run as one zip.
+
+    The Space's disk is wiped whenever it restarts, so a link into it dies
+    with the container. Offered as soon as the GPU has produced anything,
+    because that is the expensive half -- placement is free and can be run
+    again on the download.
+    """
+    return shutil.make_archive(run_dir.rstrip("/"), "zip", run_dir)
+
+
 def handle_reconstruct(prep, progress=gr.Progress(track_tqdm=True)):
     """Step 2: walk the corridor and bridge what it finds, in ONE GPU call.
 
@@ -75,9 +86,10 @@ def handle_reconstruct(prep, progress=gr.Progress(track_tqdm=True)):
     except Exception as e:
         raise gr.Error(f"Reconstruct failed: {e}")
 
-    return viewers.summary(results, 'Reconstructed. Press "3. Place into one '
-                           "scene\" to fit it to the map -- that step hands back "
-                           "the whole scene as a download."), output_dir
+    return (viewers.summary(results, "Downloadable now. Press \"3\" to fit it "
+                            "to the map -- free, and re-runnable on the "
+                            "download later if the placement needs changing."),
+            output_dir, _bundle(output_dir))
 
 def handle_postprocess(run_dir, progress=gr.Progress(track_tqdm=True)):
     """Step 3: place the run's pieces into one scene. No GPU.
@@ -101,13 +113,9 @@ def handle_postprocess(run_dir, progress=gr.Progress(track_tqdm=True)):
     except Exception as e:
         raise gr.Error(f"Post-processing failed: {e}")
 
-    # The Space's own disk is wiped whenever it restarts, so the scene is
-    # handed back as a file rather than left behind as a link to it.
-    bundle = shutil.make_archive(run_dir.rstrip("/"), "zip", run_dir)
-
     report = "<pre>" + html_lib.escape("\n".join(lines)) + "</pre>"
     return (viewers.build_pointcloud_viewer(viewers.file_url(ply)) + report,
-            bundle)
+            _bundle(run_dir))
 
 def build_main_tab():
     state, map_view, selection_view = build_map_section()
@@ -128,7 +136,7 @@ def build_main_tab():
 
     # The Space's disk does not survive a restart, so a finished scene is
     # handed back as a file rather than left behind as a link to it.
-    scene_file = gr.File(label="The placed scene (scene.json + one .ply per node)",
+    scene_file = gr.File(label="The scene (scene.json + one .ply per node)",
                          interactive=False)
 
     # Drop-ready from page load (not a static placeholder) -- lets you
@@ -146,7 +154,7 @@ def build_main_tab():
     pathfind_run_btn.click(
         fn=handle_reconstruct,
         inputs=[pathfind_prep_state],
-        outputs=[reconstruct_view, pathfind_dir_state],
+        outputs=[reconstruct_view, pathfind_dir_state, scene_file],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
     )
