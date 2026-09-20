@@ -1,8 +1,4 @@
-"""Reading and writing plain point-cloud .ply files.
-
-Lived in tools/export_island_ply.py, which meant the alignment pipeline
-imported a script out of the tests directory to write its output.
-"""
+"""Reading and writing plain point-cloud .ply files."""
 import numpy as np
 
 def write_ply(path, pts, cols):

@@ -460,7 +460,7 @@ def _meta_piece_chunk_ids(meta_piece):
     """Every distinct leaf chunk id folded into this one meta piece so
     far, sorted -- e.g. bridge_metadata's own chunk_ids/known_adjacent_
     chunk_pairs param, or for a driver that wants to know what a group
-    actually covers (see tests/tree_merge_test.py)."""
+    actually covers."""
     return sorted({chunk_id for chunk_id, _, _, _ in meta_piece[0]})
 
 

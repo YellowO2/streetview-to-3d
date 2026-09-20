@@ -164,9 +164,9 @@ def existing_group_chunk_ids():
 
 def merge_forest(client, chunk_ids, known_adjacent_chunk_pairs):
     """Greedily pairs only REAL declared-adjacent groups at each level
-    (N -> N/2 -> ... down to as few roots as the graph allows) -- see
-    tools/tree_merge_test.py's own docstring for why list-position
-    pairing is wrong. Resumable: a computed pairing whose target
+    (N -> N/2 -> ... down to as few roots as the graph allows), never by
+    list position, which pairs groups that are nowhere near each other.
+    Resumable: a computed pairing whose target
     group_id already exists in cli_meta/ WITH the exact same chunk
     coverage is reused as-is rather than re-merged (see
     existing_group_chunk_ids). Returns a list of final root group ids
