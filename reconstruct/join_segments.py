@@ -176,7 +176,11 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     merged_clouds = {**a_clouds,
                      **{k: (pts @ b_to_a_R.T + b_to_a_t, cols)
                         for k, (pts, cols) in b_clouds.items()}}
-    merged_edges = a_edges + [(a_key, b_key)] + b_edges
+    # carries its own keep counts like any other edge -- a bridge is a real
+    # DA3 test between two panoramas, and how well they agreed is exactly
+    # what decides whether the link should later be trusted
+    merged_edges = a_edges + [(a_key, b_key, list(result["keep_a"]),
+                               list(result["keep_b"]))] + b_edges
     merged_positions = {**a_positions, **{k: b_to_a_R @ p + b_to_a_t for k, p in b_positions.items()}}
     merged_frame_poses = {**a_frame_poses,
                            **{k: (b_to_a_R @ p + b_to_a_t, r @ b_to_a_R.T, path, lat, lon, n_kept, n_total)
