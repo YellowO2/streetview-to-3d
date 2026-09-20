@@ -8,14 +8,14 @@ reconstruct's handlers call through here, rather than each loading a
 separate copy.
 
 There is exactly ONE @spaces.GPU-decorated function in this whole module
-(_gpu_dispatch) -- matches DA3's own official Space (app.py wraps a single
+(run_pathfind_and_join_gpu) -- matches DA3's own official Space (app.py wraps a single
 ModelInference.run_inference, everything else is plain Python calling into
 it), instead of one decorated function per task. Every public run_*_gpu
-function below is a thin, undecorated wrapper that calls _gpu_dispatch
+helper below is plain, undecorated Python called from inside it
 with its own task name -- callers (app.py, reconstruct/build.py,
 tests/) don't need to change at all, since these functions keep their
 same names/signatures. The actual per-task work lives in the _run_*_impl
-functions, plain Python, called only from inside _gpu_dispatch where a
+functions, plain Python, called only from inside that call where a
 real GPU is guaranteed attached.
 """
 import os
@@ -61,7 +61,7 @@ try:
 
     def _gpu_duration(task, *args, **kwargs):
         """Per-call duration for the ONE @spaces.GPU-decorated dispatch
-        (see _gpu_dispatch's own docstring for why there's only one) --
+        (there is only one) --
         every task gets the normal shared window except pathfind_and_join,
         which needs room for both the walk AND a genuinely unhurried join
         afterward (see RUN_AND_JOIN_DURATION_S)."""
@@ -91,7 +91,7 @@ def get_da3_config():
 
 
 def get_da3():
-    """Lazily built on first real use, INSIDE _gpu_dispatch -- not at
+    """Lazily built on first real use, INSIDE the GPU call -- not at
     module level (building it before any @spaces.GPU call has attached a
     real GPU segfaults on pycolmap's own raw CUDA calls, which bypass
     spaces' PyTorch-only .to()/.cuda() emulation). Cached in a module-
@@ -111,61 +111,13 @@ def get_da3():
 
 
 @GPU_DISPATCH
-def _gpu_dispatch(task, *args, **kwargs):
-    """The ONE @spaces.GPU-decorated entry point for this whole app. Every
-    run_*_gpu function below routes through here with its own task name
-    -- see this module's own docstring for why."""
-    impl = {
-        "pointcloud": _run_pointcloud_impl,
-        "pathfind_reconstruction": _run_pathfind_reconstruction_impl,
-        "join_segments": _join_segments_impl,
-        "pathfind_and_join": _run_pathfind_and_join_impl,
-        "bridge_incremental": _bridge_incremental_impl,
-        "bridge_metadata": _bridge_metadata_impl,
-    }[task]
-    return impl(*args, **kwargs)
-
-
-
-
-
-
-def run_pathfind_reconstruction_gpu(date_graphs, points, adjacency, start_lat, start_lon, step_degrees=20, protected_positions=None):
-    """See reconstruct/build.py's module docstring for why the whole
-    pathfind search runs inside one GPU call, not several."""
-    return _gpu_dispatch("pathfind_reconstruction", date_graphs, points, adjacency, start_lat, start_lon,
-                          step_degrees=step_degrees, protected_positions=protected_positions)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_lon,
                                edge_max_dist_m=None, step_degrees=20):
-    """See _run_pathfind_and_join_impl for the real docstring -- this is
-    just the thin dispatch wrapper (see this module's own docstring for
-    why)."""
-    return _gpu_dispatch("pathfind_and_join", date_graphs, points, adjacency, start_lat, start_lon,
-                          edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees)
+    """The ONE @spaces.GPU-decorated entry point for this whole app -- see
+    this module's own docstring for why there is exactly one. The work
+    itself is in _run_pathfind_and_join_impl."""
+    return _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
+                                        edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees)
 
 
 def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,

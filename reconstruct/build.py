@@ -5,7 +5,7 @@ together for the UI (tab.py calls into this):
    real click-graph and split into up to DATE_TOP_N isolated, capped
    per-date graphs (no GPU) -- see build_street_graph/.
 2. Download every node referenced by any of those graphs (network, cached).
-3. run_pathfind_reconstruction_gpu: ONE GPU call -- the corridor-search
+3. run_pathfind_and_join_gpu: ONE GPU call -- the corridor-search
    algorithm (reconstruct/walk_graph.py) runs entirely
    inside it, producing possibly-several disconnected segments.
 4. join_segments_gpu: a SEPARATE GPU call -- bridges segments together
@@ -33,7 +33,7 @@ import os
 import time
 
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
-from services.pipeline_runner import run_pathfind_reconstruction_gpu, save_pointcloud
+from services.pipeline_runner import save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
 from build_street_graph.build_graph import TOP_PANOS_PER_DOT, _cap_bucket_for_date, build_corridor_graphs
 from ui.map_selection.candidates import apple_tile_panos
