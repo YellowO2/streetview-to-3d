@@ -165,13 +165,22 @@ GPS, then merges adjacent pieces back wherever the combined fit still
 holds. On NTU's 117 chunks that gives 52 islands fitting to 3.5 m median,
 against 330 m for one transform across the whole tree.
 
-Fitting the largest islands is what measures the scale: the five biggest
-(544 nodes between them) agree on **1.31** to within 0.04. Smaller islands
-bias it upward -- over a short track GPS noise is large next to the
-baseline, which inflates the apparent scale.
-
 Note the pipeline itself uses only the cutting half (`resolve`, via
 `postprocess/gps_fit/split_by_fit.py`). The merge-back is CLI-only.
+
+### The DA3-to-metres constant
+
+`config.DA3_UNITS_TO_METRES` is measured, not guessed. To re-measure it:
+
+```bash
+python -m tools.measure_da3_scale --group g_L16_0 --sweep
+```
+
+It cuts each chunk where its own nodes stop matching their GPS, fits every
+surviving piece of 4+ nodes alone, and prints the spread per cut. Take the
+value where the mean meets the median -- that is where nothing is left
+skewing the sample. On NTU it holds at 1.33-1.35 across cuts from 12 m
+down to 0.75 m.
 
 ## Dev notes
 
