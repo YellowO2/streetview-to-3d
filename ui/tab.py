@@ -16,14 +16,12 @@ from postprocess import pipeline
 from reconstruct import build as street_main
 from ui.map_selection.tab import build_map_section, nodes_by_key
 
-
 def _run_dir(prep):
     """A fresh output directory, opened as a scene holding every place this
     run will try to reconstruct. See scene.py for what a scene holds."""
     path = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
     street_main.open_scene(prep, path)
     return path
-
 
 def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
     """Experimental button, step 1 of 3: gathers every Google + Apple pano
@@ -59,103 +57,25 @@ def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
 
     progress(1.0, desc="Done!")
     n = len(prep["node_entries"])
-    return prep, f"<p>Prepared {n} candidate(s) across {len(prep['top_dates'])} date(s). Ready — press \"Run Auto-path\".</p>"
+    return prep, f"<p>Prepared {n} candidate(s) across {len(prep['top_dates'])} date(s). Ready — press \"Reconstruct\".</p>"
 
+def handle_reconstruct(prep, progress=gr.Progress(track_tqdm=True)):
+    """Step 2: walk the corridor and bridge what it finds, in ONE GPU call.
 
-def handle_pathfind_run(prep, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button, step 2 of 3: runs the real multi-goal best-first
-    search over whatever handle_pathfind_prepare already downloaded -- the
-    fixed start node stays the search's start; every other selected node is
-    a goal, and the search doesn't stop at the first one reached, it keeps
-    growing toward whatever's still outstanding.
-
-    Split from the prepare step specifically so this GPU-triggering click
-    is its own fresh, minimal-latency interaction -- the ZeroGPU proxy
-    token's validity is wall-clock, and a long download sitting ahead of
-    the @spaces.GPU call (as one combined button used to do) is exactly
-    what can let it go stale before the schedule request is ever sent.
-
-    Only saves each segment's own preview here -- joining them (step 3,
-    handle_pathfind_join) is a separate button on purpose: it's its own
-    separate GPU call, so keeping it out of this call means re-testing/
-    tuning join/bridging doesn't require re-running the expensive
-    corridor search each time.
-    See street_main.run_prepared_pathfind_segments/save_pathfind_segments."""
-    if not prep:
-        raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
-
-    try:
-        segments = street_main.run_prepared_pathfind_segments(prep)
-        output_dir = _run_dir(prep)
-        results = street_main.save_pathfind_segments(segments, output_dir)
-        bundle_path = street_main.save_segments_bundle(segments, output_dir)
-    except Exception as e:
-        raise gr.Error(f"Auto-path failed: {e}")
-
-    note = "" if len(segments) > 1 else "<p>Single segment -- nothing to join.</p>"
-    return viewers.labeled_download_links(results) + note, segments, bundle_path
-
-
-def handle_pathfind_run_and_join(prep, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button, combined 2+3: corridor search + join/bridging
-    in ONE GPU session (see street_main.run_prepared_pathfind), instead
-    of the separate Run then Join buttons -- avoids paying for two
-    separate DA3 model loads when you just want the final result end-
-    to-end and don't need to re-test join/bridging separately afterward.
-    Still saves a segments bundle (same as handle_pathfind_run), so Join
-    can be re-run alone later against this same result if needed."""
+    Search and bridging share a session so DA3 is loaded once and the
+    panoramas already on disk are reused -- a second call has no guarantee
+    of landing on the same worker.
+    """
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
     try:
         output_dir = _run_dir(prep)
-        results, segments, bundle_path = street_main.run_prepared_pathfind(prep, output_dir)
+        results = street_main.run_prepared_pathfind(prep, output_dir)
     except Exception as e:
-        raise gr.Error(f"Run + Join failed: {e}")
+        raise gr.Error(f"Reconstruct failed: {e}")
 
-    return viewers.labeled_download_links(results), segments, bundle_path, output_dir
-
-
-def handle_pathfind_load_segments(file_path):
-    """Loads a previously downloaded segments bundle (see the "Download
-    segments" file handle_pathfind_run produces), so Join can run
-    immediately without re-running Prepare or the expensive GPU search --
-    a different session, or after tweaking join_segments.py. See
-    street_main.load_segments_bundle."""
-    if not file_path:
-        raise gr.Error("Choose a segments file first.")
-    try:
-        segments = street_main.load_segments_bundle(file_path)
-    except Exception as e:
-        raise gr.Error(f"Load failed: {e}")
-    # Join no longer needs anything from prep (frame_poses in segments
-    # already carries each node's lat/lon) -- this placeholder just keeps
-    # the "something's ready" gate other handlers check (e.g.
-    # handle_pathfind_join's `if not prep or not segments`) true.
-    return True, segments, f"<p>Loaded {len(segments)} segment(s) from file. Ready — press \"Join segments\".</p>"
-
-
-def handle_pathfind_join(prep, segments, progress=gr.Progress(track_tqdm=True)):
-    """Experimental button, step 3 of 3: bridges segments together with
-    real DA3 tests (see join_segments.join_segments) -- no GPS placement;
-    a segment pair known/expected to be adjacent with zero real
-    candidates in range is treated as an upstream bug and raises, rather
-    than silently falling back to GPS. Its own separate GPU call from
-    Run's -- safe to press again after tweaking the join/bridging logic
-    without re-running Run. See street_main.save_joined_pathfind."""
-    if not prep or not segments:
-        raise gr.Error("Nothing to join yet -- press \"Run Auto-path\" first.")
-    if len(segments) < 2:
-        raise gr.Error("Only one segment -- nothing to join.")
-
-    try:
-        output_dir = _run_dir(prep)
-        results = street_main.save_joined_pathfind(segments, output_dir, prep["catalog"])
-    except Exception as e:
-        raise gr.Error(f"Join failed: {e}")
-
-    return viewers.labeled_download_links(results)
-
+    return viewers.labeled_download_links(results), output_dir
 
 def handle_postprocess(run_dir, progress=gr.Progress(track_tqdm=True)):
     """Step 3: place the run's pieces into one scene. No GPU.
@@ -187,46 +107,27 @@ def handle_postprocess(run_dir, progress=gr.Progress(track_tqdm=True)):
     return (viewers.build_pointcloud_viewer(viewers.file_url(ply)) + report,
             bundle)
 
-
 def build_main_tab():
     state, map_view, selection_view = build_map_section()
 
     with gr.Row(equal_height=True):
         with gr.Column(scale=0, min_width=140):
-            # Auto-path across the whole clicked graph (branches/loops
-            # included). Prepare is separate and has no GPU, so the
-            # GPU-triggering click is its own fresh interaction rather than
-            # following a long download inside one request -- the ZeroGPU
-            # proxy token expires on wall-clock time.
-            #
-            # Run and Join are also available as two separate GPU calls,
-            # which is what to use when tuning join/bridging against an
-            # already-computed search. They are hidden because the combined
-            # call is what an ordinary reconstruction wants: one DA3 model
-            # load instead of two, and it reuses the panoramas already on
-            # disk, which a separate Join call has to re-fetch.
-            pathfind_prepare_btn = gr.Button("1. Prepare auto-path (experimental)")
-            pathfind_run_btn = gr.Button("2. Run auto-path", visible=False)
-            pathfind_join_btn = gr.Button("3. Join segments", visible=False)
-            pathfind_run_join_btn = gr.Button("2. Run + Join (one GPU call)")
+            # Prepare is separate and has no GPU, so the GPU-triggering
+            # click is its own fresh interaction rather than following a
+            # long download inside one request -- the ZeroGPU proxy token
+            # expires on wall-clock time.
+            pathfind_prepare_btn = gr.Button("1. Prepare (fetch panoramas)")
+            pathfind_run_btn = gr.Button("2. Reconstruct (GPU)")
             pathfind_post_btn = gr.Button("3. Place into one scene (no GPU)")
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
-    pathfind_segments_state = gr.State(None)
     pathfind_dir_state = gr.State(None)
 
-    with gr.Row(equal_height=True):
-        # Produced by Run -- everything Join needs (prep + segments),
-        # pickled to one file. Download it to skip Prepare/Run entirely
-        # next time (a later session, or after tweaking join_segments.py):
-        # just re-upload it below and press "Load segments".
-        pathfind_segments_file = gr.File(label="Segments file (from Run, for Join later)", interactive=False)
-        scene_file = gr.File(label="The placed scene (scene.json + one .ply per node)", interactive=False)
-        # Only useful with the hidden Join button, so hidden with it.
-        with gr.Column(visible=False):
-            pathfind_segments_upload = gr.File(label="...or load a previously downloaded segments file", file_types=[".pkl"], type="filepath")
-            pathfind_load_btn = gr.Button("Load segments")
+    # The Space's disk does not survive a restart, so a finished scene is
+    # handed back as a file rather than left behind as a link to it.
+    scene_file = gr.File(label="The placed scene (scene.json + one .ply per node)",
+                         interactive=False)
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -241,34 +142,9 @@ def build_main_tab():
     )
 
     pathfind_run_btn.click(
-        fn=handle_pathfind_run,
+        fn=handle_reconstruct,
         inputs=[pathfind_prep_state],
-        outputs=[reconstruct_view, pathfind_segments_state, pathfind_segments_file],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    pathfind_load_btn.click(
-        fn=handle_pathfind_load_segments,
-        inputs=[pathfind_segments_upload],
-        outputs=[pathfind_prep_state, pathfind_segments_state, pathfind_status],
-        show_progress="minimal",
-        show_progress_on=[pathfind_status],
-    )
-
-    pathfind_join_btn.click(
-        fn=handle_pathfind_join,
-        inputs=[pathfind_prep_state, pathfind_segments_state],
-        outputs=[reconstruct_view],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    pathfind_run_join_btn.click(
-        fn=handle_pathfind_run_and_join,
-        inputs=[pathfind_prep_state],
-        outputs=[reconstruct_view, pathfind_segments_state, pathfind_segments_file,
-                 pathfind_dir_state],
+        outputs=[reconstruct_view, pathfind_dir_state],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
     )

@@ -52,21 +52,6 @@ def apple_candidates(lat, lon, k=APPLE_CANDIDATE_COUNT):
     return sorted(panos.values(), key=lambda p: haversine_m(lat, lon, p.lat, p.lon))[:k]
 
 
-def apple_pano_to_meta(pano):
-    """Shared metadata shape for a resolved LookaroundPanorama."""
-    return {
-        "id": pano.id,
-        "build_id": pano.build_id,
-        "lat": pano.lat,
-        "lon": pano.lon,
-        "date": format_date(pano.date),
-        "elevation": pano.elevation,
-        "neighbors": [],
-        "dates": [],
-        "heading": pano.heading,
-        "pitch": pano.pitch,
-        "roll": pano.roll,
-    }
 
 
 def get_apple_auth():

@@ -59,13 +59,3 @@ def fit_similarity_2d(src, dst):
     return R, scale, t
 
 
-def fit_nodes(nodes, da3_field="da3_xz", lat_field="lat", lon_field="lon"):
-    """Fit one group's nodes to their GPS. nodes: dicts carrying da3_field
-    (an [x, z] pair) and lat_field/lon_field. Returns (R, scale, t, real_en,
-    fitted_en, residuals)."""
-    src = np.array([n[da3_field] for n in nodes])
-    dst = np.array([real_en(n[lat_field], n[lon_field]) for n in nodes])
-    R, scale, t = fit_similarity_2d(src, dst)
-    fitted = scale * (src @ R.T) + t
-    residuals = np.linalg.norm(fitted - dst, axis=1)
-    return R, scale, t, dst, fitted, residuals

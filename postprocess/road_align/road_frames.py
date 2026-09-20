@@ -95,15 +95,6 @@ def clip(piece, curve, half_width=HALF_WIDTH_M):
     return (xz[keep], y[keep], cols[keep]), keep
 
 
-def near_cams(cams, curve, near_m=NEAR_M):
-    """The piece's cameras that stand on this road.
-
-    road_cells uses the cameras to pick which grey surface is the road,
-    so handing it only the ones on THIS road is what makes it choose this
-    road's surface rather than the whole junction.
-    """
-    d = cKDTree(curve).query(cams)[0]
-    return cams[d <= near_m] if (d <= near_m).any() else cams
 
 
 class RouteFrame:

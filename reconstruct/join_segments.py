@@ -50,16 +50,6 @@ BRIDGE_MAX_ATTEMPTS = 10
 BRIDGE_MAX_DIST_M = 30.0
 
 
-class NoBridgeCandidatesError(RuntimeError):
-    """Raised when a DECLARED-adjacent chunk-id pair never had a single
-    real node pair within edge_max_dist_m, across EVERY piece-level
-    combination carrying those two ids -- not just the first one tried.
-    A chunk can legitimately still be several separate pieces (self-
-    bridge/an earlier call didn't fully connect it), so one specific
-    piece-pair coming up empty is normal; only the declared id pair as a
-    WHOLE coming up empty everywhere points to something wrong upstream
-    (bad chunking, a node that failed to download, a corrupted
-    position)."""
 
 
 def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, refetch_path=None):
@@ -82,7 +72,7 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     genuine per-attempt failure), or if there were zero candidates at
     all. had_candidates distinguishes
     those two None cases for the caller (bridge_pieces) -- whether THIS
-    declared pair ever needs raising NoBridgeCandidatesError is decided
+    a pair ever counts as having had a real chance is decided
     there, only once EVERY piece-level pair sharing those two chunk ids
     has been tried, not on this one pair alone.
     refetch_path: optional (key, lat, lon) -> path (or None on failure)
@@ -196,140 +186,39 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     return merged, bridge_test_id, True
 
 
-def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M, deadline=None,
-                   chunk_ids=None, known_adjacent_chunk_pairs=None, refetch_path=None, return_ids=False,
-                   raise_on_unsatisfied=True):
-    """Try to merge geographically/structurally adjacent segments via real
-    DA3-verified transforms. Greedily merges pairs until nothing more
-    merges or the deadline hits. Returns a new list of (possibly merged)
-    segments, same 7-tuple shape as `segments` (see
-    run_pathfind_reconstruction's return docs). Multiple pieces coming
-    back is expected whenever parts of the input are genuinely not meant
-    to connect (e.g. two unrelated regions with no declared adjacency) --
-    not an error; see NoBridgeCandidatesError for the actual error case
-    (a declared-adjacent pair with zero real candidates, and
-    raise_on_unsatisfied=True -- see that param).
+def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
+                   deadline=None, refetch_path=None):
+    """Merge segments that a real DA3 test says belong together.
 
-    raise_on_unsatisfied: whether a declared-adjacent pair that never
-    once had a real candidate raises NoBridgeCandidatesError (True,
-    default) or is just left as separate pieces, same as an
-    undeclared/blind miss (False). True is right when the caller's own
-    adjacency really does guarantee real closeness (e.g. cross-chunk
-    bridging, where chunking itself is built around a tight per-dot
-    catchment -- see global_dates.split_cover_into_chunks -- so a
-    declared pair with zero candidates does point to something wrong
-    upstream). False is right for a same-call self-bridge pass over an
-    arbitrary corridor (e.g. a hand-picked selection, or ANY chunk that
-    isn't specifically engineered for tight spacing): two real graph-
-    adjacent dots can legitimately still be a genuine 30m+ apart in
-    practice (real gaps in real coverage) -- that's not a bug, it's just
-    geography, and should leave those two as separate pieces like any
-    other normal miss, not hard-fail the whole call.
-
-    chunk_ids: optional, same length/order as segments -- an identifying
-    label per segment (e.g. which chunk of a large-scale corridor it
-    came from). Each entry is normally a single id, but MAY itself be an
-    iterable of ids -- lets a caller feed back in an already-merged piece
-    from a PREVIOUS bridge_pieces call (see return_ids) as one input
-    segment carrying its own whole prior chunk-id set, so a later call
-    only needs to test that piece against genuinely NEW segments, never
-    re-verifying pairs it already merged. known_adjacent_chunk_pairs:
-    optional [(id_a, id_b), ...] -- when given (needs chunk_ids too),
-    ONLY segment pairs whose chunk id(s) appear together in this list are
-    ever attempted, skipping the blind O(n^2) all-pairs scan entirely.
-    Use when the caller already knows which pieces are structurally meant
-    to connect (e.g. deliberately-chunked corridor segments) -- far
-    cheaper once there are many segments, and avoids wrongly bridging two
-    segments that just happen to be geographically close but aren't
-    actually adjacent (different floor, opposite side of a loop, etc.).
-    As pieces merge, a merged piece inherits the union of its
-    ingredients' chunk ids, so it stays matchable against anything
-    adjacent to either original chunk.
-
-    return_ids: when True, returns (pieces, id_sets) -- id_sets[i] is the
-    sorted list of every original chunk id folded into pieces[i], for a
-    caller that wants to persist "here's what's already merged" and feed
-    it back into a later call as chunk_ids (see above)."""
+    Greedily tries every pair until nothing more merges or the deadline
+    hits, and returns the segments that remain. More than one coming back
+    is expected, not an error: two parts of a corridor can be genuinely
+    unconnectable because the imagery between them has a real gap.
+    """
     if bridge_test_edge is None or len(segments) < 2:
-        pieces = list(segments)
-        if not return_ids:
-            return pieces
-        if chunk_ids is not None:
-            id_sets = [sorted(cid) if isinstance(cid, (set, frozenset, list, tuple)) else [cid] for cid in chunk_ids]
-        else:
-            id_sets = [[i] for i in range(len(pieces))]
-        return pieces, id_sets
+        return list(segments)
     if deadline is None:
         deadline = time.monotonic() + 200.0
 
     pieces = list(segments)
-    if chunk_ids is not None:
-        id_sets = [frozenset(cid) if isinstance(cid, (set, frozenset, list, tuple)) else frozenset({cid}) for cid in chunk_ids]
-    else:
-        id_sets = [frozenset({i}) for i in range(len(pieces))]
-    adjacency_set = ({frozenset(pair) for pair in known_adjacent_chunk_pairs}
-                      if known_adjacent_chunk_pairs is not None else None)
-
-    def candidate_pairs():
-        for i in range(len(pieces)):
-            for j in range(len(pieces)):
-                if i == j:
-                    continue
-                if adjacency_set is not None:
-                    if not any(frozenset((x, y)) in adjacency_set for x in id_sets[i] for y in id_sets[j]):
-                        continue
-                yield i, j
-
-    # Declared pairs (from known_adjacent_chunk_pairs) that have had at
-    # least one real candidate node pair in SOME piece-level attempt --
-    # tracked across the whole run, not per-attempt, since a chunk can
-    # legitimately still be several separate pieces (self-bridge/an
-    # earlier call didn't fully connect it) and only one of them needs
-    # to actually have candidates for the declared pair to be "satisfied".
-    satisfied_declared_pairs = set()
-
     bridge_test_id = 0
     changed = True
     while changed and len(pieces) > 1 and time.monotonic() < deadline:
         changed = False
-        for i, j in candidate_pairs():
-            merged, bridge_test_id, had_candidates = _try_bridge(pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id,
-                                                                   refetch_path=refetch_path)
-            if had_candidates and adjacency_set is not None:
-                satisfied_declared_pairs |= {frozenset((x, y)) for x in id_sets[i] for y in id_sets[j]
-                                              if frozenset((x, y)) in adjacency_set}
-            if merged is not None:
-                merged_ids = id_sets[i] | id_sets[j]
-                pieces = [p for k, p in enumerate(pieces) if k not in (i, j)] + [merged]
-                id_sets = [s for k, s in enumerate(id_sets) if k not in (i, j)] + [merged_ids]
-                changed = True
+        for i in range(len(pieces)):
+            for j in range(len(pieces)):
+                if i == j:
+                    continue
+                merged, bridge_test_id, _ = _try_bridge(
+                    pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m,
+                    deadline, bridge_test_id, refetch_path=refetch_path)
+                if merged is not None:
+                    pieces = [p for k, p in enumerate(pieces) if k not in (i, j)] + [merged]
+                    changed = True
+                    break
+            if changed:
                 break
-
-    if adjacency_set is not None:
-        unsatisfied = adjacency_set - satisfied_declared_pairs
-        if unsatisfied and not raise_on_unsatisfied:
-            desc = ", ".join(f"{sorted(pair)[0]} <-> {sorted(pair)[1]}" for pair in sorted(unsatisfied, key=sorted))
-            print(f"[bridge] {len(unsatisfied)} declared-adjacent pair(s) never had a single real candidate within "
-                  f"{edge_max_dist_m:.0f}m, across every piece-level attempt: {desc} -- left as separate pieces "
-                  f"(raise_on_unsatisfied=False, a normal real-world gap, not treated as a bug here).")
-        elif unsatisfied:
-            desc = ", ".join(f"{sorted(pair)[0]} <-> {sorted(pair)[1]}" for pair in sorted(unsatisfied, key=sorted))
-            # ZeroGPU's cross-process exception marshalling can drop the
-            # real message, surfacing only the exception class name to
-            # the caller -- print the diagnostic here too so it's always
-            # visible in the Space's own server logs regardless.
-            print(f"[bridge] NoBridgeCandidatesError: {len(unsatisfied)} declared-adjacent pair(s) never had a single "
-                  f"real candidate within {edge_max_dist_m:.0f}m, across every piece-level attempt: {desc} -- "
-                  f"declared adjacent, so this points to a bug upstream.")
-            raise NoBridgeCandidatesError(
-                f"{len(unsatisfied)} declared-adjacent pair(s) never had a single real candidate within "
-                f"{edge_max_dist_m:.0f}m, across every piece-level attempt: {desc} -- these were declared "
-                f"adjacent, so this points to a bug upstream, not a normal miss."
-            )
-
-    if not return_ids:
-        return pieces
-    return pieces, [sorted(s) for s in id_sets]
+    return pieces
 
 
 def _read_ply_points(ply_path):
@@ -377,7 +266,7 @@ def _piece_edges(metadata):
     return edges
 
 
-def pieces_to_output(pieces, id_sets=None):
+def pieces_to_output(pieces):
     """[(clouds, metadata), ...] -- one entry per still-separate piece.
 
     clouds is {node key: (points, colors)}: DA3 only ever reconstructs one
@@ -386,56 +275,33 @@ def pieces_to_output(pieces, id_sets=None):
 
     metadata carries, per node, its real lat/lon/date, its position and
     rotation in this piece's frame, the view counts behind DA3's own
-    confidence in it, and its links to the nodes it was reconstructed
-    with. id_sets: optional per-piece list of source chunk ids, tagged
-    onto every node in that piece.
+    confidence in it, and its links to the nodes it was reconstructed with.
     """
     results = []
-    for idx, (clouds, path_edges, date, reached, node_positions, frame_poses) in enumerate(pieces):
-        chunk_ids = id_sets[idx] if id_sets is not None else None
+    for clouds, path_edges, date, reached, node_positions, frame_poses in pieces:
         links = _links_by_node(path_edges)
         metadata = {k: {"lat": lat, "lon": lon, "date": date, "position": pos.tolist(),
-                        "rotation": rot.tolist(), "n_views_kept": n_kept, "n_views_total": n_total,
-                        **({"links": links[k]} if k in links else {}),
-                        **({"chunk_ids": chunk_ids} if chunk_ids is not None else {})}
+                        "rotation": rot.tolist(), "n_views_kept": n_kept,
+                        "n_views_total": n_total,
+                        **({"links": links[k]} if k in links else {})}
                     for k, (pos, rot, path, lat, lon, n_kept, n_total) in frame_poses.items()}
         results.append(({k: v for k, v in clouds.items() if k in metadata}, metadata))
     return results
 
 
 def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
-                   max_time_budget_s: float = 200.0, chunk_ids=None, known_adjacent_chunk_pairs=None,
-                   refetch_path=None, raise_on_unsatisfied=True):
-    """Bridges segments together via real DA3 tests (see bridge_pieces),
-    then returns each remaining piece as-is -- no GPS fit, no shared
-    coordinate frame across pieces that never bridged. Each returned
-    piece stays in whichever local DA3 frame its own bridge chain
-    anchored to.
+                   max_time_budget_s: float = 200.0, refetch_path=None):
+    """Bridge segments together, then hand back what is left.
 
-    segments: run_pathfind_reconstruction's output -- list of (pts, cols,
-    path_edges, date, reached, node_positions, frame_poses). frame_poses
-    already carries each node's real lat/lon (see bridge_pieces), so no
-    separate node_entries/GPS lookup is needed here.
-
-    chunk_ids/known_adjacent_chunk_pairs/refetch_path/raise_on_unsatisfied:
-    passed straight through to bridge_pieces/_try_bridge -- see their
-    own docstrings.
-
-    Returns a list of (points, colors, metadata) -- one per final piece
-    still separate after bridging. metadata is {key: {"lat", "lon", "date",
-    "position", "n_views_kept", "n_views_total"}} for every node in that
-    piece: lat/lon/date/view-counts let a later process know which real
-    pano/location produced which piece without storing the images
-    themselves (always re-fetchable from source by key); "position" is
-    that node's own center in this piece's point cloud (pts/cols), same
-    local frame -- lets you locate a node directly within the output."""
+    No GPS fit and no shared frame across pieces that never bridged: each
+    stays in whichever DA3 frame its own bridge chain anchored to, which
+    is exactly what makes a piece a connected component later.
+    """
     if not segments:
         raise ValueError("No segments to join.")
-
     deadline = time.monotonic() + max_time_budget_s
     pieces = bridge_pieces(segments, bridge_test_edge, edge_max_dist_m, deadline,
-                            chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs,
-                            refetch_path=refetch_path, raise_on_unsatisfied=raise_on_unsatisfied)
+                            refetch_path=refetch_path)
     print(f"join: bridge_pieces: {len(segments)} piece(s) in, {len(pieces)} piece(s) out "
           f"({len(segments) - len(pieces)} merge(s))")
     return pieces_to_output(pieces)

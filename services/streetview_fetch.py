@@ -83,13 +83,6 @@ def pano_to_meta(pano):
     }
 
 
-async def fetch_pano(lat, lon):
-    """Fetch the newest pano at a location, with neighbor + historical-date stubs."""
-    async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
-        pano = await streetview.find_panorama_async(lat, lon, session=session)
-        if not pano:
-            return None
-        return pano_to_meta(pano)
 
 
 async def fetch_pano_by_id(pano_id):
@@ -107,16 +100,6 @@ def _cache_path(pano_id, zoom):
     return os.path.join(IMAGES_DIR, f"pano_{pano_id}_z{zoom}.jpg")
 
 
-async def download_pano(lat, lon, zoom: int = _DOWNLOAD_ZOOM):
-    """Download a pano by lat/lon, return absolute path."""
-    async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
-        pano = await streetview.find_panorama_async(lat, lon, session=session)
-        if not pano:
-            return None
-        img_path = _cache_path(pano.id, zoom)
-        if not os.path.exists(img_path):
-            await download_panorama_image(pano, img_path, zoom=zoom)
-        return img_path
 
 
 async def download_pano_by_id(pano_id, zoom: int = _DOWNLOAD_ZOOM):
@@ -131,17 +114,3 @@ async def download_pano_by_id(pano_id, zoom: int = _DOWNLOAD_ZOOM):
         return img_path
 
 
-async def download_images_for_nodes(nodes: list[dict], zoom: int = _DOWNLOAD_ZOOM) -> list[str]:
-    """Download/cache images for an ordered list of {id, ...} node dicts (the
-    shape both pano_to_meta's neighbor entries and reconstruct's exported
-    chain nodes share). The one place both the single-pano tab's support-pano
-    gathering and the street-builder reconstruction script should go through,
-    instead of each keeping a separate download implementation."""
-    paths = []
-    for i, node in enumerate(nodes):
-        print(f"Downloading pano {i + 1}/{len(nodes)}: {node['id']}")
-        path = await download_pano_by_id(node["id"], zoom=zoom)
-        if not path:
-            raise ValueError(f"Panorama {node['id']} not found")
-        paths.append(path)
-    return paths

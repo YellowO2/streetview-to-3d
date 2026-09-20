@@ -188,108 +188,8 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
     }
 
 
-def _load_global_cover():
-    """Downloads (once per process, cached module-level) the whole-NTU
-    metadata + date cover produced offline by tests/fetch_ntu_metadata.py
-    + tests/inspect_global_date_cover.py. Real network fetch only the
-    first time this call lands on a given worker; every later chunk in
-    the same worker reuses the cached copy."""
-    global _global_metadata, _global_cover
-    if _global_metadata is None:
-        from huggingface_hub import hf_hub_download
-        # Deliberately still fetch_metadata.json: this is the name in the
-        # HuggingFace dataset, which a local rename does not change. It is
-        # the same file local code calls downsampled_and_fetched_graph.json.
-        meta_path = hf_hub_download(repo_id=GLOBAL_DATASET_REPO, repo_type="dataset", filename="global/fetch_metadata.json")
-        cover_path = hf_hub_download(repo_id=GLOBAL_DATASET_REPO, repo_type="dataset", filename="global/date_cover.json")
-        with open(meta_path) as f:
-            _global_metadata = json.load(f)
-        with open(cover_path) as f:
-            _global_cover = {int(k): v for k, v in json.load(f).items()}
-    return _global_metadata, _global_cover
 
 
-def prepare_pathfind_from_cover_chunk(dots, date, top_per_dot=TOP_PANOS_PER_DOT) -> dict:
-    """Same job as prepare_pathfind (gather candidates, download, return
-    a dict ready for run_prepared_pathfind_segments) but for a chunk that
-    was already cut FROM the pre-computed whole-NTU date cover (see
-    global_dates.split_cover_into_chunks) instead of independently
-    fetching/ranking its own dates off the raw selection graph. dots are
-    global dot indices (into _load_global_cover's own points/adjacency/
-    buckets) and date is the single date split_cover_into_chunks already
-    assigned this whole chunk -- no per-dot date lookup or lat/lon
-    matching needed here, dot index IS the identity.
-
-    This is the fix for why cross-chunk bridging kept failing on a real,
-    recurring pattern this session: two adjacent chunks ranking their OWN
-    local dates independently could land on different "best" dates even
-    when both had real data on a shared date that was merely their
-    second- or third-best locally. Sourcing every chunk from the SAME
-    global cover, cut along the cover's own region boundaries, removes
-    that mismatch by construction -- a cross-date seam only ever happens
-    at a chunk boundary now, never buried inside one chunk's own walk."""
-    t0 = time.monotonic()
-    if len(dots) < 2:
-        raise ValueError("Need at least 2 dots (a start + a goal) in this chunk.")
-
-    metadata, _ = _load_global_cover()
-    global_points = metadata["points"]
-    global_buckets = metadata["buckets"]
-    global_adjacency = metadata["adjacency"]
-
-    dot_set = set(dots)
-    local_index = {d: i for i, d in enumerate(dots)}
-    local_points = [tuple(global_points[d]) for d in dots]
-    local_adjacency = {
-        local_index[d]: [local_index[n] for n in global_adjacency.get(str(d), []) if n in dot_set]
-        for d in dots
-    }
-
-    dot_candidates = {}
-    for d in dots:
-        lat, lon = global_points[d]
-        capped = _cap_bucket_for_date(global_buckets.get(str(d), []), date, lat, lon, top_per_dot)
-        if capped:
-            dot_candidates[local_index[d]] = capped
-    if not dot_candidates:
-        raise ValueError(f"No dot in this chunk has a real candidate on date {date}.")
-
-    # Apple candidates need their live _pano object to actually download
-    # (see _download_one) -- the cached global metadata dropped it (not
-    # JSON-serializable, and not needed for date ranking/covering). Cheap
-    # per-chunk re-fetch, only for however many Apple candidates this
-    # specific chunk's cover actually picked.
-    for bucket in dot_candidates.values():
-        for n in bucket:
-            if n["source"] == "apple" and "_pano" not in n:
-                try:
-                    tile_panos = apple_tile_panos(n["lat"], n["lon"])
-                    n["_pano"] = tile_panos[n["id"]]
-                except Exception as e:
-                    print(f"Apple re-fetch failed for {n['key']}: {e}")
-
-    date_graphs = [{"date": date, "dot_candidates": dot_candidates}]
-    n_candidates = sum(len(bucket) for bucket in dot_candidates.values())
-    print(f"prepare_pathfind_from_cover_chunk: {n_candidates} candidate(s) across {len(dot_candidates)} dot(s), date={date}")
-    ready_graphs, node_entries, catalog = _download_date_graphs(date_graphs)
-    if not ready_graphs:
-        raise ValueError("Nothing downloaded successfully -- can't reconstruct.")
-
-    start = tuple(local_points[0])
-    goals = [tuple(p) for p in local_points[1:]]
-    center = tuple(metadata["points"][0])
-    print(f"prepare_pathfind_from_cover_chunk: done in {time.monotonic() - t0:.1f}s")
-    return {
-        "date_graphs": ready_graphs,
-        "node_entries": node_entries,
-        "points": local_points,
-        "adjacency": local_adjacency,
-        "start": start,
-        "center": center,
-        "catalog": catalog,
-        "goals": goals,
-        "top_dates": [g["date"] for g in ready_graphs],
-    }
 
 
 def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_STEP_DEGREES):
@@ -324,8 +224,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
     if not segments:
         raise RuntimeError("No connected path found from start toward any goal.")
 
-    results = save_pathfind_segments(segments, output_dir)
-    bundle_path = save_segments_bundle(segments, output_dir)
+    results = []
     if pieces is None:
         # a lone segment has nothing to bridge TO, but it is still a piece,
         # and the scene is only filled in by saving one
@@ -333,55 +232,13 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
         pieces = pieces_to_output(segments)
     results.extend(_save_joined_pieces(pieces, output_dir, prep["catalog"]))
     print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
-    return results, segments, bundle_path
-
-
-def _stack(clouds):
-    """One (points, colors) array pair from a piece's per-node clouds."""
-    import numpy as np
-    pts = [c[0] for c in clouds.values()]
-    cols = [c[1] for c in clouds.values()]
-    return (np.concatenate(pts) if pts else np.zeros((0, 3)),
-            np.concatenate(cols) if cols else np.zeros((0, 3)))
-
-
-def save_pathfind_segments(segments, output_dir) -> list[tuple[str, str]]:
-    """Saves each segment as one preview .ply. No GPU, no fitting/joining.
-    A preview only -- the real output keeps every node's points apart, see
-    _save_joined_pieces. Returns [(label, ply_path), ...]."""
-    os.makedirs(output_dir, exist_ok=True)
-    results = []
-    for i, (clouds, path_edges, date, reached, node_positions, frame_poses) in enumerate(segments):
-        status = "full corridor covered" if reached else "partial"
-        label = f"path (date {date}, {len(path_edges)} hops, {status})"
-        pts, cols = _stack(clouds)
-        ply = save_pointcloud(pts, cols, os.path.join(output_dir, f"pathfind_{i}.ply"))
-        results.append((label, ply))
     return results
 
 
-def save_joined_pathfind(segments, output_dir, catalog, chunk_ids=None, known_adjacent_chunk_pairs=None) -> list[tuple[str, str]]:
-    """Bridges (real DA3 tests between segment boundaries) via join_segments.py
-    and records each still-separate piece in the scene (see
-    _save_joined_pieces). Usually one piece; more means bridging genuinely
-    couldn't connect everything -- see join_segments.join_segments. Its
-    own GPU call (join_segments_gpu), separate from the corridor
-    search's -- safe to call repeatedly against the same already-computed
-    segments while tuning the join/bridging step, without re-running the
-    corridor search.
 
-    chunk_ids/known_adjacent_chunk_pairs: passed straight through to
-    join_segments_gpu -- see its own docstring. For a large-scale multi-
-    chunk reconstruction (many segments, one per chunk), pass these so
-    bridging only attempts pairs known to be structurally adjacent
-    instead of a blind O(n^2) scan over every segment."""
-    from services.pipeline_runner import join_segments_gpu
-    t0 = time.monotonic()
-    os.makedirs(output_dir, exist_ok=True)
-    pieces = join_segments_gpu(segments, chunk_ids=chunk_ids, known_adjacent_chunk_pairs=known_adjacent_chunk_pairs)
-    results = _save_joined_pieces(pieces, output_dir, catalog)
-    print(f"save_joined_pathfind: done in {time.monotonic() - t0:.1f}s")
-    return results
+
+
+
 
 
 def open_scene(prep, output_dir):
@@ -461,56 +318,7 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[tuple[str, str]]:
     return results
 
 
-def save_segments_bundle(segments, output_dir) -> str:
-    """Serializes only what Join actually needs (segments -- frame_poses
-    already carries each node's own lat/lon, see join_segments.py) to one
-    file, so Join can be re-run later -- a different session, or after
-    tweaking join_segments.py -- without re-running Prepare or the
-    expensive GPU search. Deliberately drops the rest of prep
-    (date_graphs especially -- the full downloaded candidate pool across
-    every date considered, unused by Join and by far the biggest part of
-    prep) since it's dead weight for this file's one purpose; Prepare/Run
-    themselves are cheap enough to redo from scratch if ever needed, so
-    there's no reason to pay to store or re-download it. Plain pickle:
-    numpy arrays, tuples, dicts all round-trip natively, and this file is
-    only ever produced and consumed by this same codebase, not a public
-    interchange format."""
-    import pickle
-    os.makedirs(output_dir, exist_ok=True)
-    path = os.path.join(output_dir, "pathfind_segments.pkl")
-    with open(path, "wb") as f:
-        pickle.dump({"segments": segments}, f)
-    return path
 
 
-def load_segments_bundle(path: str) -> list:
-    """Inverse of save_segments_bundle. Returns segments, ready to feed
-    straight into save_joined_pathfind (or save_pathfind_segments)."""
-    import pickle
-    with open(path, "rb") as f:
-        bundle = pickle.load(f)
-    return bundle["segments"]
 
 
-def run_prepared_pathfind_segments(prep: dict, step_degrees: int = DEFAULT_STEP_DEGREES, protected_positions=None):
-    """Same GPU call as run_prepared_pathfind, but returns the raw segment
-    list (pts, cols, path_edges, date, reached, node_positions per segment)
-    instead of saved .ply paths -- what join_segments.py needs to fit and
-    merge segments, rather than just preview them individually.
-
-    protected_positions: passed straight through to run_pathfind_reconstruction_gpu
-    -- see walk_graph.run_pathfind_reconstruction's own docstring. For a
-    chunked large-area reconstruction, pass the chunk's own real boundary
-    node COORDINATES (known from the chunking step) so a location needed
-    for cross-chunk bridging later doesn't get dropped as redundant
-    coverage within this chunk alone."""
-    t0 = time.monotonic()
-    start_lat, start_lon = prep["start"]
-    segments = run_pathfind_reconstruction_gpu(
-        prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon, step_degrees=step_degrees,
-        protected_positions=protected_positions,
-    )
-    print(f"run_prepared_pathfind_segments: done in {time.monotonic() - t0:.1f}s")
-    if not segments:
-        raise RuntimeError("No connected path found from start toward any goal.")
-    return segments
