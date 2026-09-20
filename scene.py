@@ -24,12 +24,30 @@ FILENAME = "scene.json"
 
 @dataclass
 class Node:
-    """One panorama: where DA3 put it, and where it really is."""
+    """One panorama: where DA3 put it, where it really is, and how much of
+    DA3's own reconstruction of it survived.
+
+    views_kept out of views_total is DA3's solo score for this panorama --
+    how many of its own views passed the consensus filter. Measured against
+    real pairings (see the README): a score of 6 predicted 33% pairwise
+    success, 13 and above predicted 100%. It is the one confidence number
+    the reconstruction already knows about a single node.
+    """
     key: str
     lat: float
     lon: float
     position: list[float]
+    rotation: list[list[float]] | None = None
     date: str | None = None
+    views_kept: int | None = None
+    views_total: int | None = None
+
+    @property
+    def confidence(self):
+        """Fraction of this panorama's views DA3 kept, or None if unrecorded."""
+        if not self.views_total:
+            return None
+        return self.views_kept / self.views_total
 
 
 @dataclass
@@ -94,5 +112,7 @@ class Scene:
 def from_metadata(metadata):
     """[Node] from street_builder's per-panorama reconstruction metadata."""
     return [Node(key=k, lat=v["lat"], lon=v["lon"],
-                 position=list(v["position"]), date=v.get("date"))
+                 position=list(v["position"]), rotation=v.get("rotation"),
+                 date=v.get("date"), views_kept=v.get("n_views_kept"),
+                 views_total=v.get("n_views_total"))
             for k, v in metadata.items()]
