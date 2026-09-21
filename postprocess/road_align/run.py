@@ -91,11 +91,6 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
     for i in road_pts:
         if len(road_pts[i]):
             road_pts[i] = road_pts[i] + cross[i][[0, 1, 2], 3]
-    for i in sorted(cross):
-        d = float(np.hypot(cross[i][0, 3], cross[i][2, 3]))
-        if d:
-            log(f"  piece_{i:<4} slid {d:.2f} m across the road")
-
     have = {i: p for i, p in road_pts.items() if len(p)}
     if elevation:
         ground, resid, n_dots = ground_elevation.surface(sc, curves, frames, on)
