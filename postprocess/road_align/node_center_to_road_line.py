@@ -33,6 +33,8 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy.spatial import cKDTree
 
+from postprocess.road_align.road_frames import belongs
+
 STRONG_NODES = 2         # above this, GPS measured the heading itself
 TURN_RANGE_DEG = 40.0
 TURN_STEP_DEG = 2.0
@@ -111,7 +113,7 @@ def seat_all(cams, curves, on, log=print):
             out[i] = np.eye(4)
             log(f"  piece_{i:<4} no road -- left at GPS")
             continue
-        r = min(on[i], key=lambda r: cKDTree(curves[r]).query(cams[i])[0].mean())
+        r = belongs({i: cams[i]}, curves, on)[i]
         may_turn = len(cams[i]) <= STRONG_NODES
         out[i], deg, shift = seat(cams[i], curves[r], may_turn)
         log(f"  piece_{i:<4} {len(cams[i])} node(s) on road{r:<4} "

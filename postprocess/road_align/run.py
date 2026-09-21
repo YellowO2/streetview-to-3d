@@ -26,7 +26,7 @@ import os
 import numpy as np
 
 from postprocess.road_align.road_surface import ground_near_track
-from postprocess.road_align.road_frames import build as build_frames
+from postprocess.road_align.road_frames import belongs, build as build_frames
 from postprocess.road_align.node_center_to_road_line import seat_all
 from postprocess.gps_fit.load_pieces import load_pieces
 from postprocess.road_align.align_slope_of_pieces import seat
@@ -85,7 +85,7 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
         for i in ids}
 
     log("\ncross-road, which GPS cannot measure:")
-    cross = cross_road.align(road_pts, frames, on, log=log)
+    cross = cross_road.align(road_pts, frames, belongs(cams, curves, on), log=log)
     # a pure sideways translation, so the road points ride along with it
     # instead of being extracted from the cloud a second time
     for i in road_pts:

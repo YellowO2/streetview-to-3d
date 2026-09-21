@@ -122,6 +122,19 @@ def build(cams, graph, near_m=NEAR_M):
     return curves, {r: RouteFrame(c) for r, c in curves.items()}, on
 
 
+def belongs(cams, curves, on):
+    """{piece: the one road it was driven along}.
+
+    `on` lists every road within reach of any of a piece's cameras, which
+    near a junction is most of them. A piece was driven along exactly one,
+    and only that road's line describes where it was -- measuring a piece
+    against a street it was never on produces a confident, meaningless
+    answer.
+    """
+    return {i: min(on[i], key=lambda r: cKDTree(curves[r]).query(c)[0].mean())
+            for i, c in cams.items() if on.get(i)}
+
+
 def clip(piece, curve, half_width=HALF_WIDTH_M):
     """The part of a piece's cloud lying along one road.
 

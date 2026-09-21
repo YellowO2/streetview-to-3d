@@ -110,6 +110,33 @@ def offset(a, b, frame):
     return -float(best_lag * BIN_M)
 
 
+FLAT_M = 0.5             # within this of the lowest ground is carriageway
+
+
+def road_centre(pts, frame):
+    """Where the carriageway's middle sits, relative to the road line.
+
+    Absolute, unlike a pairwise match: the piece measures this on its own,
+    so a shift derived from it moves the piece onto the road rather than
+    onto its neighbour. What pairwise matching can never fix is an error
+    every piece shares, because only their differences are observed.
+
+    The carriageway is the lowest flat run of the section -- verges,
+    footways and frontage all stand above it.
+    """
+    along, left = frame.project(pts[:, [0, 2]])
+    span = max(np.abs(left).max(), 1.0)
+    section = _section(left, pts[:, 1], -span, span)
+    if not np.isfinite(section).any():
+        return None
+    bins = np.arange(-span, span, BIN_M)[:len(section)] + BIN_M / 2
+    # Y is down, so the road is the HIGHEST value in this section
+    road = section >= np.nanmax(section) - FLAT_M
+    if road.sum() < 4:
+        return None
+    return float(np.median(bins[road]))
+
+
 def solve(shifts, ids):
     """{piece: metres to move right}, from pairwise observations.
 
@@ -130,34 +157,54 @@ def solve(shifts, ids):
     return {i: float(answer[index[i]]) for i in ids}
 
 
-def align(road_pts, frames, on, log=print):
-    """{piece: 4x4} sliding each piece across the road onto its neighbours."""
+def centre_all(road_pts, frames, on, log=print):
+    """{piece: 4x4} putting each piece's carriageway on the road line.
+
+    Absolute, so unlike pairwise matching it can move the whole group.
+    """
+    out = {}
+    for i, pts in road_pts.items():
+        T = np.eye(4)
+        r = next(iter(on.get(i, ())), None)
+        if len(pts) and r is not None:
+            c = road_centre(pts, frames[r])
+            if c is not None and abs(c) <= MAX_SHIFT_M:
+                T[[0, 2], 3] = frames[r].normal(pts[:, [0, 2]].mean(0))[0] * -c
+                log(f"  piece_{i:<4} carriageway centre {c:+.2f} m off the line")
+        out[i] = T
+    return out
+
+
+def align(road_pts, frames, road_of, log=print):
+    """{piece: 4x4} sliding each piece across the road onto its neighbours.
+
+    road_of says which road each piece was actually driven along. Only two
+    pieces on the SAME road can be compared: projecting a piece onto a
+    street it was never on gives a section of something else entirely.
+    """
     ids = [i for i in sorted(road_pts) if len(road_pts[i])]
     shifts = {}
     for i, j in itertools.combinations(ids, 2):
-        shared = sorted(set(on.get(i, ())) & set(on.get(j, ())))
-        best = None
-        for r in shared:
-            d = offset(road_pts[i], road_pts[j], frames[r])
-            if d is not None and (best is None or abs(d) < abs(best[1])):
-                best = (r, d)
-        if best is not None:
-            shifts[(i, j)] = best[1]
-            log(f"  piece_{i} / piece_{j} on road{best[0]}: {best[1]:+.2f} m apart")
+        r = road_of.get(i)
+        if r is None or r != road_of.get(j):
+            continue
+        d = offset(road_pts[i], road_pts[j], frames[r])
+        if d is not None:
+            shifts[(i, j)] = d
+            log(f"  piece_{i} / piece_{j} on road{r}: {d:+.2f} m apart")
 
     if not shifts:
-        log("  no pair sees enough shared road to measure")
+        log("  no two pieces were driven along the same road -- nothing to match")
         return {i: np.eye(4) for i in road_pts}
 
-    across = solve(shifts, ids)
+    across = solve(shifts, [i for i in ids if i in
+                            {k for pair in shifts for k in pair}])
     out = {}
     for i in road_pts:
         T = np.eye(4)
-        if i in across:
-            # move along whatever road the piece was matched on
-            r = next(iter(on.get(i, ())), None)
-            if r is not None:
-                here = road_pts[i][:, [0, 2]].mean(0)
-                T[[0, 2], 3] = frames[r].normal(here)[0] * across[i]
+        r = road_of.get(i)
+        if i in across and r is not None:
+            here = road_pts[i][:, [0, 2]].mean(0)
+            T[[0, 2], 3] = frames[r].normal(here)[0] * across[i]
         out[i] = T
     return out
