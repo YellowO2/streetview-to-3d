@@ -6,12 +6,13 @@ from huggingface_hub import snapshot_download
 # unit means the same length in every reconstruction it produces -- so this
 # is one property of the model, not something to re-derive per run.
 #
-# Measured over NTU's 117 chunks: cut each chunk wherever its own nodes stop
-# matching their GPS, fit every resulting piece of 4+ nodes on its own, and
-# take the middle. The answer holds at 1.334-1.346 across break thresholds
-# from 12 m down to 0.75 m. At 0.75 m the mean and the median agree to four
-# decimals, meaning nothing skews what is left. See the README.
-DA3_UNITS_TO_METRES = 1.335
+# Two measurements disagree, and that is not yet explained. Over NTU's 117
+# chunks (tools/measure_da3_scale.py) the answer held at 1.334-1.346 across
+# every break threshold from 12 m down to 0.75 m. Three later runs down one
+# street each want 1.46-1.54 instead, and they agree with each other far
+# better than with 1.335: at 1.46 one of the three fits its own GPS to
+# 0.18 m and asks for no further scaling at all.
+DA3_UNITS_TO_METRES = 1.46
 
 
 @dataclass
