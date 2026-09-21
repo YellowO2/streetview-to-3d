@@ -56,30 +56,29 @@ def merge(directories, out_dir, log=print):
 
         log(f"{os.path.basename(d)}: {len(sc.nodes)} node(s), {len(sc.edges)} edge(s)")
 
-    # A panorama seen by two runs is one place, so its two nodes are
-    # neighbours in the street graph. They stay separate NODES because each
-    # run reconstructed it in its own DA3 frame and welding those together
-    # wrecks the fit -- but the street graph is geography, not DA3, and
-    # without this link each run's dots stay an island: roads() then reads
-    # one street as several disconnected ones.
-    same = {}
+    # A panorama seen by two runs is ONE place. Its nodes stay separate --
+    # each run reconstructed it in its own DA3 frame and welding those
+    # wrecks the fit -- but the street graph is geography, so the two share
+    # a single dot there. Linking them as neighbours instead would leave
+    # every shared panorama a degree-3 dot, which corridors reads as a
+    # junction: one street came apart into five.
+    dot = {}
     for i, node in enumerate(out.nodes):
-        same.setdefault(node.pano.key, []).append(i)
-    joined = 0
-    for group in same.values():
-        if len(group) < 2:
-            continue
-        joined += 1
-        for a in group:
-            out.adjacency.setdefault(str(a), [])
-            out.adjacency[str(a)] += [b for b in group if b != a]
+        dot[i] = dot.get(node.pano.key, i)
+        dot.setdefault(node.pano.key, i)
+    merged = {}
+    for k, vs in out.adjacency.items():
+        a = dot[int(k)]
+        merged.setdefault(a, set()).update(dot[v] for v in vs if dot[v] != a)
+    out.adjacency = {str(k): v for k, v in merged.items()}
+    joined = sum(1 for i in dot if isinstance(i, int) and dot[i] != i)
 
-    out.adjacency = {k: sorted(set(v)) for k, v in out.adjacency.items()}
+    out.adjacency = {k: sorted(v) for k, v in out.adjacency.items()}
     out.save(out_dir)
     log(f"-> {len(out.nodes)} node(s), {len(out.edges)} edge(s), "
         f"{len(out.pieces())} piece(s)"
         + (f"; {shared} pano(s) seen by more than one run, points kept once, "
-           f"{joined} stitched into the street graph" if shared else ""))
+           f"{joined} folded into one dot each" if shared else ""))
     return out
 
 
