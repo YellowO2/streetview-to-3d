@@ -18,7 +18,7 @@ KEEP_RATE_THRESHOLD = 0.6
 # rather than panoramic_da3's, so raising it here is a one-line change and
 # doesn't require touching that package: our pipeline may want to keep more
 # than DA3's own reference default and decide later what to drop.
-CONF_LOWER_PERCENTILE = 20.0   # test: keep top 80%
+CONF_LOWER_PERCENTILE = 10.0   # test: keep top 90%
 
 
 def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1,
