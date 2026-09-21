@@ -56,12 +56,30 @@ def merge(directories, out_dir, log=print):
 
         log(f"{os.path.basename(d)}: {len(sc.nodes)} node(s), {len(sc.edges)} edge(s)")
 
+    # A panorama seen by two runs is one place, so its two nodes are
+    # neighbours in the street graph. They stay separate NODES because each
+    # run reconstructed it in its own DA3 frame and welding those together
+    # wrecks the fit -- but the street graph is geography, not DA3, and
+    # without this link each run's dots stay an island: roads() then reads
+    # one street as several disconnected ones.
+    same = {}
+    for i, node in enumerate(out.nodes):
+        same.setdefault(node.pano.key, []).append(i)
+    joined = 0
+    for group in same.values():
+        if len(group) < 2:
+            continue
+        joined += 1
+        for a in group:
+            out.adjacency.setdefault(str(a), [])
+            out.adjacency[str(a)] += [b for b in group if b != a]
+
     out.adjacency = {k: sorted(set(v)) for k, v in out.adjacency.items()}
     out.save(out_dir)
     log(f"-> {len(out.nodes)} node(s), {len(out.edges)} edge(s), "
         f"{len(out.pieces())} piece(s)"
-        + (f"; {shared} pano(s) seen by more than one run, points kept once"
-           if shared else ""))
+        + (f"; {shared} pano(s) seen by more than one run, points kept once, "
+           f"{joined} stitched into the street graph" if shared else ""))
     return out
 
 
