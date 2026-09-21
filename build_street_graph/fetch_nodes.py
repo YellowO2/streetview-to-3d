@@ -114,6 +114,22 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
     return points, adjacency
 
 
+def _apple_heading(rad):
+    """Apple's heading, in Street View's convention.
+
+    Look Around measures it the opposite way round -- anticlockwise from
+    north where Street View is clockwise. Over 1,625 real panoramas,
+    negating it agrees with the direction of travel to 3.4 deg, matching
+    Street View's own 2.5 deg on the same street; left alone it disagrees
+    by 29.4 deg. The road centre line takes its direction from heading, so
+    an unconverted Apple panorama bends the line the wrong way.
+
+    pitch and roll are not converted: nothing reads them yet, and there is
+    no measurement to say which way round they run.
+    """
+    return None if rad is None else -rad
+
+
 def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
     """Every Google + Apple pano within max_dist_m of any real corridor
     node (see corridor_points).
@@ -188,7 +204,7 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
             buckets[i].append({
                 "key": node_key("apple", p.id), "source": "apple", "id": p.id,
                 "lat": p.lat, "lon": p.lon, "date": format_date(p.date),
-                "heading": p.heading, "pitch": p.pitch, "roll": p.roll,
+                "heading": _apple_heading(p.heading), "pitch": p.pitch, "roll": p.roll,
                 "_pano": p,  # kept for download_lookaround (needs the object, not just the id)
             })
 
