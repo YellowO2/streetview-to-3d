@@ -4,12 +4,17 @@ reconstruct/map_ui.py imports it from here too, rather than keeping its
 own copy.
 """
 import html as html_lib
+import json
+from pathlib import Path
 
 
-def iframe(srcdoc: str, aspect: str = "16/9") -> str:
+def iframe(srcdoc: str, aspect: str = "16/9", *, pointer_lock: bool = False) -> str:
     escaped = html_lib.escape(srcdoc, quote=True)
+    permissions = "allow-scripts allow-same-origin"
+    if pointer_lock:
+        permissions += " allow-pointer-lock"
     return (
-        f'<iframe srcdoc="{escaped}" sandbox="allow-scripts allow-same-origin" '
+        f'<iframe srcdoc="{escaped}" sandbox="{permissions}" '
         f'style="width:100%;aspect-ratio:{aspect};border:none;border-radius:8px;background:#000">'
         "</iframe>"
     )
@@ -20,170 +25,24 @@ def file_url(abs_path: str) -> str:
     return f"/gradio_api/file={abs_path}"
 
 
-def build_pointcloud_viewer(ply_url: str | None = None) -> str:
-    """Live viewer for a raw DA3 point cloud (XYZ + per-vertex color), via
-    three.js's PLYLoader + THREE.Points.
+VIEWER_PATH = Path(__file__).resolve().parents[1] / "visualise" / "viewer.html"
 
-    Point size and camera distance are both derived from the loaded geometry's
-    bounding sphere, since a point cloud's absolute scale isn't known ahead of
-    time. This is a rough heuristic, not tuned against a real render — may
-    need adjusting.
 
-    Also accepts drag-and-drop: dropping a local .ply file onto the viewer
-    replaces whatever's currently shown, parsed client-side (PLYLoader.parse),
-    no upload/round-trip to the server. ply_url is optional — with none given,
-    the viewer renders empty and ready for a drop (used as the Street Builder
-    tab's initial state, so you can preview an already-downloaded .ply without
-    needing a GPU run first)."""
-    loading_msg = (
-        '''Loading point cloud<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>'''
-        if ply_url else "Drop a .ply file here to preview it"
+def pointcloud_document(ply_url: str | None = None, *, scene_url: str | None = None) -> str:
+    """Read the directly-openable viewer; inject only its initial asset URL."""
+    doc = VIEWER_PATH.read_text(encoding="utf-8")
+    # JSON is in a script element: escape '<' so URLs cannot close the tag.
+    config = json.dumps({"plyUrl": ply_url, "sceneUrl": scene_url}).replace("<", "\\u003c")
+    return doc.replace(
+        '<script id="viewer-config" type="application/json">{}</script>',
+        f'<script id="viewer-config" type="application/json">{config}</script>',
+        1,
     )
-    doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>body{{margin:0;background:#000;overflow:hidden;cursor:grab;font:14px sans-serif;color:#bbb}}body:active{{cursor:grabbing}}canvas{{display:block}}
-#hint{{position:fixed;bottom:8px;right:8px;color:rgba(255,255,255,.4);font:11px sans-serif;pointer-events:none}}
-#loading{{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;
-  background:#000;transition:opacity .4s;pointer-events:none;padding:1em}}
-#loading.gone{{opacity:0}}
-.dot{{display:inline-block;animation:blink 1.4s infinite both}}
-.dot:nth-child(2){{animation-delay:.2s}}.dot:nth-child(3){{animation-delay:.4s}}
-@keyframes blink{{0%,80%,100%{{opacity:0}}40%{{opacity:1}}}}
-#dropzone{{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
-  background:rgba(66,133,244,.15);border:3px dashed #4285f4;pointer-events:none;
-  font-size:18px;color:#fff;z-index:10}}
-#dropzone.active{{display:flex}}</style>
-<script type="importmap">
-{{"imports":{{
-    "three":"https://unpkg.com/three@0.178.0/build/three.module.js",
-    "three/addons/":"https://unpkg.com/three@0.178.0/examples/jsm/"
-}}}}
-</script></head><body>
-<div id="loading">{loading_msg}</div>
-<div id="hint">drag to orbit · scroll to zoom · WASD/QE to fly · shift to move faster · +/- for point size · drop a .ply to preview it</div>
-<div id="dropzone">Drop .ply to preview</div>
-<script type="module">
-import * as THREE from 'three';
-import {{ PLYLoader }} from 'three/addons/loaders/PLYLoader.js';
-import {{ OrbitControls }} from 'three/addons/controls/OrbitControls.js';
 
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.01, 10000);
-const renderer = new THREE.WebGLRenderer({{antialias:true}});
-renderer.setPixelRatio(devicePixelRatio);
-renderer.setSize(innerWidth, innerHeight);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-document.body.appendChild(renderer.domElement);
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-
-const loader = new PLYLoader();
-let currentPoints = null;
-let flySpeed = 1;  // units/sec, rescaled per-geometry in showGeometry so it's never a crawl or a blur regardless of point-cloud scale
-
-const keys = new Set();
-addEventListener('keydown', e => {{
-    keys.add(e.code);
-    if ((e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_') && currentPoints) {{
-        const factor = (e.key === '+' || e.key === '=') ? 1.2 : 1 / 1.2;
-        currentPoints.material.size = Math.max(currentPoints.material.size * factor, 0.0001);
-    }}
-}});
-addEventListener('keyup', e => keys.delete(e.code));
-addEventListener('blur', () => keys.clear());
-
-const forward = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), move = new THREE.Vector3();
-function applyFlyMovement(dt) {{
-    move.set(0, 0, 0);
-    camera.getWorldDirection(forward);
-    right.crossVectors(forward, up).normalize();
-    if (keys.has('KeyW')) move.add(forward);
-    if (keys.has('KeyS')) move.sub(forward);
-    if (keys.has('KeyD')) move.add(right);
-    if (keys.has('KeyA')) move.sub(right);
-    if (keys.has('KeyE') || keys.has('Space')) move.add(up);
-    if (keys.has('KeyQ')) move.sub(up);
-    if (move.lengthSq() === 0) return;
-    const speed = flySpeed * (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 3 : 1);
-    move.normalize().multiplyScalar(speed * dt);
-    camera.position.add(move);
-    controls.target.add(move);
-}}
-
-function showGeometry(geometry) {{
-    // DA3's raw point cloud comes out in a Y-down/Z-forward (computer-vision)
-    // convention; three.js is Y-up. Bake the flip into the geometry itself
-    // (not a rotation on the Points mesh) so the bounding-sphere camera
-    // framing below -- computed from this geometry -- stays correct.
-    geometry.rotateX(Math.PI);
-    geometry.computeBoundingSphere();
-    const sphere = geometry.boundingSphere;
-    const hasColor = !!geometry.getAttribute('color');
-    const material = new THREE.PointsMaterial({{
-        size: Math.max(sphere.radius * 0.003, 0.01),
-        vertexColors: hasColor,
-        color: hasColor ? 0xffffff : 0x4285f4,
-    }});
-
-    if (currentPoints) {{
-        scene.remove(currentPoints);
-        currentPoints.geometry.dispose();
-        currentPoints.material.dispose();
-    }}
-    currentPoints = new THREE.Points(geometry, material);
-    scene.add(currentPoints);
-
-    controls.target.copy(sphere.center);
-    camera.position.copy(sphere.center).add(new THREE.Vector3(0, 0, sphere.radius * 2.2 || 5));
-    camera.near = Math.max(sphere.radius * 0.01, 0.01);
-    camera.far = sphere.radius * 20 || 10000;
-    camera.updateProjectionMatrix();
-    controls.update();
-    flySpeed = (sphere.radius || 5) * 0.35;
-
-    document.getElementById('loading').classList.add('gone');
-}}
-
-{f'''loader.load('{ply_url}', showGeometry, undefined, err => {{
-    console.error('PLY load failed', err);
-    document.getElementById('loading').textContent = 'Failed to load point cloud';
-}});''' if ply_url else ''}
-
-const dropzone = document.getElementById('dropzone');
-addEventListener('dragover', e => {{ e.preventDefault(); dropzone.classList.add('active'); }});
-addEventListener('dragleave', e => {{ if (e.target === document.documentElement) dropzone.classList.remove('active'); }});
-addEventListener('drop', e => {{
-    e.preventDefault();
-    dropzone.classList.remove('active');
-    const file = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {{
-        try {{
-            showGeometry(loader.parse(reader.result));
-        }} catch (err) {{
-            console.error('Failed to parse dropped PLY', err);
-        }}
-    }};
-    reader.readAsArrayBuffer(file);
-}});
-
-addEventListener('resize', () => {{
-    camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-}});
-const clock = new THREE.Clock();
-const tick = () => {{
-    applyFlyMovement(Math.min(clock.getDelta(), 0.1));
-    controls.update();
-    renderer.render(scene, camera);
-}};
-renderer.setAnimationLoop(tick);
-document.addEventListener('visibilitychange', () => {{
-    renderer.setAnimationLoop(document.hidden ? null : tick);
-}});
-</script></body></html>"""
-    return iframe(doc)
+def build_pointcloud_viewer(ply_url: str | None = None, *, scene_url: str | None = None) -> str:
+    """Embed the shared viewer in Gradio, including mouse capture for flight."""
+    return iframe(pointcloud_document(ply_url, scene_url=scene_url), pointer_lock=True)
 
 
 def summary(lines, note=None) -> str:

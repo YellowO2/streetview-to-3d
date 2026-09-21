@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Streetview · Scene viewer</title>
+<style>
+:root { color-scheme: dark; font: 13px/1.5 system-ui, sans-serif; color: #e6edf2; background: #11171e; }
+* { box-sizing: border-box; }
+body { margin: 0; overflow: hidden; }
+canvas { display: block; cursor: grab; outline: none; }
+canvas:active { cursor: grabbing; }
+button, input { font: inherit; }
+button { color: inherit; background: #26313d; border: 1px solid #425061; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+button svg { width: 16px; height: 16px; vertical-align: -3px; margin-right: 6px; }
+button:hover { background: #344354; }
+button:focus-visible, input:focus-visible { outline: 2px solid #b5e4a1; outline-offset: 3px; }
+button:disabled { opacity: .4; cursor: default; }
+button[aria-pressed="true"] { background: #c2e6ad; border-color: #c2e6ad; color: #17201a; }
+.panel { background: #18212bea; border: 1px solid #ffffff18; border-radius: 12px; box-shadow: 0 8px 30px #0003; backdrop-filter: blur(12px); }
+header { position: absolute; z-index: 2; top: 16px; left: 16px; right: 16px; display: flex; align-items: center; gap: 14px; padding: 10px 14px; flex-wrap: wrap; }
+.brand { margin-right: auto; font-weight: 650; letter-spacing: .02em; }
+.brand span { color: #95a5b3; font-size: 11px; font-weight: 400; display: block; }
+.modes { display: flex; gap: 4px; }
+aside { max-height: calc(100vh - 205px); overflow-y: auto; position: absolute; z-index: 2; top: 100px; right: 16px; width: 202px; padding: 14px; }
+label { display: block; color: #b6c3cf; margin-bottom: 12px; }
+label:last-child { margin-bottom: 0; }
+label span { display: flex; justify-content: space-between; }
+input[type="range"] { width: 100%; accent-color: #c2e6ad; cursor: pointer; }
+output { color: #eef6e9; font-variant-numeric: tabular-nums; }
+#pieces { border-top: 1px solid #ffffff20; margin-top: 14px; padding-top: 12px; }
+#piece-list { display: grid; gap: 5px; margin-top: 10px; }
+#piece-list button { text-align: left; font-size: 12px; }
+#placement { color: #aebdca; font-size: 11px; margin: 8px 0; }
+#empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; width: min(440px, 85vw); padding: 30px; }
+#empty h1 { font-size: 23px; font-weight: 550; margin: 0 0 8px; }
+#empty p { color: #9aabb9; margin: 0 0 20px; }
+#empty small { display: block; margin-top: 16px; color: #8394a3; }
+#resume { position: absolute; z-index: 2; bottom: 110px; left: 50%; transform: translateX(-50%); }
+footer { position: absolute; bottom: 16px; left: 16px; right: 16px; pointer-events: none; padding: 10px 14px; color: #aebdca; }
+#status { color: #e6edf2; font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#help { font-size: 11px; margin-top: 4px; }
+#notice { position: absolute; z-index: 5; left: 50%; top: 100px; transform: translateX(-50%); max-width: 80%; padding: 10px 16px; background: #493824; border: 1px solid #a98249; border-radius: 8px; }
+#dropzone { position: absolute; inset: 8px; z-index: 10; border: 2px dashed #c2e6ad; border-radius: 16px; background: #243c32dd; display: grid; place-items: center; font-size: 22px; pointer-events: none; }
+#reticle { position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; border-radius: 50%; background: #fff9; pointer-events: none; }
+[hidden] { display: none !important; }
+body.locked header, body.locked aside { opacity: .35; }
+@media (max-width: 640px) { header { gap: 8px; top: 8px; left: 8px; right: 8px; } .brand { display: none; } aside { top: 74px; width: 155px; padding: 10px; } footer { left: 8px; right: 8px; bottom: 8px; } }
+</style>
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.178.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.178.0/examples/jsm/"}}
+</script>
+<!-- Python only replaces this JSON configuration when embedding in Gradio. -->
+<script id="viewer-config" type="application/json">{}</script>
+</head>
+<body>
+<header class="panel">
+  <div class="brand">STREETVIEW <span>Scene explorer</span></div>
+  <div class="modes" aria-label="Navigation mode">
+    <button id="orbit" aria-pressed="true">Orbit</button>
+    <button id="fly" aria-pressed="false" disabled>Fly · Bird</button>
+  </div>
+  <button id="frame" disabled title="Recenter and fit the entire scene (F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><circle cx="12" cy="12" r="3"/></svg>Recenter</button>
+  <button id="open">Open files</button>
+  <button id="open-folder">Open scene folder</button>
+</header>
+<aside class="panel" aria-label="Viewer settings">
+  <label><span>Point size <output id="point-value">1.0×</output></span><input id="point-size" aria-label="Point size" type="range" min="-3" max="3" step="0.1" value="0"></label>
+  <label><span>Flight speed <output id="speed-value">1.0×</output></span><input id="speed" aria-label="Flight speed" type="range" min="-3" max="3" step="0.1" value="0"></label>
+  <label><span>Chase distance <output id="chase-value">1.0×</output></span><input id="chase" aria-label="Chase distance" type="range" min="0.5" max="2.5" step="0.1" value="1"></label>
+  <section id="pieces" hidden aria-label="Scene pieces">
+    <label><span>Link confidence <output id="confidence-value">All links</output></span><input id="confidence" aria-label="Minimum link confidence" type="range" min="0" max="100" step="1" value="0"></label>
+    <p id="placement"></p>
+    <button id="clear-selection">Show all colours</button>
+    <div id="piece-list"></div>
+  </section>
+</aside>
+<div id="empty" class="panel"><h1>A new perspective.</h1><p>Drop a PLY, or scene.json together with its PLY files.</p><button id="choose">Choose files</button><small>Files stay in your browser. Orbit to inspect, fly to explore.</small></div>
+<button id="resume" hidden>Resume flight · Esc to release</button>
+<div id="reticle" hidden></div>
+<div id="notice" role="alert" hidden></div>
+<div id="dropzone" hidden>Drop a PLY or a scene folder</div>
+<footer class="panel"><div id="status" role="status">Ready for a point cloud</div><div id="help">Drag to orbit · Right-drag to pan · Scroll to zoom · Double-click a point to focus · F to recenter</div></footer>
+<input id="file" type="file" accept=".ply,.json" multiple hidden>
+<input id="folder" type="file" webkitdirectory multiple hidden>
+<script>
+// Keep an actionable message even when a CDN module cannot load.
+window.viewerBootTimer = setTimeout(() => {
+  const notice = document.getElementById('notice');
+  notice.textContent = 'Viewer has not started. Check your internet connection (Three.js loads from unpkg.com), then reload.';
+  notice.hidden = false;
+}, 15000);
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+const $ = id => document.getElementById(id);
+const config = JSON.parse($('viewer-config').textContent);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#11171e');
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, .01, 10000);
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+} catch (error) {
+  clearTimeout(window.viewerBootTimer);
+  $('notice').textContent = 'WebGL could not start. Try a browser with hardware acceleration enabled.';
+  $('notice').hidden = false;
+  throw error;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.domElement.tabIndex = 0;
+renderer.domElement.setAttribute('aria-label', '3D point cloud viewport');
+document.body.prepend(renderer.domElement);
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.enableDamping = true;
+orbit.dampingFactor = .08;
+orbit.zoomToCursor = true;
+// PointerLockControls steers an independent camera used as the bird's heading.
+// The rendered camera follows behind this rig, rather than sitting in its head.
+const heading = new THREE.PerspectiveCamera();
+const mouseLook = new PointerLockControls(heading, renderer.domElement);
+mouseLook.minPolarAngle = .12;
+mouseLook.maxPolarAngle = Math.PI - .12;
+mouseLook.pointerSpeed = .65;
+scene.add(new THREE.HemisphereLight(0xe7f1ff, 0x63714c, 2.6));
+const sunlight = new THREE.DirectionalLight(0xffefd5, 2.2);
+sunlight.position.set(3, 5, 4);
+scene.add(sunlight);
+
+// A deliberately simple, low-poly placeholder bird. Local forward is -Z.
+const bird = new THREE.Group();
+const plumage = new THREE.MeshStandardMaterial({ color: 0xe8eee1, roughness: .85, flatShading: true });
+const wingMaterial = new THREE.MeshStandardMaterial({ color: 0x8da995, roughness: .85, flatShading: true });
+const beakMaterial = new THREE.MeshStandardMaterial({ color: 0xf4b75f, roughness: .7, flatShading: true });
+function ellipsoid(parent, material, position, scale) {
+  const mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), material);
+  mesh.position.set(...position);
+  mesh.scale.set(...scale);
+  parent.add(mesh);
+  return mesh;
+}
+ellipsoid(bird, plumage, [0, 0, 0], [.32, .28, .62]);
+ellipsoid(bird, plumage, [0, .2, -.48], [.25, .25, .28]);
+const beak = new THREE.Mesh(new THREE.ConeGeometry(.12, .32, 4), beakMaterial);
+beak.rotation.x = -Math.PI / 2;
+beak.position.set(0, .16, -.83);
+bird.add(beak);
+const eyes = new THREE.MeshBasicMaterial({ color: 0x162328 });
+for (const side of [-1, 1]) ellipsoid(bird, eyes, [side * .205, .26, -.61], [.045, .045, .045]);
+ellipsoid(bird, wingMaterial, [0, .04, .61], [.25, .075, .3]);
+const wings = [-1, 1].map(side => {
+  const pivot = new THREE.Group();
+  pivot.position.set(side * .22, .04, 0);
+  bird.add(pivot);
+  ellipsoid(pivot, wingMaterial, [side * .48, 0, .08], [.67, .065, .27]);
+  return pivot;
+});
+bird.visible = false;
+scene.add(bird);
+
+let mode = 'orbit', cloud = null, radius = 5, basePointSize = .01, flightSpeed = 1;
+let flightScale = 1, loadVersion = 0, noticeTimer;
+let bounds = new THREE.Sphere(), sceneData = null, selectedPiece = null;
+let nodeClouds = new Map();
+const keys = new Set();
+const forward = new THREE.Vector3(), right = new THREE.Vector3(), move = new THREE.Vector3();
+const offset = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+const orientation = new THREE.Euler(0, 0, 0, 'YXZ');
+function notify(message) {
+  $('notice').textContent = message;
+  $('notice').hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => $('notice').hidden = true, 7000);
+}
+function chaseOffset() {
+  return offset.set(0, flightScale * 1.1, flightScale * 4.5 * Number($('chase').value)).applyQuaternion(heading.quaternion);
+}
+function updateModeUI() {
+  const flying = mode === 'fly';
+  // Three.js dispatches lock/unlock before updating its isLocked property.
+  // The browser state is already current when those events arrive.
+  const captured = document.pointerLockElement === renderer.domElement;
+  $('orbit').setAttribute('aria-pressed', String(!flying));
+  $('fly').setAttribute('aria-pressed', String(flying));
+  $('resume').hidden = !flying || captured;
+  $('reticle').hidden = !flying || !captured;
+  document.body.classList.toggle('locked', captured);
+  $('help').textContent = flying
+    ? !captured ? 'Flight paused · Adjust settings, switch to Orbit, or press Resume flight'
+    : 'Mouse to steer · W/S forward/back · A/D strafe · Q/E down/up · Shift boost · Esc pause · F recenter · No collisions'
+    : 'Drag to orbit · Right-drag to pan · Scroll to zoom · Double-click a point to focus · F to recenter';
+}
+function setMode(next) {
+  if (next === mode || (next === 'fly' && !cloud)) return;
+  keys.clear();
+  if (next === 'fly') {
+    // Flush orbit inertia before taking ownership of the camera.
+    orbit.enableDamping = false;
+    orbit.update();
+    orbit.enableDamping = true;
+    orbit.enabled = false;
+    orientation.setFromQuaternion(camera.quaternion, 'YXZ');
+    orientation.x = THREE.MathUtils.clamp(orientation.x, -Math.PI / 2 + .12, Math.PI / 2 - .12);
+    orientation.z = 0;
+    heading.quaternion.setFromEuler(orientation);
+    bird.position.copy(camera.position).sub(chaseOffset());
+    bird.quaternion.copy(heading.quaternion);
+    bird.visible = true;
+  } else {
+    mouseLook.unlock();
+    bird.visible = false;
+    camera.getWorldDirection(forward);
+    orbit.target.copy(camera.position).addScaledVector(forward, flightScale * 4.5);
+    orbit.enabled = true;
+    orbit.update();
+  }
+  mode = next;
+  updateModeUI();
+}
+function startFlying() {
+  setMode('fly');
+  if (mode === 'fly') mouseLook.lock();
+}
+mouseLook.addEventListener('lock', () => {
+  // A delayed lock result must not capture input after changing modes.
+  if (mode !== 'fly') { mouseLook.unlock(); return; }
+  renderer.domElement.focus();
+  updateModeUI();
+});
+mouseLook.addEventListener('unlock', () => { keys.clear(); updateModeUI(); });
+document.addEventListener('pointerlockerror', () => notify('Mouse capture was blocked. Click “Resume flight” to retry, or open this viewer in a browser tab.'));
+$('orbit').onclick = () => setMode('orbit');
+$('fly').onclick = startFlying;
+$('resume').onclick = startFlying;
+// Only explicit flight buttons capture the mouse; viewport clicks stay inert
+// while paused so editing settings can never accidentally resume flight.
+function frameAll() {
+  if (!cloud) return;
+  setMode('orbit');
+  const sphere = bounds;
+  const vertical = THREE.MathUtils.degToRad(camera.fov / 2);
+  const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
+  const distance = radius / Math.sin(Math.min(vertical, horizontal)) * 1.12;
+  orbit.enableDamping = false;
+  orbit.update();
+  orbit.target.copy(sphere.center);
+  camera.position.copy(sphere.center).add(new THREE.Vector3(0, .22, 1).normalize().multiplyScalar(distance));
+  orbit.update();
+  orbit.enableDamping = true;
+}
+$('frame').onclick = frameAll;
+function updateSettings() {
+  const size = 2 ** Number($('point-size').value);
+  $('point-value').textContent = `${size.toFixed(1)}×`;
+  $('speed-value').textContent = `${(2 ** Number($('speed').value)).toFixed(1)}×`;
+  $('chase-value').textContent = `${Number($('chase').value).toFixed(1)}×`;
+  if (cloud) cloud.traverse(object => { if (object.isPoints) object.material.size = basePointSize * size; });
+}
+for (const id of ['point-size', 'speed', 'chase']) $(id).addEventListener('input', updateSettings);
+const movementCodes = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ShiftLeft', 'ShiftRight'];
+addEventListener('keydown', event => {
+  if (event.target.matches('input, textarea, select') || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (mode === 'fly' && mouseLook.isLocked && movementCodes.includes(event.code)) {
+    event.preventDefault();
+    keys.add(event.code);
+  }
+  if (event.code === 'KeyF' && !event.repeat) { event.preventDefault(); frameAll(); }
+  if (['Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract'].includes(event.code)) {
+    event.preventDefault();
+    const direction = ['Equal', 'NumpadAdd'].includes(event.code) ? 1 : -1;
+    $('point-size').value = Number($('point-size').value) + direction * .2;
+    updateSettings();
+  }
+});
+addEventListener('keyup', event => keys.delete(event.code));
+function pause() { keys.clear(); if (mouseLook.isLocked) mouseLook.unlock(); }
+addEventListener('blur', pause);
+
+const raycaster = new THREE.Raycaster();
+renderer.domElement.addEventListener('dblclick', event => {
+  if (mode !== 'orbit' || !cloud) return;
+  raycaster.params.Points.threshold = Math.max(basePointSize * 2 ** Number($('point-size').value) * 2, radius * .002);
+  raycaster.setFromCamera(new THREE.Vector2(event.clientX / innerWidth * 2 - 1, 1 - event.clientY / innerHeight * 2), camera);
+  const hit = raycaster.intersectObject(cloud, true)[0];
+  if (hit) { orbit.target.copy(hit.point); orbit.update(); }
+  else notify('No point here. Double-click directly on the cloud to set the orbit focus.');
+});
+const loader = new PLYLoader();
+// Scene helpers deliberately mirror Scene.pieces in scene.py.
+function scenePieces(data, threshold = 0) {
+  const parent = data.nodes.map((_, i) => i);
+  function find(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+  for (const edge of data.edges) {
+    const rates = [edge.keep_a, edge.keep_b].filter(k => k && k[1]).map(k => k[0] / k[1]);
+    const confidence = rates.length ? Math.min(...rates) : 0;
+    if (confidence >= threshold) parent[find(edge.a)] = find(edge.b);
+  }
+  const groups = new Map();
+  data.nodes.forEach((node, i) => {
+    if (node.position == null) return;
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(i);
+  });
+  return [...groups.values()];
+}
+function relativePath(path) {
+  if (typeof path !== 'string' || !path || path.startsWith('/') || path.includes('\\') || path.includes(':') || path.split('/').some(p => !p || p === '..' || p === '.')) {
+    throw new Error('PLY paths must be relative to scene.json, without “..”.');
+  }
+  return path;
+}
+function validateScene(data) {
+  if (!data || !Array.isArray(data.nodes) || !Array.isArray(data.edges) || !Array.isArray(data.center) || data.center.length !== 2 || !data.center.every(Number.isFinite)) {
+    throw new Error('Expected a scene.py scene: center, nodes and edges.');
+  }
+  data.nodes.forEach((node, i) => {
+    if (!node || !node.pano) throw new Error(`Node ${i} has no panorama metadata.`);
+    if (node.position != null && (!Array.isArray(node.position) || node.position.length !== 3 || !node.position.every(Number.isFinite))) throw new Error(`Node ${i} has an invalid position.`);
+    if (node.ply) relativePath(node.ply);
+    if (node.transform != null) {
+      const t = node.transform;
+      if (!Array.isArray(t) || t.length !== 4 || !t.every(row => Array.isArray(row) && row.length === 4 && row.every(Number.isFinite)) || t[3].some((v, j) => Math.abs(v - (j === 3 ? 1 : 0)) > 1e-8)) throw new Error(`Node ${i} has an invalid 4×4 transform.`);
+    }
+  });
+  for (const edge of data.edges) {
+    if (!edge || ![edge.a, edge.b].every(i => Number.isInteger(i) && i >= 0 && i < data.nodes.length)) throw new Error('An edge references a missing node.');
+    for (const k of [edge.keep_a, edge.keep_b]) {
+      if (k != null && (!Array.isArray(k) || k.length !== 2 || !k.every(Number.isFinite) || k[0] < 0 || k[1] < k[0])) throw new Error('An edge has invalid confidence counts.');
+    }
+  }
+}
+function placementMode(data) {
+  const indices = data.nodes.map((n, i) => n.ply ? i : -1).filter(i => i >= 0);
+  if (!indices.length) throw new Error('This scene has no PLY files.');
+  if (indices.every(i => data.nodes[i].transform != null)) return 'world';
+  const groups = scenePieces(data);
+  if (indices.every(i => data.nodes[i].transform == null) && groups.length === 1 && indices.every(i => groups[0].includes(i))) return 'raw';
+  throw new Error('This scene contains separate or partially placed pieces. Run postprocess.pipeline to save their transforms first.');
+}
+function disposeCloud(group) {
+  if (group) group.traverse(object => { if (object.isPoints) { object.geometry.dispose(); object.material.dispose(); } });
+}
+function parsePoints(buffer, transform = null) {
+  const geometry = loader.parse(buffer);
+  try {
+    const positions = geometry.getAttribute('position');
+    if (!positions || positions.count === 0) throw new Error('This PLY contains no points.');
+    for (const value of positions.array) if (!Number.isFinite(value)) throw new Error('This PLY contains invalid point coordinates.');
+    // JSON matrices are row-major. Matrix4.set takes row-major arguments.
+    // Stored points already share a DA3 piece frame: do NOT apply Node.position/rotation again.
+    if (transform) geometry.applyMatrix4(new THREE.Matrix4().set(...transform.flat()));
+    // World/DA3 Y-down -> display Y-up, once, AFTER the saved placement.
+    geometry.rotateX(Math.PI);
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    if (!Number.isFinite(geometry.boundingSphere.radius)) throw new Error('Point-cloud bounds are invalid.');
+    const colored = !!geometry.getAttribute('color');
+    return new THREE.Points(geometry, new THREE.PointsMaterial({ vertexColors: colored, color: colored ? 0xffffff : 0xa9cbe3, transparent: true }));
+  } catch (error) { geometry.dispose(); throw error; }
+}
+function installCloud(group, name, data = null, placement = null) {
+  const box = new THREE.Box3().setFromObject(group);
+  const nextBounds = box.getBoundingSphere(new THREE.Sphere());
+  if (!Number.isFinite(nextBounds.radius)) throw new Error('Scene bounds are invalid.');
+  setMode('orbit');
+  if (cloud) { scene.remove(cloud); disposeCloud(cloud); }
+  cloud = group;
+  sceneData = data;
+  nodeClouds = new Map();
+  let count = 0;
+  cloud.traverse(object => {
+    if (!object.isPoints) return;
+    count += object.geometry.getAttribute('position').count;
+    if (object.userData.nodeIndex != null) nodeClouds.set(object.userData.nodeIndex, object);
+  });
+  scene.add(cloud);
+  bounds.copy(nextBounds);
+  radius = Math.max(bounds.radius, .001);
+  basePointSize = radius * .002;
+  flightScale = radius * .025;
+  bird.scale.setScalar(flightScale);
+  flightSpeed = radius * .35;
+  camera.near = Math.max(radius * .0001, .00001);
+  camera.far = radius * 200;
+  camera.updateProjectionMatrix();
+  orbit.minDistance = radius * .001;
+  orbit.maxDistance = radius * 50;
+  $('empty').hidden = true;
+  $('fly').disabled = $('frame').disabled = false;
+  $('status').textContent = `${name} · ${count.toLocaleString()} points`;
+  $('pieces').hidden = !data;
+  $('placement').textContent = placement === 'world' ? 'Saved world placements · Displayed in metres' : 'Shared DA3 frame · Not yet aligned to the map';
+  $('confidence').value = '0';
+  rebuildPieces();
+  updateSettings();
+  frameAll();
+}
+function selectPiece(members) {
+  selectedPiece = members;
+  const selected = members ? new Set(members) : null;
+  nodeClouds.forEach((object, i) => {
+    const active = !selected || selected.has(i);
+    object.material.opacity = active ? 1 : .16;
+    object.material.depthWrite = active;
+  });
+  for (const button of $('piece-list').children) button.setAttribute('aria-pressed', String(button.pieceMembers === members));
+}
+function rebuildPieces() {
+  selectPiece(null);
+  $('piece-list').replaceChildren();
+  if (!sceneData) return;
+  const threshold = Number($('confidence').value) / 100;
+  $('confidence-value').textContent = threshold ? `${Math.round(threshold * 100)}%` : 'All links';
+  const groups = scenePieces(sceneData, threshold);
+  groups.forEach((members, index) => {
+    const button = document.createElement('button');
+    const loaded = members.filter(i => nodeClouds.has(i)).length;
+    button.textContent = `Piece ${index + 1} · ${members.length} nodes · ${loaded} PLYs`;
+    button.title = `Node indices: ${members.join(', ')}`;
+    button.pieceMembers = members;
+    button.disabled = !loaded;
+    button.setAttribute('aria-pressed', 'false');
+    button.onclick = () => selectPiece(selectedPiece === members ? null : members);
+    $('piece-list').append(button);
+  });
+  const ungrouped = [...nodeClouds.keys()].filter(i => !groups.some(m => m.includes(i)));
+  if (ungrouped.length) {
+    const note = document.createElement('p');
+    note.textContent = `${ungrouped.length} placed PLY(s) have no DA3 pose, so are outside pieces.`;
+    $('piece-list').append(note);
+  }
+}
+$('confidence').oninput = rebuildPieces;
+$('clear-selection').onclick = () => selectPiece(null);
+async function readBuffer(source) {
+  if (source instanceof File) return source.arrayBuffer();
+  const response = await fetch(source);
+  if (!response.ok) throw new Error(`Download failed (${response.status}).`);
+  return response.arrayBuffer();
+}
+async function loadCloud(source, name) {
+  const version = ++loadVersion;
+  pause();
+  $('status').textContent = `Loading ${name}…`;
+  $('notice').hidden = true;
+  let group;
+  try {
+    const buffer = await readBuffer(source);
+    if (version !== loadVersion) return;
+    group = new THREE.Group();
+    group.add(parsePoints(buffer));
+    installCloud(group, name);
+  } catch (error) {
+    if (group !== cloud) disposeCloud(group);
+    if (version !== loadVersion) return;
+    notify(`Could not open ${name}: ${error.message}`);
+    $('status').textContent = cloud ? 'Load failed · Previous scene retained' : 'Load failed · Choose another file';
+  }
+}
+async function loadScene(source, resolveAsset, name) {
+  const version = ++loadVersion;
+  pause();
+  $('notice').hidden = true;
+  $('status').textContent = `Reading ${name}…`;
+  const group = new THREE.Group();
+  try {
+    const data = JSON.parse(new TextDecoder().decode(await readBuffer(source)));
+    if (version !== loadVersion) return;
+    validateScene(data);
+    const placement = placementMode(data);
+    // Resolve ALL names first, before allocating any geometry.
+    const assets = data.nodes.map((node, i) => node.ply ? {i, source: resolveAsset(relativePath(node.ply))} : null).filter(Boolean);
+    for (let index = 0; index < assets.length; index++) {
+      const asset = assets[index];
+      $('status').textContent = `Loading ${name} · ${index + 1}/${assets.length} PLYs`;
+      const buffer = await readBuffer(asset.source);
+      if (version !== loadVersion) { disposeCloud(group); return; }
+      const points = parsePoints(buffer, data.nodes[asset.i].transform);
+      points.userData.nodeIndex = asset.i;
+      group.add(points);
+      // Give the browser time to paint progress between files.
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (version !== loadVersion) { disposeCloud(group); return; }
+    }
+    installCloud(group, name, data, placement);
+  } catch (error) {
+    if (group !== cloud) disposeCloud(group);
+    if (version !== loadVersion) return;
+    notify(`Could not open scene: ${error.message}`);
+    $('status').textContent = cloud ? 'Load failed · Previous scene retained' : 'Load failed · Check scene.json and its PLY files';
+  }
+}
+function openFiles(entries) {
+  if (!entries.length) return;
+  const manifests = entries.filter(entry => entry.path.split('/').pop() === 'scene.json');
+  if (manifests.length > 1) { notify('Choose one scene folder at a time. Multiple scene.json files were found.'); return; }
+  if (manifests.length === 1) {
+    const manifest = manifests[0];
+    const root = manifest.path.slice(0, -'scene.json'.length);
+    const files = new Map(entries.map(entry => [entry.path, entry.file]));
+    loadScene(manifest.file, path => {
+      const file = files.get(root + path);
+      if (!file) throw new Error(`Missing ${path}. Open the whole scene folder, or select scene.json and every referenced PLY together.`);
+      return file;
+    }, root.split('/').filter(Boolean).pop() || 'Scene');
+  } else if (entries.length === 1 && /\.ply$/i.test(entries[0].path)) loadCloud(entries[0].file, entries[0].file.name);
+  else notify('Select scene.json with its PLYs, or open a single PLY. Multiple PLYs need scene.json for placement.');
+}
+function inputEntries(files) { return [...files].map(file => ({file, path: file.webkitRelativePath || file.name})); }
+$('open').onclick = $('choose').onclick = () => $('file').click();
+$('open-folder').onclick = () => $('folder').click();
+for (const id of ['file', 'folder']) $(id).onchange = () => { openFiles(inputEntries($(id).files)); $(id).value = ''; };
+// Directory drops use entry readers; a folder may arrive in multiple batches.
+async function droppedEntries(entry, prefix = '') {
+  if (entry.isFile) return [{ file: await new Promise((resolve, reject) => entry.file(resolve, reject)), path: prefix + entry.name }];
+  if (!entry.isDirectory) return [];
+  const reader = entry.createReader(), result = [];
+  for (;;) {
+    const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+    if (!batch.length) break;
+    for (const child of batch) result.push(...await droppedEntries(child, prefix + entry.name + '/'));
+  }
+  return result;
+}
+let dragDepth = 0;
+addEventListener('dragenter', event => { event.preventDefault(); dragDepth++; $('dropzone').hidden = false; });
+addEventListener('dragover', event => event.preventDefault());
+addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('dropzone').hidden = true; } });
+addEventListener('drop', async event => {
+  event.preventDefault(); dragDepth = 0; $('dropzone').hidden = true;
+  const fallback = inputEntries(event.dataTransfer.files);
+  const entries = [...event.dataTransfer.items].map(item => item.webkitGetAsEntry?.()).filter(Boolean);
+  try {
+    const files = [];
+    for (const entry of entries) files.push(...await droppedEntries(entry));
+    openFiles(entries.length ? files : fallback);
+  } catch (error) { notify(`Could not read folder: ${error.message}. Try Open scene folder.`); }
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+let lastTime = performance.now(), wingTime = 0;
+function tick(now) {
+  const dt = Math.min((now - lastTime) / 1000, .05);
+  lastTime = now;
+  if (mode === 'fly') {
+    move.set(0, 0, 0);
+    heading.getWorldDirection(forward);
+    right.set(1, 0, 0).applyQuaternion(heading.quaternion);
+    if (mouseLook.isLocked) {
+      if (keys.has('KeyW')) move.add(forward);
+      if (keys.has('KeyS')) move.sub(forward);
+      if (keys.has('KeyD')) move.add(right);
+      if (keys.has('KeyA')) move.sub(right);
+      if (keys.has('KeyE') || keys.has('Space')) move.add(up);
+      if (keys.has('KeyQ')) move.sub(up);
+    }
+    const boosting = keys.has('ShiftLeft') || keys.has('ShiftRight');
+    bird.position.addScaledVector(move.normalize(), flightSpeed * (2 ** Number($('speed').value)) * (boosting ? 3 : 1) * dt);
+    bird.quaternion.slerp(heading.quaternion, 1 - Math.exp(-12 * dt));
+    wingTime += dt * (move.lengthSq() ? 13 : 5);
+    wings[0].rotation.z = Math.sin(wingTime) * .32;
+    wings[1].rotation.z = -Math.sin(wingTime) * .32;
+    camera.position.copy(bird.position).add(chaseOffset());
+    camera.quaternion.copy(heading.quaternion);
+  } else orbit.update();
+  renderer.render(scene, camera);
+}
+renderer.setAnimationLoop(tick);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { pause(); renderer.setAnimationLoop(null); }
+  else { lastTime = performance.now(); renderer.setAnimationLoop(tick); }
+});
+clearTimeout(window.viewerBootTimer);
+$('notice').hidden = true;
+if (config.sceneUrl) {
+  const base = config.sceneUrl.slice(0, config.sceneUrl.lastIndexOf('/') + 1);
+  loadScene(config.sceneUrl, path => base + path.split('/').map(encodeURIComponent).join('/'), 'Scene');
+} else if (config.plyUrl) loadCloud(config.plyUrl, 'Scene point cloud');
+</script>
+</body>
+</html>

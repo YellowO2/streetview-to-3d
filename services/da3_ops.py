@@ -16,9 +16,14 @@ KEEP_RATE_THRESHOLD = 0.6
 # What fraction of a view's weakest pixels DA3 discards before we ever see
 # them (see panoramic_da3's CONF_LOWER_PERCENTILE). Kept as our own default
 # rather than panoramic_da3's, so raising it here is a one-line change and
-# doesn't require touching that package: our pipeline may want to keep more
-# than DA3's own reference default and decide later what to drop.
-CONF_LOWER_PERCENTILE = 10.0   # test: keep top 90%
+# doesn't require touching that package.
+#
+# Measured on a real 4-node chunk: 60% kept gave 669,590 points, 80% gave
+# 857,247 (+28%), 90% gave 868,398 (+30%) -- CONF_ABS_FLOOR catches most of
+# what 90 would additionally let through, so 80 gets nearly all the gain
+# for less storage. The UI's "Keep %" slider overrides this per run without
+# a redeploy; this is only the fallback when a caller doesn't pass one.
+CONF_LOWER_PERCENTILE = 20.0   # keep top 80%
 
 
 def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1,

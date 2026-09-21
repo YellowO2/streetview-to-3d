@@ -112,16 +112,19 @@ def get_da3():
 
 @GPU_DISPATCH
 def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_lon,
-                               edge_max_dist_m=None, step_degrees=20):
+                               edge_max_dist_m=None, step_degrees=20,
+                               conf_lower_percentile=None):
     """The ONE @spaces.GPU-decorated entry point for this whole app -- see
     this module's own docstring for why there is exactly one. The work
     itself is in _run_pathfind_and_join_impl."""
     return _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
-                                        edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees)
+                                        edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees,
+                                        conf_lower_percentile=conf_lower_percentile)
 
 
 def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
-                                 edge_max_dist_m=None, step_degrees=20):
+                                 edge_max_dist_m=None, step_degrees=20,
+                                 conf_lower_percentile=None):
     """Convenience combined task: corridor search (run_pathfind_reconstruction)
     AND join/bridging (join_segments) in ONE GPU session, using the same
     already-downloaded local image paths for both phases -- Join re-run
@@ -150,12 +153,17 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
     import time
 
     import torch
-    from services.da3_ops import bridge_test_edge as da3_bridge_test_edge, rate_pano as da3_rate_pano, test_edge as da3_test_edge
+    from services.da3_ops import (
+        CONF_LOWER_PERCENTILE, bridge_test_edge as da3_bridge_test_edge,
+        rate_pano as da3_rate_pano, test_edge as da3_test_edge,
+    )
     from reconstruct.join_segments import BRIDGE_MAX_DIST_M, join_segments
     from reconstruct.walk_graph import run_pathfind_reconstruction
 
     if edge_max_dist_m is None:
         edge_max_dist_m = BRIDGE_MAX_DIST_M
+    if conf_lower_percentile is None:
+        conf_lower_percentile = CONF_LOWER_PERCENTILE
 
     t0 = time.monotonic()
     hard_deadline = t0 + RUN_AND_JOIN_DURATION_S - SAVE_BUFFER_S
@@ -165,15 +173,18 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
     try:
         with tempfile.TemporaryDirectory() as views_base:
             def test_edge(path_a, path_b, test_id):
-                return da3_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+                return da3_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id,
+                                     step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile)
 
             rate_ids = itertools.count()
 
             def rate_pano(path):
-                return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids), step_degrees=step_degrees)
+                return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids),
+                                     step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile)
 
             def bridge_test_edge(path_a, path_b, test_id):
-                return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id, step_degrees=step_degrees)
+                return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id,
+                                            step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile)
 
             segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
                                                     rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)

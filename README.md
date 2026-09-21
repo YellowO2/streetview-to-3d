@@ -46,13 +46,40 @@ Models (DA3) are downloaded from the Hugging Face Hub on first run and cached un
 For a stage-by-stage description of how the pipeline works, see
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
+### Explore a reconstruction
+
+Open `visualise/viewer.html` directly in Chrome; no Python server or build is
+needed. Three.js loads from a CDN, so keep an internet connection available.
+The Gradio viewer embeds this same file. The optional
+`python -m visualise.export_standalone_viewer --out ~/Downloads/viewer.html`
+command simply copies it to another location.
+
+- Open a single PLY, or use **Open scene folder** for `scene.json` and its PLYs.
+  You can also drop the folder, or select/drop the JSON and PLY files together.
+- Saved node transforms place each cloud in world coordinates. A reconstruction
+  with no transforms can be previewed in its raw DA3 frame only when every
+  cloud belongs to one connected piece. Separate or partially placed pieces
+  require `python -m postprocess.pipeline --dir <scene-folder>` first.
+- The piece list follows `Scene.pieces(min_confidence)`. Select a piece to dim
+  the others. The confidence slider changes grouping only, never placement.
+  Unknown edge confidence counts as zero; nodes without a DA3 pose are not
+  piece members, matching the Python dataclass.
+- **Orbit**: drag to orbit, right-drag to pan, scroll to zoom, double-click a
+  point to focus. **Recenter** (F) fits the entire scene and returns to Orbit.
+- **Fly · Bird**: mouse to steer, WASD to move, Q/E down/up, Shift to boost.
+  Escape releases the mouse; use **Resume flight** to capture it again.
+
+This stage previews and highlights pieces; it does not change or save their
+placements. The Gradio pipeline still automatically previews its merged PLY;
+use the folder control to inspect individual nodes and pieces.
+
 ### Coordinate convention
 
 Everything in this repo is **Y-DOWN**: `+Y` points at the ground, not the sky.
 
 That is DA3's own computer-vision convention and it is never changed on the
 way through -- `load_pieces` scales height but does not flip it, and every
-transform downstream inherits it. `Documents/viewer.html` applies
+transform downstream inherits it. `visualise/viewer.html` applies
 `geometry.rotateX(PI)` at display time, which is the only place the flip
 happens.
 

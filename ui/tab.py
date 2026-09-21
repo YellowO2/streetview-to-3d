@@ -70,19 +70,24 @@ def _bundle(run_dir):
     return shutil.make_archive(run_dir.rstrip("/"), "zip", run_dir)
 
 
-def handle_reconstruct(prep, progress=gr.Progress(track_tqdm=True)):
+def handle_reconstruct(prep, keep_pct, progress=gr.Progress(track_tqdm=True)):
     """Step 2: walk the corridor and bridge what it finds, in ONE GPU call.
 
     Search and bridging share a session so DA3 is loaded once and the
     panoramas already on disk are reused -- a second call has no guarantee
     of landing on the same worker.
+
+    keep_pct: how much of each view's own weakest pixels to keep, from the
+    slider -- a UI value, not a redeploy, so it can change without
+    rebuilding the Space (see services.da3_ops.CONF_LOWER_PERCENTILE).
     """
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
     try:
         output_dir = _run_dir(prep)
-        results = street_main.run_prepared_pathfind(prep, output_dir)
+        results = street_main.run_prepared_pathfind(
+            prep, output_dir, conf_lower_percentile=100 - keep_pct)
     except Exception as e:
         raise gr.Error(f"Reconstruct failed: {e}")
 
@@ -127,6 +132,11 @@ def build_main_tab():
             # long download inside one request -- the ZeroGPU proxy token
             # expires on wall-clock time.
             pathfind_prepare_btn = gr.Button("1. Prepare (fetch panoramas)")
+            keep_pct_slider = gr.Slider(
+                50, 100, value=80, step=5, label="Keep % of each view's points",
+                info="Lower keeps less but runs smaller/faster. 80 matched "
+                     "90 closely in testing; going below ~60 visibly thins "
+                     "the cloud.")
             pathfind_run_btn = gr.Button("2. Reconstruct (GPU)")
             pathfind_post_btn = gr.Button("3. Place into one scene (no GPU)")
 
@@ -153,7 +163,7 @@ def build_main_tab():
 
     pathfind_run_btn.click(
         fn=handle_reconstruct,
-        inputs=[pathfind_prep_state],
+        inputs=[pathfind_prep_state, keep_pct_slider],
         outputs=[reconstruct_view, pathfind_dir_state, scene_file],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
