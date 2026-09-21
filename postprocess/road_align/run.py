@@ -30,7 +30,7 @@ from postprocess.road_align.road_frames import build as build_frames
 from postprocess.road_align.node_center_to_road_line import seat_all
 from postprocess.gps_fit.load_pieces import load_pieces
 from postprocess.road_align.align_slope_of_pieces import seat
-from postprocess.road_align import ground_elevation
+from postprocess.road_align import cross_road, ground_elevation
 import scene as scene_mod
 
 MARGIN_M = 25.0
@@ -84,6 +84,18 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
         moved[i], cams[i] @ horiz[i][[0, 2]][:, [0, 2]].T + horiz[i][[0, 2], 3])
         for i in ids}
 
+    log("\ncross-road, which GPS cannot measure:")
+    cross = cross_road.align(road_pts, frames, on, log=log)
+    # a pure sideways translation, so the road points ride along with it
+    # instead of being extracted from the cloud a second time
+    for i in road_pts:
+        if len(road_pts[i]):
+            road_pts[i] = road_pts[i] + cross[i][[0, 1, 2], 3]
+    for i in sorted(cross):
+        d = float(np.hypot(cross[i][0, 3], cross[i][2, 3]))
+        if d:
+            log(f"  piece_{i:<4} slid {d:.2f} m across the road")
+
     have = {i: p for i, p in road_pts.items() if len(p)}
     if elevation:
         ground, resid, n_dots = ground_elevation.surface(sc, curves, frames, on)
@@ -102,19 +114,21 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
 
     diagnostics = {}
     for i in ids:
-        M = vert.get(i, np.eye(4)) @ horiz[i]
+        M = vert.get(i, np.eye(4)) @ cross[i] @ horiz[i]
         d = {"matrix": M.tolist(),
              "road": {"nodes": fits[i]["n"],
                       "roads": sorted(on.get(i, [])),
                       "moved_m": round(float(np.linalg.norm(
                           cams[i] @ horiz[i][[0, 2]][:, [0, 2]].T
                           + horiz[i][[0, 2], 3] - cams[i], axis=1).mean()), 3)}}
+        d["road"]["across_m"] = round(float(np.hypot(cross[i][0, 3],
+                                                     cross[i][2, 3])), 3)
         d["seating"] = ({"height_m": round(report[i][0], 3),
                          "tilt_deg": round(report[i][1], 2)}
                         if i in report else None)
         diagnostics[i] = d
 
-    transforms = {i: vert.get(i, np.eye(4)) @ horiz[i] for i in ids}
+    transforms = {i: vert.get(i, np.eye(4)) @ cross[i] @ horiz[i] for i in ids}
     if save:
         for i in ids:
             M = np.asarray(gps_transform(fits[i]))

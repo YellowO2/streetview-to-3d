@@ -163,6 +163,12 @@ class RouteFrame:
         left = t[:, 0] * rel[:, 1] - t[:, 1] * rel[:, 0]
         return along, left
 
+    def normal(self, pts):
+        """Unit vector pointing to the route's left, at each point."""
+        _, k = self._tree.query(np.atleast_2d(np.asarray(pts, float)))
+        t = self.tangent[k]
+        return np.column_stack([-t[:, 1], t[:, 0]])
+
     def orient(self, curve):
         """Turn a curve to run the way the vehicle drove.
 
