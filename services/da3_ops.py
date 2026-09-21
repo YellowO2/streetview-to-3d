@@ -13,9 +13,17 @@ import numpy as np
 
 KEEP_RATE_THRESHOLD = 0.6
 
+# What fraction of a view's weakest pixels DA3 discards before we ever see
+# them (see panoramic_da3's CONF_LOWER_PERCENTILE). Kept as our own default
+# rather than panoramic_da3's, so raising it here is a one-line change and
+# doesn't require touching that package: our pipeline may want to keep more
+# than DA3's own reference default and decide later what to drop.
+CONF_LOWER_PERCENTILE = 20.0   # test: keep top 80%
+
 
 def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1,
-              step_degrees=20, keep_rate_threshold=KEEP_RATE_THRESHOLD):
+              step_degrees=20, keep_rate_threshold=KEEP_RATE_THRESHOLD,
+              conf_lower_percentile=CONF_LOWER_PERCENTILE):
     """One real pairwise DA3 test between two already-downloaded panos.
     Returns None if either pano fails the keep-rate health check, else
     (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views)."""
@@ -26,6 +34,7 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
     _, res, pts, cols, per_pano_pts, per_pano_cols = run_da3(
         path_a, [path_b], cfg, test_dir,
         da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
+        conf_lower_percentile=conf_lower_percentile,
     )
     ka, ta = res.pano_keep_counts.get(id_a, (0, 1))
     kb, tb = res.pano_keep_counts.get(id_b, (0, 1))
@@ -37,7 +46,8 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
     return pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views
 
 
-def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=20):
+def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=20,
+              conf_lower_percentile=CONF_LOWER_PERCENTILE):
     """Run DA3 on this pano ALONE (no partner) to get a solo consistency
     score and a real solo point cloud -- so a dot that never pairs with
     any real neighbor can still contribute its own solo reconstruction
@@ -59,6 +69,7 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
     pano_id = os.path.basename(path)
     filtered_views, res, _, _, per_pano_pts, per_pano_cols = run_da3(
         path, [], cfg, rate_dir, da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
+        conf_lower_percentile=conf_lower_percentile,
     )
     score = len(filtered_views)
     n_kept, n_total = res.pano_keep_counts.get(pano_id, (score, score))
@@ -70,7 +81,8 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
     return score, pose, pts, cols, n_kept, n_total
 
 
-def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=20):
+def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=20,
+                     conf_lower_percentile=CONF_LOWER_PERCENTILE):
     """Diagnostic variant of test_edge for the bridging search (joining two
     already-built pieces -- a real DA3 estimate, even a poor one, is
     trusted over independent GPS placement). Never gates pass/fail itself
@@ -90,6 +102,7 @@ def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thres
     _, res, pts, cols, _, _ = run_da3(
         path_a, [path_b], cfg, test_dir,
         da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
+        conf_lower_percentile=conf_lower_percentile,
     )
     if id_a not in res.pano_poses or id_b not in res.pano_poses:
         return None
