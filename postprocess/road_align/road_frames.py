@@ -15,7 +15,6 @@ Road polylines and camera positions are both in the scene's metre frame
 """
 
 import numpy as np
-from scipy.interpolate import splprep, splev
 from scipy.spatial import cKDTree
 
 from postprocess.corridors import _dots, _metres, roads
@@ -33,29 +32,67 @@ NEAR_M = 12.0
 # hold one carriageway and its verges, and to leave a branch outside.
 HALF_WIDTH_M = 8.0
 STEP_M = 0.5
-SMOOTH_PER_DOT = 2.0
-MIN_DOTS = 4
 
 
-def smooth(polyline, step=STEP_M):
+def _tangents(p, headings):
+    """A unit direction at every dot, from the panorama's own heading.
+
+    Heading is the source's absolute measurement of which way the camera
+    faced, so unlike a difference between dot positions it does not inherit
+    GPS noise, and it survives having only two dots to work with. Measured
+    against the driven direction on real data it agrees to about 2.5 deg.
+
+    A panorama says which way it faced, not which way the road is walked,
+    so each heading is flipped to follow the walk. Where one is missing the
+    neighbouring dots supply the direction instead.
+    """
+    step = np.gradient(p, axis=0)
+    step /= np.maximum(np.linalg.norm(step, axis=1, keepdims=True), 1e-9)
+    if headings is None:
+        return step
+    h = np.asarray(headings, float)
+    t = np.column_stack([np.sin(h), np.cos(h)])          # bearing -> (east, north)
+    t[np.isnan(h)] = step[np.isnan(h)]
+    back = (t * step).sum(1) < 0
+    t[back] *= -1
+    return t
+
+
+def smooth(polyline, headings=None, step=STEP_M):
     """A dot polyline resampled fine enough to be a frame.
 
     Graph dots are ~10 m apart, and RouteFrame finds the nearest SEGMENT
     midpoint -- at that spacing the along/left it returns is quantised to
-    the segment. Smoothing also steadies the tangent, which decides which
-    side is left and is a derivative of noisy GPS.
+    the segment.
+
+    The curve passes through every dot with that dot's own heading as its
+    direction (a cubic Hermite per segment). Taking direction from heading
+    rather than from the dot spacing is what lets a two-dot road still
+    describe a curve instead of a chord.
     """
     p = np.asarray(polyline, float)
-    # a road chained into a ring returns to its first dot, and splprep
-    # rejects a repeated point
-    p = p[np.r_[True, np.linalg.norm(np.diff(p, axis=0), axis=1) > 1e-6]]
-    if len(p) < MIN_DOTS:
+    keep = np.r_[True, np.linalg.norm(np.diff(p, axis=0), axis=1) > 1e-6]
+    p = p[keep]
+    if headings is not None:
+        headings = np.asarray(headings, float)[keep]
+    if len(p) < 2:
         return p
-    length = float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
-    tck, _ = splprep([p[:, 0], p[:, 1]], s=SMOOTH_PER_DOT * len(p),
-                     k=min(3, len(p) - 1))
-    x, y = splev(np.linspace(0, 1, max(int(length / step), 20)), tck)
-    return np.column_stack([x, y])
+
+    t = _tangents(p, headings)
+    seg = np.linalg.norm(np.diff(p, axis=0), axis=1)
+    out = []
+    for i, length in enumerate(seg):
+        u = np.linspace(0, 1, max(int(length / step), 2), endpoint=False)[:, None]
+        # Hermite basis, tangents scaled to the segment so the curve bulges
+        # in proportion to how far it has to travel
+        h00 = 2*u**3 - 3*u**2 + 1
+        h10 = u**3 - 2*u**2 + u
+        h01 = -2*u**3 + 3*u**2
+        h11 = u**3 - u**2
+        out.append(h00 * p[i] + h10 * length * t[i]
+                   + h01 * p[i+1] + h11 * length * t[i+1])
+    out.append(p[-1][None, :])
+    return np.vstack(out)
 
 
 def build(cams, graph, near_m=NEAR_M):
@@ -68,10 +105,12 @@ def build(cams, graph, near_m=NEAR_M):
             piece alone on a road can still be seated against it.
     """
     xy = np.array(_metres(_dots(graph)))
+    head = np.array([np.nan if n.pano.heading is None else n.pano.heading
+                     for n in graph.nodes])
     curves = {}
     for rid, walk in enumerate(roads(graph)):
-        c = smooth(xy[walk])
-        if len(c) >= MIN_DOTS:
+        c = smooth(xy[walk], head[walk])
+        if len(c) >= 2:
             curves[rid] = c
 
     trees = {rid: cKDTree(c) for rid, c in curves.items()}
