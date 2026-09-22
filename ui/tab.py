@@ -125,20 +125,23 @@ def handle_postprocess(run_dir, progress=gr.Progress(track_tqdm=True)):
 def build_main_tab():
     state, map_view, selection_view = build_map_section()
 
+    # Three sequential steps, so one row read left to right rather than a
+    # narrow sidebar column -- the buttons' own full sentences need real
+    # width, and nothing else shares this row with them.
     with gr.Row(equal_height=True):
-        with gr.Column(scale=0, min_width=140):
-            # Prepare is separate and has no GPU, so the GPU-triggering
-            # click is its own fresh interaction rather than following a
-            # long download inside one request -- the ZeroGPU proxy token
-            # expires on wall-clock time.
-            pathfind_prepare_btn = gr.Button("1. Prepare (fetch panoramas)")
-            keep_pct_slider = gr.Slider(
-                50, 100, value=80, step=5, label="Keep % of each view's points",
-                info="Lower keeps less but runs smaller/faster. 80 matched "
-                     "90 closely in testing; going below ~60 visibly thins "
-                     "the cloud.")
-            pathfind_run_btn = gr.Button("2. Reconstruct (GPU)")
-            pathfind_post_btn = gr.Button("3. Place into one scene (no GPU)")
+        # Prepare is separate and has no GPU, so the GPU-triggering click
+        # is its own fresh interaction rather than following a long
+        # download inside one request -- the ZeroGPU proxy token expires
+        # on wall-clock time.
+        pathfind_prepare_btn = gr.Button("1. Prepare (fetch panoramas)")
+        pathfind_run_btn = gr.Button("2. Reconstruct (GPU)")
+        pathfind_post_btn = gr.Button("3. Place into one scene (no GPU)")
+
+    # A real parameter (services.da3_ops.CONF_LOWER_PERCENTILE), not a UI
+    # decision -- kept as a component only so it is callable over the API
+    # with a different value; hidden so it isn't something every user has
+    # to understand. See handle_reconstruct.
+    keep_pct_slider = gr.Slider(50, 100, value=80, step=5, visible=False)
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
