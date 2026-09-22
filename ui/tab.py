@@ -1,15 +1,14 @@
-"""The three buttons: prepare candidates, reconstruct, place into one scene.
+"""The two buttons: prepare candidates, then reconstruct and place.
 
 Mounts map_selection's own map-picking section above its own controls,
 wired against the same shared `state` that section's handlers update.
 """
-import html as html_lib
 import os
-import shutil
 import uuid
 
 import gradio as gr
 
+import scene as scene_mod
 from ui import viewers
 from paths import SPLATS_DIR
 from postprocess import pipeline
@@ -59,23 +58,24 @@ def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
     n = len(prep["node_entries"])
     return prep, f"<p>Prepared {n} candidate(s) across {len(prep['top_dates'])} date(s). Ready — press \"Reconstruct\".</p>"
 
-def _bundle(run_dir):
-    """The whole run as one zip.
+def _files(run_dir):
+    """scene.json plus every node's own .ply, as plain paths.
 
-    The Space's disk is wiped whenever it restarts, so a link into it dies
-    with the container. Offered as soon as the GPU has produced anything,
-    because that is the expensive half -- placement is free and can be run
-    again on the download.
-    """
-    return shutil.make_archive(run_dir.rstrip("/"), "zip", run_dir)
+    No zip: the Space's disk is wiped on restart, so these are handed back
+    directly rather than left as a link into it, and the viewer already
+    opens exactly this file set (drag them in, or "Open files")."""
+    names = sorted(n for n in os.listdir(run_dir)
+                   if n == scene_mod.FILENAME or n.endswith(".ply"))
+    return [os.path.join(run_dir, n) for n in names]
 
 
 def handle_reconstruct(prep, keep_pct, progress=gr.Progress(track_tqdm=True)):
-    """Step 2: walk the corridor and bridge what it finds, in ONE GPU call.
+    """Reconstruct (GPU) then place (CPU), in one click.
 
-    Search and bridging share a session so DA3 is loaded once and the
-    panoramas already on disk are reused -- a second call has no guarantee
-    of landing on the same worker.
+    Placement never needs its own GPU call, so it runs immediately after
+    reconstruction returns rather than waiting for a second click --
+    nothing about it requires a fresh ZeroGPU token the way the GPU call
+    itself does (see handle_pathfind_prepare for why THAT stays separate).
 
     keep_pct: how much of each view's own weakest pixels to keep, from the
     slider -- a UI value, not a redeploy, so it can change without
@@ -86,41 +86,15 @@ def handle_reconstruct(prep, keep_pct, progress=gr.Progress(track_tqdm=True)):
 
     try:
         output_dir = _run_dir(prep)
-        results = street_main.run_prepared_pathfind(
+        street_main.run_prepared_pathfind(
             prep, output_dir, conf_lower_percentile=100 - keep_pct)
+        pipeline.process(output_dir, log=print)
     except Exception as e:
         raise gr.Error(f"Reconstruct failed: {e}")
 
-    return (viewers.summary(results, "Downloadable now. Press \"3\" to fit it "
-                            "to the map -- free, and re-runnable on the "
-                            "download later if the placement needs changing."),
-            output_dir, _bundle(output_dir))
-
-def handle_postprocess(run_dir, progress=gr.Progress(track_tqdm=True)):
-    """Step 3: place the run's pieces into one scene. No GPU.
-
-    Everything up to here reconstructs geometry; this is what decides
-    where that geometry actually sits -- see postprocess.pipeline.
-
-    Returns the viewer plus the whole scene as one zip.
-    """
-    if not run_dir:
-        raise gr.Error("Nothing reconstructed yet -- press \"Run + Join\" first.")
-
-    lines = []
-    def log(msg=""):
-        lines.append(str(msg))
-        print(msg)
-
-    progress(0, desc="Placing pieces...")
-    try:
-        ply = pipeline.process(run_dir, log=log)
-    except Exception as e:
-        raise gr.Error(f"Post-processing failed: {e}")
-
-    report = "<pre>" + html_lib.escape("\n".join(lines)) + "</pre>"
-    return (viewers.build_pointcloud_viewer(viewers.file_url(ply)) + report,
-            _bundle(run_dir))
+    scene_url = viewers.file_url(os.path.join(output_dir, scene_mod.FILENAME))
+    return (viewers.build_pointcloud_viewer(scene_url=scene_url),
+            _files(output_dir))
 
 def build_main_tab():
     state, map_view, selection_view = build_map_section()
@@ -134,8 +108,7 @@ def build_main_tab():
         # download inside one request -- the ZeroGPU proxy token expires
         # on wall-clock time.
         pathfind_prepare_btn = gr.Button("1. Prepare (fetch panoramas)")
-        pathfind_run_btn = gr.Button("2. Reconstruct (GPU)")
-        pathfind_post_btn = gr.Button("3. Place into one scene (no GPU)")
+        pathfind_run_btn = gr.Button("2. Reconstruct and place")
 
     # A real parameter (services.da3_ops.CONF_LOWER_PERCENTILE), not a UI
     # decision -- kept as a component only so it is callable over the API
@@ -145,12 +118,12 @@ def build_main_tab():
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
-    pathfind_dir_state = gr.State(None)
 
     # The Space's disk does not survive a restart, so a finished scene is
-    # handed back as a file rather than left behind as a link to it.
-    scene_file = gr.File(label="The scene (scene.json + one .ply per node)",
-                         interactive=False)
+    # handed back as files rather than left behind as a link into it -- no
+    # zip: the viewer already opens exactly this file set directly.
+    scene_files = gr.Files(label="The scene (scene.json + one .ply per node)",
+                           interactive=False)
 
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
@@ -167,15 +140,7 @@ def build_main_tab():
     pathfind_run_btn.click(
         fn=handle_reconstruct,
         inputs=[pathfind_prep_state, keep_pct_slider],
-        outputs=[reconstruct_view, pathfind_dir_state, scene_file],
-        show_progress="minimal",
-        show_progress_on=[reconstruct_view],
-    )
-
-    pathfind_post_btn.click(
-        fn=handle_postprocess,
-        inputs=[pathfind_dir_state],
-        outputs=[reconstruct_view, scene_file],
+        outputs=[reconstruct_view, scene_files],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],
     )
