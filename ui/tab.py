@@ -19,6 +19,10 @@ def _run_dir(prep):
     """A fresh output directory, opened as a scene holding every place this
     run will try to reconstruct. See scene.py for what a scene holds."""
     path = os.path.join(SPLATS_DIR, uuid.uuid4().hex)
+    # Logged so a run can still be found after the page is refreshed:
+    # Gradio serves any file under it at this URL, but can't list the folder.
+    print(f"run dir: {path}  (scene: {viewers.file_url(os.path.join(path, scene_mod.FILENAME))})",
+          flush=True)
     street_main.open_scene(prep, path)
     return path
 
