@@ -4,6 +4,7 @@ Mounts map_selection's own map-picking section above its own controls,
 wired against the same shared `state` that section's handlers update.
 """
 import os
+import time
 import uuid
 
 import gradio as gr
@@ -13,6 +14,7 @@ from ui import viewers
 from paths import SPLATS_DIR
 from postprocess import pipeline
 from reconstruct import build as street_main
+from services.pipeline_runner import estimate_gpu_seconds
 from ui.map_selection.tab import build_map_section, nodes_by_key
 
 def _run_dir(prep):
@@ -60,7 +62,16 @@ def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
 
     progress(1.0, desc="Done!")
     n = len(prep["node_entries"])
-    return prep, f"<p>Prepared {n} candidate(s) across {len(prep['top_dates'])} date(s). Ready — press \"Reconstruct\".</p>"
+    return prep, (f"<p>Prepared {n} candidate(s) across {len(prep['top_dates'])} date(s). "
+                  f"Ready — press \"Reconstruct\".</p>" + _gpu_note(len(prep["points"])))
+
+def _gpu_note(n_dots):
+    """How much ZeroGPU time the Reconstruct click will ask for, so a user
+    can check it against their own daily quota before spending it."""
+    minutes = estimate_gpu_seconds(n_dots) / 60
+    return (f"<p>{n_dots} place(s) to reconstruct: this needs about <b>{minutes:.1f} min</b> "
+            f"of GPU time. ZeroGPU gives each account a daily quota (5 min free, 40 min PRO) "
+            f"-- check you have enough left, or the run will be refused.</p>")
 
 def _files(run_dir):
     """scene.json plus every node's own .ply, as plain paths.
@@ -73,7 +84,7 @@ def _files(run_dir):
     return [os.path.join(run_dir, n) for n in names]
 
 
-def handle_reconstruct(prep, keep_pct, progress=gr.Progress(track_tqdm=True)):
+def handle_reconstruct(prep, keep_pct, gpu_seconds, progress=gr.Progress(track_tqdm=True)):
     """Reconstruct (GPU) then place (CPU), in one click.
 
     Placement never needs its own GPU call, so it runs immediately after
@@ -84,6 +95,9 @@ def handle_reconstruct(prep, keep_pct, progress=gr.Progress(track_tqdm=True)):
     keep_pct: how much of each view's own weakest pixels to keep, from the
     slider -- a UI value, not a redeploy, so it can change without
     rebuilding the Space (see services.da3_ops.CONF_LOWER_PERCENTILE).
+
+    gpu_seconds: the GPU window to ask for; 0 sizes it from the dot count
+    (see services.pipeline_runner.estimate_gpu_seconds).
     """
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -91,8 +105,11 @@ def handle_reconstruct(prep, keep_pct, progress=gr.Progress(track_tqdm=True)):
     try:
         output_dir = _run_dir(prep)
         street_main.run_prepared_pathfind(
-            prep, output_dir, conf_lower_percentile=100 - keep_pct)
+            prep, output_dir, conf_lower_percentile=100 - keep_pct,
+            gpu_seconds=gpu_seconds or None)
+        t_place = time.monotonic()
         pipeline.process(output_dir, log=print)
+        print(f"timing: placement {time.monotonic() - t_place:.1f}s", flush=True)
     except Exception as e:
         raise gr.Error(f"Reconstruct failed: {e}")
 
@@ -119,6 +136,9 @@ def build_main_tab():
     # with a different value; hidden so it isn't something every user has
     # to understand. See handle_reconstruct.
     keep_pct_slider = gr.Slider(50, 100, value=80, step=5, visible=False)
+    # Same idea: the ZeroGPU window in seconds, 0 = sized from the dot
+    # count. Hidden for now; the estimate is shown after Prepare instead.
+    gpu_seconds_input = gr.Number(value=0, precision=0, minimum=0, visible=False)
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
@@ -143,7 +163,7 @@ def build_main_tab():
 
     pathfind_run_btn.click(
         fn=handle_reconstruct,
-        inputs=[pathfind_prep_state, keep_pct_slider],
+        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input],
         outputs=[reconstruct_view, scene_files],
         show_progress="minimal",
         show_progress_on=[reconstruct_view],

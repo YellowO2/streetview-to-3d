@@ -193,7 +193,8 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
 
 
 def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_STEP_DEGREES,
-                          conf_lower_percentile: float | None = None):
+                          conf_lower_percentile: float | None = None,
+                          gpu_seconds: float | None = None):
     """Convenience one-shot: corridor search + join/bridging in ONE GPU
     session (see pipeline_runner.run_pathfind_and_join_gpu) -- avoids
     paying for two separate DA3 model loads when you just want the final
@@ -220,6 +221,9 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
     drops before backprojection -- see services.da3_ops.CONF_LOWER_PERCENTILE
     for what it means. None keeps that module's own default; exposed here
     so a caller can change it without redeploying anything.
+
+    gpu_seconds: the ZeroGPU window to ask for. None sizes it from the dot
+    count -- see services.pipeline_runner.estimate_gpu_seconds.
     """
     from services.pipeline_runner import run_pathfind_and_join_gpu
     t0 = time.monotonic()
@@ -227,6 +231,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
     segments, pieces = run_pathfind_and_join_gpu(
         prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon,
         step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
+        gpu_seconds=gpu_seconds,
     )
     if not segments:
         raise RuntimeError("No connected path found from start toward any goal.")

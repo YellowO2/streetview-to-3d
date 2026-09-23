@@ -21,15 +21,52 @@ real GPU is guaranteed attached.
 import os
 
 # Self-bridge/join's own guaranteed minimum window after the walk,
-# regardless of how much of PATHFIND_MAX_TIME_BUDGET_S the walk itself
-# used -- see _run_pathfind_reconstruction_impl's own docstring.
+# regardless of how much of its own budget the walk itself used -- see
+# _run_pathfind_reconstruction_impl's own docstring.
 # SAVE_BUFFER_S: headroom left after bridging for saving/uploading the
 # result before the hard ZeroGPU wall-clock window closes. Both are
-# subtracted from GPU_WINDOWED_DURATION_S to get the walk's own budget
-# (PATHFIND_MAX_TIME_BUDGET_S) -- carved OUT of the one hard window, not
-# added on top of it.
+# carved OUT of the one hard window (see _walk_budget_s), not added on
+# top of it.
 SELF_BRIDGE_MIN_S = 20.0
 SAVE_BUFFER_S = 10.0
+
+# The join/bridge phase's allowance after the walk: a floor plus a share
+# per dot, since a bigger area tends to come out of the walk in more
+# pieces to bridge. NOT measured yet -- each run logs "timing:" lines
+# (model load, walk, join) to calibrate these against. join_segments
+# stops at its own deadline, so an allowance that is too small leaves
+# pieces unbridged rather than failing the run.
+JOIN_BASE_S = 60.0
+JOIN_PER_DOT_S = 3.0
+
+
+def _join_allowance_s(n_dots: int) -> float:
+    return JOIN_BASE_S + n_dots * JOIN_PER_DOT_S
+
+
+def estimate_gpu_seconds(n_dots: int) -> float:
+    """The GPU window a run over n_dots needs: the walk's own per-dot
+    estimate (walk_graph.SECONDS_PER_DOT_ESTIMATE, the same one it budgets
+    itself with), then the join, then the bridge/save headroom. Shown to the
+    user after Prepare, and the window asked for unless they override it."""
+    from reconstruct.walk_graph import SECONDS_PER_DOT_ESTIMATE
+    return (n_dots * SECONDS_PER_DOT_ESTIMATE + _join_allowance_s(n_dots)
+            + SELF_BRIDGE_MIN_S + SAVE_BUFFER_S)
+
+
+def _gpu_seconds(points, gpu_seconds=None) -> float:
+    """The window this call actually gets: the caller's override, else the
+    estimate for this many dots."""
+    return float(gpu_seconds) if gpu_seconds else estimate_gpu_seconds(len(points))
+
+
+def _walk_budget_s(total_s: float, n_dots: int) -> float:
+    """The walk's share of a total_s window: everything except the join,
+    the self-bridge minimum and the save headroom. The join's share is
+    capped at a third so a small override still leaves the walk room."""
+    join_s = min(_join_allowance_s(n_dots), total_s / 3)
+    return max(0.0, total_s - join_s - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S)
+
 
 try:
     import spaces
@@ -37,35 +74,12 @@ try:
     # spaces is also installed locally via requirements.txt, so gate on SPACE_ID
     # which HF Spaces always sets but local machines don't have.
     ON_SPACES = bool(os.getenv("SPACE_ID"))
-    # Flat duration -- started at 120 to match DA3's own official Space
-    # (duration=120, not a per-task callable; the real cause of the
-    # second-@spaces.GPU-call segfault this was originally chasing turned
-    # out to be unrelated -- open3d's persistent background thread pool
-    # in Saver.save_point_cloud, fixed in panoramic-da3). Bumped to 180:
-    # self-bridge kept getting starved of real time to work with once the
-    # walk alone routinely used most of a 120s window (confirmed on real
-    # data: a 20-dot chunk's walk took 94.6s), and our chunk sizes are
-    # consistently similar (~20 dots), so a flat bump is simpler than a
-    # dynamic per-task duration -- bump further if 180 still isn't enough.
-    GPU_WINDOWED_DURATION_S = 180
-    # pathfind_and_join runs the walk AND the join/bridge phase
-    # sequentially in ONE call, sharing whatever window it gets -- giving
-    # it just GPU_WINDOWED_DURATION_S (sized for walk-alone/join-alone)
-    # would starve whichever phase runs second. Sized instead as the
-    # previous walk budget PLUS join's own standalone default (see
-    # join_segments.join_segments's own 200s default), so combining the
-    # two steps into one call doesn't cost either phase the time it'd
-    # get running separately.
-    RUN_AND_JOIN_DURATION_S = GPU_WINDOWED_DURATION_S + 200.0
-    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S
 
-    def _gpu_duration(task, *args, **kwargs):
-        """Per-call duration for the ONE @spaces.GPU-decorated dispatch
-        (there is only one) --
-        every task gets the normal shared window except pathfind_and_join,
-        which needs room for both the walk AND a genuinely unhurried join
-        afterward (see RUN_AND_JOIN_DURATION_S)."""
-        return RUN_AND_JOIN_DURATION_S if task == "pathfind_and_join" else GPU_WINDOWED_DURATION_S
+    def _gpu_duration(date_graphs, points, *args, gpu_seconds=None, **kwargs):
+        """spaces.GPU calls this with the decorated function's own
+        arguments, so the window follows the dot count (or the override)
+        rather than one flat size for every area."""
+        return _gpu_seconds(points, gpu_seconds)
 
     if ON_SPACES:
         GPU_DISPATCH = spaces.GPU(duration=_gpu_duration)
@@ -74,9 +88,6 @@ try:
 except ImportError:
     GPU_DISPATCH = lambda fn: fn  # no-op outside HF Spaces
     ON_SPACES = False
-    GPU_WINDOWED_DURATION_S = 180
-    RUN_AND_JOIN_DURATION_S = GPU_WINDOWED_DURATION_S + 200.0
-    PATHFIND_MAX_TIME_BUDGET_S = GPU_WINDOWED_DURATION_S - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S
 
 _da3_config = None
 _da3 = None
@@ -113,18 +124,23 @@ def get_da3():
 @GPU_DISPATCH
 def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_lon,
                                edge_max_dist_m=None, step_degrees=20,
-                               conf_lower_percentile=None):
+                               conf_lower_percentile=None, gpu_seconds=None):
     """The ONE @spaces.GPU-decorated entry point for this whole app -- see
     this module's own docstring for why there is exactly one. The work
-    itself is in _run_pathfind_and_join_impl."""
+    itself is in _run_pathfind_and_join_impl.
+
+    gpu_seconds: the GPU window to ask for. None sizes it from the dot
+    count (estimate_gpu_seconds). Passed by keyword, since _gpu_duration
+    reads it by name."""
     return _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
                                         edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees,
-                                        conf_lower_percentile=conf_lower_percentile)
+                                        conf_lower_percentile=conf_lower_percentile,
+                                        gpu_seconds=gpu_seconds)
 
 
 def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
                                  edge_max_dist_m=None, step_degrees=20,
-                                 conf_lower_percentile=None):
+                                 conf_lower_percentile=None, gpu_seconds=None):
     """Convenience combined task: corridor search (run_pathfind_reconstruction)
     AND join/bridging (join_segments) in ONE GPU session, using the same
     already-downloaded local image paths for both phases -- Join re-run
@@ -137,13 +153,10 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
     an already-saved segments bundle, without redoing the whole (much
     more expensive) corridor search.
 
-    Splits ONE wall-clock window (RUN_AND_JOIN_DURATION_S, sized as the
-    walk's own normal budget PLUS join's own standalone default -- see
-    that constant's own comment) between the two phases sequentially:
-    corridor search first (still capped at the same PATHFIND_MAX_TIME_BUDGET_S
-    a plain walk gets), then whatever's left of the bigger window for
-    join/bridging -- which now amounts to roughly a full, unhurried join
-    budget rather than the walk's leftover scraps.
+    Splits ONE wall-clock window (_gpu_seconds: the override, else sized
+    from the dot count) between the two phases sequentially: corridor
+    search first (capped at _walk_budget_s of it), then whatever's left
+    for join/bridging.
 
     Returns (segments, pieces) -- pieces is a list of (pts, cols,
     metadata) or None if there was only ever one segment (nothing to
@@ -166,10 +179,16 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
         conf_lower_percentile = CONF_LOWER_PERCENTILE
 
     t0 = time.monotonic()
-    hard_deadline = t0 + RUN_AND_JOIN_DURATION_S - SAVE_BUFFER_S
+    total_s = _gpu_seconds(points, gpu_seconds)
+    hard_deadline = t0 + total_s - SAVE_BUFFER_S
+    print(f"GPU window: {total_s:.0f}s for {len(points)} dot(s)"
+          f"{' (override)' if gpu_seconds else ''}", flush=True)
 
     cfg = get_da3_config()
     da3 = get_da3()
+    # "timing:" lines are what the per-phase constants above get
+    # calibrated from -- grep the Space's logs for them.
+    print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
     try:
         with tempfile.TemporaryDirectory() as views_base:
             def test_edge(path_a, path_b, test_id):
@@ -186,9 +205,14 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
                 return da3_bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id,
                                             step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile)
 
+            t_walk = time.monotonic()
             segments = run_pathfind_reconstruction(date_graphs, points, adjacency, start_lat, start_lon, test_edge,
-                                                    rate_pano=rate_pano, max_time_budget_s=PATHFIND_MAX_TIME_BUDGET_S)
+                                                    rate_pano=rate_pano,
+                                                    max_time_budget_s=_walk_budget_s(total_s, len(points)))
+            print(f"timing: walk {time.monotonic() - t_walk:.1f}s for {len(points)} dot(s) "
+                  f"-> {len(segments or [])} segment(s)", flush=True)
             if not segments or len(segments) < 2:
+                print(f"timing: GPU total {time.monotonic() - t0:.1f}s of {total_s:.0f}s", flush=True)
                 return segments, None
 
             # Whatever's left of the hard GPU-session deadline, not the
@@ -197,7 +221,11 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
             # so never asks join_segments to run past hard_deadline) even
             # if the walk somehow overran its own budget.
             remaining_s = max(0.0, hard_deadline - time.monotonic())
+            t_join = time.monotonic()
             pieces = join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s)
+            print(f"timing: join {time.monotonic() - t_join:.1f}s of {remaining_s:.0f}s allowed, "
+                  f"{len(segments)} segment(s) -> {len(pieces)} piece(s)", flush=True)
+            print(f"timing: GPU total {time.monotonic() - t0:.1f}s of {total_s:.0f}s", flush=True)
             return segments, pieces
     finally:
         torch.cuda.empty_cache()
