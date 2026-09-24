@@ -18,7 +18,7 @@ import numpy as np
 from postprocess.road_align.run import align
 
 
-def process(run_dir, min_nodes=2, log=print, merge_ply=None):
+def process(run_dir, min_nodes=1, log=print, merge_ply=None):
     """Place a reconstruction. merge_ply: also write one combined .ply
     there, for local inspection outside the viewer -- not needed by the
     Space, which reads scene.json's per-node transforms directly."""
@@ -41,7 +41,7 @@ def process(run_dir, min_nodes=2, log=print, merge_ply=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dir", required=True, help="a reconstruction run's directory")
-    ap.add_argument("--min-nodes", type=int, default=2)
+    ap.add_argument("--min-nodes", type=int, default=1)
     ap.add_argument("--merge", help="also write one combined .ply here")
     args = ap.parse_args()
     process(args.dir, args.min_nodes, merge_ply=args.merge)

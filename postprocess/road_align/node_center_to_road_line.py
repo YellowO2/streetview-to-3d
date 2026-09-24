@@ -17,11 +17,18 @@ it, which is the same principle `drift_cap` encodes:
                                      that same GPS smoothed -- overruling
                                      a direct measurement with a smoothed
                                      one loses information.
-    STRONG_NODES or fewer            rotation as well. GPS never measured
+    2 to STRONG_NODES                rotation as well. GPS never measured
                                      a heading here: two points fix a
                                      position and nothing else. The road
                                      line is the only thing that can
                                      supply one.
+    1                                translation only. Turning about its
+                                     one camera moves no camera, so every
+                                     turn fits the line equally and the
+                                     sweep would just keep its first,
+                                     -TURN_RANGE_DEG. Its heading comes
+                                     from the panorama instead (see
+                                     load_pieces.heading_rotation).
 
 Both are held near GPS by a soft (move/cap)**4 penalty rather than a hard
 limit. The penalty is also what stops the piece sliding ALONG the road: a
@@ -114,9 +121,11 @@ def seat_all(cams, curves, on, log=print):
             log(f"  piece_{i:<4} no road -- left at GPS")
             continue
         r = belongs({i: cams[i]}, curves, on)[i]
-        may_turn = len(cams[i]) <= STRONG_NODES
+        may_turn = 1 < len(cams[i]) <= STRONG_NODES
         out[i], deg, shift = seat(cams[i], curves[r], may_turn)
         log(f"  piece_{i:<4} {len(cams[i])} node(s) on road{r:<4} "
-            + (f"turn {deg:+5.0f} deg, " if may_turn else "no turn (GPS fixed it), ")
+            + (f"turn {deg:+5.0f} deg, " if may_turn
+               else "no turn (heading), " if len(cams[i]) == 1
+               else "no turn (GPS fixed it), ")
             + f"shift {shift:.2f} m")
     return out

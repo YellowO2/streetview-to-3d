@@ -12,6 +12,7 @@ constant converts its units to metres (config.DA3_UNITS_TO_METRES). Fitting
 it per piece would turn GPS noise into geometry: pieces come out different
 sizes and no amount of moving them makes them meet.
 """
+import math
 import os
 
 import numpy as np
@@ -26,9 +27,9 @@ def load_pieces(directory, min_confidence=None):
     """(fits, clouds) keyed by piece index, in the scene's metre frame.
 
     A single-node piece cannot fit its own rotation -- one point fixes a
-    position and says nothing about a heading -- so it borrows one from the
-    nearest multi-node piece. Road alignment recovers it properly, which is
-    the whole point.
+    position and says nothing about a heading -- so it takes one from its
+    panorama's own heading (see heading_rotation). Only a node without a
+    heading still borrows the nearest multi-node piece's rotation.
     """
     sc = scene_mod.Scene.load(directory)
     use_origin(*sc.origin)
@@ -51,17 +52,18 @@ def load_pieces(directory, min_confidence=None):
                    "resid": float(np.median(res)), "src_xz": src, "members": members}
 
     multi = [i for i in fits if fits[i]["n"] > 1]
-    if singles and not multi:
-        # nothing to borrow a heading from -- and placement drops lone
-        # nodes anyway, so there is nothing left to place
-        raise ValueError("couldn't link any panoramas together -- every place came out "
-                         "on its own. Try a larger radius or a different area.")
     for i in singles:
         c = fits[i]["cams"][0]
-        near = min(multi, key=lambda j: np.linalg.norm(fits[j]["cams"] - c, axis=1).min())
-        R = fits[near]["R"]
-        fits[i].update(R=R, scale=scale, borrowed_from=near,
-                       t=c - R @ fits[i]["src_xz"][0])
+        R = heading_rotation(sc.nodes[fits[i]["members"][0]])
+        if R is not None:
+            fits[i].update(R=R, scale=scale, rotation_from="heading")
+        elif multi:
+            near = min(multi, key=lambda j: np.linalg.norm(fits[j]["cams"] - c, axis=1).min())
+            fits[i].update(R=fits[near]["R"], scale=scale, borrowed_from=near)
+        else:
+            raise ValueError("a panorama with no heading came out on its own, and no linked "
+                             "piece exists to borrow a rotation from")
+        fits[i]["t"] = c - fits[i]["R"] @ fits[i]["src_xz"][0]
 
     clouds = {}
     for i, f in fits.items():
@@ -76,6 +78,44 @@ def load_pieces(directory, min_confidence=None):
         xz = pts[:, [0, 2]] * scale @ f["R"].T + f["t"]
         clouds[i] = (xz, pts[:, 1] * scale, cols)
     return fits, clouds
+
+
+def heading_rotation(node):
+    """The 2D rotation (DA3's x, z -> east, north) that points this node's
+    camera along its panorama's own heading, or None without one.
+
+    The camera looks down its own +z; rotation.T carries that into DA3's
+    frame. Measured on real placed pieces (the GPS fit's rotation against
+    each node's heading): Google agrees to within 1.2 deg on 13 nodes.
+    Apple faces the other way -- its heading (already converted to Street
+    View's convention, see fetch_nodes._apple_heading) is the direction of
+    travel, but the image's forward is 180 deg from it, within 1.3 deg on
+    2 nodes. heading_agreement logs the same check on every run.
+    """
+    if node.rotation is None or node.pano.heading is None:
+        return None
+    v = np.asarray(node.rotation, float).T @ np.array([0.0, 0.0, 1.0])
+    bearing = node.pano.heading + (math.pi if node.pano.source == "apple" else 0.0)
+    th = math.atan2(v[0], v[2]) - bearing
+    return np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
+
+
+def heading_agreement(fits, sc):
+    """{source: [deg, ...]}: for every node of a multi-node piece, how far
+    heading_rotation's direction is from where the GPS fit actually
+    points it. Near zero means single-node pieces are being turned right."""
+    out = {}
+    for f in fits.values():
+        if f["n"] < 2:
+            continue
+        fitted = math.atan2(f["R"][1, 0], f["R"][0, 0])
+        for m in f["members"]:
+            R = heading_rotation(sc.nodes[m])
+            if R is None:
+                continue
+            d = math.degrees(math.atan2(R[1, 0], R[0, 0]) - fitted)
+            out.setdefault(sc.nodes[m].pano.source, []).append((d + 180) % 360 - 180)
+    return out
 
 
 def _read_cloud(directory, sc, members):

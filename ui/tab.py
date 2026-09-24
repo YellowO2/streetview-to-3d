@@ -6,6 +6,7 @@ wired against the same shared `state` that section's handlers update.
 import os
 import time
 import uuid
+import zipfile
 
 import gradio as gr
 
@@ -73,14 +74,22 @@ def _gpu_note(n_dots):
 
 
 def _files(run_dir):
-    """scene.json plus every node's own .ply, as plain paths.
+    """The whole scene as one zip, then scene.json and every node's own
+    .ply, as plain paths.
 
-    No zip: the Space's disk is wiped on restart, so these are handed back
-    directly rather than left as a link into it, and the viewer already
-    opens exactly this file set (drag them in, or "Open files")."""
+    The loose files are what the viewer opens (drag them in, or "Open
+    files"); the zip is so the scene downloads in one click, since a
+    browser can only download files, not a folder. Stored, not compressed:
+    point data barely shrinks, so compressing would only cost time. The
+    Space's disk is wiped on restart, so everything is handed back rather
+    than left as a link into it."""
     names = sorted(n for n in os.listdir(run_dir)
                    if n == scene_mod.FILENAME or n.endswith(".ply"))
-    return [os.path.join(run_dir, n) for n in names]
+    archive = os.path.join(run_dir, f"scene_{os.path.basename(run_dir)[:8]}.zip")
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as z:
+        for n in names:
+            z.write(os.path.join(run_dir, n), n)
+    return [archive] + [os.path.join(run_dir, n) for n in names]
 
 
 def handle_reconstruct(prep, keep_pct, gpu_seconds):
@@ -152,7 +161,7 @@ def build_main_tab():
     # preview an already-downloaded .ply without needing a GPU run first.
     reconstruct_view = gr.HTML(viewers.build_pointcloud_viewer())
     with gr.Accordion("Download scene", open=False):
-        scene_files = gr.Files(label="Scene files", interactive=False)
+        scene_files = gr.Files(label="Scene files (the .zip holds them all)", interactive=False)
 
     pathfind_prepare_btn.click(
         fn=handle_pathfind_prepare,

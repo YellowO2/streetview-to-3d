@@ -28,7 +28,7 @@ import numpy as np
 from postprocess.road_align.road_surface import ground_near_track
 from postprocess.road_align.road_frames import belongs, build as build_frames
 from postprocess.road_align.node_center_to_road_line import seat_all
-from postprocess.gps_fit.load_pieces import load_pieces
+from postprocess.gps_fit.load_pieces import heading_agreement, load_pieces
 from postprocess.road_align.align_slope_of_pieces import seat
 from postprocess.road_align import cross_road, ground_elevation
 import scene as scene_mod
@@ -36,7 +36,7 @@ import scene as scene_mod
 MARGIN_M = 25.0
 
 
-def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
+def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1,
           elevation=True, save=True):
     """Solve, and return ({piece: 4x4}, clouds, fits, per-piece diagnostics).
 
@@ -46,6 +46,11 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=2,
     """
     sc = scene_mod.Scene.load(directory)
     fits, clouds = load_pieces(directory)
+    agree = heading_agreement(fits, sc)
+    if agree:
+        log("heading vs GPS fit (lone pieces are turned by heading): "
+            + ", ".join(f"{src} {np.median(d):+.1f} deg median, worst {max(d, key=abs):+.1f} over {len(d)}"
+                        for src, d in sorted(agree.items())) + "\n")
     ids = [i for i in (piece_ids or sorted(clouds)) if i in clouds]
     if min_nodes > 1:
         # Dropped before anything else, so a weak piece cannot be exported
@@ -158,11 +163,12 @@ def main():
                     help="comma-separated piece ids (default: all in --dir)")
     ap.add_argument("--out", default=None, help="write the aligned cloud here")
     ap.add_argument("--cell", type=float, default=0.25)
-    ap.add_argument("--min-nodes", type=int, default=2,
+    ap.add_argument("--min-nodes", type=int, default=1,
                     help="drop pieces with fewer GPS nodes than this. Defaults "
-                         "to 2: a single-node piece has no heading of its own "
-                         "and borrows one from a neighbour, and the results "
-                         "were worse with them in.")
+                         "to 1, keeping every piece: a single-node piece is "
+                         "turned by its panorama's own heading (see "
+                         "load_pieces.heading_rotation). It used to borrow a "
+                         "neighbour's, and the results were worse with them in.")
     ap.add_argument("--no-elevation", action="store_true",
                     help="set heights by fitting a surface to the pieces "
                          "themselves instead of to Google's elevation. "
