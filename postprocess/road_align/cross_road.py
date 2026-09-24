@@ -35,7 +35,7 @@ MIN_BIN_POINTS = 20      # below this a bin's height is noise
 MIN_SHARED_BINS = 20     # 5 m of profile the two actually have in common
 SLICE_M = 8.0            # the stretch each separate measurement covers
 MAX_TURN_DEG = 5.0       # a piece's heading came from GPS; this only trims it
-GROUND_PCT = 8.0         # the low percentile in a bin is its ground
+GROUND_PCT = 92.0        # Y-DOWN: a bin's lowest points (high y) are its ground
 
 
 def _section(left, height, lo, hi):

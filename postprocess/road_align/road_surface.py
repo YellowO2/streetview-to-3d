@@ -27,7 +27,9 @@ DEGENERATE_EIGENVALUE = 1e-3   # below this a direction is not constrained at al
 TRACK_RADIUS_M = 12.0    # a road is not wider than this either side of the track
 GROUND_CELL_M = 1.0
 GROUND_BAND_M = 0.6      # how thick a road surface is, allowing for noise
-GROUND_PCT = 8.0         # low percentile = ground, not the lowest point (noise)
+GROUND_PCT = 92.0        # Y-DOWN, so a HIGH percentile of y is the ground --
+                         # not the very lowest point (noise). At 8 it took
+                         # the tops of walls in cells with no road in them.
 MIN_TRACK_PTS = 100
 
 
@@ -129,9 +131,10 @@ def ground_near_track(piece, cams, radius=TRACK_RADIUS_M, cell=GROUND_CELL_M,
     returned 1.7% of one piece's cloud, a bare line under the cameras,
     against 30-43% for its neighbours on the same road.
 
-    So: take the points near the track, and in each cell call the low
-    percentile of height the ground. Everything above it is vegetation,
-    vehicles, buildings or noise. No colour, no components, no width.
+    So: take the points near the track, and in each cell call the lowest
+    points the ground (a high percentile of y, which points down).
+    Everything above it is vegetation, vehicles, buildings or noise. No
+    colour, no components, no width.
     """
     xz, y, _ = piece
     near = cKDTree(cams).query(xz)[0] <= radius
