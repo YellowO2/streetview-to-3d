@@ -50,19 +50,16 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
     return Rotation.from_quat(quats.mean(axis=0)).as_matrix(), np.mean(ts, axis=0)
 
 
-# Rough real DA3 pairwise-test cost x ~2 tests/dot (most dots succeed on
-# the first candidate; occasional restarts need more) -- scales
-# the search's own time budget to corridor size (see
-# run_pathfind_reconstruction's deadline calc) instead of every corridor
-# getting the same flat allowance regardless of how much there is to walk.
+# Walk cost per dot, used to size the GPU window (see
+# services.pipeline_runner.estimate_gpu_seconds) -- the walk itself just
+# runs to whatever budget its caller hands it.
 #
-# Calibrated from two real measurements (see tests/debug_solo_score_experiment.py
-# for the full methodology/results): a real production pathfind run
-# averaged ~3.2s/pairwise-test (27 tests in 86.5s, includes rigid_align +
-# point-cloud merge overhead), while an isolated experiment doing only
-# raw DA3 pairwise calls averaged ~2.0s/test (no merge overhead). ~3.0s
-# padded per test x ~2 tests/dot -> 6.0s/dot.
-SECONDS_PER_DOT_ESTIMATE = 6.0
+# First calibrated at 6.0s/dot from ~3.2s/pairwise-test x ~2 tests/dot
+# (see tests/debug_solo_score_experiment.py). Too low once dots carry many
+# candidates: a 7-dot run (Apple, 6-10 candidates/dot) spent 9.4s just
+# rating dot 0's candidates, ~2s per failed pairwise test, and ran out of
+# its 42s budget before reaching 4 of the 7 dots or any other date.
+SECONDS_PER_DOT_ESTIMATE = 12.0
 
 
 def _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_indices):
@@ -177,10 +174,10 @@ def run_pathfind_reconstruction(
       tests." A call-count budget was only ever an approximation of that,
       and a bad one once calls stop being uniform cost (e.g. a future
       solo-pano scoring pass alongside the pairwise tests). The deadline
-      itself scales with corridor size (len(points) * SECONDS_PER_DOT_ESTIMATE)
-      so a short street doesn't wait around for a budget sized for a long
-      one, capped at max_time_budget_s -- the caller's own real GPU window,
-      margined for model load/teardown (see pipeline_runner.py).
+      is max_time_budget_s -- the walk's share of the caller's own GPU
+      window, which is already sized from the dot count (see
+      pipeline_runner.estimate_gpu_seconds). Early exit below means an
+      easy corridor still finishes well before it.
     - Phase 2 (set_cover): greedy set cover over every piece from every
       date mapped -- picks fewest pieces covering the most corridor.
 
@@ -531,9 +528,9 @@ def run_pathfind_reconstruction(
 
     all_pieces = []  # (pts, cols, path_edges, node_positions, covered, frame_poses, dots, date)
     total_tests = 0
-    time_budget_s = min(len(points) * SECONDS_PER_DOT_ESTIMATE, max_time_budget_s)
+    time_budget_s = max_time_budget_s
     deadline = time.monotonic() + time_budget_s
-    print(f"pathfind: time budget {time_budget_s:.0f}s ({len(points)} dot(s) x {SECONDS_PER_DOT_ESTIMATE}s, capped at {max_time_budget_s:.0f}s)")
+    print(f"pathfind: time budget {time_budget_s:.0f}s for {len(points)} dot(s)")
 
     for date_graph in date_graphs:
         if time.monotonic() >= deadline:

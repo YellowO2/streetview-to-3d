@@ -29,6 +29,10 @@ import os
 # top of it.
 SELF_BRIDGE_MIN_S = 20.0
 SAVE_BUFFER_S = 10.0
+# Loading DA3 inside the GPU window: 40.9s on the first run after a restart
+# (it downloads the 6.76 GB weights), less once they are cached. Allowed
+# for in full, so a cold start doesn't eat the walk's share.
+MODEL_LOAD_S = 45.0
 
 # The join/bridge phase's allowance after the walk: a floor plus a share
 # per dot, since a bigger area tends to come out of the walk in more
@@ -46,11 +50,11 @@ def _join_allowance_s(n_dots: int) -> float:
 
 def estimate_gpu_seconds(n_dots: int) -> float:
     """The GPU window a run over n_dots needs: the walk's own per-dot
-    estimate (walk_graph.SECONDS_PER_DOT_ESTIMATE, the same one it budgets
-    itself with), then the join, then the bridge/save headroom. Shown to the
-    user after Prepare, and the window asked for unless they override it."""
+    estimate (walk_graph.SECONDS_PER_DOT_ESTIMATE), then the join, plus
+    model load and the bridge/save headroom. Shown to the user after
+    Prepare, and the window asked for unless they override it."""
     from reconstruct.walk_graph import SECONDS_PER_DOT_ESTIMATE
-    return (n_dots * SECONDS_PER_DOT_ESTIMATE + _join_allowance_s(n_dots)
+    return (MODEL_LOAD_S + n_dots * SECONDS_PER_DOT_ESTIMATE + _join_allowance_s(n_dots)
             + SELF_BRIDGE_MIN_S + SAVE_BUFFER_S)
 
 
@@ -61,11 +65,12 @@ def _gpu_seconds(points, gpu_seconds=None) -> float:
 
 
 def _walk_budget_s(total_s: float, n_dots: int) -> float:
-    """The walk's share of a total_s window: everything except the join,
-    the self-bridge minimum and the save headroom. The join's share is
-    capped at a third so a small override still leaves the walk room."""
+    """The walk's share of a total_s window: everything except model load,
+    the join, the self-bridge minimum and the save headroom. The join's
+    share is capped at a third so a small override still leaves the walk
+    room."""
     join_s = min(_join_allowance_s(n_dots), total_s / 3)
-    return max(0.0, total_s - join_s - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S)
+    return max(0.0, total_s - MODEL_LOAD_S - join_s - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S)
 
 
 try:

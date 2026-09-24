@@ -51,6 +51,11 @@ def load_pieces(directory, min_confidence=None):
                    "resid": float(np.median(res)), "src_xz": src, "members": members}
 
     multi = [i for i in fits if fits[i]["n"] > 1]
+    if singles and not multi:
+        # nothing to borrow a heading from -- and placement drops lone
+        # nodes anyway, so there is nothing left to place
+        raise ValueError("couldn't link any panoramas together -- every place came out "
+                         "on its own. Try a larger radius or a different area.")
     for i in singles:
         c = fits[i]["cams"][0]
         near = min(multi, key=lambda j: np.linalg.norm(fits[j]["cams"] - c, axis=1).min())
