@@ -314,8 +314,12 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
                 views_kept=m.get("n_views_kept"), views_total=m.get("n_views_total"))
             node.position = list(m["position"])
             node.rotation = m.get("rotation")
-            node.ply = f"node_{i}.ply"
-            save_pointcloud(*clouds[key], os.path.join(output_dir, node.ply))
+            # A pano DA3 kept none of the views of has no points. Its
+            # camera still places the piece, but an empty .ply would
+            # stop the viewer opening the scene at all.
+            if len(clouds[key][0]):
+                node.ply = f"node_{i}.ply"
+                save_pointcloud(*clouds[key], os.path.join(output_dir, node.ply))
             placed[key] = i
 
         for a, b, keep_a, keep_b in _piece_edges(metadata):
