@@ -45,7 +45,7 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1,
     node composes the two, so a node's matrix stands on its own.
     """
     sc = scene_mod.Scene.load(directory)
-    fits, clouds = load_pieces(directory)
+    fits, clouds = load_pieces(directory, log=log)
     agree = heading_agreement(fits, sc)
     if agree:
         log("heading vs GPS fit (lone pieces are turned by heading): "

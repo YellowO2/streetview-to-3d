@@ -2,9 +2,10 @@ from dataclasses import dataclass
 
 from huggingface_hub import snapshot_download
 
-# How many metres one DA3 unit is. DA3 is internally consistent -- the same
-# unit means the same length in every reconstruction it produces -- so this
-# is one property of the model, not something to re-derive per run.
+# How many metres one DA3 unit is, when a scene cannot measure its own.
+# Placement fits the scale per scene from its linked pieces' GPS (see
+# postprocess/gps_fit/load_pieces.scene_scale); this is only the fallback,
+# for a scene of lone panoramas or a fit out of range.
 #
 # Two measurements disagree, and that is not yet explained. Over NTU's 117
 # chunks (tools/measure_da3_scale.py) the answer held at 1.334-1.346 across
@@ -17,7 +18,7 @@ DA3_UNITS_TO_METRES = 1.46
 # Every number above was measured on the original DA3NESTED-GIANT-LARGE,
 # which DA3 has since deprecated for a training bug. Later runs on it fit
 # 1.17-1.26 (Stockholm, and gen_10node at NTU), so it was never one
-# constant. Re-measure it for whatever DA3_MODEL_REPO is.
+# constant -- hence the per-scene fit.
 
 # The original Nested, deprecated by DA3 but the best of the three tried
 # on Stockholm (same pairs, same panos):

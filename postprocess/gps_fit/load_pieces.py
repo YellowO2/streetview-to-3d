@@ -7,10 +7,11 @@ rotation and offset that put the piece in the world, and doing it for
 every piece puts them all in the SAME world, which is what makes aligning
 them to each other possible at all.
 
-Scale is not fitted. DA3 is internally consistent, so one measured
-constant converts its units to metres (config.DA3_UNITS_TO_METRES). Fitting
-it per piece would turn GPS noise into geometry: pieces come out different
-sizes and no amount of moving them makes them meet.
+Scale is fitted once per SCENE, never per piece (see scene_scale). The
+fixed constant (config.DA3_UNITS_TO_METRES) was measured on one street and
+other runs of the same model fit 1.17-1.26, so it is only the fallback.
+Fitting each piece its own scale would turn GPS noise into geometry: pieces
+come out different sizes and no amount of moving them makes them meet.
 """
 import math
 import os
@@ -23,7 +24,39 @@ from postprocess.gps_fit.fit import fit_similarity_2d, real_en, use_origin
 from reconstruct.join_segments import _read_ply_points
 
 
-def load_pieces(directory, min_confidence=None):
+MIN_SCALE_SPAN_M = 8.0   # cameras closer than this: GPS noise swamps the fit
+SCALE_RANGE = (0.9, 1.8) # a fit outside this is a bad link, not a real scale
+
+
+def scene_scale(sc, groups):
+    """(metres per DA3 unit, reason) for the whole scene.
+
+    Every multi-node piece whose cameras span at least MIN_SCALE_SPAN_M
+    fits its own scale against GPS; the scene takes their median, so one
+    bad piece cannot drag it. A lone node has nothing to fit and takes the
+    scene's value like everything else. With no piece to measure, or a
+    median outside SCALE_RANGE, it falls back to DA3_UNITS_TO_METRES.
+    """
+    fitted = []
+    for members in groups:
+        nodes = [sc.nodes[m] for m in members]
+        if len(nodes) < 2:
+            continue
+        cams = np.array([real_en(n.pano.lat, n.pano.lon) for n in nodes])
+        if np.linalg.norm(cams[:, None] - cams[None], axis=2).max() < MIN_SCALE_SPAN_M:
+            continue
+        src = np.array([[n.position[0], n.position[2]] for n in nodes])
+        fitted.append(fit_similarity_2d(src, cams)[1])
+    if not fitted:
+        return DA3_UNITS_TO_METRES, "fixed: no piece spans enough to fit one"
+    s = float(np.median(fitted))
+    each = ", ".join(f"{f:.2f}" for f in fitted)
+    if not SCALE_RANGE[0] <= s <= SCALE_RANGE[1]:
+        return DA3_UNITS_TO_METRES, f"fixed: fitted {s:.2f} from [{each}] is out of range"
+    return s, f"fitted, median of {len(fitted)} piece(s): {each}"
+
+
+def load_pieces(directory, min_confidence=None, log=print):
     """(fits, clouds) keyed by piece index, in the scene's metre frame.
 
     A single-node piece cannot fit its own rotation -- one point fixes a
@@ -34,13 +67,14 @@ def load_pieces(directory, min_confidence=None):
     sc = scene_mod.Scene.load(directory)
     use_origin(*sc.origin)
     groups = sc.pieces(min_confidence=min_confidence)
-    scale = DA3_UNITS_TO_METRES
+    scale, why = scene_scale(sc, groups)
+    log(f"scale: {scale:.2f} m per DA3 unit ({why})")
 
     fits, singles = {}, []
     for i, members in enumerate(groups):
         nodes = [sc.nodes[m] for m in members]
         cams = np.array([real_en(n.pano.lat, n.pano.lon) for n in nodes])
-        src = np.array([[n.camera[0], n.camera[2]] for n in nodes])
+        src = np.array([[n.position[0] * scale, n.position[2] * scale] for n in nodes])
         if len(nodes) == 1:
             singles.append(i)
             fits[i] = {"cams": cams, "n": 1, "resid": None, "src_xz": src,
