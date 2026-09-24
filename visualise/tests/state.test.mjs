@@ -79,3 +79,20 @@ test('nested scene paths resolve relative to JSON, not the current page', () => 
   assert.throws(() => spec.resolve('missing.ply'));
   assert.equal(spec.name, 'run');
 });
+
+test('individual node selection survives piece regrouping and isolates only that node', () => {
+  const s = new ViewerState();
+  s.regroup(scenePieces(data, 0));
+  s.select([1], 'node');
+  s.isolated = true;
+  s.regroup(scenePieces(data, 0.84));
+  assert.equal(s.selectionKind, 'node');
+  assert.deepEqual(s.selected, [1]);
+  assert(s.visible(1));
+  assert(!s.visible(0));
+  s.regroup(scenePieces(data, 0));
+  assert.deepEqual(s.selected, [1]);
+  s.select(s.groups[0]);
+  assert.equal(s.selectionKind, 'piece');
+  assert.deepEqual(s.selected, [0, 1, 2, 3]);
+});

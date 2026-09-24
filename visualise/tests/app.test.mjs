@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { viewerTemplate } from './fixture.mjs';
 import { register } from 'node:module';
 import { JSDOM } from 'jsdom';
 register('./mock-renderer-loader.mjs', import.meta.url);
@@ -12,10 +12,7 @@ const waitFor = async (fn) => {
   assert.fail('Application did not reach expected state');
 };
 test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode switches, failed flight, reload', async () => {
-  const dom = new JSDOM(
-    readFileSync(new URL('../viewer_src/template.html', import.meta.url), 'utf8'),
-    { url: 'https://viewer.test/' },
-  );
+  const dom = new JSDOM(viewerTemplate(), { url: 'https://viewer.test/' });
   const win = dom.window;
   Object.assign(globalThis, {
     window: win,
@@ -64,7 +61,7 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
   assert(!$('prepare').hidden);
   $('prepare-gps').click();
   assert($('prepare').hidden);
-  assert.match($('edit-state').textContent, /Undownloaded/);
+  assert.match($('edit-state').textContent, /Unsaved/);
   $('confidence').value = '76';
   $('confidence').dispatchEvent(new win.Event('input'));
   assert.equal($('piece-count').textContent, '(2)');
@@ -81,6 +78,17 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
   assert(!$('redo').disabled);
   $('redo').click();
   assert(!$('undo').disabled);
+  document.querySelector('.disclosure').click();
+  document.querySelector('.node-select').click();
+  assert.equal($('selection-title').textContent, 'Node 0');
+  assert.equal(document.body.dataset.mode, 'edit');
+  $('east').value = '3';
+  $('apply').click();
+  assert.equal($('east').value, '0');
+  $('confidence').value = '0';
+  $('confidence').dispatchEvent(new win.Event('input'));
+  assert.equal($('selection-title').textContent, 'Node 0');
+  document.querySelector('.piece-select').click();
   $('view-settings').open = true;
   $('rotate').click();
   $('inspect').click();
@@ -104,7 +112,7 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
   $('file').dispatchEvent(new win.Event('change'));
   await waitFor(() => $('status').textContent === '2 points · Single PLY');
   assert($('edit').disabled);
-  assert.equal($('selection-title').textContent, 'No piece selected');
+  assert.equal($('selection-title').textContent, 'Nothing selected');
   assert($('undo').disabled);
   dom.window.close();
 });

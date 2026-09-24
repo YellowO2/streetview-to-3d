@@ -1,13 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { viewerTemplate } from './fixture.mjs';
 import { JSDOM } from 'jsdom';
 import { createUI } from '@viewer/ui';
 import { ViewerState } from '@viewer/state';
 test('user flow: select, switch modes, open settings, regroup, isolate, hide and restore', () => {
-  const dom = new JSDOM(
-    readFileSync(new URL('../viewer_src/template.html', import.meta.url), 'utf8'),
-  );
+  const dom = new JSDOM(viewerTemplate());
   globalThis.document = dom.window.document;
   const state = new ViewerState();
   state.regroup([
@@ -33,8 +31,8 @@ test('user flow: select, switch modes, open settings, regroup, isolate, hide and
       state.mode = mode;
       render();
     },
-    select: (members) => {
-      state.select(members);
+    select: (members, kind) => {
+      state.select(members, kind);
       render();
     },
     focus: () => (focused = true),
@@ -112,9 +110,7 @@ test('user flow: select, switch modes, open settings, regroup, isolate, hide and
 });
 
 test('public viewer hides editing and exposes optional view settings', () => {
-  const dom = new JSDOM(
-    readFileSync(new URL('../viewer_src/template.html', import.meta.url), 'utf8'),
-  );
+  const dom = new JSDOM(viewerTemplate());
   globalThis.document = dom.window.document;
   const actions = new Proxy({}, { get: () => () => {} });
   const ui = createUI(actions, { editable: false });
@@ -131,14 +127,31 @@ test('public viewer hides editing and exposes optional view settings', () => {
   };
   ui.render(store, state);
   const $ = (id) => document.getElementById(id);
-  for (const id of ['edit', 'library', 'history', 'inspector']) assert($(id).hidden);
-  assert($('edit').disabled);
-  assert(document.querySelector('.save').hidden);
+  assert($('scene-manager').hidden);
+  assert($('view-panel').hidden);
   assert(!$('fly').disabled);
   $('toggle-settings').click();
-  assert(!$('inspector').hidden);
+  assert(!$('view-panel').hidden);
   assert($('view-settings').open);
   $('toggle-settings').click();
-  assert($('inspector').hidden);
+  assert($('view-panel').hidden);
   dom.window.close();
+});
+
+test('editor and demo render identical shared toolbar, footer and view settings', () => {
+  const shell = (editable) => {
+    const dom = new JSDOM(viewerTemplate());
+    globalThis.document = dom.window.document;
+    const ui = createUI(new Proxy({}, { get: () => () => {} }), { editable });
+    ui.render(
+      { name: 'Scene', group: null, data: null, nodes: new Map(), undo: [], redo: [] },
+      new ViewerState(),
+    );
+    const result = ['header', 'footer', '#view-panel'].map(
+      (selector) => document.querySelector(selector).outerHTML,
+    );
+    dom.window.close();
+    return result;
+  };
+  assert.deepEqual(shell(true), shell(false));
 });

@@ -1,0 +1,81 @@
+<aside id="scene-manager" aria-label="Scene Manager">
+  <div class="manager-heading">
+    <h2>Scene Manager</h2>
+    <button id="show-all" class="small quiet" disabled>Show all</button>
+  </div>
+  <div class="scene-hierarchy">
+    <div class="section-heading">
+      <h3>Pieces <span id="piece-count"></span></h3>
+    </div>
+    <p id="piece-guide" class="muted">Open a scene to see its pieces.</p>
+    <div id="piece-list" aria-label="Pieces and nodes"></div>
+    <details id="grouping" hidden>
+      <summary>Connection confidence</summary>
+      <label
+        >Minimum <output id="confidence-value">All links</output>
+        <input id="confidence" type="range" min="0" max="100" step="1" value="0" />
+      </label>
+      <p class="muted">Higher values split weaker connections.</p>
+    </details>
+  </div>
+  <section class="selection-panel">
+    <div class="section-heading">
+      <h3>Transform</h3>
+      <button id="edit" class="small quiet" aria-pressed="false" disabled>Edit</button>
+    </div>
+    <h2 id="selection-title">Nothing selected</h2>
+    <p id="selection-description" class="muted">Select a piece or node.</p>
+    <div id="selection-actions" hidden>
+      <div class="row">
+        <button id="focus">Focus</button
+        ><button id="clear-selection" class="quiet">Deselect</button>
+      </div>
+      <label class="check"><input id="isolate" type="checkbox" /> Isolate</label>
+    </div>
+    <div id="editing" hidden>
+      <div id="prepare" hidden>
+        <p class="muted">
+          Place this raw scene from GPS before editing. Road height is not aligned.
+        </p>
+        <label
+          >Metres per DA3 unit<input
+            id="da3-scale"
+            type="number"
+            min=".001"
+            step=".01"
+            value="1.46"
+        /></label>
+        <button id="prepare-gps">Place from GPS</button>
+      </div>
+      <div id="edit-tools" hidden>
+        <div class="row">
+          <button id="move" aria-pressed="true">Move</button
+          ><button id="rotate" aria-pressed="false">Rotate</button>
+        </div>
+        <p id="tool-help" class="muted"></p>
+        <div class="fields position-fields">
+          <label>East (m)<input id="east" type="number" step=".1" value="0" /></label>
+          <label>North (m)<input id="north" type="number" step=".1" value="0" /></label>
+          <label>Up (m)<input id="up" type="number" step=".1" value="0" /></label>
+        </div>
+        <label>Heading (°)<input id="turn" type="number" step="1" value="0" /></label>
+        <div class="row">
+          <button id="apply">Apply offsets</button
+          ><button id="reset" class="quiet" title="Restore opening placement; this can be undone">
+            Reset
+          </button>
+        </div>
+      </div>
+      <p id="edit-prompt" class="muted">Select a piece or node to adjust.</p>
+    </div>
+    <p id="placement" class="muted"></p>
+  </section>
+  <div class="manager-save">
+    <div id="history" class="row">
+      <button id="undo" disabled title="Undo (Ctrl/Cmd+Z)">Undo</button
+      ><button id="redo" disabled title="Redo (Ctrl/Cmd+Shift+Z)">Redo</button>
+    </div>
+    <button id="save" disabled>Download scene.json</button>
+    <span id="edit-state" class="muted">No scene open</span>
+  </div>
+</aside>

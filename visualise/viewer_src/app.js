@@ -149,10 +149,11 @@ function focus() {
   navigation.frame(store.box(state.selected).getBoundingSphere(new THREE.Sphere()));
   refresh();
 }
-function select(members) {
+function select(members, kind = 'piece') {
   if (!editable || editor.dragging || busy) return;
-  state.select(members);
-  refresh();
+  state.select(members, kind);
+  if (members) setMode('edit');
+  else refresh();
 }
 async function openEntries(entries) {
   if (entries.length) attempt(() => load(resolveEntries(entries)));

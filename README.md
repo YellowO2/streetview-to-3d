@@ -54,22 +54,23 @@ Use **Open scene** for a folder containing `scene.json` and its PLYs, or
 **Open PLY / files** for a single cloud or a multi-file selection. Folder drops
 also work. The Gradio viewer is built from the same sources.
 
-The top bar has one interaction mode:
+The shared top bar switches between Inspect and Fly:
 
 - **Inspect**: orbit, pan and zoom; click a piece to select it, double-click to
-  focus. The left list and right selection panel stay in place.
+  focus.
 - **Fly**: mouse to steer, WASD to move, Q/E down/up and Shift to boost.
   Escape returns to Inspect and releases the mouse. Selection is retained.
-- **Edit**: the same orbit camera plus Move/Rotate handles for the selected
-  piece. Escape cancels an active drag. Numeric offsets are east/north/up in
+- **Scene Manager** (local editor only): expand pieces to see their nodes.
+  Select a piece to move it as a group, or a node to adjust just that cloud.
+  Selection enables Move/Rotate handles; Inspect pauses editing. Escape cancels an active drag. Numeric offsets are east/north/up in
   metres and heading in degrees. Undo/Redo supports Ctrl/Cmd+Z and Shift+Z.
 
 Selection, hide/show choices, tool choice and history survive mode switches.
-**Isolate selected** temporarily hides other pieces; **Show all** clears both
-isolation and explicit hiding. The confidence control under **Piece grouping**
+**Isolate** temporarily hides other pieces; **Show all** clears both
+isolation and explicit hiding. The confidence control under **Connection confidence**
 changes connected-component selection groups, never placement. Regrouping
 keeps hidden-node choices and follows the previously selected node into its
-new group. The rules match `Scene.pieces(min_confidence)`.
+new group. Individual node selections remain individual when regrouping. The rules match `Scene.pieces(min_confidence)`.
 
 Saved node transforms place the clouds in world coordinates. A single raw
 component can be previewed without transforms; Edit's **Place from GPS** gives
@@ -77,7 +78,7 @@ it a starting placement with fixed scale (default 1.46 metres per DA3 unit).
 This does not align road height. Separate/partially placed components require
 `python -m postprocess.pipeline --dir <scene-folder>` first.
 
-**Reset piece** returns to its opening placement, or the prepared GPS baseline.
+**Reset** returns to its opening placement, or the prepared GPS baseline.
 **Download scene.json** requests a new JSON download, without changing PLYs or
 silently overwriting your files. Replace the JSON beside the original PLYs to
 persist edits. Hidden nodes are saved too. Automatic alignment can overwrite
@@ -87,7 +88,10 @@ manual placements; `postprocess.render_pieces` uses saved placements directly.
 
 Edit `visualise/viewer_src/`, not the generated `visualise/viewer.html`:
 
-- `template.html`, `styles.css`, `ui.js`: stable panels, labels and DOM bindings.
+- `template.html`, `styles.css`, `ui.js`: one shared viewer shell, toolbar,
+  footer and view-settings panel for all hosts.
+- `scene-manager.html`, `scene-manager.js`: optional left sidebar with the
+  piece/node hierarchy, transform controls, history and save actions.
 - `state.js`: selection, visibility and mode state.
 - `scene-store.js`, `scene-format.js`, `files.js`: loading, transforms, history,
   export and compatibility with `scene.py`.

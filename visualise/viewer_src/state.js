@@ -3,12 +3,14 @@
 export class ViewerState {
   mode = 'inspect';
   selected = null;
+  selectionKind = 'piece';
   hidden = new Set();
   isolated = false;
   threshold = 0;
   groups = [];
   tool = 'translate';
-  select(members) {
+  select(members, kind = 'piece') {
+    this.selectionKind = kind;
     this.selected = members;
     if (members) members.forEach((i) => this.hidden.delete(i));
     else this.isolated = false;
@@ -16,7 +18,12 @@ export class ViewerState {
   regroup(groups) {
     const anchor = this.selected?.[0];
     this.groups = groups;
-    this.selected = anchor == null ? null : groups.find((m) => m.includes(anchor)) || null;
+    this.selected =
+      anchor == null
+        ? null
+        : this.selectionKind === 'node'
+          ? [anchor]
+          : groups.find((m) => m.includes(anchor)) || null;
     if (!this.selected) this.isolated = false;
   }
   visible(i) {
@@ -31,6 +38,7 @@ export class ViewerState {
   reset() {
     this.mode = 'inspect';
     this.selected = null;
+    this.selectionKind = 'piece';
     this.hidden.clear();
     this.isolated = false;
     this.threshold = 0;

@@ -26,6 +26,7 @@ def build_document(config: dict | None = None) -> str:
         encoded = base64.b64encode(source.read_bytes()).decode("ascii")
         imports[f"@viewer/{source.stem}"] = f"data:text/javascript;base64,{encoded}"
     template = (SOURCE / "template.html").read_text(encoding="utf-8")
+    template = template.replace("<!-- SCENE_MANAGER -->", (SOURCE / "scene-manager.html").read_text(encoding="utf-8"))
     config_json = json.dumps(config or {}).replace("<", "\\u003c")
     template, count = re.subn(
         r'(<script id="viewer-config" type="application/json">)\s*\{\}\s*(</script>)',
