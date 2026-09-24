@@ -63,18 +63,10 @@ def nodes_by_key(state):
 
 def _summary_markdown(state):
     if not state["selected"]:
-        return "_Load an area to set the start node, then click markers to extend the graph._"
-    by_key = nodes_by_key(state)
+        return "Load a location, then select a route on the map."
     n_nodes = len(state["selected"])
     n_edges = len(state.get("selected_edges", []))
-    lines = [f"**{n_nodes} node(s), {n_edges} edge(s) selected**", ""]
-    for i, key in enumerate(state["selected"]):
-        n = by_key.get(key)
-        if not n:
-            continue
-        label = "Start" if i == 0 else f"#{i + 1}"
-        lines.append(f"{label}. `{n['id']}`")
-    return "\n".join(lines)
+    return f"**{n_nodes} panoramas · {n_edges} connections**"
 
 
 def _map_html(state, zoom=19):
@@ -163,7 +155,7 @@ def handle_load_area(area_input, state):
     return _map_html(state), _summary_markdown(state), state
 
 
-def handle_expand_area(area_input, radius_input, state, progress=gr.Progress(track_tqdm=True)):
+def handle_expand_area(area_input, radius_input, state, progress=gr.Progress(track_tqdm=False)):
     """Experimental: auto-discover the real Street View graph within a
     radius of the given area (see candidates.expand_area) instead of
     clicking node by node -- sets the WHOLE discovered graph as already
@@ -180,7 +172,7 @@ def handle_expand_area(area_input, radius_input, state, progress=gr.Progress(tra
     if radius_m <= 0:
         raise gr.Error("Radius must be positive.")
 
-    progress(0, desc="Auto-expanding area...")
+    progress(None, desc="Finding nearby panoramas…")
     nodes, edges = candidates_mod.expand_area(lat, lon, radius_m)
     if not nodes:
         raise gr.Error("No Street View coverage found in that area.")
@@ -190,7 +182,6 @@ def handle_expand_area(area_input, radius_input, state, progress=gr.Progress(tra
         "selected": [n["key"] for n in nodes], "selected_edges": list(edges), "view": None,
         "radius_m": radius_m, "preview_center": None,
     }
-    progress(1.0, desc="Done!")
     return _map_html(state), _summary_markdown(state), state
 
 
@@ -311,12 +302,12 @@ def build_map_section():
 
     with gr.Row(equal_height=True):
         expand_radius_input = gr.Textbox(
-            placeholder="Auto-expand radius in meters (e.g. 500) -- uses the same location above",
+            placeholder="Radius in metres (e.g. 500)",
             show_label=False,
             container=False,
             scale=5,
         )
-        expand_btn = gr.Button("Auto-expand area (experimental)", scale=1, min_width=100)
+        expand_btn = gr.Button("Expand area", scale=1, min_width=100)
 
     map_view = gr.HTML(_map_html(_empty_state()), elem_classes="no-pad")
     # visible=True + CSS hiding (BRIDGE_CSS), not visible=False -- see the

@@ -1,0 +1,15 @@
+{
+  "name": "streetview-viewer-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --import ./tests/register.mjs --test tests/*.test.mjs",
+    "format": "prettier --write viewer_src tests",
+    "format:check": "prettier --check viewer_src tests"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0",
+    "prettier": "3.6.2",
+    "three": "0.178.0"
+  }
+}

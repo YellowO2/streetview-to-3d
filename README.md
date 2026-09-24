@@ -46,32 +46,75 @@ Models (DA3) are downloaded from the Hugging Face Hub on first run and cached un
 For a stage-by-stage description of how the pipeline works, see
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
-### Explore a reconstruction
+### Explore and edit a reconstruction
 
-Open `visualise/viewer.html` directly in Chrome; no Python server or build is
-needed. Three.js loads from a CDN, so keep an internet connection available.
-The Gradio viewer embeds this same file. The optional
-`python -m visualise.export_standalone_viewer --out ~/Downloads/viewer.html`
-command simply copies it to another location.
+Open `visualise/viewer.html` directly in Chrome. It is a packaged viewer, with
+no server needed; Three.js still loads from a pinned CDN version.
+Use **Open scene** for a folder containing `scene.json` and its PLYs, or
+**Open PLY / files** for a single cloud or a multi-file selection. Folder drops
+also work. The Gradio viewer is built from the same sources.
 
-- Open a single PLY, or use **Open scene folder** for `scene.json` and its PLYs.
-  You can also drop the folder, or select/drop the JSON and PLY files together.
-- Saved node transforms place each cloud in world coordinates. A reconstruction
-  with no transforms can be previewed in its raw DA3 frame only when every
-  cloud belongs to one connected piece. Separate or partially placed pieces
-  require `python -m postprocess.pipeline --dir <scene-folder>` first.
-- The piece list follows `Scene.pieces(min_confidence)`. Select a piece to dim
-  the others. The confidence slider changes grouping only, never placement.
-  Unknown edge confidence counts as zero; nodes without a DA3 pose are not
-  piece members, matching the Python dataclass.
-- **Orbit**: drag to orbit, right-drag to pan, scroll to zoom, double-click a
-  point to focus. **Recenter** (F) fits the entire scene and returns to Orbit.
-- **Fly · Bird**: mouse to steer, WASD to move, Q/E down/up, Shift to boost.
-  Escape releases the mouse; use **Resume flight** to capture it again.
+The top bar has one interaction mode:
 
-This stage previews and highlights pieces; it does not change or save their
-placements. The Gradio pipeline still automatically previews its merged PLY;
-use the folder control to inspect individual nodes and pieces.
+- **Inspect**: orbit, pan and zoom; click a piece to select it, double-click to
+  focus. The left list and right selection panel stay in place.
+- **Fly**: mouse to steer, WASD to move, Q/E down/up and Shift to boost.
+  Escape returns to Inspect and releases the mouse. Selection is retained.
+- **Edit**: the same orbit camera plus Move/Rotate handles for the selected
+  piece. Escape cancels an active drag. Numeric offsets are east/north/up in
+  metres and heading in degrees. Undo/Redo supports Ctrl/Cmd+Z and Shift+Z.
+
+Selection, hide/show choices, tool choice and history survive mode switches.
+**Isolate selected** temporarily hides other pieces; **Show all** clears both
+isolation and explicit hiding. The confidence control under **Piece grouping**
+changes connected-component selection groups, never placement. Regrouping
+keeps hidden-node choices and follows the previously selected node into its
+new group. The rules match `Scene.pieces(min_confidence)`.
+
+Saved node transforms place the clouds in world coordinates. A single raw
+component can be previewed without transforms; Edit's **Place from GPS** gives
+it a starting placement with fixed scale (default 1.46 metres per DA3 unit).
+This does not align road height. Separate/partially placed components require
+`python -m postprocess.pipeline --dir <scene-folder>` first.
+
+**Reset piece** returns to its opening placement, or the prepared GPS baseline.
+**Download scene.json** requests a new JSON download, without changing PLYs or
+silently overwriting your files. Replace the JSON beside the original PLYs to
+persist edits. Hidden nodes are saved too. Automatic alignment can overwrite
+manual placements; `postprocess.render_pieces` uses saved placements directly.
+
+### Viewer development
+
+Edit `visualise/viewer_src/`, not the generated `visualise/viewer.html`:
+
+- `template.html`, `styles.css`, `ui.js`: stable panels, labels and DOM bindings.
+- `state.js`: selection, visibility and mode state.
+- `scene-store.js`, `scene-format.js`, `files.js`: loading, transforms, history,
+  export and compatibility with `scene.py`.
+- `navigation.js`, `bird.js`: camera input and bird flight.
+- `editor.js`: transform-handle transactions; `viewport.js`: rendering/picking.
+- `app.js`: wiring and user actions.
+
+Build the portable HTML with Python's standard library:
+
+```bash
+python -m visualise.build_viewer
+python -m visualise.build_viewer --check
+```
+
+Gradio builds from these sources automatically in viewing-only mode (orbit and flight).
+The local `viewer.html` retains the editing tools. Copy that HTML wherever you need it. Development tests are optional
+Node tooling, not runtime/build requirements:
+
+```bash
+npm ci --prefix visualise
+npm test --prefix visualise
+npm run format --prefix visualise
+python -m unittest discover -s visualise/tests -p 'test_*.py'
+```
+
+The DOM integration tests use real Three.js math/controls with GPU drawing
+stubbed; they do not substitute for visual browser QA.
 
 ### Coordinate convention
 

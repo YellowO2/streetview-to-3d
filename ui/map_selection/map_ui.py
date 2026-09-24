@@ -102,7 +102,7 @@ if (RADIUS_M) {{
 if (NODES.length === 0) {{
   var empty = document.createElement('div');
   empty.className = 'sb-empty';
-  empty.textContent = 'No Street View coverage found here.';
+  empty.textContent = 'Load a location to see Street View coverage.';
   document.body.appendChild(empty);
 }}
 

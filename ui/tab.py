@@ -28,7 +28,7 @@ def _run_dir(prep):
     street_main.open_scene(prep, path)
     return path
 
-def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
+def handle_pathfind_prepare(state):
     """Experimental button, step 1 of 3: gathers every Google + Apple pano
     near the clicked graph's real shape -- branches and loops included,
     since the selection graph (state["selected"] + state["selected_edges"])
@@ -53,25 +53,24 @@ def handle_pathfind_prepare(state, progress=gr.Progress(track_tqdm=True)):
         for a, b in selected_edges if a in by_key and b in by_key
     ]
 
-    progress(0, desc="Gathering + downloading candidates...")
+    yield None, "<p>Fetching panoramas… This may take a few minutes.</p>"
     try:
         prep = street_main.prepare_pathfind(start, goals, corridor_edges,
                                             (state["lat"], state["lon"]))
     except Exception as e:
+        yield None, "<p>Preparation failed. Try again.</p>"
         raise gr.Error(f"Prepare failed: {e}")
 
-    progress(1.0, desc="Done!")
     n = len(prep["node_entries"])
-    return prep, (f"<p>Prepared {n} candidate(s) across {len(prep['top_dates'])} date(s). "
-                  f"Ready — press \"Reconstruct\".</p>" + _gpu_note(len(prep["points"])))
+    yield prep, f"<p>{n} panoramas ready.</p>" + _gpu_note(len(prep["points"]))
+
 
 def _gpu_note(n_dots):
     """How much ZeroGPU time the Reconstruct click will ask for, so a user
     can check it against their own daily quota before spending it."""
     minutes = estimate_gpu_seconds(n_dots) / 60
-    return (f"<p>{n_dots} place(s) to reconstruct: this needs about <b>{minutes:.1f} min</b> "
-            f"of GPU time. ZeroGPU gives each account a daily quota (5 min free, 40 min PRO) "
-            f"-- check you have enough left, or the run will be refused.</p>")
+    return f"<p>Estimated GPU budget: {minutes:.1f} min. Queue and download time vary.</p>"
+
 
 def _files(run_dir):
     """scene.json plus every node's own .ply, as plain paths.
@@ -84,7 +83,7 @@ def _files(run_dir):
     return [os.path.join(run_dir, n) for n in names]
 
 
-def handle_reconstruct(prep, keep_pct, gpu_seconds, progress=gr.Progress(track_tqdm=True)):
+def handle_reconstruct(prep, keep_pct, gpu_seconds):
     """Reconstruct (GPU) then place (CPU), in one click.
 
     Placement never needs its own GPU call, so it runs immediately after
@@ -102,20 +101,23 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, progress=gr.Progress(track_t
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
+    yield gr.skip(), gr.skip(), "<p>Reconstructing… This may take a few minutes.</p>"
     try:
         output_dir = _run_dir(prep)
         street_main.run_prepared_pathfind(
             prep, output_dir, conf_lower_percentile=100 - keep_pct,
             gpu_seconds=gpu_seconds or None)
+        yield gr.skip(), gr.skip(), "<p>Aligning the scene…</p>"
         t_place = time.monotonic()
         pipeline.process(output_dir, log=print)
         print(f"timing: placement {time.monotonic() - t_place:.1f}s", flush=True)
     except Exception as e:
+        yield gr.skip(), gr.skip(), "<p>Reconstruction failed. Try again.</p>"
         raise gr.Error(f"Reconstruct failed: {e}")
 
     scene_url = viewers.file_url(os.path.join(output_dir, scene_mod.FILENAME))
-    return (viewers.build_pointcloud_viewer(scene_url=scene_url),
-            _files(output_dir))
+    yield (viewers.build_pointcloud_viewer(scene_url=scene_url),
+           _files(output_dir), "<p>Scene ready.</p>")
 
 def build_main_tab():
     state, map_view, selection_view = build_map_section()
@@ -128,8 +130,8 @@ def build_main_tab():
         # is its own fresh interaction rather than following a long
         # download inside one request -- the ZeroGPU proxy token expires
         # on wall-clock time.
-        pathfind_prepare_btn = gr.Button("1. Prepare (fetch panoramas)")
-        pathfind_run_btn = gr.Button("2. Reconstruct and place")
+        pathfind_prepare_btn = gr.Button("1. Prepare")
+        pathfind_run_btn = gr.Button("2. Reconstruct")
 
     # A real parameter (services.da3_ops.CONF_LOWER_PERCENTILE), not a UI
     # decision -- kept as a component only so it is callable over the API
@@ -146,25 +148,24 @@ def build_main_tab():
     # The Space's disk does not survive a restart, so a finished scene is
     # handed back as files rather than left behind as a link into it -- no
     # zip: the viewer already opens exactly this file set directly.
-    scene_files = gr.Files(label="The scene (scene.json + one .ply per node)",
-                           interactive=False)
-
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded .ply without needing a GPU run first.
     reconstruct_view = gr.HTML(viewers.build_pointcloud_viewer())
+    with gr.Accordion("Download scene", open=False):
+        scene_files = gr.Files(label="Scene files", interactive=False)
 
     pathfind_prepare_btn.click(
         fn=handle_pathfind_prepare,
         inputs=[state],
         outputs=[pathfind_prep_state, pathfind_status],
-        show_progress="minimal",
+        show_progress="hidden",
         show_progress_on=[pathfind_status],
     )
 
     pathfind_run_btn.click(
         fn=handle_reconstruct,
         inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input],
-        outputs=[reconstruct_view, scene_files],
-        show_progress="minimal",
+        outputs=[reconstruct_view, scene_files, pathfind_status],
+        show_progress="hidden",
         show_progress_on=[reconstruct_view],
     )

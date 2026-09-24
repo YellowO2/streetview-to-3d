@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Streetview · 3D viewer</title>
+    <style>
+      /* VIEWER_STYLES */
+    </style>
+    <script type="importmap">
+      /* VIEWER_IMPORTS */
+    </script>
+    <script id="viewer-config" type="application/json">
+      {}
+    </script>
+  </head>
+  <body>
+    <header>
+      <div class="brand">STREETVIEW <span id="scene-name">No scene open</span></div>
+      <button id="open-folder">Open scene</button
+      ><button id="open-files" class="quiet">Open PLY / files</button>
+      <nav aria-label="Interaction mode">
+        <button id="inspect" aria-pressed="true">Inspect</button
+        ><button id="fly" aria-pressed="false" disabled>Fly</button
+        ><button id="edit" aria-pressed="false" disabled>Edit</button>
+      </nav>
+      <button id="toggle-settings" class="quiet" aria-pressed="false" hidden>Settings</button>
+      <button id="recenter" disabled title="Fit the entire scene (F)">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.7"
+          aria-hidden="true"
+        >
+          <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />
+          <circle cx="12" cy="12" r="3" /></svg
+        >Recenter
+      </button>
+    </header>
+    <div id="workspace">
+      <aside id="library" aria-label="Scene pieces">
+        <div class="section-heading">
+          <h2>Pieces <span id="piece-count"></span></h2>
+          <button id="show-all" class="small quiet" disabled>Show all</button>
+        </div>
+        <p id="piece-guide" class="muted">Open a scene folder to inspect its pieces.</p>
+        <div id="piece-list"></div>
+        <details id="grouping" hidden>
+          <summary>Piece grouping</summary>
+          <label
+            >Minimum connection confidence <output id="confidence-value">All links</output
+            ><input id="confidence" type="range" min="0" max="100" step="1" value="0"
+          /></label>
+          <p class="muted">
+            Higher values split weaker connections. Positions and edits stay unchanged.
+          </p>
+        </details>
+      </aside>
+      <main id="viewport" aria-label="3D viewport">
+        <div id="empty">
+          <h1>Street View in 3D</h1>
+          <p>Drop a scene folder, or a single PLY.</p>
+          <button id="choose">Open scene folder</button>
+        </div>
+        <div id="flight" hidden>
+          <span>WASD to fly · Q/E down/up · Shift boost</span
+          ><button id="exit-fly">Exit Fly · Esc</button>
+        </div>
+        <div id="reticle" hidden></div>
+        <div id="notice" role="alert" hidden>
+          <span id="notice-text"></span
+          ><button id="dismiss-notice" aria-label="Dismiss message">×</button>
+        </div>
+        <div id="dropzone" hidden>Drop a PLY or scene folder</div>
+      </main>
+      <aside id="inspector" aria-label="Selection and settings">
+        <h2 id="selection-title">No piece selected</h2>
+        <p id="selection-description" class="muted">
+          Click a piece in the scene or choose one from the list.
+        </p>
+        <div id="selection-actions" hidden>
+          <div class="row">
+            <button id="focus">Focus</button
+            ><button id="clear-selection" class="quiet">Deselect</button>
+          </div>
+          <label class="check"><input id="isolate" type="checkbox" /> Isolate selected</label>
+        </div>
+        <section id="editing" hidden>
+          <div id="prepare" hidden>
+            <h3>Prepare placement</h3>
+            <p class="muted">
+              This scene has no world placement. GPS fitting gives a starting position; it does not
+              align road height.
+            </p>
+            <label
+              >Metres per DA3 unit<input
+                id="da3-scale"
+                type="number"
+                min=".001"
+                step=".01"
+                value="1.46" /></label
+            ><button id="prepare-gps">Place from GPS</button>
+          </div>
+          <div id="edit-tools" hidden>
+            <h3>Adjust placement</h3>
+            <div class="row">
+              <button id="move" aria-pressed="true">Move</button
+              ><button id="rotate" aria-pressed="false">Rotate</button>
+            </div>
+            <p id="tool-help" class="muted"></p>
+            <details>
+              <summary>Precise adjustment</summary>
+              <p class="muted">Offsets in metres. Positive height moves up.</p>
+              <div class="fields">
+                <label>East<input id="east" type="number" step=".1" value="0" /></label
+                ><label>North<input id="north" type="number" step=".1" value="0" /></label>
+                <label>Up<input id="up" type="number" step=".1" value="0" /></label
+                ><label>Turn (°)<input id="turn" type="number" step="1" value="0" /></label>
+              </div>
+              <button id="apply">Apply adjustment</button>
+            </details>
+            <button
+              id="reset"
+              class="quiet"
+              title="Restore this piece to its opening placement; this can be undone"
+            >
+              Reset piece
+            </button>
+          </div>
+          <p id="edit-prompt" class="muted">Select a piece to move or rotate it.</p>
+        </section>
+        <details id="view-settings">
+          <summary>View settings</summary>
+          <label
+            >Point size <output id="point-value">1.0×</output
+            ><input id="point-size" type="range" min="-3" max="3" step=".1" value="0"
+          /></label>
+          <label
+            >Flight speed <output id="speed-value">1.0×</output
+            ><input id="speed" type="range" min="-3" max="3" step=".1" value="0"
+          /></label>
+          <label
+            >Chase distance <output id="chase-value">1.0×</output
+            ><input id="chase" type="range" min=".5" max="2.5" step=".1" value="1"
+          /></label>
+        </details>
+        <p id="placement" class="muted"></p>
+      </aside>
+    </div>
+    <footer>
+      <div class="status">
+        <div id="status" role="status">Ready</div>
+        <div id="help" class="muted">Drag to orbit · Right-drag to pan · Scroll to zoom</div>
+      </div>
+      <div id="history">
+        <button id="undo" disabled title="Undo (Ctrl/Cmd+Z)">Undo</button
+        ><button id="redo" disabled title="Redo (Ctrl/Cmd+Shift+Z)">Redo</button>
+      </div>
+      <div class="save">
+        <span id="edit-state">No scene open</span
+        ><button id="save" disabled>Download scene.json</button>
+      </div>
+    </footer>
+    <input id="file" type="file" accept=".ply,.json" multiple hidden /><input
+      id="folder"
+      type="file"
+      webkitdirectory
+      multiple
+      hidden
+    />
+    <script>
+      window.viewerBootTimer = setTimeout(() => {
+        document.getElementById('notice-text').textContent =
+          'Viewer did not start. Check your internet connection: Three.js loads from unpkg.com.';
+        document.getElementById('notice').hidden = false;
+      }, 15000);
+    </script>
+    <script type="module">
+      import '@viewer/app';
+    </script>
+  </body>
+</html>
