@@ -13,6 +13,21 @@ import numpy as np
 
 KEEP_RATE_THRESHOLD = 0.6
 
+# Yaw step for slicing a panorama into DA3 views: 30 gives 12 views. The
+# tested middle ground between DA3's own default 20 (18 views) and a too-
+# coarse 45 (8 views, which turned 2 of 4 winners from partial acceptance
+# to full rejection in an earlier scoring experiment). Every caller uses
+# this one value, so a view count means the same thing everywhere.
+VIEW_STEP_DEGREES = 30
+
+# Below this share of a pano's views surviving DA3's consensus filter,
+# DA3 has not made sense of the pano: a date whose sampled panos sit under
+# it is not walked (walk_graph._sample_dates), and a bridge whose best
+# attempt sits under it is rejected (join_segments). The solo-score
+# experiment (tools/debug_solo_score_experiment.py) saw links mostly fail
+# around there and mostly succeed above ~2/3.
+MIN_KEEP_RATE = 1.0 / 3
+
 # What fraction of a view's weakest pixels DA3 discards before we ever see
 # them (see panoramic_da3's CONF_LOWER_PERCENTILE). Kept as our own default
 # rather than panoramic_da3's, so raising it here is a one-line change and
@@ -27,7 +42,7 @@ CONF_LOWER_PERCENTILE = 20.0   # keep top 80%
 
 
 def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1,
-              step_degrees=20, keep_rate_threshold=KEEP_RATE_THRESHOLD,
+              step_degrees=VIEW_STEP_DEGREES, keep_rate_threshold=KEEP_RATE_THRESHOLD,
               conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False):
     """One real pairwise DA3 test between two already-downloaded panos.
     Returns None if either pano fails the keep-rate health check, else
@@ -54,7 +69,7 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
     return out + (res.pano_point_confidence,) if return_confidence else out
 
 
-def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=20,
+def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=VIEW_STEP_DEGREES,
               conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False):
     """Run DA3 on this pano ALONE (no partner) to get a solo consistency
     score and a real solo point cloud -- so a dot that never pairs with
@@ -95,7 +110,7 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
     return out + (conf,) if return_confidence else out
 
 
-def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=20,
+def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=VIEW_STEP_DEGREES,
                      conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False):
     """Diagnostic variant of test_edge for the bridging search (joining two
     already-built pieces -- a real DA3 estimate, even a poor one, is

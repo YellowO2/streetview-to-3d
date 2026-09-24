@@ -4,17 +4,12 @@ from services.geo import haversine_m
 from build_street_graph.date_ranking import DATE_TOP_N, date_connects, rank_dates
 from build_street_graph.fetch_nodes import fetch_corridor_nodes
 
-# Per dot, per date, how many of that date's own closest panos to keep.
-# This is the actual fix for a dense capture date (Apple's ~1.2m frame
-# spacing) trapping the search in one dot's worth of redundant same-spot
-# candidates before it ever reaches the next dot -- at most this many
-# real options exist at any dot, for any date, period, regardless of how
-# dense that date's real coverage is. Bumped from 5 now that
-# POINT_MAX_DIST_M is wider (fetch_nodes.py) to match real selection-
-# graph node spacing instead of the old 5m interpolation -- a wider
-# catchment can turn up more real candidates per dot, so the cap needs
-# more headroom to keep them all as options.
-TOP_PANOS_PER_DOT = 10
+# Per dot, per date, how many of that date's own closest panos to keep --
+# and so download and rate. A dense capture date (Apple's ~1.2m frame
+# spacing) put up to 10 same-date panos on one dot, and the walk rated all
+# of them: 51 ratings, over half a 7-dot run's budget. 3 still leaves a
+# fallback when the closest is bad; beyond that it's the same spot again.
+TOP_PANOS_PER_DOT = 3
 
 
 def _cap_bucket_for_date(bucket, date, dot_lat, dot_lon, top_n):

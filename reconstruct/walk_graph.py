@@ -21,6 +21,7 @@ from collections import deque
 
 import numpy as np
 
+from services.da3_ops import MIN_KEEP_RATE
 from services.geo import haversine_m
 
 
@@ -60,6 +61,26 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
 # rating dot 0's candidates, ~2s per failed pairwise test, and ran out of
 # its 42s budget before reaching 4 of the 7 dots or any other date.
 SECONDS_PER_DOT_ESTIMATE = 12.0
+
+# A piece at least this many dots long is trusted as it is; every dot
+# outside one is weak, and the next date re-walks it (see _patch_dots).
+GOOD_PIECE_DOTS = 4
+# How far a patch walk reaches past a weak stretch into the good piece on
+# either side, in dots. The patch comes from another date, so it is never
+# DA3-linked to that piece -- the overlap is shared road for placement's
+# cross-road alignment to line the two up by.
+PATCH_OVERLAP_DOTS = 1
+# Dots in a row that fail to link (none of their candidates linking) after
+# which a date is left for the next one -- so one date that DA3 can't make
+# sense of can't spend the whole budget. Counted in dots, not tests: with
+# up to 3 candidates a dot, a count of tests would give up on a mostly-good
+# date at its first two broken dots. 4, not 3: two broken dots side by side
+# (o-x-x-o) already fail three links in a row -- into each of them, and
+# out of the second.
+MAX_FAILED_DOTS_IN_A_ROW = 4
+# Panos rated per date before any walking, to order dates by how well DA3
+# handles their imagery rather than by coverage alone (see _sample_dates).
+DATE_SAMPLES_MAX = 5
 
 
 def _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_indices):
@@ -123,6 +144,79 @@ def _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_i
     return chosen, leftover_uncovered
 
 
+def _sample_dots(dots, k):
+    """k of `dots`, evenly spread along the corridor's dot order."""
+    dots = sorted(dots)
+    if k >= len(dots):
+        return dots
+    return [dots[round(i * (len(dots) - 1) / (k - 1))] for i in range(k)] if k > 1 else [dots[len(dots) // 2]]
+
+
+def _sample_dates(date_graphs, n_points, rate):
+    """Date graphs in the order to walk them: each one's median solo
+    keep-rate over a few sampled panos, times the share of the corridor it
+    covers. A date below MIN_KEEP_RATE is dropped -- links between its
+    panos would almost all fail -- unless every date is, in which case the
+    best one is still walked, so the run has something to show.
+
+    Samples: half the date's own dots, 1 to DATE_SAMPLES_MAX, spread along
+    it, rating each dot's closest pano. rate is the walk's cached rater,
+    so a sampled pano is never rated twice."""
+    scored = []
+    for g in date_graphs:
+        dots = list(g["dot_candidates"])
+        if not dots:
+            continue
+        k = min(DATE_SAMPLES_MAX, max(1, -(-len(dots) // 2)))
+        rates = []
+        for d in _sample_dots(dots, k):
+            *_, n_kept, n_total = rate(g["dot_candidates"][d][0])
+            rates.append(n_kept / n_total if n_total else 0.0)
+        median = float(np.median(rates))
+        coverage = len(dots) / n_points
+        scored.append((median * coverage, median, coverage, g))
+        print(f"pathfind: date {g['date']} sampled {len(rates)} pano(s): median keep "
+              f"{median:.2f}, covers {coverage:.0%} of the corridor")
+    scored.sort(key=lambda t: t[0], reverse=True)
+    kept = [t for t in scored if t[1] >= MIN_KEEP_RATE]
+    for _, median, _, g in scored:
+        if median < MIN_KEEP_RATE:
+            print(f"pathfind: date {g['date']} dropped -- median keep {median:.2f} < {MIN_KEEP_RATE:.2f}")
+    if not kept and scored:
+        print(f"pathfind: every date is below {MIN_KEEP_RATE:.2f} -- walking the best one anyway")
+        kept = scored[:1]
+    return [g for *_, g in kept]
+
+
+def _ranges(dots):
+    """Dot indices as compact runs for the log, e.g. "0-6, 11-12"."""
+    runs, dots = [], sorted(dots)
+    for d in dots:
+        if runs and d == runs[-1][1] + 1:
+            runs[-1][1] = d
+        else:
+            runs.append([d, d])
+    return ", ".join(f"{a}-{b}" if a != b else f"{a}" for a, b in runs)
+
+
+def _patch_dots(pieces, n_points, adjacency):
+    """The dots the next date should walk: every dot not in a good piece
+    (GOOD_PIECE_DOTS or longer, from any date so far), plus
+    PATCH_OVERLAP_DOTS of each good piece bordering them. Before any date
+    has run that is every dot. Empty means nothing is left to patch."""
+    good_len = min(GOOD_PIECE_DOTS, n_points)
+    good = set()
+    for p in pieces:
+        if len(p[5]) >= good_len:  # p[5] == dots
+            good |= p[5]
+    patch = set(range(n_points)) - good
+    frontier = set(patch)
+    for _ in range(PATCH_OVERLAP_DOTS if patch else 0):
+        frontier = {nb for d in frontier for nb in adjacency.get(d, [])} - patch
+        patch |= frontier
+    return patch
+
+
 def run_pathfind_reconstruction(
     date_graphs: list[dict],
     points: list[tuple[float, float]],
@@ -133,7 +227,6 @@ def run_pathfind_reconstruction(
     rate_pano,
     point_cover_tolerance_m: float = 15.0,
     max_time_budget_s: float = 220.0,
-    early_exit_segments: int = 4,
     protected_positions: set = None,
 ) -> list[tuple]:
     """Two-phase pathfind.
@@ -162,9 +255,16 @@ def run_pathfind_reconstruction(
       corridor is covered), restart a fresh piece from whichever untried
       non-empty dot is closest to the nearest still-uncovered corridor
       point. Produces N disconnected pieces per date (each already
-      guaranteed non-empty by the per-dot rating above). Early-exits date
-      exploration once pieces so far already need < early_exit_segments to
-      fully cover the corridor.
+      guaranteed non-empty by the per-dot rating above). A date is left
+      early after MAX_FAILED_DOTS_IN_A_ROW dots in a row fail to link.
+
+      Dates are first sampled and reordered (see _sample_dates), then
+      walked as patches: the best date walks the whole corridor, and
+      each later date walks only what is still weak -- every dot outside
+      a piece of GOOD_PIECE_DOTS or more, plus a little overlap (see
+      _patch_dots). Earlier pieces are always kept; set_cover picks
+      between them and the patch's at the end, so a patch that does
+      worse costs nothing. Stops once nothing is weak.
 
       Bounded by ONE shared wall-clock deadline across ALL dates combined,
       not a per-date call count -- this call runs inside a single
@@ -189,10 +289,9 @@ def run_pathfind_reconstruction(
 
     Inputs (pre-downloaded by caller, no network here):
     - date_graphs: [{"date": str, "dot_candidates": {dot_index: [(key,
-      path, lat, lon), ...]}}, ...], ranked best first, already
-      capped/isolated per date (see build_corridor_graphs) -- this
-      function tries them in the given order and stops once
-      early_exit_segments is satisfied, it doesn't re-rank them.
+      path, lat, lon), ...]}}, ...], ranked by coverage, already
+      capped/isolated per date (see build_corridor_graphs) -- reordered
+      here by sampled image quality (see _sample_dates).
     - points/adjacency: the corridor's shared spine and dot-to-dot
       structural graph (see fetch_nodes.corridor_points) -- dates
       never share real panos, but they all walk the same structure.
@@ -281,13 +380,12 @@ def run_pathfind_reconstruction(
         next_piece_id = [0]
         visited = set()  # dot indices already given their one chance (whether or not they ended up `confirmed`)
         tests_used = [0]
-        rated_cache = {}  # pano key -> (score, pose, pts, cols) from rate_pano, so a candidate never gets re-rated twice
+        fails_in_a_row = [0]
 
-        def rate_one(candidate):
-            key, path, lat, lon = candidate
-            if key not in rated_cache:
-                rated_cache[key] = rate_pano(path)
-            return rated_cache[key]
+        def out_of_time():
+            """The shared deadline, or this date given up on (see
+            MAX_FAILED_DOTS_IN_A_ROW) -- either way, stop spending on it."""
+            return time.monotonic() >= deadline or fails_in_a_row[0] >= MAX_FAILED_DOTS_IN_A_ROW
 
         def rate_sorted(candidates):
             """Best-solo-score-first ordering of a dot's own candidates,
@@ -297,7 +395,7 @@ def run_pathfind_reconstruction(
             reorder, or the deadline's already passed (graceful degrade,
             not a wasted call). Doesn't rate a lone candidate itself here
             (nothing to sort) -- ensure_piece rates it on demand instead."""
-            if len(candidates) <= 1 or time.monotonic() >= deadline:
+            if len(candidates) <= 1 or out_of_time():
                 return candidates
             scored = [(rate_one(c)[0], c) for c in candidates]
             scored.sort(key=lambda sc: sc[0], reverse=True)
@@ -316,7 +414,7 @@ def run_pathfind_reconstruction(
             behavior) if the deadline's passed,
             there's nothing to rate for this dot on this date, or DA3
             produced no pose at all for the best candidate."""
-            if dot in confirmed or time.monotonic() >= deadline:
+            if dot in confirmed or out_of_time():
                 return
             t0 = time.monotonic()
             raw_candidates = dot_candidates.get(dot, [])
@@ -367,7 +465,7 @@ def run_pathfind_reconstruction(
             is left untouched -- never re-added, so an already-established
             node's points don't get duplicated across however many further
             edges touch it."""
-            if time.monotonic() >= deadline:
+            if out_of_time():
                 return False
             t0 = time.monotonic()
             result = test_edge(from_path, to_path, f"{date}_{test_offset + tests_used[0]}")
@@ -417,9 +515,15 @@ def run_pathfind_reconstruction(
             if from_dot not in confirmed:
                 return False
             c = confirmed[from_dot]
+            tests_before = tests_used[0]
             for key, path, lat, lon in rate_sorted(to_candidates):
                 if test_and_confirm(from_dot, c["key"], c["path"], c["lat"], c["lon"], to_dot, key, path, lat, lon):
+                    fails_in_a_row[0] = 0
                     return True
+            if tests_used[0] > tests_before:  # really tried, not just out of time
+                fails_in_a_row[0] += 1
+                if fails_in_a_row[0] == MAX_FAILED_DOTS_IN_A_ROW:
+                    print(f"[{date}] {MAX_FAILED_DOTS_IN_A_ROW} dots in a row failed to link -- leaving this date")
             return False
 
         queue = deque()
@@ -466,7 +570,7 @@ def run_pathfind_reconstruction(
                 return min(candidates, key=lambda d: haversine_m(points[d][0], points[d][1], start_lat, start_lon))
             return min(candidates, key=lambda d: min(pdist(points[d][0], points[d][1], pi) for pi in uncovered))
 
-        while time.monotonic() < deadline:
+        while not out_of_time():
             uncovered = set(range(len(points))) - covered_points(confirmed.keys())
             if not uncovered:
                 break
@@ -532,22 +636,40 @@ def run_pathfind_reconstruction(
     deadline = time.monotonic() + time_budget_s
     print(f"pathfind: time budget {time_budget_s:.0f}s for {len(points)} dot(s)")
 
-    for date_graph in date_graphs:
+    rated_cache = {}  # pano key -> rate_pano's result, shared by sampling and every date's walk
+
+    def rate_one(candidate):
+        key, path, lat, lon = candidate
+        if key not in rated_cache:
+            rated_cache[key] = rate_pano(path)
+        return rated_cache[key]
+
+    t_sample = time.monotonic()
+    ordered = _sample_dates(date_graphs, len(points), rate_one)
+    print(f"timing: date sampling {time.monotonic() - t_sample:.1f}s, {len(rated_cache)} pano(s) rated")
+
+    for date_graph in ordered:
         if time.monotonic() >= deadline:
             print("pathfind: time budget exhausted -- stopping date exploration")
             break
+        patch = _patch_dots(all_pieces, len(points), adjacency)
+        if not patch:
+            print("pathfind: every dot is in a good piece -- stopping date exploration")
+            break
 
-        date, dot_candidates = date_graph["date"], date_graph["dot_candidates"]
+        date = date_graph["date"]
+        dot_candidates = {d: c for d, c in date_graph["dot_candidates"].items() if d in patch}
+        if not dot_candidates:
+            print(f"pathfind: date {date} has no panos where patching is needed -- skipped")
+            continue
+        print(f"pathfind: date {date} walking {len(dot_candidates)} dot(s) "
+              f"({'whole corridor' if not all_pieces else 'patch: dots ' + _ranges(dot_candidates)})")
         pieces, tests_used = map_date(date, dot_candidates, total_tests, deadline)
         total_tests += tests_used
         for p in pieces:
             all_pieces.append(p + (date,))
-        print(f"pathfind: date {date} mapped into {len(pieces)} piece(s), {total_tests} attempts so far")
-
-        chosen_so_far, uncovered_so_far = set_cover(all_pieces, len(points))
-        if chosen_so_far and not uncovered_so_far and len(chosen_so_far) < early_exit_segments:
-            print(f"pathfind: {len(chosen_so_far)} segment(s) already cover everything -- stopping date exploration")
-            break
+        print(f"pathfind: date {date} mapped into {len(pieces)} piece(s) "
+              f"{sorted(len(p[5]) for p in pieces)[::-1]} dot(s), {total_tests} attempts so far")
 
     protected_indices = None
     if protected_positions:

@@ -48,14 +48,28 @@ def _join_allowance_s(n_dots: int) -> float:
     return JOIN_BASE_S + n_dots * JOIN_PER_DOT_S
 
 
+# One solo DA3 rating: 1.36s average in the solo-score experiment
+# (tools/debug_solo_score_experiment.py).
+SECONDS_PER_RATING = 1.4
+
+
+def _date_sampling_s(n_dots: int) -> float:
+    """At most: every kept date sampled at half its dots, capped at
+    DATE_SAMPLES_MAX each (see walk_graph._sample_dates)."""
+    from build_street_graph.date_ranking import DATE_TOP_N
+    from reconstruct.walk_graph import DATE_SAMPLES_MAX
+    per_date = min(DATE_SAMPLES_MAX, max(1, -(-n_dots // 2)))
+    return DATE_TOP_N * per_date * SECONDS_PER_RATING
+
+
 def estimate_gpu_seconds(n_dots: int) -> float:
-    """The GPU window a run over n_dots needs: the walk's own per-dot
-    estimate (walk_graph.SECONDS_PER_DOT_ESTIMATE), then the join, plus
-    model load and the bridge/save headroom. Shown to the user after
-    Prepare, and the window asked for unless they override it."""
+    """The GPU window a run over n_dots needs: date sampling, the walk's
+    own per-dot estimate (walk_graph.SECONDS_PER_DOT_ESTIMATE), then the
+    join, plus model load and the bridge/save headroom. Shown to the user
+    after Prepare, and the window asked for unless they override it."""
     from reconstruct.walk_graph import SECONDS_PER_DOT_ESTIMATE
-    return (MODEL_LOAD_S + n_dots * SECONDS_PER_DOT_ESTIMATE + _join_allowance_s(n_dots)
-            + SELF_BRIDGE_MIN_S + SAVE_BUFFER_S)
+    return (MODEL_LOAD_S + _date_sampling_s(n_dots) + n_dots * SECONDS_PER_DOT_ESTIMATE
+            + _join_allowance_s(n_dots) + SELF_BRIDGE_MIN_S + SAVE_BUFFER_S)
 
 
 def _gpu_seconds(points, gpu_seconds=None) -> float:
@@ -128,7 +142,7 @@ def get_da3():
 
 @GPU_DISPATCH
 def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_lon,
-                               edge_max_dist_m=None, step_degrees=20,
+                               edge_max_dist_m=None, step_degrees=None,
                                conf_lower_percentile=None, gpu_seconds=None):
     """The ONE @spaces.GPU-decorated entry point for this whole app -- see
     this module's own docstring for why there is exactly one. The work
@@ -144,7 +158,7 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
 
 
 def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
-                                 edge_max_dist_m=None, step_degrees=20,
+                                 edge_max_dist_m=None, step_degrees=None,
                                  conf_lower_percentile=None, gpu_seconds=None):
     """Convenience combined task: corridor search (run_pathfind_reconstruction)
     AND join/bridging (join_segments) in ONE GPU session, using the same
@@ -172,7 +186,7 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
 
     import torch
     from services.da3_ops import (
-        CONF_LOWER_PERCENTILE, bridge_test_edge as da3_bridge_test_edge,
+        CONF_LOWER_PERCENTILE, VIEW_STEP_DEGREES, bridge_test_edge as da3_bridge_test_edge,
         rate_pano as da3_rate_pano, test_edge as da3_test_edge,
     )
     from reconstruct.join_segments import BRIDGE_MAX_DIST_M, join_segments
@@ -182,6 +196,8 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
         edge_max_dist_m = BRIDGE_MAX_DIST_M
     if conf_lower_percentile is None:
         conf_lower_percentile = CONF_LOWER_PERCENTILE
+    if step_degrees is None:
+        step_degrees = VIEW_STEP_DEGREES
 
     t0 = time.monotonic()
     total_s = _gpu_seconds(points, gpu_seconds)

@@ -32,6 +32,7 @@ import json
 import os
 import time
 
+from services.da3_ops import VIEW_STEP_DEGREES
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
@@ -48,11 +49,8 @@ GLOBAL_DATASET_REPO = "potato-bug/ntu-reconstruction"
 _global_metadata = None
 _global_cover = None
 
-# Yaw step for DA3's view slicing. 30 (12 slices) is the tested middle
-# ground between DA3's own default 20 (18 slices) and the too-coarse 45
-# (8 slices, caused 2/4 winners to go from partial acceptance to fully
-# rejected in an earlier scoring experiment).
-DEFAULT_STEP_DEGREES = 30
+# Kept as a name for tools/ -- the value lives in services.da3_ops.
+DEFAULT_STEP_DEGREES = VIEW_STEP_DEGREES
 
 # How many panos download at once. Downloads used to run one at a time
 # (each its own fresh event loop) -- for a large batch (100+ candidates on

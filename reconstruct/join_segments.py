@@ -20,6 +20,7 @@ import time
 
 import numpy as np
 
+from services.da3_ops import MIN_KEEP_RATE
 from services.geo import haversine_m
 from reconstruct.walk_graph import rigid_align
 
@@ -41,7 +42,7 @@ BRIDGE_RIDICULOUS_DEV_M = 2.0
 # pano's views failing DA3's own consensus filter), not to demand a
 # strong one. Even the best-ranked attempt must clear BOTH this and the
 # deviation floor, or the merge is rejected.
-BRIDGE_MIN_KEEP_RATE = 1.0 / 3
+BRIDGE_MIN_KEEP_RATE = MIN_KEEP_RATE
 # Real DA3 calls spent trying to bridge one pair of pieces, capped
 # regardless of how many (Ax, By) node pairs qualify by distance.
 BRIDGE_MAX_ATTEMPTS = 10
