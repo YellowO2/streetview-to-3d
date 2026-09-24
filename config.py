@@ -17,13 +17,16 @@ DA3_UNITS_TO_METRES = 1.46
 # Every number above was measured on the original DA3NESTED-GIANT-LARGE,
 # which DA3 has since deprecated for a training bug. Later runs on it fit
 # 1.17-1.26 (Stockholm, and gen_10node at NTU), so it was never one
-# constant. The Nested model is meant to output metres already, so on
-# DA3_MODEL_REPO this should be re-measured and is expected near 1.0.
+# constant. Re-measure it for whatever DA3_MODEL_REPO is.
 
-# DA3's own README: "-1.1" models were retrained after fixing a training
-# bug, and "you could expect much better performance for street scenes".
-# Same architecture (identical config.json), so only the weights change.
-DA3_MODEL_REPO = "depth-anything/DA3NESTED-GIANT-LARGE-1.1"
+# Trial. DA3NESTED-GIANT-LARGE-1.1 kept more views per pano on its own, but
+# no pair test on it kept views on both panos (0 of 34, vs 20 of 89 on the
+# old Nested), so nothing linked. Its any-view part is NOT DA3-GIANT-1.1's
+# weights (the old Nested's was byte-identical to old DA3-GIANT), so the
+# plain Giant-1.1 is a different model worth its own run. It is relative
+# only: check that pieces still come out one scale before trusting it.
+# Fallback: "depth-anything/DA3NESTED-GIANT-LARGE".
+DA3_MODEL_REPO = "depth-anything/DA3-GIANT-1.1"
 
 
 @dataclass
