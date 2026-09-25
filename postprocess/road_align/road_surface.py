@@ -25,8 +25,9 @@ def ground_near_track(piece, cams, radius=TRACK_RADIUS_M, cell=GROUND_CELL_M,
 
     Take the points near the track, and in each cell call the lowest
     points the ground (a high percentile of y, which points down).
-    Everything above it is vegetation, vehicles, buildings or noise. No
-    colour, no components, no width.
+    Everything above it is vegetation, vehicles, buildings or noise. Then
+    keep only those lowest points that lie on one flat plane (_on_plane),
+    which drops the bottoms of walls. No colour, no components, no width.
     """
     xz, y, _ = piece
     near = cKDTree(cams).query(xz)[0] <= radius
@@ -41,4 +42,40 @@ def ground_near_track(piece, cams, radius=TRACK_RADIUS_M, cell=GROUND_CELL_M,
     keep = np.zeros(len(key_s), bool)
     for a, b in zip(edges[:-1], edges[1:]):
         keep[a:b] = np.abs(h_s[a:b] - np.percentile(h_s[a:b], pct)) <= band
-    return np.column_stack([p_s[keep, 0], h_s[keep], p_s[keep, 1]])
+    low = np.column_stack([p_s[keep, 0], h_s[keep], p_s[keep, 1]])
+    return low[_on_plane(low)]
+
+
+PLANE_TOL_M = 0.15       # how far off the plane a point may be and still be floor
+PLANE_MAX_TILT_DEG = 30  # DA3 hands floors back tilted 5-16 deg; walls are ~90
+PLANE_TRIES = 300
+
+
+def _on_plane(pts, tol=PLANE_TOL_M, max_tilt=PLANE_MAX_TILT_DEG, tries=PLANE_TRIES):
+    """Mask of the points on the one flat plane most of them share (RANSAC).
+
+    A cell's lowest points are the floor only where the floor was seen; in
+    a cell holding nothing but wall they are the bottom of the wall. The
+    floor is the one surface that is flat and near level across the whole
+    track, so a wall can't sit on it however many points it has. The hole
+    under the car costs nothing: the plane is fitted around it."""
+    if len(pts) < 3:
+        return np.ones(len(pts), bool)
+    rng = np.random.default_rng(0)
+    min_ny = np.cos(np.radians(max_tilt))
+    best = None
+    for _ in range(tries):
+        a, b, c = pts[rng.choice(len(pts), 3, replace=False)]
+        n = np.cross(b - a, c - a)
+        norm = np.linalg.norm(n)
+        if norm < 1e-9 or abs(n[1]) / norm < min_ny:
+            continue
+        inl = np.abs((pts - a) @ (n / norm)) <= tol
+        if best is None or inl.sum() > best.sum():
+            best = inl
+    if best is None:
+        return np.ones(len(pts), bool)
+    # refit on the inliers, so the plane isn't just the lucky three points
+    ctr = pts[best].mean(0)
+    n = np.linalg.svd(pts[best] - ctr, full_matrices=False)[2][-1]
+    return np.abs((pts - ctr) @ n) <= tol
