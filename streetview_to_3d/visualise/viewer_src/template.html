@@ -17,8 +17,8 @@
   <body>
     <header>
       <div class="brand">STREETVIEW <span id="scene-name">No scene open</span></div>
-      <button id="open-folder">Open scene</button
-      ><button id="open-files" class="quiet">Open PLY / files</button>
+      <span id="status" class="muted" role="status" hidden></span>
+      <button id="open-folder">Open scene</button>
       <nav aria-label="Interaction mode">
         <button id="inspect" aria-pressed="true">Inspect</button
         ><button id="fly" aria-pressed="false" disabled>Fly</button>
@@ -75,19 +75,7 @@
         <div id="dropzone" hidden>Drop a PLY or scene folder</div>
       </main>
     </div>
-    <footer>
-      <div class="status">
-        <div id="status" role="status">Ready</div>
-        <div id="help" class="muted">Drag to orbit · Right-drag to pan · Scroll to zoom</div>
-      </div>
-    </footer>
-    <input id="file" type="file" accept=".ply,.json" multiple hidden /><input
-      id="folder"
-      type="file"
-      webkitdirectory
-      multiple
-      hidden
-    />
+    <input id="folder" type="file" webkitdirectory multiple hidden />
     <script>
       window.viewerBootTimer = setTimeout(() => {
         document.getElementById('notice-text').textContent =

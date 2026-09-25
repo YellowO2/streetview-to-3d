@@ -1,6 +1,9 @@
 <aside id="scene-manager" aria-label="Scene Manager">
   <div class="manager-heading">
-    <h2>Scene Manager</h2>
+    <div>
+      <h2>Scene Manager</h2>
+      <div id="scene-info" class="muted" hidden></div>
+    </div>
     <button id="show-all" class="small quiet" disabled>Show all</button>
   </div>
   <div class="scene-hierarchy">
@@ -21,7 +24,6 @@
   <section class="selection-panel">
     <div class="section-heading">
       <h3>Transform</h3>
-      <button id="edit" class="small quiet" aria-pressed="false" disabled>Edit</button>
     </div>
     <h2 id="selection-title">Nothing selected</h2>
     <p id="selection-description" class="muted">Select a piece or node.</p>
@@ -30,7 +32,6 @@
         <button id="focus">Focus</button
         ><button id="clear-selection" class="quiet">Deselect</button>
       </div>
-      <label class="check"><input id="isolate" type="checkbox" /> Isolate</label>
     </div>
     <div id="editing" hidden>
       <div id="prepare" hidden>
@@ -38,12 +39,7 @@
           Place this raw scene from GPS before editing. Road height is not aligned.
         </p>
         <label
-          >Metres per DA3 unit<input
-            id="da3-scale"
-            type="number"
-            min=".001"
-            step=".01"
-            value="1.3"
+          >Metres per DA3 unit<input id="da3-scale" type="number" min=".001" step=".01" value="1.3"
         /></label>
         <button id="prepare-gps">Place from GPS</button>
       </div>

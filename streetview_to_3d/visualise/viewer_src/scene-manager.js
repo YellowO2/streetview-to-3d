@@ -6,11 +6,9 @@ const eyeIcon = (visible) =>
 // the shared viewer shell never needs to know their layout or state.
 export function createSceneManager(actions) {
   const bind = (id, fn) => ($(id).onclick = fn);
-  bind('edit', () => actions.mode('edit'));
   bind('focus', actions.focus);
   bind('clear-selection', () => actions.select(null));
   bind('show-all', actions.showAll);
-  $('isolate').onchange = () => actions.isolate($('isolate').checked);
   $('confidence').oninput = () => actions.group(Number($('confidence').value) / 100);
   bind('move', () => actions.tool('translate'));
   bind('rotate', () => actions.tool('rotate'));
@@ -101,8 +99,6 @@ export function createSceneManager(actions) {
         '#scene-manager button, #scene-manager input',
       ))
         control.disabled = blocked;
-      $('edit').disabled = blocked || !store.data;
-      $('edit').setAttribute('aria-pressed', String(state.mode === 'edit'));
       $('show-all').disabled = blocked || !store.data;
       $('grouping').hidden = !store.data;
       $('piece-count').textContent = store.data ? `(${state.groups.length})` : '';
@@ -146,7 +142,6 @@ export function createSceneManager(actions) {
           ? store.data.nodes?.[selected[0]]?.ply || 'Panorama node'
           : `${selected.length} nodes · Move together`;
       $('selection-actions').hidden = !selected;
-      $('isolate').checked = state.isolated;
       $('editing').hidden = state.mode !== 'edit';
       $('prepare').hidden = world;
       $('edit-tools').hidden = !world || !selected;

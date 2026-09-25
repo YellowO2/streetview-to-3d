@@ -5,7 +5,6 @@ export class ViewerState {
   selected = null;
   selectionKind = 'piece';
   hidden = new Set();
-  isolated = false;
   threshold = 0;
   groups = [];
   tool = 'translate';
@@ -13,7 +12,6 @@ export class ViewerState {
     this.selectionKind = kind;
     this.selected = members;
     if (members) members.forEach((i) => this.hidden.delete(i));
-    else this.isolated = false;
   }
   regroup(groups) {
     const anchor = this.selected?.[0];
@@ -24,14 +22,12 @@ export class ViewerState {
         : this.selectionKind === 'node'
           ? [anchor]
           : groups.find((m) => m.includes(anchor)) || null;
-    if (!this.selected) this.isolated = false;
   }
   visible(i) {
-    return !this.hidden.has(i) && (!this.isolated || !this.selected || this.selected.includes(i));
+    return !this.hidden.has(i);
   }
   toggleVisibility(members) {
     const visible = members.some((i) => this.visible(i));
-    this.isolated = false;
     members.forEach((i) => (visible ? this.hidden.add(i) : this.hidden.delete(i)));
     if (visible && this.selected?.some((i) => members.includes(i))) this.select(null);
   }
@@ -40,7 +36,6 @@ export class ViewerState {
     this.selected = null;
     this.selectionKind = 'piece';
     this.hidden.clear();
-    this.isolated = false;
     this.threshold = 0;
     this.groups = [];
     this.tool = 'translate';

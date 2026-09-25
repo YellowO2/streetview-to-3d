@@ -10,13 +10,11 @@ export function createUI(actions, { editable = true } = {}) {
   bind('exit-fly', () => actions.mode('inspect'));
   bind('recenter', actions.recenter);
   bind('open-folder', () => $('folder').click());
-  bind('open-files', () => $('file').click());
-  for (const id of ['file', 'folder'])
-    $(id).onchange = () => {
-      const files = [...$(id).files];
-      $(id).value = '';
-      actions.files(files);
-    };
+  $('folder').onchange = () => {
+    const files = [...$('folder').files];
+    $('folder').value = '';
+    actions.files(files);
+  };
   bind('toggle-settings', () => {
     $('view-panel').hidden = !$('view-panel').hidden;
     $('toggle-settings').setAttribute('aria-pressed', String(!$('view-panel').hidden));
@@ -39,6 +37,7 @@ export function createUI(actions, { editable = true } = {}) {
     },
     progress(message) {
       $('status').textContent = message;
+      $('status').hidden = false;
     },
     drop(visible) {
       $('dropzone').hidden = !visible;
@@ -62,17 +61,15 @@ export function createUI(actions, { editable = true } = {}) {
         $(mode).disabled = blocked || (mode === 'fly' && !store.group);
       }
       $('recenter').disabled = blocked || !store.group;
-      for (const id of ['open-folder', 'open-files', 'toggle-settings']) $(id).disabled = blocked;
+      for (const id of ['open-folder', 'toggle-settings']) $(id).disabled = blocked;
       for (const input of document.querySelectorAll('#view-panel input')) input.disabled = blocked;
       manager?.render(store, state, { busy, dragging });
-      if (!busy)
-        $('status').textContent = store.group
-          ? `${points.toLocaleString()} points · ${store.data ? 'Scene' : 'Single PLY'}`
-          : 'Ready';
-      $('help').textContent =
-        state.mode === 'fly'
-          ? 'Mouse to steer · WASD/QE to fly · Esc to exit'
-          : 'Drag to orbit · Right-drag to pan · Scroll to zoom · F to recenter';
+      $('scene-info').hidden = !store.group;
+      $('scene-info').textContent = store.group ? `${points.toLocaleString()} points` : '';
+      if (!busy) {
+        $('status').textContent = '';
+        $('status').hidden = true;
+      }
     },
   };
 }

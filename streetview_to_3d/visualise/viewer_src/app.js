@@ -20,11 +20,6 @@ const ui = createUI(
     select,
     showAll: () => {
       state.hidden.clear();
-      state.isolated = false;
-      refresh();
-    },
-    isolate: (value) => {
-      state.isolated = value;
       refresh();
     },
     group: (threshold) => {

@@ -31,8 +31,8 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
   });
   await import('@viewer/app');
   const $ = (id) => document.getElementById(id);
-  assert.equal($('status').textContent, 'Ready');
-  assert($('edit').disabled);
+  assert($('status').hidden);
+  assert($('editing').hidden);
   const data = {
     center: [1, 103],
     nodes: [0, 1, 2, 3].map((i) => ({
@@ -54,10 +54,10 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
     new File([JSON.stringify(data)], 'scene.json'),
     ...data.nodes.map((n) => new File([ply], n.ply)),
   ];
-  Object.defineProperty($('file'), 'files', { configurable: true, value: files });
-  $('file').dispatchEvent(new win.Event('change'));
-  await waitFor(() => $('status').textContent === '8 points · Scene');
-  $('edit').click();
+  Object.defineProperty($('folder'), 'files', { configurable: true, value: files });
+  $('folder').dispatchEvent(new win.Event('change'));
+  await waitFor(() => $('scene-info').textContent === '8 points' && $('status').hidden);
+  document.querySelector('.piece-select').click();
   assert(!$('prepare').hidden);
   $('prepare-gps').click();
   assert($('prepare').hidden);
@@ -72,7 +72,7 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
   assert(!$('undo').disabled);
   $('inspect').click();
   assert.equal($('selection-title').textContent, 'Piece 1');
-  $('edit').click();
+  document.querySelector('.piece-select').click();
   assert.equal($('selection-title').textContent, 'Piece 1');
   $('undo').click();
   assert(!$('redo').disabled);
@@ -92,7 +92,7 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
   $('view-settings').open = true;
   $('rotate').click();
   $('inspect').click();
-  $('edit').click();
+  document.querySelector('.piece-select').click();
   assert.equal($('rotate').getAttribute('aria-pressed'), 'true');
   assert($('view-settings').open);
   // Reproduce denied pointer lock without a browser. The app must recover to Inspect.
@@ -104,14 +104,14 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
   $('fly').click();
   assert.equal(document.body.dataset.mode, 'inspect');
   assert.equal($('selection-title').textContent, 'Piece 1');
-  assert(!$('isolate').disabled);
-  Object.defineProperty($('file'), 'files', {
-    configurable: true,
-    value: [new File([ply], 'single.ply')],
+  assert(!$('focus').disabled);
+  const drop = new win.Event('drop', { cancelable: true });
+  Object.defineProperty(drop, 'dataTransfer', {
+    value: { items: [], files: [new File([ply], 'single.ply')] },
   });
-  $('file').dispatchEvent(new win.Event('change'));
-  await waitFor(() => $('status').textContent === '2 points · Single PLY');
-  assert($('edit').disabled);
+  win.dispatchEvent(drop);
+  await waitFor(() => $('scene-info').textContent === '2 points' && $('status').hidden);
+  assert($('editing').hidden);
   assert.equal($('selection-title').textContent, 'Nothing selected');
   assert($('undo').disabled);
   dom.window.close();

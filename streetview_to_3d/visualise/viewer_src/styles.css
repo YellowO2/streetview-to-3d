@@ -18,7 +18,7 @@ body {
   height: 100vh;
   height: 100dvh;
   display: grid;
-  grid-template-rows: 64px minmax(0, 1fr) 52px;
+  grid-template-rows: 64px minmax(0, 1fr);
   overflow: hidden;
 }
 button,
@@ -408,24 +408,14 @@ summary {
   pointer-events: none;
   z-index: 10;
 }
-footer {
-  display: flex;
-  align-items: center;
-  padding: 6px 16px;
-  background: var(--panel);
-  border-top: 1px solid var(--border);
-  font-size: 11px;
-  overflow: hidden;
-}
-.status {
-  flex: 1;
-  min-width: 0;
-}
-#status,
-#help {
+#status {
+  max-width: 240px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+#scene-info {
+  margin-top: 3px;
 }
 body[data-mode='fly'] #scene-manager {
   opacity: 0.55;

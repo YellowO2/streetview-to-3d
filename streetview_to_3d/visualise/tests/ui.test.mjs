@@ -4,7 +4,7 @@ import { viewerTemplate } from './fixture.mjs';
 import { JSDOM } from 'jsdom';
 import { createUI } from '@viewer/ui';
 import { ViewerState } from '@viewer/state';
-test('user flow: select, switch modes, open settings, regroup, isolate, hide and restore', () => {
+test('user flow: select, switch modes, open settings, regroup, hide and restore', () => {
   const dom = new JSDOM(viewerTemplate());
   globalThis.document = dom.window.document;
   const state = new ViewerState();
@@ -33,6 +33,7 @@ test('user flow: select, switch modes, open settings, regroup, isolate, hide and
     },
     select: (members, kind) => {
       state.select(members, kind);
+      if (members) state.mode = 'edit';
       render();
     },
     focus: () => (focused = true),
@@ -42,11 +43,6 @@ test('user flow: select, switch modes, open settings, regroup, isolate, hide and
     },
     showAll: () => {
       state.hidden.clear();
-      state.isolated = false;
-      render();
-    },
-    isolate: (v) => {
-      state.isolated = v;
       render();
     },
     group: () => {},
@@ -70,7 +66,6 @@ test('user flow: select, switch modes, open settings, regroup, isolate, hide and
   assert.equal($('selection-title').textContent, 'Piece 1');
   $('view-settings').open = true;
   document.querySelector('#east').value = '2.5';
-  $('edit').click();
   assert(!document.querySelector('#edit-tools').hidden);
   assert.equal($('east').value, '2.5');
   assert($('view-settings').open);
@@ -80,14 +75,12 @@ test('user flow: select, switch modes, open settings, regroup, isolate, hide and
   $('fly').click();
   assert.equal($('selection-title').textContent, 'Piece 1');
   assert($('confidence').disabled);
-  assert($('isolate').disabled);
+  assert($('focus').disabled);
   $('exit-fly').click();
   assert.equal(state.mode, 'inspect');
-  assert(!$('isolate').disabled);
-  $('isolate').click();
-  assert(state.isolated);
+  assert(!$('focus').disabled);
   $('clear-selection').click();
-  assert(!state.isolated);
+  assert.equal(state.selected, null);
   document.querySelector('.visibility').click();
   assert(state.hidden.has(0));
   $('show-all').click();
@@ -103,7 +96,7 @@ test('user flow: select, switch modes, open settings, regroup, isolate, hide and
   assert(focused);
   ui.render(store, state, { busy: true });
   assert($('open-folder').disabled);
-  assert($('edit').disabled);
+  assert($('focus').disabled);
   render();
   assert(!$('open-folder').disabled);
   dom.window.close();
@@ -138,7 +131,7 @@ test('public viewer hides editing and exposes optional view settings', () => {
   dom.window.close();
 });
 
-test('editor and demo render identical shared toolbar, footer and view settings', () => {
+test('editor and demo render identical shared toolbar and view settings', () => {
   const shell = (editable) => {
     const dom = new JSDOM(viewerTemplate());
     globalThis.document = dom.window.document;
@@ -147,7 +140,7 @@ test('editor and demo render identical shared toolbar, footer and view settings'
       { name: 'Scene', group: null, data: null, nodes: new Map(), undo: [], redo: [] },
       new ViewerState(),
     );
-    const result = ['header', 'footer', '#view-panel'].map(
+    const result = ['header', '#view-panel'].map(
       (selector) => document.querySelector(selector).outerHTML,
     );
     dom.window.close();

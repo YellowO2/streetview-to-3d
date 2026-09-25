@@ -42,13 +42,12 @@ test('regroup preserves selection anchor and explicit hidden nodes', () => {
   assert.deepEqual(s.selected, [0]);
   assert(s.hidden.has(3));
 });
-test('isolation and hiding are distinct; clearing selection restores only isolation', () => {
+test('selection preserves hidden nodes and selecting a hidden piece reveals it', () => {
   const s = new ViewerState();
   s.regroup(scenePieces(data, 0.76));
   s.hidden.add(3);
   s.select(s.groups[0]);
-  s.isolated = true;
-  assert(!s.visible(2));
+  assert(s.visible(2));
   s.select(null);
   assert(s.visible(2));
   assert(!s.visible(3));
@@ -80,16 +79,15 @@ test('nested scene paths resolve relative to JSON, not the current page', () => 
   assert.equal(spec.name, 'run');
 });
 
-test('individual node selection survives piece regrouping and isolates only that node', () => {
+test('individual node selection survives piece regrouping', () => {
   const s = new ViewerState();
   s.regroup(scenePieces(data, 0));
   s.select([1], 'node');
-  s.isolated = true;
   s.regroup(scenePieces(data, 0.84));
   assert.equal(s.selectionKind, 'node');
   assert.deepEqual(s.selected, [1]);
   assert(s.visible(1));
-  assert(!s.visible(0));
+  assert(s.visible(0));
   s.regroup(scenePieces(data, 0));
   assert.deepEqual(s.selected, [1]);
   s.select(s.groups[0]);
