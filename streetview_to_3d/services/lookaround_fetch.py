@@ -5,7 +5,6 @@ import os
 import pillow_heif
 import torch as _torch
 from PIL import Image
-from streetlevel.geo import wgs84_to_tile_coord
 from streetlevel.lookaround import lookaround as apple_lookaround
 from streetlevel.lookaround import reproject as apple_reproject
 from streetlevel.lookaround.auth import Authenticator as AppleAuthenticator
@@ -20,7 +19,6 @@ apple_reproject._device = _torch.device("cpu")
 pillow_heif.register_heif_opener()
 
 from streetview_to_3d.paths import PANOS_DIR
-from streetview_to_3d.services.geo import haversine_m
 
 # Apple zoom is inverted vs Google's (0=full res/slow, 7=lowest). 3 is a
 # fast, decent-quality default -- kept for whoever needs real detail.
@@ -31,29 +29,8 @@ APPLE_ZOOM = 3
 # cap -- measured directly. zoom=3's 4560px pano is 2x more than DA3 uses.
 DA3_ONLY_APPLE_ZOOM = 5
 
-APPLE_CANDIDATE_COUNT = 5
 
 _apple_auth = None
-
-
-def apple_nearby_panos(lat, lon):
-    """All Look Around panos on the target tile + its 8 neighbors, keyed by ID."""
-    tx, ty = wgs84_to_tile_coord(lat, lon, 17)
-    seen = {}
-    for dx in (-1, 0, 1):
-        for dy in (-1, 0, 1):
-            tile = apple_lookaround.get_coverage_tile(tx + dx, ty + dy)
-            for p in tile.panos:
-                seen[p.id] = p
-    return seen
-
-
-def apple_candidates(lat, lon, k=APPLE_CANDIDATE_COUNT):
-    """Nearest k Look Around panos to (lat, lon), sorted by distance."""
-    panos = apple_nearby_panos(lat, lon)
-    return sorted(panos.values(), key=lambda p: haversine_m(lat, lon, p.lat, p.lon))[:k]
-
-
 
 
 def get_apple_auth():
