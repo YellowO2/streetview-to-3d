@@ -46,6 +46,7 @@ def download_lookaround(pano, zoom: int = APPLE_ZOOM) -> str:
     appearance) request for the same pano must not collide."""
     img_path = os.path.join(PANOS_DIR, f"lookaround_{pano.id}_z{zoom}.jpg")
     if os.path.exists(img_path):
+        os.utime(img_path)  # in use again: keep paths.remove_older_than off it
         return img_path
 
     auth = get_apple_auth()

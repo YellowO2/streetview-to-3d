@@ -5,14 +5,13 @@ wired against the same shared `state` that section's handlers update.
 """
 import os
 import time
-import uuid
 import zipfile
 
 import gradio as gr
 
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.ui import viewers
-from streetview_to_3d.paths import RUNS_DIR
+from streetview_to_3d.paths import new_run_dir
 from streetview_to_3d.postprocess import pipeline
 from streetview_to_3d.reconstruct import build as street_main
 from streetview_to_3d.services.pipeline_runner import estimate_gpu_seconds
@@ -21,7 +20,7 @@ from streetview_to_3d.ui.map_selection.tab import build_map_section, nodes_by_ke
 def _run_dir(prep):
     """A fresh output directory, opened as a scene holding every place this
     run will try to reconstruct. See scene.py for what a scene holds."""
-    path = os.path.join(RUNS_DIR, uuid.uuid4().hex)
+    path = new_run_dir()
     # Logged so a run can still be found after the page is refreshed:
     # Gradio serves any file under it at this URL, but can't list the folder.
     print(f"run dir: {path}  (scene: {viewers.file_url(os.path.join(path, scene_mod.FILENAME))})",

@@ -7,10 +7,10 @@ from streetview_to_3d import gpu
 # Headroom left after the join for saving the result before the hard
 # ZeroGPU window closes. Carved OUT of the window (see _walk_budget_s).
 SAVE_BUFFER_S = 10.0
-# Loading DA3 inside the GPU window: 40.9s on the first run after a restart
-# (it downloads the 6.76 GB weights), less once they are cached. Allowed
-# for in full, so a cold start doesn't eat the walk's share.
-MODEL_LOAD_S = 45.0
+# DA3 is loaded at startup (see streetview_to_3d.gpu), so a call only waits
+# for ZeroGPU to move it onto the GPU: "timing: model load 0.0s" measured.
+# Was 45 when it loaded from disk inside the call (17-41 s).
+MODEL_LOAD_S = 5.0
 
 # The join/bridge phase's allowance after the walk: a floor plus a share
 # per dot, since a bigger area tends to come out of the walk in more

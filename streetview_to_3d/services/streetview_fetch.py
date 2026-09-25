@@ -83,8 +83,6 @@ def pano_to_meta(pano):
     }
 
 
-
-
 async def fetch_pano_by_id(pano_id):
     """Fetch pano metadata for a specific panorama ID (e.g. a historical capture)."""
     async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
@@ -100,8 +98,6 @@ def _cache_path(pano_id, zoom):
     return os.path.join(PANOS_DIR, f"pano_{pano_id}_z{zoom}.jpg")
 
 
-
-
 async def download_pano_by_id(pano_id, zoom: int = _DOWNLOAD_ZOOM):
     """Download a pano by its exact ID, return absolute path."""
     async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
@@ -109,7 +105,9 @@ async def download_pano_by_id(pano_id, zoom: int = _DOWNLOAD_ZOOM):
         if not pano:
             return None
         img_path = _cache_path(pano.id, zoom)
-        if not os.path.exists(img_path):
+        if os.path.exists(img_path):
+            os.utime(img_path)  # in use again: keep paths.remove_older_than off it
+        else:
             await download_panorama_image(pano, img_path, zoom=zoom)
         return img_path
 
