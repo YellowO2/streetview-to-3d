@@ -1,1 +1,1 @@
-"""Visualisation: the graph page, the point-cloud viewer, the segment selector."""
+"""Visualisation: the point-cloud viewer, and the builder that packages it."""

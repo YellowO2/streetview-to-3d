@@ -8,7 +8,7 @@ from huggingface_hub import snapshot_download
 # for a scene of lone panoramas or a fit out of range.
 #
 # Two measurements disagree, and that is not yet explained. Over NTU's 117
-# chunks (tools/measure_da3_scale.py) the answer held at 1.334-1.346 across
+# chunks the answer held at 1.334-1.346 across
 # every break threshold from 12 m down to 0.75 m. Three later runs down one
 # street each want 1.46-1.54 instead, and they agree with each other far
 # better than with 1.335: at 1.46 one of the three fits its own GPS to

@@ -149,95 +149,51 @@ scene while every individual number still looks plausible.
 ### How a reconstruction becomes an aligned scene
 
 ```
-google_graph.json                    every Google panorama in the area, and how they link
-  ↓  ask Google and Apple what imagery is at each spot
-downsampled_and_fetched_graph.json   corridor resampled to dots + a pano census (metadata only)
-  ↓  pick dates, pick a corridor
-graph.json                           the nodes actually reconstructed
-  ↓  reconstruct (GPU) — uploads to HuggingFace, not local
+the clicked nodes                    Street View nodes, and their real links
+  ↓  ask Google and Apple what imagery is near each one (metadata only)
+date graphs                          one isolated graph per capture date
+  ↓  download, then walk + join in one GPU call (reconstruct/)
 scene.json + one .ply per node       DA3 geometry, and each camera's DA3 position beside its pano's lat/lon
-  ↓  postprocess.gps_fit             that pairing is what makes the fit possible
-  ↓  postprocess.road_align          heading, position, then height and tilt
+  ↓  postprocess.gps_fit             each piece fitted to its own GPS
+  ↓  postprocess.road_align          onto its road, across it, then height and tilt
 scene.json, now with a transform per node   its stored .ply -> world metres
 ```
 
 Solving is slow and the answer is small, so it is saved rather than baked
-into a merged cloud. `postprocess.render_pieces` builds any subset from it
-without solving.
+into a merged cloud. `postprocess.render_pieces` builds one from it
+without solving. For each stage in detail, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Placement
 
-## Alignment
+`python -m postprocess.pipeline --dir <run dir>` places a scene; add
+`--merge out.ply` to also write it as one cloud. The Space runs the same
+call right after reconstructing.
 
-Pieces are brought into one consistent scene in three stages, in `alignment/`:
+1. **GPS** (`gps_fit/load_pieces.py`). A piece is the nodes sharing one DA3
+   frame. Its cameras are fitted to their panoramas' GPS: a rotation and an
+   offset per piece, but ONE scale for the whole scene -- the median over
+   pieces whose cameras span at least 8 m, or `config.DA3_UNITS_TO_METRES`
+   when none do. A scale per piece would turn GPS noise into pieces of
+   different sizes. A lone panorama has nothing to fit a heading from, so
+   it is turned by its own camera heading.
+2. **Road line** (`road_frames.py`, `node_center_to_road_line.py`). The
+   street graph is chained into roads, and each piece's cameras are seated
+   on its road's line. A piece of 3+ nodes only slides; a 2-node piece may
+   also turn.
+3. **Across the road** (`cross_road.py`). The line follows whichever lane
+   the car drove, so pieces on the same road are compared by the height
+   profile of the ground across it, and every sideways shift (plus a turn
+   of at most 5 degrees) is solved at once.
+4. **Height** (`ground_elevation.py`). Google's per-node elevation gives the
+   real ground along each road; each piece gets one height offset and one
+   tilt onto it, measured from the ground under its own camera track.
 
-```
-DA3 alignment  ->  GPS alignment  ->  road alignment
-```
-
-GPS gets every piece roughly right but leaves visible seams: pieces sit
-at slightly different heights and slightly off sideways, and a piece
-built from a single panorama can face almost any direction (one GPS
-point pins a position but says nothing about a heading).
-
-**Road alignment** (`alignment/road.py`, run over a set of pieces with
-`python -m alignment.run_road_align --dir <pieces> --out out.ply`)
-closes those seams using the road surface itself:
-
-1. **Look straight down at each piece.** For every ground cell keep the
-   colour of its highest point — a plain top-down photo, no filtering.
-2. **Grey cells are road.** That gives each piece's road as a 2D shape.
-3. **Measure which way that road runs.** A road is long and thin, so its
-   direction is the angle at which it is narrowest measured across. The
-   painted white line is fitted separately as an independent check.
-4. **Decide whether the heading may be touched**, by comparing the road
-   direction against the piece's *own* GPS camera track:
-   - they agree → GPS already got it right, leave it alone
-   - they disagree → the heading is wrong, solve for it
-   - no track at all (single-node piece) → nothing ever constrained the
-     heading, solve for it
-5. **Slide sideways across the road** until the two road shapes overlap.
-   The kerbs make this sharp.
-6. **Shift up or down** until the two road surfaces sit at the same height.
-7. **Leave the along-road direction alone.** A straight road looks
-   identical at every point along its own length, so nothing in the
-   imagery can determine it — GPS keeps that one, permanently.
-
-Three things this design exists to avoid, each found by measurement:
-
-- **Neighbouring pieces legitimately differ in heading.** Where the road
-  curves, two pieces can be 9° apart while each matches its own GPS
-  track to within 1°. Treating that as error drags pieces ~10 m off GPS,
-  hence the step-4 self-check rather than a node-count rule.
-- **Overlap area cannot determine rotation.** On a straight road it
-  varies by ~0.03 IoU across ±20°. Headings are solved by matching road
-  *directions* (sharp to a few degrees); overlap is used only to pick
-  between the two 180°-opposed choices.
-- **Pieces are aligned to their single best-overlapping neighbour**, not
-  to everything placed so far — against the union, a piece with a small
-  genuine overlap slides sideways onto some other road entirely. A
-  correction larger than a few times the piece's own GPS residual is
-  rejected as exactly that failure.
-
-A panorama's blind spot leaves a hole in the middle of its own road;
-every step above is written to tolerate it.
-
-## The DA3-to-metres constant
-
-`config.DA3_UNITS_TO_METRES` is measured, not guessed. To re-measure it:
-
-```bash
-python -m tools.measure_da3_scale --scene splats/<run id> --sweep
-```
-
-It cuts each piece where its own nodes stop matching their GPS, fits every
-surviving piece of 4+ nodes alone, and prints the spread per cut. Take the
-value where the mean meets the median -- that is where nothing is left
-skewing the sample. On NTU it holds at 1.33-1.35 across cuts from 12 m
-down to 0.75 m.
+Nothing corrects a piece ALONG its road: a straight road looks the same at
+every point along it, so GPS keeps that.
 
 ## Dev notes
 
-**Solo-score vs. pairwise DA3 experiment** (2026-08-19, real data, see `tests/debug_solo_score_experiment.py`):
+**Solo-score vs. pairwise DA3 experiment** (2026-08-19, real data; the one-off script was removed once its numbers were recorded here):
 
 - Hypothesis confirmed: a candidate's solo DA3 self-consistency score predicts pairwise success likelihood.
   - min-score 6 → 33% pairwise success
@@ -247,7 +203,7 @@ down to 0.75 m.
 - DA3 model load: **8.93s**
 - Solo-score call: avg **1.36s**
 - Pairwise call: avg **1.99s**
-- Used to calibrate `SECONDS_PER_DOT_ESTIMATE = 6.0` in `reconstruct/walk_graph.py`.
+- First calibration of `SECONDS_PER_DOT_ESTIMATE` in `reconstruct/walk_graph.py` (since raised from real runs' `timing:` logs).
 
 ## Planned
 

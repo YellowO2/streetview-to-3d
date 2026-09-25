@@ -24,7 +24,7 @@ VIEW_STEP_DEGREES = 30
 # DA3 has not made sense of the pano: a date whose sampled panos sit under
 # it is not walked (walk_graph._sample_dates), and a bridge whose best
 # attempt sits under it is rejected (join_segments). The solo-score
-# experiment (tools/debug_solo_score_experiment.py) saw links mostly fail
+# experiment (README, Dev notes) saw links mostly fail
 # around there and mostly succeed above ~2/3.
 MIN_KEEP_RATE = 1.0 / 3
 
@@ -78,8 +78,8 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
 
     Returns (score, pose, pts, cols, n_kept, n_total):
       - score: how many of this pano's own views survived DA3's
-        consensus filter. Validated against real data (see
-        tests/debug_solo_score_experiment.py): pairwise success rate
+        consensus filter. Validated against real data (the solo-score
+        experiment, README Dev notes): pairwise success rate
         rose monotonically with the weaker candidate's score, 33% at
         score 6 up to 100% at score 13+.
       - pose: (center, rotation), or None if DA3 produced no pose at

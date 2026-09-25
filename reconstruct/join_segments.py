@@ -1,24 +1,12 @@
-"""Combine independently-reconstructed pathfind segments into one merged
-point cloud using real DA3 tests -- no GPS placement (see tests/gps.py
-for the old GPS-anchoring approach, kept only for reference, no longer
-used: nothing here needs the result oriented to true north/real-world
-coordinates, only internally consistent).
+"""Combine independently-reconstructed pathfind segments using real DA3
+tests -- no GPS placement here; that happens later, in postprocess/.
 
-Each pair of segments known (or suspected, in the no-known-adjacency
-case) to touch gets bridged via _try_bridge: real lat/lon (already
-carried per-node in frame_poses) picks which node pairs are worth a
-real DA3 test, then the actual merge uses the DA3-derived relative
-transform between the two segments' own local frames.
-
-Since our chunking guarantees any pair this module is actually asked to
-bridge came from a real, previously-confirmed graph edge, two touching
-segments should always have SOME node pair within edge_max_dist_m of
-each other -- if not, that's treated as a bug upstream (bad chunking,
-a lost/corrupted node) and raises loudly.
+Every pair of segments is tried via _try_bridge: real lat/lon (carried
+per node in frame_poses) picks which node pairs are worth a real DA3 test,
+then the merge uses the DA3-derived relative transform between the two
+segments' own local frames. A pair with no nodes in range is skipped.
 """
 import time
-
-import numpy as np
 
 from services.da3_ops import MIN_KEEP_RATE
 from services.geo import haversine_m
@@ -51,9 +39,7 @@ BRIDGE_MAX_ATTEMPTS = 10
 BRIDGE_MAX_DIST_M = 30.0
 
 
-
-
-def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id, refetch_path=None):
+def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_id):
     """One pair's worth of bridge search: every (Ax, By) node pair within
     edge_max_dist_m, same-date-first then closest-first, up to
     BRIDGE_MAX_ATTEMPTS real tests. Merges using whichever attempt came
@@ -67,29 +53,9 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     bad match doesn't get forced through just for being the least-bad of
     a weak field, matching the Run step's own walk (which already never
     accepts a genuinely failed edge test either).
-    Returns (merged_segment, next_bridge_test_id, had_candidates).
-    merged_segment is None if real candidates existed but every DA3
-    attempt on them came back unusable or failed the reject floor (a
-    genuine per-attempt failure), or if there were zero candidates at
-    all. had_candidates distinguishes
-    those two None cases for the caller (bridge_pieces) -- whether THIS
-    a pair ever counts as having had a real chance is decided
-    there, only once EVERY piece-level pair sharing those two chunk ids
-    has been tried, not on this one pair alone.
-    refetch_path: optional (key, lat, lon) -> path (or None on failure)
-    callback -- lat/lon passed through since Apple's fetch-by-id needs a
-    coarse location to know which coverage tile to search (see
-    map_selection.candidates.apple_tile_panos), unlike Google's pure
-    fetch-by-id.
-    frame_poses' own path field points at wherever the image lived in the
-    ORIGINAL segment-producing GPU session's ephemeral disk -- a separate
-    Join call (a different ZeroGPU worker/container) has no guarantee
-    that file still exists. When given, refetch_path re-downloads each
-    candidate pano fresh right before testing it instead of trusting the
-    stored path; a pair where either side fails to refetch is skipped
-    like any other per-attempt failure, not an error. None (default)
-    trusts the stored path as-is, for callers that know they're still in
-    the same session that produced it (e.g. run_pathfind_and_join_gpu)."""
+    Returns (merged_segment, next_bridge_test_id). merged_segment is None
+    if there were no candidates in range, or every DA3 attempt on them came
+    back unusable or failed the reject floor."""
     a_clouds, a_edges, a_date, a_reached, a_positions, a_frame_poses = a
     b_clouds, b_edges, b_date, b_reached, b_positions, b_frame_poses = b
 
@@ -111,7 +77,7 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
         closest_desc = f"closest real pair was {closest[1]} <-> {closest[2]} at {closest[0]:.1f}m" if closest else "no nodes on either side at all"
         print(f"[bridge] {a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
               f"0 candidate pair(s) within {edge_max_dist_m:.0f}m -- skipped ({closest_desc})")
-        return None, bridge_test_id, False
+        return None, bridge_test_id
     print(f"[bridge] {a_date} ({len(a_positions)} node(s)) <-> {b_date} ({len(b_positions)} node(s)): "
           f"{len(pairs)} candidate pair(s) within {edge_max_dist_m:.0f}m, trying up to {BRIDGE_MAX_ATTEMPTS}")
     pairs.sort()
@@ -121,15 +87,8 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     for _, _, a_key, b_key in pairs:
         if attempts >= BRIDGE_MAX_ATTEMPTS or time.monotonic() >= deadline:
             break
-        _, _, a_path, a_lat, a_lon, _, _ = a_frame_poses[a_key]
-        _, _, b_path, b_lat, b_lon, _, _ = b_frame_poses[b_key]
-        if refetch_path is not None:
-            fresh_a, fresh_b = refetch_path(a_key, a_lat, a_lon), refetch_path(b_key, b_lat, b_lon)
-            if fresh_a is None or fresh_b is None:
-                print(f"[bridge] {a_key} -> {b_key}: refetch failed, skipping")
-                attempts += 1
-                continue
-            a_path, b_path = fresh_a, fresh_b
+        a_path = a_frame_poses[a_key][2]
+        b_path = b_frame_poses[b_key][2]
         result = bridge_test_edge(a_path, b_path, f"bridge_{bridge_test_id}")
         bridge_test_id += 1
         attempts += 1
@@ -161,7 +120,7 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
         if best is not None:
             print(f"[bridge] {a_date}+{b_date}: best available still failed the reject floor "
                   f"(avg_dev >= {BRIDGE_RIDICULOUS_DEV_M:.1f}m or keep-rate < {BRIDGE_MIN_KEEP_RATE:.2f}) -- leaving separate")
-        return None, bridge_test_id, True
+        return None, bridge_test_id
 
     _, result, a_key, b_key = best
     a_center, a_rot, _, _, _, _, _ = a_frame_poses[a_key]
@@ -188,11 +147,11 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
                               for k, (p, r, path, lat, lon, n_kept, n_total) in b_frame_poses.items()}}
     print(f"[bridge] {a_date}+{b_date}: merged via {a_key} -> {b_key} (keep={result['keep_a']},{result['keep_b']})")
     merged = (merged_clouds, merged_edges, a_date, a_reached, merged_positions, merged_frame_poses)
-    return merged, bridge_test_id, True
+    return merged, bridge_test_id
 
 
 def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
-                   deadline=None, refetch_path=None):
+                   deadline=None):
     """Merge segments that a real DA3 test says belong together.
 
     Greedily tries every pair until nothing more merges or the deadline
@@ -214,9 +173,9 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
             for j in range(len(pieces)):
                 if i == j:
                     continue
-                merged, bridge_test_id, _ = _try_bridge(
+                merged, bridge_test_id = _try_bridge(
                     pieces[i], pieces[j], bridge_test_edge, edge_max_dist_m,
-                    deadline, bridge_test_id, refetch_path=refetch_path)
+                    deadline, bridge_test_id)
                 if merged is not None:
                     pieces = [p for k, p in enumerate(pieces) if k not in (i, j)] + [merged]
                     changed = True
@@ -224,26 +183,6 @@ def bridge_pieces(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
             if changed:
                 break
     return pieces
-
-
-def _read_ply_points(ply_path):
-    """Reads a plain (uncompressed, unquantized -- see tab.py's own
-    _dequantize_ply for the CLI storage format that resolves to this
-    before it ever reaches here) binary PLY back into (pts, cols) --
-    there's exactly one place that understands this file format."""
-    with open(ply_path, "rb") as f:
-        data = f.read()
-    header_end = data.index(b"end_header\n") + len(b"end_header\n")
-    header = data[:header_end].decode("ascii")
-    n = int(next(l for l in header.splitlines() if l.startswith("element vertex")).split()[-1])
-    has_color = "red" in header
-    fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
-    if has_color:
-        fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
-    verts = np.frombuffer(data[header_end:], dtype=np.dtype(fields), count=n)
-    pts = np.stack([verts["x"], verts["y"], verts["z"]], axis=1).astype(np.float64)
-    cols = (np.stack([verts["red"], verts["green"], verts["blue"]], axis=1).astype(np.float64) / 255.0) if has_color else None
-    return pts, cols
 
 
 def _links_by_node(path_edges):
@@ -295,7 +234,7 @@ def pieces_to_output(pieces):
 
 
 def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
-                   max_time_budget_s: float = 200.0, refetch_path=None):
+                   max_time_budget_s: float = 200.0):
     """Bridge segments together, then hand back what is left.
 
     No GPS fit and no shared frame across pieces that never bridged: each
@@ -305,8 +244,7 @@ def join_segments(segments, bridge_test_edge, edge_max_dist_m=BRIDGE_MAX_DIST_M,
     if not segments:
         raise ValueError("No segments to join.")
     deadline = time.monotonic() + max_time_budget_s
-    pieces = bridge_pieces(segments, bridge_test_edge, edge_max_dist_m, deadline,
-                            refetch_path=refetch_path)
+    pieces = bridge_pieces(segments, bridge_test_edge, edge_max_dist_m, deadline)
     print(f"join: bridge_pieces: {len(segments)} piece(s) in, {len(pieces)} piece(s) out "
           f"({len(segments) - len(pieces)} merge(s))")
     return pieces_to_output(pieces)

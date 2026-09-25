@@ -1,6 +1,24 @@
 """Reading and writing plain point-cloud .ply files."""
 import numpy as np
 
+
+def read_ply(ply_path):
+    """(pts, cols) from a plain binary .ply; cols is None without colour."""
+    with open(ply_path, "rb") as f:
+        data = f.read()
+    header_end = data.index(b"end_header\n") + len(b"end_header\n")
+    header = data[:header_end].decode("ascii")
+    n = int(next(l for l in header.splitlines() if l.startswith("element vertex")).split()[-1])
+    has_color = "red" in header
+    fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
+    if has_color:
+        fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+    verts = np.frombuffer(data[header_end:], dtype=np.dtype(fields), count=n)
+    pts = np.stack([verts["x"], verts["y"], verts["z"]], axis=1).astype(np.float64)
+    cols = (np.stack([verts["red"], verts["green"], verts["blue"]], axis=1).astype(np.float64) / 255.0) if has_color else None
+    return pts, cols
+
+
 def write_ply(path, pts, cols):
     n = len(pts)
     header = (

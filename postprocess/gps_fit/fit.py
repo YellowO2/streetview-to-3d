@@ -5,33 +5,26 @@ Positions are metres east/north of an ORIGIN that belongs to the AREA, not
 to any one run: every solved transform is stored relative to it, so
 deriving it from whichever pieces happen to be loaded would silently
 invalidate every transform already saved. A reconstruction writes the area's
-centre in its scene.json; `load_origin` reads it back, and nothing
-measures anything before that.
+centre in its scene.json, and use_origin(*scene.origin) sets it before
+anything is measured.
 """
 import numpy as np
 
-import scene
 from services.geo import latlon_to_local_m
 
 _origin = None
 
 
 def use_origin(lat, lon):
-    """Set the frame directly. Prefer load_origin; this is for callers that
-    have the centre in hand rather than on disk."""
+    """Set the frame: the area centre every position is measured from."""
     global _origin
     _origin = (float(lat), float(lon))
     return _origin
 
 
-def load_origin(directory):
-    """Set the frame from the scene.json written beside a directory's clouds."""
-    return use_origin(*scene.Scene.load(directory).origin)
-
-
 def origin():
     if _origin is None:
-        raise RuntimeError("no area origin set -- call load_origin(directory)")
+        raise RuntimeError("no area origin set -- call use_origin(*scene.origin)")
     return _origin
 
 

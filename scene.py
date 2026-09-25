@@ -26,7 +26,6 @@ import json
 import os
 from dataclasses import asdict, dataclass, field
 
-from config import DA3_UNITS_TO_METRES
 
 FILENAME = "scene.json"
 
@@ -80,25 +79,6 @@ class Node:
     @property
     def key(self):
         return self.pano.key
-
-    @property
-    def da3_xz(self):
-        """(x, z) where DA3 put this camera, in DA3's own units.
-
-        Only comparable with the other nodes of the same piece -- the frame
-        is shared by exactly one connected component of the edges.
-        """
-        if self.position is None:
-            return None
-        return (self.position[0], self.position[2])
-
-    @property
-    def camera(self):
-        """(x, y, z) where DA3 put this camera, in METRES, in its piece's
-        frame. The same place as da3_xz, in the units everything else uses."""
-        if self.position is None:
-            return None
-        return tuple(v * DA3_UNITS_TO_METRES for v in self.position)
 
 
 @dataclass
@@ -162,11 +142,6 @@ class Scene:
             if n.position is not None:
                 groups.setdefault(find(i), []).append(i)
         return list(groups.values())
-
-    def neighbours(self, i):
-        """{node index: Edge} -- who DA3 joined this node to."""
-        return {(e.b if e.a == i else e.a): e
-                for e in self.edges if i in (e.a, e.b)}
 
     def save(self, directory):
         os.makedirs(directory, exist_ok=True)

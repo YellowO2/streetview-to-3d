@@ -21,7 +21,7 @@ import numpy as np
 import scene as scene_mod
 from config import DA3_UNITS_TO_METRES
 from postprocess.gps_fit.fit import fit_similarity_2d, real_en, use_origin
-from reconstruct.join_segments import _read_ply_points
+from postprocess.ply_io import read_ply
 
 
 MIN_SCALE_SPAN_M = 8.0   # cameras closer than this: GPS noise swamps the fit
@@ -154,7 +154,7 @@ def heading_agreement(fits, sc):
 
 def _read_cloud(directory, sc, members):
     """One piece's points, from the nodes of it that have any."""
-    read = [_read_ply_points(os.path.join(directory, sc.nodes[m].ply))
+    read = [read_ply(os.path.join(directory, sc.nodes[m].ply))
             for m in members if sc.nodes[m].ply]
     if not read:
         return np.zeros((0, 3)), np.zeros((0, 3))

@@ -13,8 +13,7 @@ merges the points into one extra file by default.
 import argparse
 import os
 
-import numpy as np
-
+from postprocess.render_pieces import render
 from postprocess.road_align.run import align
 
 
@@ -23,19 +22,8 @@ def process(run_dir, min_nodes=1, log=print, merge_ply=None):
     there, for local inspection outside the viewer -- not needed by the
     Space, which reads scene.json's per-node transforms directly."""
     run_dir = os.path.expanduser(run_dir)
-    transforms, clouds, _, _ = align(run_dir, min_nodes=min_nodes, log=log)
-    if not merge_ply:
-        return None
-
-    pts, cols = [], []
-    for i, T in transforms.items():
-        xz, y, col = clouds[i]
-        pts.append(np.column_stack([xz[:, 0], y, xz[:, 1]]) @ T[:3, :3].T + T[:3, 3])
-        cols.append(col)
-    from postprocess.ply_io import write_ply
-    write_ply(merge_ply, np.concatenate(pts), np.concatenate(cols))
-    log(f"\nwrote {sum(len(p) for p in pts):,} points to {merge_ply}")
-    return merge_ply
+    align(run_dir, min_nodes=min_nodes, log=log)
+    return render(run_dir, merge_ply, log=log) if merge_ply else None
 
 
 def main():

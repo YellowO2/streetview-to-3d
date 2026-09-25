@@ -183,6 +183,4 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
     return nodes, edges
 
 
-DEFAULT_CHUNK_SIZE = 30
-
 

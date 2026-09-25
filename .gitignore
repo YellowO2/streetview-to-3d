@@ -6,9 +6,3 @@ models
 splats
 references
 .claude
-ntubuild
-
-# generated + fetched data, not sources
-build
-ntu
-data/*.partial.json

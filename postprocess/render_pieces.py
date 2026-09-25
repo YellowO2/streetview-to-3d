@@ -12,8 +12,7 @@ import os
 import numpy as np
 
 import scene as scene_mod
-from postprocess.ply_io import write_ply
-from reconstruct.join_segments import _read_ply_points
+from postprocess.ply_io import read_ply, write_ply
 
 
 def render(directory, out, log=print):
@@ -28,7 +27,7 @@ def render(directory, out, log=print):
 
     pts, cols = [], []
     for n in ready:
-        p, c = _read_ply_points(os.path.join(directory, n.ply))
+        p, c = read_ply(os.path.join(directory, n.ply))
         T = np.array(n.transform)
         pts.append(p @ T[:3, :3].T + T[:3, 3])
         cols.append(c)

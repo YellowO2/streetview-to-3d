@@ -56,7 +56,7 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
 # runs to whatever budget its caller hands it.
 #
 # First calibrated at 6.0s/dot from ~3.2s/pairwise-test x ~2 tests/dot
-# (see tests/debug_solo_score_experiment.py). Too low once dots carry many
+# (the solo-score experiment, README Dev notes). Too low once dots carry many
 # candidates: a 7-dot run (Apple, 6-10 candidates/dot) spent 9.4s just
 # rating dot 0's candidates, ~2s per failed pairwise test, and ran out of
 # its 42s budget before reaching 4 of the 7 dots or any other date.
@@ -81,67 +81,6 @@ MAX_FAILED_DOTS_IN_A_ROW = 4
 # Panos rated per date before any walking, to order dates by how well DA3
 # handles their imagery rather than by coverage alone (see _sample_dates).
 DATE_SAMPLES_MAX = 5
-
-
-def _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_indices):
-    """After set_cover has already picked its coverage-optimal pieces,
-    force back in any piece covering a `protected_indices` dot that got
-    dropped as geographically redundant -- see
-    run_pathfind_reconstruction's own docstring for why. Pure
-    bookkeeping, no GPU/network -- factored out from
-    run_pathfind_reconstruction so it's directly unit-testable without
-    needing a real walk to exercise it (see tests/test_pathfind_scenarios.py).
-
-    Matched by DOT INDEX (piece[6], the raw dot-index set every piece
-    tuple carries -- see map_date), not by node key or real distance:
-    every date graph walks the exact same points/adjacency object, so a
-    dot index is a precise, date-independent structural identity for "this
-    real location" -- confirmed empirically (a real chunk-boundary bridge
-    failure) that a node KEY is date-specific instead (the same real spot
-    gets a totally different pano id on every historical date), so
-    exact-key matching can never rescue a location whose winning date
-    differs from whichever date the caller's own boundary-node snapshot
-    came from. protected_indices: set of dot indices (see
-    run_pathfind_reconstruction's own resolution of protected_positions
-    -> protected_indices) that must end up in the result if reconstructed
-    at all, in ANY date.
-
-    chosen/all_pieces: (clouds, path_edges, node_positions, covered,
-    frame_poses, dots, date) tuples -- id()-based membership check
-    throughout, NOT ==, since these tuples hold numpy arrays (pts/cols)
-    that make `==` ambiguous/raise. Returns (chosen, leftover_uncovered),
-    both possibly updated in place... actually returned fresh, not
-    mutated -- chosen is the same list object appended to,
-    leftover_uncovered is a new set."""
-    if not protected_indices:
-        return chosen, leftover_uncovered
-
-    chosen_dots = set()
-    for p in chosen:
-        chosen_dots |= p[5]  # p[5] == dots
-    missing = protected_indices - chosen_dots
-    if not missing:
-        return chosen, leftover_uncovered
-
-    rescued = 0
-    chosen_ids = {id(c) for c in chosen}
-    for p in all_pieces:
-        if not missing:
-            break
-        if id(p) in chosen_ids:
-            continue
-        overlap = p[5] & missing
-        if overlap:
-            chosen.append(p)
-            chosen_ids.add(id(p))
-            leftover_uncovered = leftover_uncovered - p[3]  # p[3] == covered
-            missing -= overlap
-            rescued += 1
-    if rescued:
-        print(f"pathfind: rescued {rescued} piece(s) covering protected dot(s) set_cover had dropped as redundant")
-    if missing:
-        print(f"pathfind: {len(missing)} protected dot(s) never reconstructed in any date, nothing to rescue: dot indices {sorted(missing)}")
-    return chosen, leftover_uncovered
 
 
 def _sample_dots(dots, k):
@@ -227,7 +166,6 @@ def run_pathfind_reconstruction(
     rate_pano,
     point_cover_tolerance_m: float = 15.0,
     max_time_budget_s: float = 220.0,
-    protected_positions: set = None,
 ) -> list[tuple]:
     """Two-phase pathfind.
 
@@ -304,8 +242,8 @@ def run_pathfind_reconstruction(
       connectivity.
     - rate_pano(path) -> (score, pose, pts, cols). A candidate's
       solo DA3 self-consistency score (higher = more internally coherent,
-      correlates with real pairwise success -- see
-      tests/debug_solo_score_experiment.py for the real-data validation:
+      correlates with real pairwise success -- the solo-score
+      experiment (README Dev notes) is the real-data validation:
       33% success at score 6 up to 100% at score 13+) PLUS that pano's own
       real solo point cloud (pose/pts/cols, same shape/frame convention as
       test_edge's pose_a/pose_b/pts). When given, a dot's own candidates
@@ -316,39 +254,10 @@ def run_pathfind_reconstruction(
       what makes every node own its own points: a dot always enters the
       result through its own solo cloud or its own slice of a pairwise
       one, never through a joint cloud covering two panoramas at once.
-      Was optional, preserving the given candidate
-      order -- but then a dot that never pairs with anything is dropped
-      instead of falling back to a solo piece (old behavior).
 
     Segments are NOT stitched together -- each is DA3's own arbitrary
-    frame; joining/bridging is entirely the caller's job (see
-    reconstruct/join_segments.py's bridge_pieces,
-    which reconciles pieces using real DA3 tests, and join_segments,
-    which GPS-fits whatever's left over -- both run in their own later
-    GPU call, not this one, since bridging needs no data this function
-    doesn't already expose).
-
-    protected_positions: optional set of (lat, lon) real-world coordinates
-    that MUST end up in the returned segments if reconstructed at all (in
-    ANY date), even if set_cover would otherwise drop their piece as
-    geographically redundant. For a chunked large-area reconstruction,
-    these are a chunk's own real boundary node COORDINATES (real edges to
-    a neighboring chunk, known from the chunking step itself) -- set_cover
-    only optimizes for covering THIS chunk's own corridor, so a boundary
-    location already covered by a different date's piece looks
-    "redundant" and gets discarded, even though it's exactly what a later
-    cross-chunk bridge attempt needs. Resolved to the matching dot INDEX
-    in `points` (exact match -- every date graph walks the same
-    points/adjacency object, so a dot index is a precise, date-
-    independent structural identity for "this real location") before
-    rescuing, NOT matched by node key or approximate distance -- a node
-    key is date-specific (the same real spot gets a different pano id on
-    every historical date), so exact-key matching can't rescue a location
-    whose winning date differs from whichever date the coordinate itself
-    came from (see _rescue_protected_pieces). A protected position with
-    zero real candidates anywhere just stays absent -- this only rescues
-    a location that WAS reconstructed somewhere but lost the coverage
-    competition.
+    frame; bridging them is the caller's job (join_segments, later in the
+    same GPU call).
 
     Returns [(clouds, path_edges, date, reached_all, node_positions,
     frame_poses), ...], phase 2's (set_cover's) chosen pieces.
@@ -454,7 +363,7 @@ def run_pathfind_reconstruction(
                         covered.add(pi)
             return covered
 
-        def test_and_confirm(from_dot, from_key, from_path, from_lat, from_lon, to_dot, to_key, to_path, to_lat, to_lon):
+        def test_and_confirm(from_dot, from_key, from_path, to_dot, to_key, to_path, to_lat, to_lon):
             """One real DA3 test. from_dot and to_dot ALWAYS already have
             their own piece by this point (ensure_piece runs on every dot
             before any edge involving it is attempted -- see visit). On
@@ -517,7 +426,7 @@ def run_pathfind_reconstruction(
             c = confirmed[from_dot]
             tests_before = tests_used[0]
             for key, path, lat, lon in rate_sorted(to_candidates):
-                if test_and_confirm(from_dot, c["key"], c["path"], c["lat"], c["lon"], to_dot, key, path, lat, lon):
+                if test_and_confirm(from_dot, c["key"], c["path"], to_dot, key, path, lat, lon):
                     fails_in_a_row[0] = 0
                     return True
             if tests_used[0] > tests_before:  # really tried, not just out of time
@@ -604,11 +513,8 @@ def run_pathfind_reconstruction(
                                                    confirmed[d]["path"], confirmed[d]["lat"], confirmed[d]["lon"],
                                                    confirmed[d]["n_views_kept"], confirmed[d]["n_views_total"]) for d in dots}
             # dots (the raw dot-index set) tags along as the LAST field --
-            # internal-only, structural identity shared bit-for-bit across
-            # every date graph (same points/adjacency object), used by
-            # _rescue_protected_pieces for exact dot matching instead of
-            # approximate real-distance matching against a node's own
-            # (differently-sourced) reported lat/lon.
+            # a date-independent identity for each place, since every date
+            # graph walks the same points/adjacency.
             pieces.append((pd["clouds"], pd["path_edges"], node_positions, covered_points(dots), frame_poses, set(dots)))
         return pieces, tests_used[0]
 
@@ -671,16 +577,7 @@ def run_pathfind_reconstruction(
         print(f"pathfind: date {date} mapped into {len(pieces)} piece(s) "
               f"{sorted(len(p[5]) for p in pieces)[::-1]} dot(s), {total_tests} attempts so far")
 
-    protected_indices = None
-    if protected_positions:
-        pos_to_idx = {pt: i for i, pt in enumerate(points)}
-        protected_indices = {pos_to_idx[pos] for pos in protected_positions if pos in pos_to_idx}
-        not_in_graph = set(protected_positions) - set(pos_to_idx)
-        if not_in_graph:
-            print(f"pathfind: {len(not_in_graph)} protected position(s) aren't a dot in this corridor at all: {sorted(not_in_graph)}")
-
     chosen, leftover_uncovered = set_cover(all_pieces, len(points))
-    chosen, leftover_uncovered = _rescue_protected_pieces(chosen, all_pieces, leftover_uncovered, protected_indices)
 
     reached_all = not leftover_uncovered
     segments = [

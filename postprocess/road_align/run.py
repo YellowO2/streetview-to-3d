@@ -1,7 +1,6 @@
-"""Align a set of pieces to the road network and write them out as one cloud.
+"""Align a scene's pieces to the road network, saving a transform per node.
 
-    python -m postprocess.road_align.run --dir /tmp/gap3_joined \
-        --pieces 5,3,9,6 --out ~/Downloads/aligned.ply
+    python -m postprocess.road_align.run --dir splats/<run id> --pieces 5,3,9 --no-save
 
 The stages, and why they are in this order:
 
@@ -21,7 +20,6 @@ Road polylines and camera positions are both in the shared GLOBAL_ORIGIN
 metre frame (gps_fit.fit.real_en), so they compare directly.
 """
 import argparse
-import os
 
 import numpy as np
 
@@ -33,10 +31,8 @@ from postprocess.road_align.align_slope_of_pieces import seat
 from postprocess.road_align import cross_road, ground_elevation
 import scene as scene_mod
 
-MARGIN_M = 25.0
 
-
-def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1,
+def align(directory, piece_ids=None, log=print, min_nodes=1,
           elevation=True, save=True):
     """Solve, and return ({piece: 4x4}, clouds, fits, per-piece diagnostics).
 
@@ -67,9 +63,6 @@ def align(directory, piece_ids=None, cell=0.25, log=print, min_nodes=1,
     # GPS positions instead measures nothing: the road line is splined
     # through those very points, so they start on it by construction.
     cams = {i: fits[i]["placed"] for i in ids}
-    allc = np.vstack([cams[i] for i in ids])
-    bounds = (allc[:, 0].min() - MARGIN_M, allc[:, 0].max() + MARGIN_M,
-              allc[:, 1].min() - MARGIN_M, allc[:, 1].max() + MARGIN_M)
 
     curves, frames, on = build_frames(cams, sc)
     log(f"{len(curves)} road(s): "
@@ -161,8 +154,6 @@ def main():
                     help="directory holding a scene.json and its clouds")
     ap.add_argument("--pieces", default=None,
                     help="comma-separated piece ids (default: all in --dir)")
-    ap.add_argument("--out", default=None, help="write the aligned cloud here")
-    ap.add_argument("--cell", type=float, default=0.25)
     ap.add_argument("--min-nodes", type=int, default=1,
                     help="drop pieces with fewer GPS nodes than this. Defaults "
                          "to 1, keeping every piece: a single-node piece is "
@@ -178,21 +169,8 @@ def main():
     args = ap.parse_args()
 
     ids = ([int(x) for x in args.pieces.split(",")] if args.pieces else None)
-    transforms, clouds, fits, diagnostics = align(args.dir, ids, args.cell,
-                                                  min_nodes=args.min_nodes,
-                                                  elevation=not args.no_elevation,
-                                                  save=not args.no_save)
-
-    if args.out:
-        from postprocess.ply_io import write_ply
-        pts, cols = [], []
-        for i, T in transforms.items():
-            xz, y, co = clouds[i]
-            pts.append(np.column_stack([xz[:, 0], y, xz[:, 1]]) @ T[:3, :3].T + T[:3, 3])
-            cols.append(co)
-        out = os.path.expanduser(args.out)
-        write_ply(out, np.concatenate(pts), np.concatenate(cols))
-        print(f"\nwrote {sum(len(p) for p in pts)} points to {out}")
+    align(args.dir, ids, min_nodes=args.min_nodes,
+          elevation=not args.no_elevation, save=not args.no_save)
 
 
 if __name__ == "__main__":

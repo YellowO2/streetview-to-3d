@@ -18,7 +18,6 @@ apple_reproject._device = _torch.device("cpu")
 
 from paths import IMAGES_DIR
 from services.geo import haversine_m
-from services.streetview_fetch import format_date
 
 # Apple zoom is inverted vs Google's (0=full res/slow, 7=lowest). 3 is a
 # fast, decent-quality default -- kept for whoever needs real detail.

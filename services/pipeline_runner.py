@@ -1,33 +1,14 @@
-"""GPU-wrapped pipeline runners: DA3-only point cloud generation, plus
-reconstruct's corridor pathfinding/join tasks. Also owns the
-ZeroGPU/@spaces.GPU decorator setup, since that setup exists purely to wrap
-these calls.
+"""The GPU side of the app: the ZeroGPU setup, the one DA3 model, and the
+one @spaces.GPU call (run_pathfind_and_join_gpu) that walks and joins.
 
-get_da3() is the single DA3Model singleton for this whole app --
-reconstruct's handlers call through here, rather than each loading a
-separate copy.
-
-There is exactly ONE @spaces.GPU-decorated function in this whole module
-(run_pathfind_and_join_gpu) -- matches DA3's own official Space (app.py wraps a single
-ModelInference.run_inference, everything else is plain Python calling into
-it), instead of one decorated function per task. Every public run_*_gpu
-helper below is plain, undecorated Python called from inside it
-with its own task name -- callers (app.py, reconstruct/build.py,
-tests/) don't need to change at all, since these functions keep their
-same names/signatures. The actual per-task work lives in the _run_*_impl
-functions, plain Python, called only from inside that call where a
-real GPU is guaranteed attached.
+One decorated function, like DA3's own official Space: everything inside
+it is plain Python, and the window it asks for is sized from the dot count
+(estimate_gpu_seconds). get_da3() is the single DA3Model for the whole app.
 """
 import os
 
-# Self-bridge/join's own guaranteed minimum window after the walk,
-# regardless of how much of its own budget the walk itself used -- see
-# _run_pathfind_reconstruction_impl's own docstring.
-# SAVE_BUFFER_S: headroom left after bridging for saving/uploading the
-# result before the hard ZeroGPU wall-clock window closes. Both are
-# carved OUT of the one hard window (see _walk_budget_s), not added on
-# top of it.
-SELF_BRIDGE_MIN_S = 20.0
+# Headroom left after the join for saving the result before the hard
+# ZeroGPU window closes. Carved OUT of the window (see _walk_budget_s).
 SAVE_BUFFER_S = 10.0
 # Loading DA3 inside the GPU window: 40.9s on the first run after a restart
 # (it downloads the 6.76 GB weights), less once they are cached. Allowed
@@ -40,7 +21,7 @@ MODEL_LOAD_S = 45.0
 # (model load, walk, join) to calibrate these against. join_segments
 # stops at its own deadline, so an allowance that is too small leaves
 # pieces unbridged rather than failing the run.
-JOIN_BASE_S = 60.0
+JOIN_BASE_S = 80.0
 JOIN_PER_DOT_S = 3.0
 
 
@@ -49,7 +30,7 @@ def _join_allowance_s(n_dots: int) -> float:
 
 
 # One solo DA3 rating: 1.36s average in the solo-score experiment
-# (tools/debug_solo_score_experiment.py).
+# (README, Dev notes).
 SECONDS_PER_RATING = 1.4
 
 
@@ -65,11 +46,11 @@ def _date_sampling_s(n_dots: int) -> float:
 def estimate_gpu_seconds(n_dots: int) -> float:
     """The GPU window a run over n_dots needs: date sampling, the walk's
     own per-dot estimate (walk_graph.SECONDS_PER_DOT_ESTIMATE), then the
-    join, plus model load and the bridge/save headroom. Shown to the user
+    join, plus model load and the save headroom. Shown to the user
     after Prepare, and the window asked for unless they override it."""
     from reconstruct.walk_graph import SECONDS_PER_DOT_ESTIMATE
     return (MODEL_LOAD_S + _date_sampling_s(n_dots) + n_dots * SECONDS_PER_DOT_ESTIMATE
-            + _join_allowance_s(n_dots) + SELF_BRIDGE_MIN_S + SAVE_BUFFER_S)
+            + _join_allowance_s(n_dots) + SAVE_BUFFER_S)
 
 
 def _gpu_seconds(points, gpu_seconds=None) -> float:
@@ -80,11 +61,11 @@ def _gpu_seconds(points, gpu_seconds=None) -> float:
 
 def _walk_budget_s(total_s: float, n_dots: int) -> float:
     """The walk's share of a total_s window: everything except model load,
-    the join, the self-bridge minimum and the save headroom. The join's
+    the join and the save headroom. The join's
     share is capped at a third so a small override still leaves the walk
     room."""
     join_s = min(_join_allowance_s(n_dots), total_s / 3)
-    return max(0.0, total_s - MODEL_LOAD_S - join_s - SELF_BRIDGE_MIN_S - SAVE_BUFFER_S)
+    return max(0.0, total_s - MODEL_LOAD_S - join_s - SAVE_BUFFER_S)
 
 
 try:
@@ -160,17 +141,8 @@ def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_l
 def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
                                  edge_max_dist_m=None, step_degrees=None,
                                  conf_lower_percentile=None, gpu_seconds=None):
-    """Convenience combined task: corridor search (run_pathfind_reconstruction)
-    AND join/bridging (join_segments) in ONE GPU session, using the same
-    already-downloaded local image paths for both phases -- Join re-run
-    as a separate task needs to re-fetch each candidate pano fresh
-    instead (see _join_segments_impl's refetch_path), since a separate
-    call has no guarantee of landing on the same worker/disk. Use when
-    you just want the final result end-to-end and don't need to iterate
-    on join/bridging separately -- pathfind_reconstruction/join_segments
-    (split) are still the right choice for re-testing Join alone against
-    an already-saved segments bundle, without redoing the whole (much
-    more expensive) corridor search.
+    """The walk (run_pathfind_reconstruction), then the join
+    (join_segments), in one GPU session on the same downloaded panos.
 
     Splits ONE wall-clock window (_gpu_seconds: the override, else sized
     from the dot count) between the two phases sequentially: corridor
@@ -237,10 +209,9 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
                 return segments, None
 
             # Whatever's left of the hard GPU-session deadline, not the
-            # walk's own (smaller) budget -- see SELF_BRIDGE_MIN_S's own
-            # docstring. Clamped at 0 so this can never go negative (and
-            # so never asks join_segments to run past hard_deadline) even
-            # if the walk somehow overran its own budget.
+            # walk's own (smaller) budget. Clamped at 0 so join_segments is
+            # never asked to run past hard_deadline, even if the walk
+            # overran its own budget.
             remaining_s = max(0.0, hard_deadline - time.monotonic())
             t_join = time.monotonic()
             pieces = join_segments(segments, bridge_test_edge, edge_max_dist_m=edge_max_dist_m, max_time_budget_s=remaining_s)

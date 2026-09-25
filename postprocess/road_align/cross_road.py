@@ -143,30 +143,6 @@ def gap(a, b, frame):
     return float(level), float(slope), mid
 
 
-def road_centre(pts, frame):
-    """Where the carriageway's middle sits, relative to the road line.
-
-    Absolute, unlike a pairwise match: the piece measures this on its own,
-    so a shift derived from it moves the piece onto the road rather than
-    onto its neighbour. What pairwise matching can never fix is an error
-    every piece shares, because only their differences are observed.
-
-    The carriageway is the lowest flat run of the section -- verges,
-    footways and frontage all stand above it.
-    """
-    along, left = frame.project(pts[:, [0, 2]])
-    span = max(np.abs(left).max(), 1.0)
-    section = _section(left, pts[:, 1], -span, span)
-    if not np.isfinite(section).any():
-        return None
-    bins = np.arange(-span, span, BIN_M)[:len(section)] + BIN_M / 2
-    # Y is down, so the road is the HIGHEST value in this section
-    road = section >= np.nanmax(section) - FLAT_M
-    if road.sum() < 4:
-        return None
-    return float(np.median(bins[road]))
-
-
 def solve(pairs, centres, ids):
     """({piece: sideways shift}, {piece: turn}) from pairwise gaps.
 
@@ -207,24 +183,6 @@ def solve(pairs, centres, ids):
     cap = np.radians(MAX_TURN_DEG)
     return ({i: float(x[at[i]]) for i in ids},
             {i: float(np.clip(x[n + at[i]], -cap, cap)) for i in ids})
-
-
-def centre_all(road_pts, frames, on, log=print):
-    """{piece: 4x4} putting each piece's carriageway on the road line.
-
-    Absolute, so unlike pairwise matching it can move the whole group.
-    """
-    out = {}
-    for i, pts in road_pts.items():
-        T = np.eye(4)
-        r = next(iter(on.get(i, ())), None)
-        if len(pts) and r is not None:
-            c = road_centre(pts, frames[r])
-            if c is not None and abs(c) <= MAX_SHIFT_M:
-                T[[0, 2], 3] = frames[r].normal(pts[:, [0, 2]].mean(0))[0] * -c
-                log(f"  piece_{i:<4} carriageway centre {c:+.2f} m off the line")
-        out[i] = T
-    return out
 
 
 def align(road_pts, frames, road_of, log=print):

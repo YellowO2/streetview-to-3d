@@ -1,34 +1,18 @@
-"""Orchestrator for the pathfind flow -- wires the pipeline stages
-together for the UI (tab.py calls into this):
+"""Orchestrator for the pathfind flow, called from ui/tab.py:
 
-1. build_graph.build_corridor_graphs: gather candidate panos along the
-   real click-graph and split into up to DATE_TOP_N isolated, capped
-   per-date graphs (no GPU) -- see build_street_graph/.
-2. Download every node referenced by any of those graphs (network, cached).
-3. run_pathfind_and_join_gpu: ONE GPU call -- the corridor-search
-   algorithm (reconstruct/walk_graph.py) runs entirely
-   inside it, producing possibly-several disconnected segments.
-4. join_segments_gpu: a SEPARATE GPU call -- bridges segments together
-   with real DA3 tests where possible, then GPS-fits + merges whatever's
-   still separate into one final point cloud (see
-   reconstruct/join_segments.py). Split from step 3
-   deliberately: bridging only needs each segment's own already-
-   confirmed nodes, nothing from the corridor search itself, so keeping
-   it separate lets Join (and bridging behavior) be re-run/re-tuned
-   against an already-computed step 3 result without re-paying for the
-   whole corridor search each time.
-
-Each of steps 3 and 4 is its own single GPU call, not split further: an
-earlier version fell back to a second call within one step (download
-everything, retry) if the first didn't reach the end. That's exactly the
-pattern that causes 'Expired ZeroGPU proxy token' -- each @spaces.GPU
-call requests a fresh session credential, and a second request can
-arrive after the first one's already aged out. The top-N date filter
-already keeps each step's own work bounded, so there's no real need for
-a fallback call within either one.
+1. prepare_pathfind (no GPU): build_corridor_graphs gathers candidate
+   panos along the clicked graph and splits them into isolated per-date
+   graphs (see build_street_graph/), then every candidate is downloaded.
+2. run_prepared_pathfind: ONE GPU call (pipeline_runner.
+   run_pathfind_and_join_gpu) that walks the date graphs
+   (reconstruct/walk_graph.py) and then bridges the pieces it left
+   (reconstruct/join_segments.py). One call, not two: each @spaces.GPU call
+   requests a fresh session credential, and a second one can arrive after
+   the first has already expired.
+3. The result is written into the run's scene (open_scene,
+   _save_joined_pieces); placement happens afterwards, in postprocess/.
 """
 import asyncio
-import json
 import os
 import time
 
@@ -36,21 +20,7 @@ from services.da3_ops import VIEW_STEP_DEGREES
 from services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from services.pipeline_runner import save_pointcloud
 from services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
-from build_street_graph.build_graph import TOP_PANOS_PER_DOT, _cap_bucket_for_date, build_corridor_graphs
-from ui.map_selection.candidates import apple_tile_panos
-
-# Where prepare_pathfind_from_cover_chunk downloads the whole-NTU metadata +
-# date cover from (see tests/fetch_ntu_metadata.py,
-# tests/inspect_global_date_cover.py, build_street_graph/
-# global_dates.py -- these were produced ONCE, offline, not something a
-# real chunk run recomputes). Same dataset repo the CLI checkpoint flow
-# already uses (see tab.py's CLI_JOIN_DATASET_REPO).
-GLOBAL_DATASET_REPO = "potato-bug/ntu-reconstruction"
-_global_metadata = None
-_global_cover = None
-
-# Kept as a name for tools/ -- the value lives in services.da3_ops.
-DEFAULT_STEP_DEGREES = VIEW_STEP_DEGREES
+from build_street_graph.build_graph import build_corridor_graphs
 
 # How many panos download at once. Downloads used to run one at a time
 # (each its own fresh event loop) -- for a large batch (100+ candidates on
@@ -186,39 +156,15 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
     }
 
 
-
-
-
-
-def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_STEP_DEGREES,
+def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_DEGREES,
                           conf_lower_percentile: float | None = None,
                           gpu_seconds: float | None = None):
-    """Convenience one-shot: corridor search + join/bridging in ONE GPU
-    session (see pipeline_runner.run_pathfind_and_join_gpu) -- avoids
-    paying for two separate DA3 model loads when you just want the final
-    result end-to-end and don't care about re-testing join/bridging
-    separately. UI callers doing the 3-step Prepare/Run/Join flow (see
-    tab.py) should call run_prepared_pathfind_segments,
-    save_pathfind_segments, and save_joined_pathfind instead -- that
-    split lets join/bridging be re-tested without re-running the much
-    more expensive corridor search each time; this one-shot call always
-    redoes both together.
-
-    Returns (results, segments, bundle_path): results is [(label,
-    ply_path), ...] -- one per segment (see
-    reconstruct/walk_graph.py for what a "segment" is),
-    plus one "joined" entry per still-separate piece (see
-    join_segments.join_segments -- multiple pieces means bridging left
-    some genuinely unconnected, not an error) when there's more than one
-    segment to actually combine. segments/bundle_path are the same as
-    save_segments_bundle produces, still saved here so join/bridging can
-    be re-tuned later (via the separate Join button) without redoing
-    this whole call.
+    """Walk and join in one GPU call, then write the pieces into the scene
+    at output_dir. Returns one "piece i: n node(s)" line per piece.
 
     conf_lower_percentile: how much of each view's own weakest pixels DA3
-    drops before backprojection -- see services.da3_ops.CONF_LOWER_PERCENTILE
-    for what it means. None keeps that module's own default; exposed here
-    so a caller can change it without redeploying anything.
+    drops before backprojection -- see services.da3_ops.CONF_LOWER_PERCENTILE.
+    None keeps that module's own default.
 
     gpu_seconds: the ZeroGPU window to ask for. None sizes it from the dot
     count -- see services.pipeline_runner.estimate_gpu_seconds.
@@ -243,12 +189,6 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = DEFAULT_ST
     results.extend(_save_joined_pieces(pieces, output_dir, prep["catalog"]))
     print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
     return results
-
-
-
-
-
-
 
 
 def open_scene(prep, output_dir):
@@ -330,9 +270,5 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
 
     sc.save(output_dir)
     return results
-
-
-
-
 
 

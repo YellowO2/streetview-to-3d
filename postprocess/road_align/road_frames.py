@@ -181,16 +181,3 @@ class RouteFrame:
         _, k = self._tree.query(np.atleast_2d(np.asarray(pts, float)))
         t = self.tangent[k]
         return np.column_stack([-t[:, 1], t[:, 0]])
-
-    def orient(self, curve):
-        """Turn a curve to run the way the vehicle drove.
-
-        A piece whose centreline was traced backwards has its left and
-        right kerbs swapped, and is then fitted to the wrong one.
-        """
-        curve = np.asarray(curve, float)
-        d = curve[-1] - curve[0]
-        if np.linalg.norm(d) < 1e-9:
-            return curve
-        _, k = self._tree.query(curve.mean(0))
-        return curve[::-1] if float(d @ self.tangent[k]) < 0 else curve
