@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "streetview-to-3d"
+version = "0.1.0"
+description = "Reconstruct a street from Street View / Look Around panoramas into a placed 3D point cloud"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "aiohttp",
+    "pillow",
+    "pillow-heif",
+    "huggingface_hub",
+    "gradio",
+    "spaces",
+    # depth_anything_3 imports these without declaring them
+    "addict",
+    "tqdm",
+    "streetlevel @ git+https://github.com/YellowO2/streetlevel.git",
+    "panoramic-da3 @ git+https://github.com/YellowO2/panoramic-da3.git",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["streetview_to_3d*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"streetview_to_3d.visualise" = ["viewer.html", "viewer_src/*"]

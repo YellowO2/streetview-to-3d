@@ -1,8 +1,9 @@
 .venv
+data
+*.egg-info
+build
 __pycache__
-images
 .DS_Store
 models
-splats
 references
 .claude

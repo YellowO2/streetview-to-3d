@@ -14,16 +14,13 @@ HF Spaces:    set as app.py, add `spaces` to requirements, enable ZeroGPU.
 # importing the `spaces` package." Importing pipeline_runner here, before
 # the services import below, guarantees the required order regardless of
 # what order the names in that later `from services import ...` get resolved in.
-from services import pipeline_runner  # noqa: F401
+from streetview_to_3d.services import pipeline_runner  # noqa: F401
 
 import gradio as gr
-import pillow_heif
 
-pillow_heif.register_heif_opener()
-
-from paths import IMAGES_DIR, SPLATS_DIR
-from ui.tab import build_main_tab
-from ui.map_selection.tab import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
+from streetview_to_3d.paths import DATA_DIR
+from streetview_to_3d.ui.tab import build_main_tab
+from streetview_to_3d.ui.map_selection.tab import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
 
 with gr.Blocks(title="Street Builder") as demo:
     build_main_tab()
@@ -31,7 +28,7 @@ with gr.Blocks(title="Street Builder") as demo:
 
 if __name__ == "__main__":
     demo.launch(
-        allowed_paths=[IMAGES_DIR, SPLATS_DIR],
+        allowed_paths=[DATA_DIR],
         server_name="0.0.0.0",
         server_port=7860,
         theme=gr.themes.Default(),

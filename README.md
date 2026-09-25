@@ -48,7 +48,7 @@ For a stage-by-stage description of how the pipeline works, see
 
 ### Explore and edit a reconstruction
 
-Open `visualise/viewer.html` directly in Chrome. It is a packaged viewer, with
+Open `streetview_to_3d/visualise/viewer.html` directly in Chrome. It is a packaged viewer, with
 no server needed; Three.js still loads from a pinned CDN version.
 Use **Open scene** for a folder containing `scene.json` and its PLYs, or
 **Open PLY / files** for a single cloud or a multi-file selection. Folder drops
@@ -76,7 +76,7 @@ Saved node transforms place the clouds in world coordinates. A single raw
 component can be previewed without transforms; Edit's **Place from GPS** gives
 it a starting placement with fixed scale (default 1.46 metres per DA3 unit).
 This does not align road height. Separate/partially placed components require
-`python -m postprocess.pipeline --dir <scene-folder>` first.
+`python -m streetview_to_3d.postprocess.pipeline --dir <scene-folder>` first.
 
 **Reset** returns to its opening placement, or the prepared GPS baseline.
 **Download scene.json** requests a new JSON download, without changing PLYs or
@@ -86,7 +86,7 @@ manual placements; `postprocess.render_pieces` uses saved placements directly.
 
 ### Viewer development
 
-Edit `visualise/viewer_src/`, not the generated `visualise/viewer.html`:
+Edit `streetview_to_3d/visualise/viewer_src/`, not the generated `streetview_to_3d/visualise/viewer.html`:
 
 - `template.html`, `styles.css`, `ui.js`: one shared viewer shell, toolbar,
   footer and view-settings panel for all hosts.
@@ -102,8 +102,8 @@ Edit `visualise/viewer_src/`, not the generated `visualise/viewer.html`:
 Build the portable HTML with Python's standard library:
 
 ```bash
-python -m visualise.build_viewer
-python -m visualise.build_viewer --check
+python -m streetview_to_3d.visualise.build_viewer
+python -m streetview_to_3d.visualise.build_viewer --check
 ```
 
 Gradio builds from these sources automatically in viewing-only mode (orbit and flight).
@@ -111,10 +111,10 @@ The local `viewer.html` retains the editing tools. Copy that HTML wherever you n
 Node tooling, not runtime/build requirements:
 
 ```bash
-npm ci --prefix visualise
-npm test --prefix visualise
-npm run format --prefix visualise
-python -m unittest discover -s visualise/tests -p 'test_*.py'
+npm ci --prefix streetview_to_3d/visualise
+npm test --prefix streetview_to_3d/visualise
+npm run format --prefix streetview_to_3d/visualise
+python -m unittest discover -s streetview_to_3d/visualise/tests -p 'test_*.py'
 ```
 
 The DOM integration tests use real Three.js math/controls with GPU drawing
@@ -126,7 +126,7 @@ Everything in this repo is **Y-DOWN**: `+Y` points at the ground, not the sky.
 
 That is DA3's own computer-vision convention and it is never changed on the
 way through -- `load_pieces` scales height but does not flip it, and every
-transform downstream inherits it. `visualise/viewer.html` applies
+transform downstream inherits it. `streetview_to_3d/visualise/viewer.html` applies
 `geometry.rotateX(PI)` at display time, which is the only place the flip
 happens.
 
@@ -165,7 +165,7 @@ without solving. For each stage in detail, see [ARCHITECTURE.md](ARCHITECTURE.md
 
 ## Placement
 
-`python -m postprocess.pipeline --dir <run dir>` places a scene; add
+`python -m streetview_to_3d.postprocess.pipeline --dir <run dir>` places a scene; add
 `--merge out.ply` to also write it as one cloud. The Space runs the same
 call right after reconstructing.
 
