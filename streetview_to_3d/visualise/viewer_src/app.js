@@ -77,6 +77,9 @@ try {
 const { scene, camera, renderer, canvas, highlight } = view;
 const navigation = createNavigation(scene, camera, canvas, () => setMode('inspect'), ui.notify);
 const editor = createEditor(scene, camera, canvas, navigation, store, state, refresh, ui.notify);
+// A splat is seen from inside, from where its panorama was taken (the
+// origin), and has no bounds to size the view from; this stands in.
+const SPLAT_RADIUS = 20;
 let busy = false,
   version = 0,
   radius = 5,
@@ -119,7 +122,10 @@ function setMode(mode) {
   }
 }
 function configure() {
-  radius = Math.max(store.box().getBoundingSphere(new THREE.Sphere()).radius, 0.001);
+  const box = store.box();
+  radius = box.isEmpty()
+    ? SPLAT_RADIUS
+    : Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 0.001);
   navigation.configure(radius);
   camera.near = Math.max(radius * 0.0001, 0.00001);
   camera.far = radius * 1000;
@@ -131,11 +137,16 @@ function setPointSize() {
     if (o.isPoints) o.material.size = radius * 0.002 * pointMultiplier;
   });
 }
+function frameAll() {
+  const box = store.box();
+  if (box.isEmpty()) navigation.place(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1));
+  else navigation.frame(box.getBoundingSphere(new THREE.Sphere()));
+}
 function recenter() {
   if (!store.group) return;
   if (state.mode === 'fly') setMode('inspect');
   editor.cancel();
-  navigation.frame(store.box().getBoundingSphere(new THREE.Sphere()));
+  frameAll();
   refresh();
 }
 function focus() {
@@ -153,7 +164,7 @@ function select(members, kind = 'piece') {
 async function openEntries(entries) {
   if (entries.length) attempt(() => load(resolveEntries(entries)));
 }
-async function load({ source, resolve, name }) {
+async function load({ source, resolve, name, splat = false }) {
   if (
     store.dirty &&
     !confirm('Open another scene and discard changes that have not been downloaded?')
@@ -174,6 +185,7 @@ async function load({ source, resolve, name }) {
         if (token === version) ui.progress(message);
       },
       () => token !== version,
+      { splat },
     );
     if (!asset) return;
     if (token !== version) {
@@ -185,12 +197,12 @@ async function load({ source, resolve, name }) {
     scene.add(store.group);
     state.reset();
     state.regroup(store.data ? scenePieces(store.data) : []);
-    points = 0;
+    points = store.splat?.numSplats || 0;
     store.group.traverse((o) => {
       if (o.isPoints) points += o.geometry.getAttribute('position').count;
     });
     configure();
-    navigation.frame(store.box().getBoundingSphere(new THREE.Sphere()));
+    frameAll();
   } catch (e) {
     if (token === version) ui.notify(`Could not open scene: ${e.message}`);
   } finally {
@@ -338,4 +350,5 @@ if (config.sceneUrl) {
     resolve: (path) => base + path.split('/').map(encodeURIComponent).join('/'),
     name: 'Scene',
   });
-} else if (config.plyUrl) load({ source: config.plyUrl, name: 'Scene point cloud' });
+} else if (config.splatUrl) load({ source: config.splatUrl, name: 'Splat', splat: true });
+else if (config.plyUrl) load({ source: config.plyUrl, name: 'Scene point cloud' });

@@ -78,6 +78,14 @@ test('nested scene paths resolve relative to JSON, not the current page', () => 
   assert.throws(() => spec.resolve('missing.ply'));
   assert.equal(spec.name, 'run');
 });
+test('a lone .spz opens as a splat, a lone .ply as points', () => {
+  const file = { name: 'final_output.spz' };
+  const splat = resolveEntries([{ path: 'final_output.spz', file }]);
+  assert.equal(splat.source, file);
+  assert.equal(splat.splat, true);
+  assert.equal(resolveEntries([{ path: 'a.ply', file: { name: 'a.ply' } }]).splat, undefined);
+  assert.throws(() => resolveEntries([{ path: 'notes.txt', file: {} }]));
+});
 
 test('individual node selection survives piece regrouping', () => {
   const s = new ViewerState();

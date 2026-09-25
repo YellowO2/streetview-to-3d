@@ -21,7 +21,9 @@ export function resolveEntries(entries) {
   }
   if (entries.length === 1 && /\.ply$/i.test(entries[0].path))
     return { source: entries[0].file, name: entries[0].file.name };
-  throw Error('Choose a single PLY, or scene.json together with its PLY files.');
+  if (entries.length === 1 && /\.spz$/i.test(entries[0].path))
+    return { source: entries[0].file, name: entries[0].file.name, splat: true };
+  throw Error('Choose a scene folder, a single PLY, or a splat (.spz).');
 }
 async function walk(entry, prefix = '') {
   if (entry.isFile)

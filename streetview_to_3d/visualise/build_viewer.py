@@ -21,6 +21,8 @@ def build_document(config: dict | None = None) -> str:
     imports = {
         "three": "https://unpkg.com/three@0.178.0/build/three.module.js",
         "three/addons/": "https://unpkg.com/three@0.178.0/examples/jsm/",
+        # Gaussian splats; imported only when one is opened (scene-store.parseSplat)
+        "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.10/spark.module.js",
     }
     for source in sorted(SOURCE.glob("*.js")):
         encoded = base64.b64encode(source.read_bytes()).decode("ascii")

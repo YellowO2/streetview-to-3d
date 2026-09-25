@@ -49,7 +49,7 @@ export function createViewport(host) {
       );
       return (
         ray.intersectObjects(
-          store.group.children.filter((o) => o.visible),
+          store.group.children.filter((o) => o.visible && o.isPoints),
           false,
         )[0] || null
       );

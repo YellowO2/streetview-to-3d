@@ -28,7 +28,7 @@ export function dispose(group) {
     if (o.isPoints) {
       o.geometry.dispose();
       o.material.dispose();
-    }
+    } else if (o.userData.splat) o.dispose();
   });
 }
 const loader = new PLYLoader();
@@ -52,6 +52,20 @@ export function parsePoints(buffer, transform) {
     throw e;
   }
 }
+// A Gaussian splat (.spz). Spark is imported only when one is opened, so a
+// page showing point clouds never downloads it.
+export async function parseSplat(buffer) {
+  const { SplatMesh } = await import('@sparkjsdev/spark');
+  const mesh = new SplatMesh({ fileBytes: buffer });
+  await mesh.initialized;
+  if (!mesh.numSplats) {
+    mesh.dispose();
+    throw Error('Splat file has no splats.');
+  }
+  mesh.quaternion.set(1, 0, 0, 0); // the same Y-down to Y-up turn `flip` gives points
+  mesh.userData.splat = true;
+  return mesh;
+}
 export async function readBuffer(source) {
   if (typeof source !== 'string') return source.arrayBuffer();
   const response = await fetch(source);
@@ -60,12 +74,13 @@ export async function readBuffer(source) {
 }
 // A load is staged off-screen; failures and superseded requests cannot destroy
 // the currently installed scene. UI decides when to commit the result.
-export async function loadAsset(source, resolve, progress, cancelled) {
+export async function loadAsset(source, resolve, progress, cancelled, { splat = false } = {}) {
   const group = new THREE.Group();
   let data = null,
     placement = null;
   try {
-    if (!resolve) group.add(parsePoints(await readBuffer(source)));
+    if (splat) group.add(await parseSplat(await readBuffer(source)));
+    else if (!resolve) group.add(parsePoints(await readBuffer(source)));
     else {
       data = JSON.parse(new TextDecoder().decode(await readBuffer(source)));
       validateScene(data);
@@ -105,6 +120,7 @@ export class SceneStore {
   data = null;
   placement = null;
   name = 'No scene open';
+  splat = null;
   nodes = new Map();
   corrections = [];
   undo = [];
@@ -116,8 +132,10 @@ export class SceneStore {
     Object.assign(this, asset);
     this.name = name;
     this.nodes = new Map();
+    this.splat = null;
     this.group.traverse((o) => {
       if (o.isPoints && o.userData.nodeIndex != null) this.nodes.set(o.userData.nodeIndex, o);
+      if (o.userData.splat) this.splat = o;
     });
     this.corrections = this.data?.nodes.map(() => new THREE.Matrix4()) || [];
     this.undo = [];
@@ -190,9 +208,10 @@ export class SceneStore {
   }
   box(members = null, visibleOnly = false) {
     const box = new THREE.Box3();
+    // points only: a splat has no bounds to read (see app.js's splat view)
     const objects = members
       ? members.map((i) => this.nodes.get(i)).filter(Boolean)
-      : this.group?.children || [];
+      : (this.group?.children || []).filter((o) => o.isPoints);
     objects.forEach((o) => {
       o.updateMatrixWorld(true);
       if (!visibleOnly || o.visible)

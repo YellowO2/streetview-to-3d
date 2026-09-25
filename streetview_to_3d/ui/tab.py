@@ -125,7 +125,7 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds):
         raise gr.Error(f"Reconstruct failed: {e}")
 
     scene_url = viewers.file_url(os.path.join(output_dir, scene_mod.FILENAME))
-    yield (gr.HTML(viewers.build_pointcloud_viewer(scene_url=scene_url), visible=True),
+    yield (gr.HTML(viewers.build_viewer(scene_url=scene_url), visible=True),
            gr.DownloadButton(value=_zip(output_dir), visible=True),
            "<p>Scene ready.</p>")
 
@@ -162,7 +162,7 @@ def build_main_tab():
     # Drop-ready from page load (not a static placeholder) -- lets you
     # preview an already-downloaded scene without needing a GPU run first.
     # Hidden while a run is going; see handle_reconstruct.
-    reconstruct_view = gr.HTML(viewers.build_pointcloud_viewer())
+    reconstruct_view = gr.HTML(viewers.build_viewer())
 
     pathfind_prepare_btn.click(
         fn=handle_pathfind_prepare,

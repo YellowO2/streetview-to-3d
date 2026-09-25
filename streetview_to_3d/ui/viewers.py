@@ -1,6 +1,6 @@
-"""HTML/iframe builders for the point-cloud viewer. `iframe()` is the canonical sandboxed iframe wrapper --
-reconstruct/map_ui.py imports it from here too, rather than keeping its
-own copy.
+"""HTML/iframe builders for the viewer: point clouds, scenes and splats.
+`iframe()` is the one sandboxed iframe wrapper; the map picker and the
+splat tab use it too.
 """
 import html as html_lib
 
@@ -24,11 +24,16 @@ def file_url(abs_path: str) -> str:
     return f"/gradio_api/file={abs_path}"
 
 
-def pointcloud_document(ply_url: str | None = None, *, scene_url: str | None = None) -> str:
-    """Build the shared modular viewer and inject its initial asset URL."""
-    return build_document({"plyUrl": ply_url, "sceneUrl": scene_url, "editable": False})
+def viewer_document(ply_url: str | None = None, *, scene_url: str | None = None,
+                    splat_url: str | None = None) -> str:
+    """Build the shared modular viewer and inject what it opens first: a
+    scene.json, a single point-cloud PLY, or a splat (.spz)."""
+    return build_document({"plyUrl": ply_url, "sceneUrl": scene_url, "splatUrl": splat_url,
+                           "editable": False})
 
 
-def build_pointcloud_viewer(ply_url: str | None = None, *, scene_url: str | None = None) -> str:
+def build_viewer(ply_url: str | None = None, *, scene_url: str | None = None,
+                 splat_url: str | None = None) -> str:
     """Embed the shared viewer in Gradio, including mouse capture for flight."""
-    return iframe(pointcloud_document(ply_url, scene_url=scene_url), pointer_lock=True)
+    return iframe(viewer_document(ply_url, scene_url=scene_url, splat_url=splat_url),
+                  pointer_lock=True)

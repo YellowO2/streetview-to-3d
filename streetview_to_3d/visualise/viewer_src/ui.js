@@ -65,7 +65,9 @@ export function createUI(actions, { editable = true } = {}) {
       for (const input of document.querySelectorAll('#view-panel input')) input.disabled = blocked;
       manager?.render(store, state, { busy, dragging });
       $('scene-info').hidden = !store.group;
-      $('scene-info').textContent = store.group ? `${points.toLocaleString()} points` : '';
+      $('scene-info').textContent = store.group
+        ? `${points.toLocaleString()} ${store.splat ? 'splats' : 'points'}`
+        : '';
       if (!busy) {
         $('status').textContent = '';
         $('status').hidden = true;

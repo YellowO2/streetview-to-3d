@@ -117,6 +117,17 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
       flying = true;
       look.lock();
     },
+    // Stand at `position` looking at `target` -- inside a splat, which is
+    // seen from where its panorama was taken rather than from outside.
+    place(position, target) {
+      stop();
+      orbit.enableDamping = false;
+      orbit.update();
+      orbit.target.copy(target);
+      camera.position.copy(position);
+      orbit.update();
+      orbit.enableDamping = true;
+    },
     frame(sphere) {
       stop();
       const v = THREE.MathUtils.degToRad(camera.fov / 2),

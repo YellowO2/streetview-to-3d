@@ -4,7 +4,7 @@ import json
 import re
 import unittest
 
-from streetview_to_3d.ui.viewers import build_pointcloud_viewer, iframe
+from streetview_to_3d.ui.viewers import build_viewer, iframe
 from streetview_to_3d.visualise.build_viewer import SOURCE, OUTPUT, build_document
 
 
@@ -21,7 +21,7 @@ class BuildTests(unittest.TestCase):
 
     def test_gradio_config_and_sandbox(self):
         url = "/gradio_api/file=/test/scene.json?unsafe=</script>"
-        embed = build_pointcloud_viewer(scene_url=url)
+        embed = build_viewer(scene_url=url)
         doc = html.unescape(re.search(r'srcdoc="(.*?)" sandbox=', embed, re.S)[1])
         config = re.search(r'<script id="viewer-config" type="application/json">(.*?)</script>', doc, re.S)[1]
         self.assertEqual(json.loads(config)["sceneUrl"], url)
@@ -29,3 +29,11 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("</script>", config)
         self.assertIn("allow-downloads", embed)
         self.assertNotIn("allow-pointer-lock", iframe("map"))
+
+    def test_splat_config_and_spark_import(self):
+        embed = build_viewer(splat_url="/gradio_api/file=/run/final_output.spz")
+        doc = html.unescape(re.search(r'srcdoc="(.*?)" sandbox=', embed, re.S)[1])
+        config = json.loads(re.search(r'<script id="viewer-config" type="application/json">(.*?)</script>', doc, re.S)[1])
+        imports = json.loads(re.search(r'<script type="importmap">(.*?)</script>', doc, re.S)[1])["imports"]
+        self.assertEqual(config["splatUrl"], "/gradio_api/file=/run/final_output.spz")
+        self.assertIn("@sparkjsdev/spark", imports)
