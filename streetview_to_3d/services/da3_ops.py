@@ -165,9 +165,10 @@ def depth_around(target_path, neighbour_paths, cfg, views_base, da3, dist_thresh
     One joint run, not pairwise tests: there is nothing to chain, and DA3
     reconciles all of them at once. A neighbour that keeps under
     keep_rate_threshold of its views -- the walk's own link bar -- is
-    dropped and the run repeated without it, so a bad neighbour cannot
-    bend the target's depth. With every neighbour dropped, this is the
-    target alone.
+    dropped and the run repeated without it. But fewer panos can also make
+    DA3 worse on the target itself (on Stockholm it went 6/12 -> 1/12 ->
+    0/12 as neighbours were dropped), so every run is kept and the one that
+    keeps the most of the target's views wins.
 
     Returns a dict: points/colors (every kept pano's, in the target's run
     frame), pose (the target's (center, rotation)), views ((kept, total)
@@ -176,7 +177,7 @@ def depth_around(target_path, neighbour_paths, cfg, views_base, da3, dist_thresh
     """
     from panoramic_da3 import run_da3
     target_id = os.path.basename(target_path)
-    used = list(neighbour_paths)
+    used, best = list(neighbour_paths), None
     for attempt in range(len(used) + 1):
         run_dir = os.path.join(views_base, f"around{attempt}")
         os.makedirs(run_dir, exist_ok=True)
@@ -184,6 +185,19 @@ def depth_around(target_path, neighbour_paths, cfg, views_base, da3, dist_thresh
             target_path, used, cfg, run_dir, da3=da3, dist_thresh=dist_thresh,
             angle_thresh=angle_thresh, step_degrees=step_degrees,
             conf_lower_percentile=conf_lower_percentile)
+        pose = res.pano_poses.get(target_id)
+        run = {
+            "points": pts if pts is not None else np.zeros((0, 3)),
+            "colors": cols if cols is not None else np.zeros((0, 3)),
+            "pose": (pose["center"], pose["rotation"]) if pose else None,
+            "views": res.pano_keep_counts.get(target_id, (0, 0)),
+            "n_clean": len(filtered),
+            "neighbours": list(used),
+        }
+        print(f"depth_around: {len(used)} neighbour(s): target kept {run['views'][0]}/"
+              f"{run['views'][1]}, {run['n_clean']} clean view(s) in all")
+        if best is None or (run["views"][0], run["n_clean"]) > (best["views"][0], best["n_clean"]):
+            best = run
         rate = {p: k / t if t else 0.0
                 for p in used for k, t in [res.pano_keep_counts.get(os.path.basename(p), (0, 1))]}
         bad = [p for p in used if rate[p] < keep_rate_threshold]
@@ -193,13 +207,4 @@ def depth_around(target_path, neighbour_paths, cfg, views_base, da3, dist_thresh
         if not bad:
             break
         used = [p for p in used if p not in bad]
-
-    pose = res.pano_poses.get(target_id)
-    return {
-        "points": pts if pts is not None else np.zeros((0, 3)),
-        "colors": cols if cols is not None else np.zeros((0, 3)),
-        "pose": (pose["center"], pose["rotation"]) if pose else None,
-        "views": res.pano_keep_counts.get(target_id, (0, 0)),
-        "n_clean": len(filtered),
-        "neighbours": used,
-    }
+    return best
