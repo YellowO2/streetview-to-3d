@@ -72,23 +72,21 @@ def _gpu_note(n_dots):
     return f"<p>Estimated GPU budget: {minutes:.1f} min. Queue and download time vary.</p>"
 
 
-def _files(run_dir):
-    """The whole scene as one zip, then scene.json and every node's own
-    .ply, as plain paths.
+def _zip(run_dir):
+    """The whole scene -- scene.json and every node's .ply -- as one zip.
 
-    The loose files are what the viewer opens (drag them in, or "Open
-    files"); the zip is so the scene downloads in one click, since a
-    browser can only download files, not a folder. Stored, not compressed:
-    point data barely shrinks, so compressing would only cost time. The
-    Space's disk is wiped on restart, so everything is handed back rather
-    than left as a link into it."""
+    One file, because a browser can only download files, not a folder, and
+    the viewer opens exactly this set once unzipped. Stored, not
+    compressed: point data barely shrinks, so compressing would only cost
+    time. The Space's disk is wiped on restart, so the scene is handed back
+    rather than left as a link into it."""
     names = sorted(n for n in os.listdir(run_dir)
                    if n == scene_mod.FILENAME or n.endswith(".ply"))
     archive = os.path.join(run_dir, f"scene_{os.path.basename(run_dir)[:8]}.zip")
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as z:
         for n in names:
             z.write(os.path.join(run_dir, n), n)
-    return [archive] + [os.path.join(run_dir, n) for n in names]
+    return archive
 
 
 def handle_reconstruct(prep, keep_pct, gpu_seconds):
@@ -109,7 +107,10 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds):
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
-    yield gr.skip(), gr.skip(), "<p>Reconstructing… This may take a few minutes.</p>"
+    # nothing to look at until the scene exists, and a previous run's
+    # download would be mistaken for this one's
+    yield (gr.HTML(visible=False), gr.DownloadButton(visible=False),
+           "<p>Reconstructing… This may take a few minutes.</p>")
     try:
         output_dir = _run_dir(prep)
         street_main.run_prepared_pathfind(
@@ -120,12 +121,13 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds):
         pipeline.process(output_dir, log=print)
         print(f"timing: placement {time.monotonic() - t_place:.1f}s", flush=True)
     except Exception as e:
-        yield gr.skip(), gr.skip(), "<p>Reconstruction failed. Try again.</p>"
+        yield gr.HTML(visible=True), gr.skip(), "<p>Reconstruction failed. Try again.</p>"
         raise gr.Error(f"Reconstruct failed: {e}")
 
     scene_url = viewers.file_url(os.path.join(output_dir, scene_mod.FILENAME))
-    yield (viewers.build_pointcloud_viewer(scene_url=scene_url),
-           _files(output_dir), "<p>Scene ready.</p>")
+    yield (gr.HTML(viewers.build_pointcloud_viewer(scene_url=scene_url), visible=True),
+           gr.DownloadButton(value=_zip(output_dir), visible=True),
+           "<p>Scene ready.</p>")
 
 def build_main_tab():
     state, map_view, selection_view = build_map_section()
@@ -153,14 +155,14 @@ def build_main_tab():
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
 
-    # The Space's disk does not survive a restart, so a finished scene is
-    # handed back as files rather than left behind as a link into it -- no
-    # zip: the viewer already opens exactly this file set directly.
+    # The download is what a run is for, so it sits above the viewer and
+    # only appears once there is a scene to download (see _zip).
+    download_btn = gr.DownloadButton("Download scene (.zip)", visible=False,
+                                     variant="primary")
     # Drop-ready from page load (not a static placeholder) -- lets you
-    # preview an already-downloaded .ply without needing a GPU run first.
+    # preview an already-downloaded scene without needing a GPU run first.
+    # Hidden while a run is going; see handle_reconstruct.
     reconstruct_view = gr.HTML(viewers.build_pointcloud_viewer())
-    with gr.Accordion("Download scene", open=False):
-        scene_files = gr.Files(label="Scene files (the .zip holds them all)", interactive=False)
 
     pathfind_prepare_btn.click(
         fn=handle_pathfind_prepare,
@@ -173,7 +175,7 @@ def build_main_tab():
     pathfind_run_btn.click(
         fn=handle_reconstruct,
         inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input],
-        outputs=[reconstruct_view, scene_files, pathfind_status],
+        outputs=[reconstruct_view, download_btn, pathfind_status],
         show_progress="hidden",
         show_progress_on=[reconstruct_view],
     )
