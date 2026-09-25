@@ -46,7 +46,27 @@ def ground_near_track(piece, cams, radius=TRACK_RADIUS_M, cell=GROUND_CELL_M,
     return low[_on_plane(low)]
 
 
-PLANE_TOL_M = 0.15       # how far off the plane a point may be and still be floor
+FLOOR_SECTORS = 12       # directions around a camera, 30 deg each
+SECTOR_MIN_PTS = 20      # floor points a direction needs to count as seen
+SIDES_RADIUS_M = 8.0
+
+
+def sides_seen(floor, cams, radius=SIDES_RADIUS_M, sectors=FLOOR_SECTORS):
+    """How many of `sectors` directions around its best-seen camera the
+    floor was found in. A full ring pins the plane; a strip down one side
+    lets it rock about the strip like a plank on its edge."""
+    best = 0
+    for c in np.atleast_2d(cams):
+        d = floor[:, [0, 2]] - c
+        r = np.hypot(d[:, 0], d[:, 1])
+        near = (r > 1) & (r <= radius)
+        k = ((np.arctan2(d[near, 1], d[near, 0]) + np.pi)
+             / (2 * np.pi) * sectors).astype(int) % sectors
+        best = max(best, int((np.bincount(k, minlength=sectors) >= SECTOR_MIN_PTS).sum()))
+    return best
+
+
+PLANE_TOL_M = 0.15      # how far off the plane a point may be and still be floor
 PLANE_MAX_TILT_DEG = 30  # DA3 hands floors back tilted 5-16 deg; walls are ~90
 PLANE_TRIES = 300
 

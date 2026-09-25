@@ -134,6 +134,24 @@ def heading_rotation(node):
     return np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
 
 
+def floor_normal_from_pitch(node):
+    """The up-pointing floor normal DA3 should hand back for this node, in
+    its piece's DA3 frame, from the panorama's own pitch -- or None.
+
+    Measured on Stockholm: DA3's floor tilts along the heading by the
+    pano's pitch, within 1-2 deg on 4 of 6 nodes (the other two were 4 and
+    9 deg off), with the same sign rule as heading_rotation's -- Apple's
+    image faces backwards. Roll matched nothing, so it is left out. Only
+    good for holding a floor fit that can't pin itself, not replacing one.
+    """
+    if node.rotation is None or node.pano.pitch is None:
+        return None
+    p = node.pano.pitch
+    s = 1.0 if node.pano.source == "apple" else -1.0
+    # camera frame: x right, y down, z forward; up is -y
+    return np.asarray(node.rotation, float).T @ np.array([0.0, -math.cos(p), s * math.sin(p)])
+
+
 def heading_agreement(fits, sc):
     """{source: [deg, ...]}: for every node of a multi-node piece, how far
     heading_rotation's direction is from where the GPS fit actually

@@ -114,25 +114,47 @@ def surface(scene, curves, frames, on):
 NEAR_ROAD_M = 15.0       # a node further out than this is not on that road
 
 
-def seat_on(road_by_piece, ground):
-    """{piece: 4x4}, {piece: (height, tilt_deg)} onto a known ground.
+PRIOR_MAX_OFF_DEG = 5.0  # how far a held floor may tilt from what pitch says
+
+
+def seat_on(road_by_piece, ground, priors=None, max_off_deg=PRIOR_MAX_OFF_DEG):
+    """{piece: 4x4}, {piece: (height, tilt_deg, held)} onto a known ground.
 
     One height offset and one tilt per piece: the piece's own shape is left
     alone, because DA3's local geometry is far better than a handful of
     sparse elevation samples.
+
+    priors: {piece: (dy/dx, dy/dz)}, the floor slope its panoramas' pitch
+    predicts (load_pieces.floor_normal_from_pitch), for pieces whose floor
+    was seen only down one side. A plane through a strip rocks about it
+    freely -- Gotland's two strip-only pieces came out 24 deg off -- so
+    their fitted floor is held within max_off_deg of the prediction.
     """
     out, report = {}, {}
     for i, p in road_by_piece.items():
         if len(p) < 3:
             out[i] = np.eye(4)
             continue
-        gap = p[:, 1] - ground(p[:, [0, 2]])
+        g = ground(p[:, [0, 2]])
+        gap = p[:, 1] - g
         cx, cz = p[:, 0].mean(), p[:, 2].mean()
         A = np.column_stack([np.ones(len(p)), p[:, 0] - cx, p[:, 2] - cz])
         a, b, c = np.linalg.lstsq(A, gap, rcond=None)[0]
+        held = False
+        prior = (priors or {}).get(i)
+        if prior is not None:
+            # gap slope = the floor's slope minus the ground's; hold the floor's
+            gb, gc = np.linalg.lstsq(A, g, rcond=None)[0][1:]
+            off = np.array([b + gb - prior[0], c + gc - prior[1]])
+            lim = np.tan(np.radians(max_off_deg))
+            if np.hypot(*off) > lim:
+                off *= lim / np.hypot(*off)
+                b, c = prior[0] + off[0] - gb, prior[1] + off[1] - gc
+                a = float(np.mean(gap - b * (p[:, 0] - cx) - c * (p[:, 2] - cz)))
+                held = True
         T = np.eye(4)
         T[1, 0], T[1, 2] = -b, -c
         T[1, 3] = -a + b * cx + c * cz
         out[i] = T
-        report[i] = (float(-a), float(np.degrees(np.arctan(np.hypot(b, c)))))
+        report[i] = (float(-a), float(np.degrees(np.arctan(np.hypot(b, c)))), held)
     return out, report

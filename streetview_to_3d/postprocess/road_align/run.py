@@ -23,10 +23,11 @@ import argparse
 
 import numpy as np
 
-from streetview_to_3d.postprocess.road_align.road_surface import ground_near_track
+from streetview_to_3d.postprocess.road_align.road_surface import ground_near_track, sides_seen
 from streetview_to_3d.postprocess.road_align.road_frames import belongs, build as build_frames
 from streetview_to_3d.postprocess.road_align.node_center_to_road_line import seat_all
-from streetview_to_3d.postprocess.gps_fit.load_pieces import heading_agreement, load_pieces
+from streetview_to_3d.postprocess.gps_fit.load_pieces import (
+    floor_normal_from_pitch, heading_agreement, load_pieces)
 from streetview_to_3d.postprocess.road_align.align_slope_of_pieces import seat
 from streetview_to_3d.postprocess.road_align import cross_road, ground_elevation
 from streetview_to_3d import scene as scene_mod
@@ -92,14 +93,19 @@ def align(directory, piece_ids=None, log=print, min_nodes=1,
         ground, resid, n_dots = ground_elevation.surface(sc, curves, frames, on)
         log(f"\nground from {n_dots} node elevation(s) along "
             f"{len(curves)} road(s), profiles fit them to {resid:.2f} m")
-        vert, report = ground_elevation.seat_on(have, ground)
+        priors = {i: prior for i in have
+                  if (prior := _pitch_prior(i, road_pts[i], sc, fits, horiz, cross, cams))}
+        vert, report = ground_elevation.seat_on(have, ground, priors)
     else:
         vert, report = seat(have)
     log("")
     for i in ids:
         if i in report:
+            held = (f" (floor seen on one side only: held within "
+                    f"{ground_elevation.PRIOR_MAX_OFF_DEG:.0f} deg of pitch)"
+                    if len(report[i]) > 2 and report[i][2] else "")
             log(f"  piece_{i:<4} seated {report[i][0]:+.2f} m, "
-                f"tilt {report[i][1]:.2f} deg")
+                f"tilt {report[i][1]:.2f} deg{held}")
         else:
             log(f"  piece_{i:<4} too little road to seat, height left at GPS")
 
@@ -128,6 +134,29 @@ def align(directory, piece_ids=None, log=print, min_nodes=1,
         sc.save(directory)
     return (transforms, {i: clouds[i] for i in ids},
             {i: fits[i] for i in ids}, diagnostics)
+
+
+MIN_SIDES_SEEN = 7        # of 12. At 6 or fewer the floor may be one strip.
+                          # Stockholm's walled street shows 6-9 on good
+                          # nodes, Gotland's strip-only ones 6 and 4; holding
+                          # a good one costs little, since pitch mostly agrees.
+
+
+def _pitch_prior(i, floor, sc, fits, horiz, cross, cams):
+    """(dy/dx, dy/dz) of the floor its panoramas' pitch predicts, in the
+    placed frame -- or None when the floor was seen all round, so the fit
+    can pin itself, or no member has a pitch."""
+    H = horiz[i][[0, 2]][:, [0, 2]]
+    placed = cams[i] @ H.T + horiz[i][[0, 2], 3] + cross[i][[0, 2], 3]
+    if not len(floor) or sides_seen(floor, placed) >= MIN_SIDES_SEEN:
+        return None
+    normals = [n for m in fits[i]["members"]
+               if (n := floor_normal_from_pitch(sc.nodes[m])) is not None]
+    if not normals:
+        return None
+    n = np.mean(normals, axis=0)
+    nx, nz = H @ fits[i]["R"] @ n[[0, 2]]
+    return -nx / n[1], -nz / n[1]
 
 
 def gps_transform(fit):
