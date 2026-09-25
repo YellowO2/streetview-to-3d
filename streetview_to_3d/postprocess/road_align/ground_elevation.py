@@ -114,7 +114,9 @@ def surface(scene, curves, frames, on):
 NEAR_ROAD_M = 15.0       # a node further out than this is not on that road
 
 
-PRIOR_MAX_OFF_DEG = 5.0  # how far a held floor may tilt from what pitch says
+PRIOR_MAX_OFF_DEG = 3.0  # how far a held floor may tilt from what pitch says:
+                         # on floors seen all round, pitch agreed within 2.6
+                         # deg at Gotland (6 of 6), 3 deg on 11 of 16 overall
 
 
 def seat_on(road_by_piece, ground, priors=None, max_off_deg=PRIOR_MAX_OFF_DEG):
