@@ -10,7 +10,6 @@ export function createUI(actions, { editable = true } = {}) {
   bind('exit-fly', () => actions.mode('inspect'));
   bind('recenter', actions.recenter);
   bind('open-folder', () => $('folder').click());
-  bind('choose', () => $('folder').click());
   bind('open-files', () => $('file').click());
   for (const id of ['file', 'folder'])
     $(id).onchange = () => {
@@ -63,8 +62,7 @@ export function createUI(actions, { editable = true } = {}) {
         $(mode).disabled = blocked || (mode === 'fly' && !store.group);
       }
       $('recenter').disabled = blocked || !store.group;
-      for (const id of ['open-folder', 'open-files', 'choose', 'toggle-settings'])
-        $(id).disabled = blocked;
+      for (const id of ['open-folder', 'open-files', 'toggle-settings']) $(id).disabled = blocked;
       for (const input of document.querySelectorAll('#view-panel input')) input.disabled = blocked;
       manager?.render(store, state, { busy, dragging });
       if (!busy)
