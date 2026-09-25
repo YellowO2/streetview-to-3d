@@ -3,14 +3,20 @@
 ZeroGPU attaches a GPU only inside a function decorated with @spaces.GPU.
 There is exactly one, `run`, like DA3's own official Space: a task is a
 plain function handed to it, and the window it asks for is the task's own
-estimate. The street reconstruction and the splat both go through it, so
-they share one loaded DA3 rather than each keeping their own.
+estimate. The street reconstruction and the splat both go through it.
+
+On a Space, DA3 is built at startup and placed on cuda, as HF's ZeroGPU docs
+ask: ZeroGPU then moves it onto the GPU for each call, quickly. Built inside
+a call instead, it loaded from disk every time (17-28 s of the window),
+because each call runs in a fresh worker and nothing it loads survives.
 
 `spaces` must be imported before anything initialises CUDA -- streetlevel's
 Look Around reprojection does on import -- or it refuses to load. The
 package's __init__ imports this module first for that reason.
 """
 import os
+import sys
+import types
 
 try:
     import spaces
@@ -46,28 +52,18 @@ def get_da3_config():
 
 
 def get_da3():
-    """The DA3 model, built on first use INSIDE a GPU call and reused after.
-
-    Not at import: building it before a GPU is attached segfaults on
-    pycolmap's raw CUDA calls, which bypass spaces' PyTorch-only .cuda()
-    emulation. Re-attached to CUDA on every call, not just the first, in
-    case it drifted back to CPU in between -- DA3's own Space
-    (model_inference.py's _MODEL_CACHE) does the same check every time.
-    """
+    """The DA3 model: built at startup on a Space, on first use elsewhere."""
     global _da3
     if _da3 is None:
         from panoramic_da3 import DA3Model
         _da3 = DA3Model(get_da3_config().da3_model)
-    elif next(_da3.model.parameters()).device.type != "cuda":
-        _da3.model = _da3.model.to(device="cuda")
     return _da3
 
 
-def release_da3():
-    """Move DA3 off the GPU, for a task that needs the memory for another
-    model after it (the splat's SHARP). get_da3 moves it back next call,
-    which is much cheaper than loading it again."""
-    if _da3 is not None and next(_da3.model.parameters()).device.type == "cuda":
-        import torch
-        _da3.model = _da3.model.to(device="cpu")
-        torch.cuda.empty_cache()
+if ON_SPACES:
+    # depth_anything_3 imports pycolmap for an export format we never use,
+    # and pycolmap's native init calls CUDA directly -- outside a GPU call,
+    # past ZeroGPU's emulation, it segfaults. A placeholder satisfies the
+    # import without ever loading it. (Same fix the old 3DGS app used.)
+    sys.modules.setdefault("pycolmap", types.ModuleType("pycolmap"))
+    get_da3()
