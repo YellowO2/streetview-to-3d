@@ -14,7 +14,7 @@ short_description: Reconstructs a street corridor into a 3D point cloud
 
 # Street View to 3D
 
-Reconstructs a stretch of street into one placed 3D point cloud, from Google Street View and Apple Look Around panoramas. Try it in the **Street → point cloud** tab of the [Hugging Face Space](https://huggingface.co/spaces/potato-bug/street-view-to-3dgs).
+Reconstructs a stretch of street into one placed 3D point cloud, from Google Street View and Apple Look Around panoramas. Try it in the **Street → point cloud** tab of the [Hugging Face Space](https://huggingface.co/spaces/potato-bug/street-view-to-3d).
 
 For a single panorama as a Gaussian splat, see [panoramic-to-3dgs](https://github.com/YellowO2/panoramic-to-3dgs). How the pipeline works: [ARCHITECTURE.md](ARCHITECTURE.md).
 
