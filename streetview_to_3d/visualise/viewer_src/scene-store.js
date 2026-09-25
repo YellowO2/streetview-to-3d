@@ -55,6 +55,12 @@ export function parsePoints(buffer, transform) {
 // A Gaussian splat (.spz). Spark is imported only when one is opened, so a
 // page showing point clouds never downloads it.
 export async function parseSplat(buffer) {
+  // Spark decodes in a worker, which Chrome will not start for a page opened
+  // straight from disk -- it then fails with an unhelpful data-URL error.
+  if (location.protocol === 'file:')
+    throw Error(
+      'Splats need the viewer served over http. In its folder run "python3 -m http.server", then open http://localhost:8000/viewer.html.',
+    );
   const { SplatMesh } = await import('@sparkjsdev/spark');
   const mesh = new SplatMesh({ fileBytes: buffer });
   await mesh.initialized;
