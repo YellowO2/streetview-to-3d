@@ -61,3 +61,13 @@ def get_da3():
     elif next(_da3.model.parameters()).device.type != "cuda":
         _da3.model = _da3.model.to(device="cuda")
     return _da3
+
+
+def release_da3():
+    """Move DA3 off the GPU, for a task that needs the memory for another
+    model after it (the splat's SHARP). get_da3 moves it back next call,
+    which is much cheaper than loading it again."""
+    if _da3 is not None and next(_da3.model.parameters()).device.type == "cuda":
+        import torch
+        _da3.model = _da3.model.to(device="cpu")
+        torch.cuda.empty_cache()
