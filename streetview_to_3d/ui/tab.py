@@ -14,7 +14,6 @@ from streetview_to_3d.ui import viewers
 from streetview_to_3d.paths import new_run_dir
 from streetview_to_3d.postprocess import pipeline
 from streetview_to_3d.reconstruct import build as street_main
-from streetview_to_3d.services.pipeline_runner import estimate_gpu_seconds
 from streetview_to_3d.ui.map_selection.tab import build_map_section, nodes_by_key
 
 def _run_dir(prep):
@@ -62,14 +61,7 @@ def handle_pathfind_prepare(state):
         raise gr.Error(f"Prepare failed: {e}")
 
     n = len(prep["node_entries"])
-    yield prep, f"<p>{n} panoramas ready.</p>" + _gpu_note(len(prep["points"]))
-
-
-def _gpu_note(n_dots):
-    """How much ZeroGPU time the Reconstruct click will ask for, so a user
-    can check it against their own daily quota before spending it."""
-    minutes = estimate_gpu_seconds(n_dots) / 60
-    return f"<p>Estimated GPU budget: {minutes:.1f} min. Queue and download time vary.</p>"
+    yield prep, f"<p>{n} panoramas ready.</p>"
 
 
 def _zip(run_dir):
@@ -149,7 +141,7 @@ def build_main_tab():
     # to understand. See handle_reconstruct.
     keep_pct_slider = gr.Slider(50, 100, value=80, step=5, visible=False)
     # Same idea: the ZeroGPU window in seconds, 0 = sized from the dot
-    # count. Hidden for now; the estimate is shown after Prepare instead.
+    # count. Hidden for now; the estimate is shown beside the selection.
     gpu_seconds_input = gr.Number(value=0, precision=0, minimum=0, visible=False)
 
     pathfind_status = gr.HTML()

@@ -20,6 +20,7 @@ import json
 import gradio as gr
 
 from streetview_to_3d.services.geo import extract_lat_lon
+from streetview_to_3d.services.pipeline_runner import estimate_gpu_seconds
 from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id, run_async
 from streetview_to_3d.ui.map_selection import candidates as candidates_mod
 from streetview_to_3d.ui.map_selection import map_ui
@@ -66,7 +67,9 @@ def _summary_markdown(state):
         return "Enter a location and select a street via 'Expand Area' Button or manually clicking. Then press button 1, wait for it to run, then button 2."
     n_nodes = len(state["selected"])
     n_edges = len(state.get("selected_edges", []))
-    return f"**{n_nodes} panoramas · {n_edges} connections**"
+    return (f"**{n_nodes} panoramas · {n_edges} connections** · "
+            f"about {estimate_gpu_seconds(n_nodes) / 60:.1f} min of GPU "
+            "(daily ZeroGPU quota: 2 min logged out, 5 min free account, 40 min PRO)")
 
 
 def _map_html(state, zoom=19):

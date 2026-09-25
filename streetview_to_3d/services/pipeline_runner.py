@@ -14,39 +14,28 @@ MODEL_LOAD_S = 5.0
 
 # The join/bridge phase's allowance after the walk: a floor plus a share
 # per dot, since a bigger area tends to come out of the walk in more
-# pieces to bridge. NOT measured yet -- each run logs "timing:" lines
-# (model load, walk, join) to calibrate these against. join_segments
-# stops at its own deadline, so an allowance that is too small leaves
-# pieces unbridged rather than failing the run.
-JOIN_BASE_S = 80.0
-JOIN_PER_DOT_S = 3.0
+# pieces to bridge. Measured on the Space: 4 dots 23 s, 7 dots 12-98 s
+# (3 to 7 segments). join_segments stops at its own deadline, so an
+# allowance that is too small leaves pieces unbridged rather than failing.
+JOIN_BASE_S = 10.0
+JOIN_PER_DOT_S = 8.0
 
 
 def _join_allowance_s(n_dots: int) -> float:
     return JOIN_BASE_S + n_dots * JOIN_PER_DOT_S
 
 
-# One solo DA3 rating: 1.36s average in the solo-score experiment
-# (README, Dev notes).
-SECONDS_PER_RATING = 1.4
-
-
-def _date_sampling_s(n_dots: int) -> float:
-    """At most: every kept date sampled at half its dots, capped at
-    DATE_SAMPLES_MAX each (see walk_graph._sample_dates)."""
-    from streetview_to_3d.build_street_graph.date_ranking import DATE_TOP_N
-    from streetview_to_3d.reconstruct.walk_graph import DATE_SAMPLES_MAX
-    per_date = min(DATE_SAMPLES_MAX, max(1, -(-n_dots // 2)))
-    return DATE_TOP_N * per_date * SECONDS_PER_RATING
+# Date sampling, per dot: measured 7 s for 4 dots, 13 s for 7.
+DATE_SAMPLING_PER_DOT_S = 2.0
 
 
 def estimate_gpu_seconds(n_dots: int) -> float:
     """The GPU window a run over n_dots needs: date sampling, the walk's
     own per-dot estimate (walk_graph.SECONDS_PER_DOT_ESTIMATE), then the
     join, plus model load and the save headroom. Shown to the user
-    after Prepare, and the window asked for unless they override it."""
+    as they select, and the window asked for unless they override it."""
     from streetview_to_3d.reconstruct.walk_graph import SECONDS_PER_DOT_ESTIMATE
-    return (MODEL_LOAD_S + _date_sampling_s(n_dots) + n_dots * SECONDS_PER_DOT_ESTIMATE
+    return (MODEL_LOAD_S + n_dots * (DATE_SAMPLING_PER_DOT_S + SECONDS_PER_DOT_ESTIMATE)
             + _join_allowance_s(n_dots) + SAVE_BUFFER_S)
 
 
