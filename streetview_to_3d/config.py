@@ -7,18 +7,12 @@ from huggingface_hub import snapshot_download
 # postprocess/gps_fit/load_pieces.scene_scale); this is only the fallback,
 # for a scene of lone panoramas or a fit out of range.
 #
-# Two measurements disagree, and that is not yet explained. Over NTU's 117
-# chunks the answer held at 1.334-1.346 across
-# every break threshold from 12 m down to 0.75 m. Three later runs down one
-# street each want 1.46-1.54 instead, and they agree with each other far
-# better than with 1.335: at 1.46 one of the three fits its own GPS to
-# 0.18 m and asks for no further scaling at all.
-DA3_UNITS_TO_METRES = 1.46
-#
-# Every number above was measured on the original DA3NESTED-GIANT-LARGE,
-# which DA3 has since deprecated for a training bug. Later runs on it fit
-# 1.17-1.26 (Stockholm, and gen_10node at NTU), so it was never one
-# constant -- hence the per-scene fit.
+# It is not one constant: per-scene fits have come out 1.17 (NTU), 1.62
+# (another NTU street), 1.22 (Stockholm), 1.25 (Gotland) and 1.31 -- one
+# per place, middle 1.25, mean 1.31. The older 1.46 predates the fix for
+# two pieces sharing a place, which glued unrelated frames into one piece
+# and fitted nonsense scales.
+DA3_UNITS_TO_METRES = 1.3
 
 # The original Nested, deprecated by DA3 but the best of the three tried
 # on Stockholm (same pairs, same panos):
