@@ -74,7 +74,7 @@ new group. Individual node selections remain individual when regrouping. The rul
 
 Saved node transforms place the clouds in world coordinates. A single raw
 component can be previewed without transforms; Edit's **Place from GPS** gives
-it a starting placement with fixed scale (default 1.46 metres per DA3 unit).
+it a starting placement with fixed scale (default 1.3 metres per DA3 unit).
 This does not align road height. Separate/partially placed components require
 `python -m streetview_to_3d.postprocess.pipeline --dir <scene-folder>` first.
 
