@@ -153,3 +153,53 @@ def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thres
         out["conf_a"] = res.pano_point_confidence.get(id_a, np.zeros((0,), dtype=np.float32))
         out["conf_b"] = res.pano_point_confidence.get(id_b, np.zeros((0,), dtype=np.float32))
     return out
+
+
+def depth_around(target_path, neighbour_paths, cfg, views_base, da3, dist_thresh=0.2, angle_thresh=1,
+                 step_degrees=VIEW_STEP_DEGREES, keep_rate_threshold=KEEP_RATE_THRESHOLD,
+                 conf_lower_percentile=CONF_LOWER_PERCENTILE):
+    """Depth around one panorama: a single joint DA3 run on it and its
+    same-date neighbours, for a caller that needs the target's pose and the
+    points around it (a splat is scaled against these).
+
+    One joint run, not pairwise tests: there is nothing to chain, and DA3
+    reconciles all of them at once. A neighbour that keeps under
+    keep_rate_threshold of its views -- the walk's own link bar -- is
+    dropped and the run repeated without it, so a bad neighbour cannot
+    bend the target's depth. With every neighbour dropped, this is the
+    target alone.
+
+    Returns a dict: points/colors (every kept pano's, in the target's run
+    frame), pose (the target's (center, rotation)), views ((kept, total)
+    for the target), n_clean (views surviving DA3's filter across the
+    run), neighbours (the paths actually used).
+    """
+    from panoramic_da3 import run_da3
+    target_id = os.path.basename(target_path)
+    used = list(neighbour_paths)
+    for attempt in range(len(used) + 1):
+        run_dir = os.path.join(views_base, f"around{attempt}")
+        os.makedirs(run_dir, exist_ok=True)
+        filtered, res, pts, cols, _, _ = run_da3(
+            target_path, used, cfg, run_dir, da3=da3, dist_thresh=dist_thresh,
+            angle_thresh=angle_thresh, step_degrees=step_degrees,
+            conf_lower_percentile=conf_lower_percentile)
+        rate = {p: k / t if t else 0.0
+                for p in used for k, t in [res.pano_keep_counts.get(os.path.basename(p), (0, 1))]}
+        bad = [p for p in used if rate[p] < keep_rate_threshold]
+        for p in bad:
+            print(f"depth_around: dropping neighbour {os.path.basename(p)} "
+                  f"(kept {rate[p]:.0%} of its views)")
+        if not bad:
+            break
+        used = [p for p in used if p not in bad]
+
+    pose = res.pano_poses.get(target_id)
+    return {
+        "points": pts if pts is not None else np.zeros((0, 3)),
+        "colors": cols if cols is not None else np.zeros((0, 3)),
+        "pose": (pose["center"], pose["rotation"]) if pose else None,
+        "views": res.pano_keep_counts.get(target_id, (0, 0)),
+        "n_clean": len(filtered),
+        "neighbours": used,
+    }

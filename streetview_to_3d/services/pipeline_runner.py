@@ -1,11 +1,8 @@
-"""The GPU side of the app: the ZeroGPU setup, the one DA3 model, and the
-one @spaces.GPU call (run_pathfind_and_join_gpu) that walks and joins.
-
-One decorated function, like DA3's own official Space: everything inside
-it is plain Python, and the window it asks for is sized from the dot count
-(estimate_gpu_seconds). get_da3() is the single DA3Model for the whole app.
+"""The street reconstruction's GPU task: the walk then the join, in one
+window sized from the dot count (estimate_gpu_seconds). The GPU itself and
+the DA3 model come from streetview_to_3d.gpu.
 """
-import os
+from streetview_to_3d import gpu
 
 # Headroom left after the join for saving the result before the hard
 # ZeroGPU window closes. Carved OUT of the window (see _walk_budget_s).
@@ -68,74 +65,17 @@ def _walk_budget_s(total_s: float, n_dots: int) -> float:
     return max(0.0, total_s - MODEL_LOAD_S - join_s - SAVE_BUFFER_S)
 
 
-try:
-    import spaces
-
-    # spaces is also installed locally via requirements.txt, so gate on SPACE_ID
-    # which HF Spaces always sets but local machines don't have.
-    ON_SPACES = bool(os.getenv("SPACE_ID"))
-
-    def _gpu_duration(date_graphs, points, *args, gpu_seconds=None, **kwargs):
-        """spaces.GPU calls this with the decorated function's own
-        arguments, so the window follows the dot count (or the override)
-        rather than one flat size for every area."""
-        return _gpu_seconds(points, gpu_seconds)
-
-    if ON_SPACES:
-        GPU_DISPATCH = spaces.GPU(duration=_gpu_duration)
-    else:
-        GPU_DISPATCH = lambda fn: fn
-except ImportError:
-    GPU_DISPATCH = lambda fn: fn  # no-op outside HF Spaces
-    ON_SPACES = False
-
-_da3_config = None
-_da3 = None
-
-
-def get_da3_config():
-    global _da3_config
-    if _da3_config is None:
-        from streetview_to_3d.config import load_da3_config
-        _da3_config = load_da3_config()
-    return _da3_config
-
-
-def get_da3():
-    """Lazily built on first real use, INSIDE the GPU call -- not at
-    module level (building it before any @spaces.GPU call has attached a
-    real GPU segfaults on pycolmap's own raw CUDA calls, which bypass
-    spaces' PyTorch-only .to()/.cuda() emulation). Cached in a module-
-    level global and REUSED across calls -- matches DA3's own official
-    Space (depth_anything_3/app/modules/model_inference.py's
-    _MODEL_CACHE/initialize_model): never deleted, but re-checked and
-    re-attached to 'cuda' on every single call, not just the first, in
-    case it drifted back to CPU between calls (their own code does this
-    exact check every time, not just once)."""
-    global _da3
-    if _da3 is None:
-        from panoramic_da3 import DA3Model
-        _da3 = DA3Model(get_da3_config().da3_model)
-    elif next(_da3.model.parameters()).device.type != "cuda":
-        _da3.model = _da3.model.to(device="cuda")
-    return _da3
-
-
-@GPU_DISPATCH
 def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_lon,
                                edge_max_dist_m=None, step_degrees=None,
                                conf_lower_percentile=None, gpu_seconds=None):
-    """The ONE @spaces.GPU-decorated entry point for this whole app -- see
-    this module's own docstring for why there is exactly one. The work
-    itself is in _run_pathfind_and_join_impl.
+    """Walk and join in one GPU window (see streetview_to_3d.gpu).
 
-    gpu_seconds: the GPU window to ask for. None sizes it from the dot
-    count (estimate_gpu_seconds). Passed by keyword, since _gpu_duration
-    reads it by name."""
-    return _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
-                                        edge_max_dist_m=edge_max_dist_m, step_degrees=step_degrees,
-                                        conf_lower_percentile=conf_lower_percentile,
-                                        gpu_seconds=gpu_seconds)
+    gpu_seconds: the window to ask for. None sizes it from the dot count
+    (estimate_gpu_seconds)."""
+    return gpu.run(_run_pathfind_and_join_impl, date_graphs, points, adjacency,
+                   start_lat, start_lon, edge_max_dist_m=edge_max_dist_m,
+                   step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
+                   gpu_seconds=gpu_seconds, seconds=_gpu_seconds(points, gpu_seconds))
 
 
 def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
@@ -177,8 +117,8 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
     print(f"GPU window: {total_s:.0f}s for {len(points)} dot(s)"
           f"{' (override)' if gpu_seconds else ''}", flush=True)
 
-    cfg = get_da3_config()
-    da3 = get_da3()
+    cfg = gpu.get_da3_config()
+    da3 = gpu.get_da3()
     # "timing:" lines are what the per-phase constants above get
     # calibrated from -- grep the Space's logs for them.
     print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)

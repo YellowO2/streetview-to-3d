@@ -20,7 +20,7 @@ DATE_TOP_N = 5
 START_ZONE_M = 5.0
 GOAL_TOLERANCE_M = 15.0
 
-def _date_recency_key(date_str):
+def date_recency_key(date_str):
     """date_str is format_date's output: "YYYY-MM" or "YYYY-MM-DD", zero-
     padded so plain string comparison already sorts chronologically.
     "unknown date" (format_date's fallback for a missing capture date)
@@ -54,7 +54,7 @@ def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
     for date, covered in covered_by_date.items():
         span = max(covered) - min(covered)
         scored.append((date, span, len(covered)))
-    scored.sort(key=lambda t: (t[1], t[2], _date_recency_key(t[0])), reverse=True)
+    scored.sort(key=lambda t: (t[1], t[2], date_recency_key(t[0])), reverse=True)
     return [date for date, _, _ in scored]
 
 

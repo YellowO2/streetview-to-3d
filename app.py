@@ -6,21 +6,13 @@ Run locally:  python app.py
 HF Spaces:    set as app.py, add `spaces` to requirements, enable ZeroGPU.
 """
 
-# Must be the first project import. ZeroGPU requires `spaces` (imported by
-# services.pipeline_runner) to load before anything CUDA-related does.
-# services.lookaround_fetch imports streetlevel's `reproject` module, which
-# initializes CUDA at import time to pick its default device -- if that runs
-# first, `import spaces` fails with "CUDA has been initialized before
-# importing the `spaces` package." Importing pipeline_runner here, before
-# the services import below, guarantees the required order regardless of
-# what order the names in that later `from services import ...` get resolved in.
-from streetview_to_3d.services import pipeline_runner  # noqa: F401
-
-import gradio as gr
-
+# The package first: importing it imports `spaces` before anything touches
+# CUDA, which ZeroGPU requires (see streetview_to_3d/gpu.py).
 from streetview_to_3d.paths import DATA_DIR
 from streetview_to_3d.ui.tab import build_main_tab
 from streetview_to_3d.ui.map_selection.tab import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
+
+import gradio as gr
 
 with gr.Blocks(title="Street Builder") as demo:
     build_main_tab()

@@ -12,7 +12,7 @@ from streetview_to_3d.build_street_graph.fetch_nodes import fetch_corridor_nodes
 TOP_PANOS_PER_DOT = 3
 
 
-def _cap_bucket_for_date(bucket, date, dot_lat, dot_lon, top_n):
+def cap_bucket_for_date(bucket, date, dot_lat, dot_lon, top_n):
     """This dot's own panos of ONE date, closest-first, capped to top_n."""
     same_date = [n for n in bucket if n["date"] == date]
     same_date.sort(key=lambda n: haversine_m(dot_lat, dot_lon, n["lat"], n["lon"]))
@@ -62,7 +62,7 @@ def build_corridor_graphs(corridor_edges, start_lat, start_lon, goals,
         dot_candidates = {}
         for i, bucket in buckets.items():
             dot_lat, dot_lon = points[i]
-            capped = _cap_bucket_for_date(bucket, date, dot_lat, dot_lon, top_per_dot)
+            capped = cap_bucket_for_date(bucket, date, dot_lat, dot_lon, top_per_dot)
             if capped:
                 dot_candidates[i] = capped
         if not dot_candidates:
