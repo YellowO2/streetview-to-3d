@@ -63,7 +63,7 @@ def nodes_by_key(state):
 
 def _summary_markdown(state):
     if not state["selected"]:
-        return "Enter a location and select a street via "Expand Area" Button or manually clicking. Then press button 1, wait for it to run, then button 2."
+        return "Enter a location and select a street via 'Expand Area' Button or manually clicking. Then press button 1, wait for it to run, then button 2."
     n_nodes = len(state["selected"])
     n_edges = len(state.get("selected_edges", []))
     return f"**{n_nodes} panoramas · {n_edges} connections**"
