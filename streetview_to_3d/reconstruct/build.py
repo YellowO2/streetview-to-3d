@@ -231,6 +231,13 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
 
     Edges are recorded by node index, which is what makes a piece a
     connected component rather than something stored.
+
+    Two pieces can both hold a panorama for the same place: patching walks
+    overlapping stretches on purpose, and set_cover keeps a piece for any
+    place it adds. A place is one node, so the bigger piece keeps it and the
+    other's panorama there is dropped with its links. Writing both let the
+    second overwrite the first while the first's links survived, gluing two
+    DA3 frames into one piece.
     """
     from streetview_to_3d import scene as scene_mod
     from streetview_to_3d.reconstruct.join_segments import _piece_edges
@@ -238,14 +245,20 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
     node_of_dot = {catalog[n.key]["dot"]: i
                    for i, n in enumerate(sc.nodes) if n.key in catalog}
 
-    results = []
-    for p_i, (clouds, metadata) in enumerate(pieces):
+    results, taken = [], set()
+    for p_i in sorted(range(len(pieces)), key=lambda k: -len(pieces[k][1])):
+        clouds, metadata = pieces[p_i]
         placed = {}
         for key, m in metadata.items():
             c = catalog.get(key)
             if c is None or c["dot"] not in node_of_dot:
                 continue
             i = node_of_dot[c["dot"]]
+            if i in taken:
+                print(f"save: piece {p_i}'s {key} is at node {i}, already held by a "
+                      f"bigger piece -- dropped with its links", flush=True)
+                continue
+            taken.add(i)
             node = sc.nodes[i]
             node.pano = scene_mod.Pano(
                 source=c["source"], id=c["id"], lat=m["lat"], lon=m["lon"],
