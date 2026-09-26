@@ -81,7 +81,7 @@ def _zip(run_dir):
     return archive
 
 
-def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0):
+def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model=""):
     """Reconstruct (GPU) then place (CPU), in one click.
 
     Placement never needs its own GPU call, so it runs immediately after
@@ -97,6 +97,8 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0):
     (see services.pipeline_runner.estimate_gpu_seconds).
 
     view_hfov: solo mode's view width, 0 = its default (reconstruct.solo).
+
+    da3_model: a DA3 repo id; blank keeps the mode's own (see config).
     """
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -109,7 +111,8 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0):
         output_dir = _run_dir(prep)
         street_main.run_prepared_pathfind(
             prep, output_dir, conf_lower_percentile=100 - keep_pct,
-            gpu_seconds=gpu_seconds or None, hfov=view_hfov or None)
+            gpu_seconds=gpu_seconds or None, hfov=view_hfov or None,
+            model=(da3_model or "").strip() or None)
         yield gr.skip(), gr.skip(), "<p>Aligning the scene…</p>"
         t_place = time.monotonic()
         pipeline.process(output_dir, log=print)
@@ -150,6 +153,8 @@ def build_main_tab():
     link_input = gr.Checkbox(value=True, label="Link panoramas (off: each Google pano on its own)")
     # Solo mode's view width, for trying settings over the API; hidden.
     view_hfov_input = gr.Number(value=0, precision=0, minimum=0, visible=False)
+    # Which DA3 to use, blank = the mode's own (config); hidden, for comparing.
+    da3_model_input = gr.Textbox(value="", visible=False)
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
@@ -173,7 +178,7 @@ def build_main_tab():
 
     pathfind_run_btn.click(
         fn=handle_reconstruct,
-        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input],
+        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input, da3_model_input],
         outputs=[reconstruct_view, download_btn, pathfind_status],
         show_progress="hidden",
         show_progress_on=[reconstruct_view],

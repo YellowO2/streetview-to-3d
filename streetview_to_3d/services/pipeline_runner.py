@@ -56,20 +56,20 @@ def _walk_budget_s(total_s: float, n_dots: int) -> float:
 
 def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_lon,
                                edge_max_dist_m=None, step_degrees=None,
-                               conf_lower_percentile=None, gpu_seconds=None):
+                               conf_lower_percentile=None, gpu_seconds=None, model=None):
     """Walk and join in one GPU window (see streetview_to_3d.gpu).
 
     gpu_seconds: the window to ask for. None sizes it from the dot count
-    (estimate_gpu_seconds)."""
+    (estimate_gpu_seconds). model: a DA3 repo; None is config.DA3_MODEL_REPO."""
     return gpu.run(_run_pathfind_and_join_impl, date_graphs, points, adjacency,
                    start_lat, start_lon, edge_max_dist_m=edge_max_dist_m,
                    step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
-                   gpu_seconds=gpu_seconds, seconds=_gpu_seconds(points, gpu_seconds))
+                   gpu_seconds=gpu_seconds, model=model, seconds=_gpu_seconds(points, gpu_seconds))
 
 
 def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
                                  edge_max_dist_m=None, step_degrees=None,
-                                 conf_lower_percentile=None, gpu_seconds=None):
+                                 conf_lower_percentile=None, gpu_seconds=None, model=None):
     """The walk (run_pathfind_reconstruction), then the join
     (join_segments), in one GPU session on the same downloaded panos.
 
@@ -106,8 +106,8 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
     print(f"GPU window: {total_s:.0f}s for {len(points)} dot(s)"
           f"{' (override)' if gpu_seconds else ''}", flush=True)
 
-    cfg = gpu.get_da3_config()
-    da3 = gpu.get_da3()
+    cfg = gpu.get_da3_config(model)
+    da3 = gpu.get_da3(model)
     # "timing:" lines are what the per-phase constants above get
     # calibrated from -- grep the Space's logs for them.
     print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
@@ -152,18 +152,18 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
         torch.cuda.empty_cache()
 
 
-def run_solo_gpu(places, catalog, conf_lower_percentile=None, gpu_seconds=None, hfov=None):
+def run_solo_gpu(places, catalog, conf_lower_percentile=None, gpu_seconds=None, hfov=None, model=None):
     """Solo mode's GPU task (see reconstruct.solo): every place's candidates
     rated alone with the solo model, the best one's cloud kept. hfov: each
-    view's width; None keeps solo's default."""
+    view's width; model: a DA3 repo; None keeps solo's defaults."""
     from streetview_to_3d.reconstruct import solo
     views = dict(hfov=hfov or solo.VIEW_HFOV)
     seconds = float(gpu_seconds) if gpu_seconds else solo.estimate_gpu_seconds(places)
     return gpu.run(_run_solo_impl, places, catalog, conf_lower_percentile=conf_lower_percentile,
-                   views=views, total_s=seconds, seconds=seconds)
+                   views=views, model=model, total_s=seconds, seconds=seconds)
 
 
-def _run_solo_impl(places, catalog, conf_lower_percentile=None, views=None, total_s=None):
+def _run_solo_impl(places, catalog, conf_lower_percentile=None, views=None, model=None, total_s=None):
     import itertools
     import tempfile
     import time
@@ -178,8 +178,9 @@ def _run_solo_impl(places, catalog, conf_lower_percentile=None, views=None, tota
     t0 = time.monotonic()
     views = views or {}
     total_s = total_s or solo.estimate_gpu_seconds(places)
-    cfg, da3 = gpu.get_da3_config(DA3_SOLO_MODEL_REPO), gpu.get_da3(DA3_SOLO_MODEL_REPO)
-    print(f"timing: model load {time.monotonic() - t0:.1f}s; views {views}", flush=True)
+    model = model or DA3_SOLO_MODEL_REPO
+    cfg, da3 = gpu.get_da3_config(model), gpu.get_da3(model)
+    print(f"timing: model load {time.monotonic() - t0:.1f}s; {model}, views {views}", flush=True)
     try:
         with tempfile.TemporaryDirectory() as views_base:
             rate_ids = itertools.count()
