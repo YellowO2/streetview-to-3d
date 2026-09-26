@@ -152,15 +152,13 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
         torch.cuda.empty_cache()
 
 
-def run_solo_gpu(places, catalog, conf_lower_percentile=None, gpu_seconds=None,
-                 hfov=None, ring_pitches=None):
+def run_solo_gpu(places, catalog, conf_lower_percentile=None, gpu_seconds=None, hfov=None):
     """Solo mode's GPU task (see reconstruct.solo): every place's candidates
-    rated alone with the solo model, the best one's cloud kept. hfov and
-    ring_pitches: how panos are cut into views; None keeps solo's defaults."""
+    rated alone with the solo model, the best one's cloud kept. hfov: each
+    view's width; None keeps solo's default."""
     from streetview_to_3d.reconstruct import solo
-    views = dict(hfov=hfov or solo.VIEW_HFOV,
-                 ring_pitches=tuple(solo.RING_PITCHES if ring_pitches is None else ring_pitches))
-    seconds = float(gpu_seconds) if gpu_seconds else solo.estimate_gpu_seconds(places, views["ring_pitches"])
+    views = dict(hfov=hfov or solo.VIEW_HFOV)
+    seconds = float(gpu_seconds) if gpu_seconds else solo.estimate_gpu_seconds(places)
     return gpu.run(_run_solo_impl, places, catalog, conf_lower_percentile=conf_lower_percentile,
                    views=views, total_s=seconds, seconds=seconds)
 

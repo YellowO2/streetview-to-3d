@@ -101,8 +101,8 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
     A 7th value, this pano's own per-point confidence array, is appended
     when return_confidence is True -- index-aligned with pts/cols.
 
-    view_options: hfov / ring_pitches for panoramic_da3.run_da3 (solo mode
-    only; the walk keeps the default horizon ring)."""
+    view_options: hfov for panoramic_da3.run_da3 (solo mode only; the walk
+    keeps the default)."""
     from panoramic_da3 import run_da3
     rate_dir = os.path.join(views_base, f"r{rate_id}")
     os.makedirs(rate_dir, exist_ok=True)

@@ -206,7 +206,7 @@ def prepare_pathfind(start, goals, corridor_edges, center, link=True) -> dict:
 
 def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_DEGREES,
                           conf_lower_percentile: float | None = None,
-                          gpu_seconds: float | None = None, hfov=None, ring_pitches=None):
+                          gpu_seconds: float | None = None, hfov=None):
     """Walk and join in one GPU call, then write the pieces into the scene
     at output_dir. Returns one "piece i: n node(s)" line per piece. A prep
     made for solo mode (prepare_pathfind(link=False)) runs that instead.
@@ -218,14 +218,14 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
     gpu_seconds: the ZeroGPU window to ask for. None sizes it from the dot
     count -- see services.pipeline_runner.estimate_gpu_seconds.
 
-    hfov, ring_pitches: solo mode's views (see reconstruct.solo); None keeps
-    its defaults. The walk ignores them.
+    hfov: solo mode's view width (see reconstruct.solo); None keeps its
+    default. The walk ignores it.
     """
     from streetview_to_3d.services.pipeline_runner import run_pathfind_and_join_gpu, run_solo_gpu
     t0 = time.monotonic()
     if "solo" in prep:
         pieces = run_solo_gpu(prep["solo"], prep["catalog"], conf_lower_percentile=conf_lower_percentile,
-                              gpu_seconds=gpu_seconds, hfov=hfov, ring_pitches=ring_pitches)
+                              gpu_seconds=gpu_seconds, hfov=hfov)
         if not pieces:
             raise RuntimeError("DA3 reconstructed none of the panos.")
         results = _save_joined_pieces(pieces, output_dir, prep["catalog"])
