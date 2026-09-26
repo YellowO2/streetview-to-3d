@@ -53,6 +53,8 @@ Turns downloaded panos into an actual 3d point cloud, via real pairwise DA3 test
 
     Before saving, each Google pano's floor hole -- the disc under the camera DA3's views never reach -- is filled from Google's own depth map, which has the ground exactly in metres (`reconstruct.ground_fill`). Colour comes from a neighbour that sees that road unblocked, since a pano's own photo shows its car there.
 
+    - 3.3 Solo mode (solo.py) -- the "Link panoramas" toggle off. No walk, no join: every Google pano is reconstructed on its own with DA3 1.1 (better than the linked model at one pano alone), one piece each. The panos are each route dot's Google candidates (best-ranked date within 5 years of the others) plus Google's official neighbours of them (the same ones google_base uses). Apple takes no part: it has no depth map to be placed by. Meant to be placed on the Google base rather than by links.
+
 - 4. Placement (postprocess/, CPU only) -- runs right after reconstruction
 Input: the run's scene -- its centre, its street graph, and one Piece per cloud.
 

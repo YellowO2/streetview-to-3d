@@ -39,25 +39,27 @@ def _duration(task, *args, seconds, **kwargs):
 
 run = spaces.GPU(duration=_duration)(_run) if ON_SPACES else _run
 
-_da3_config = None
-_da3 = None
+_da3_configs = {}
+_da3s = {}
 
 
-def get_da3_config():
-    global _da3_config
-    if _da3_config is None:
-        from streetview_to_3d.config import load_da3_config
-        _da3_config = load_da3_config()
-    return _da3_config
+def get_da3_config(repo=None):
+    from streetview_to_3d.config import DA3_MODEL_REPO, load_da3_config
+    repo = repo or DA3_MODEL_REPO
+    if repo not in _da3_configs:
+        _da3_configs[repo] = load_da3_config(repo)
+    return _da3_configs[repo]
 
 
-def get_da3():
-    """The DA3 model: built at startup on a Space, on first use elsewhere."""
-    global _da3
-    if _da3 is None:
+def get_da3(repo=None):
+    """A DA3 model, by repo (default config.DA3_MODEL_REPO): the default is
+    built at startup on a Space, anything else on first use."""
+    from streetview_to_3d.config import DA3_MODEL_REPO
+    repo = repo or DA3_MODEL_REPO
+    if repo not in _da3s:
         from panoramic_da3 import DA3Model
-        _da3 = DA3Model(get_da3_config().da3_model)
-    return _da3
+        _da3s[repo] = DA3Model(get_da3_config(repo).da3_model)
+    return _da3s[repo]
 
 
 if ON_SPACES:
@@ -67,5 +69,8 @@ if ON_SPACES:
     # import without ever loading it. (Same fix the old 3DGS app used.)
     sys.modules.setdefault("pycolmap", types.ModuleType("pycolmap"))
     get_da3()
+    # solo mode's model: downloaded now, built inside the call that uses it
+    from streetview_to_3d.config import DA3_SOLO_MODEL_REPO
+    get_da3_config(DA3_SOLO_MODEL_REPO)
     from streetview_to_3d.services.segment import get_segmenter
     get_segmenter()  # the car/person masker, small, same treatment as DA3

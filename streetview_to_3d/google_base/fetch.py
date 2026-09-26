@@ -47,35 +47,50 @@ def _official(pano_id):
     return len(pano_id) == 22 and not pano_id.startswith("CIHM")
 
 
-async def _gather(scene):
-    lat0, lon0 = scene["center"][:2]
-    seeds = [n["pano"] for n in scene["nodes"] if n["pano"]["source"] == "google"]
+async def neighbours(seeds, lat0, lon0, session):
+    """Google's own metadata for the official panos near a set of seed
+    panos (dicts with id, lat, lon, date): each seed's neighbours within
+    NEAR_M of any seed, captured within MAX_YEARS of the seeds' median
+    year, with an elevation. Seeds themselves are left out."""
     if not seeds:
         return []
     seed_ids = {p["id"] for p in seeds}
     seed_en = np.array([latlon_to_local_m(p["lat"], p["lon"], lat0, lon0) for p in seeds])
     year = int(np.median([int(str(p["date"])[:4]) for p in seeds]))
-    ids = set(seed_ids)
+    ids = set()
+    for p in seeds:
+        meta = await streetview.find_panorama_by_id_async(p["id"], session=session)
+        for nb in (meta.neighbors if meta else []):
+            en = np.array(latlon_to_local_m(nb.lat, nb.lon, lat0, lon0))
+            if _official(nb.id) and nb.id not in seed_ids and np.linalg.norm(seed_en - en, axis=1).min() < NEAR_M:
+                ids.add(nb.id)
+    out = []
+    for i in sorted(ids):
+        meta = await streetview.find_panorama_by_id_async(i, session=session)
+        if (meta is not None and meta.elevation is not None and meta.date is not None
+                and abs(meta.date.year - year) <= MAX_YEARS):
+            out.append(meta)
+    return out
+
+
+async def _gather(scene):
+    lat0, lon0 = scene["center"][:2]
+    seeds = [n["pano"] for n in scene["nodes"] if n["pano"]["source"] == "google"]
+    if not seeds:
+        return []
     panos = []
     async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as s:
-        for p in seeds:
-            meta = await streetview.find_panorama_by_id_async(p["id"], session=s)
-            for nb in (meta.neighbors if meta else []):
-                en = np.array(latlon_to_local_m(nb.lat, nb.lon, lat0, lon0))
-                if _official(nb.id) and np.linalg.norm(seed_en - en, axis=1).min() < NEAR_M:
-                    ids.add(nb.id)
-        for i in sorted(ids):
-            meta = await streetview.find_panorama_by_id_async(i, session=s)
-            if meta is None or meta.elevation is None or meta.date is None:
-                continue
-            if i not in seed_ids and abs(meta.date.year - year) > MAX_YEARS:
-                continue
-            got = await fetch_depth_planes(i, session=s)
+        metas = [await streetview.find_panorama_by_id_async(p["id"], session=s) for p in seeds]
+        metas = [m for m in metas if m is not None and m.elevation is not None and m.date is not None]
+        seed_ids = {m.id for m in metas}
+        for meta in metas + await neighbours(seeds, lat0, lon0, s):
+            got = await fetch_depth_planes(meta.id, session=s)
             if got is None:
                 continue
-            panos.append(GooglePano(id=i, date=str(meta.date), lat=meta.lat, lon=meta.lon,
+            panos.append(GooglePano(id=meta.id, date=str(meta.date), lat=meta.lat, lon=meta.lon,
                                     heading=meta.heading, elevation=meta.elevation,
-                                    depth=got[0], plane_index=got[1], in_scene=i in seed_ids))
+                                    depth=got[0], plane_index=got[1], in_scene=meta.id in seed_ids))
+    panos.sort(key=lambda p: p.id)
     return [p.place(lat0, lon0) for p in panos]
 
 

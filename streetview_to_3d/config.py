@@ -24,6 +24,9 @@ DA3_UNITS_TO_METRES = 1.3
 #                              (Apple about half of Google), so no one
 #                              DA3_UNITS_TO_METRES fits.
 DA3_MODEL_REPO = "depth-anything/DA3NESTED-GIANT-LARGE"
+# Solo mode (reconstruct.solo) never links, so it takes the 1.1 that keeps
+# more views per pano on its own.
+DA3_SOLO_MODEL_REPO = "depth-anything/DA3NESTED-GIANT-LARGE-1.1"
 
 
 @dataclass
@@ -34,5 +37,5 @@ class DA3Config:
     da3_model: str = ""
 
 
-def load_da3_config() -> DA3Config:
-    return DA3Config(da3_model=snapshot_download(repo_id=DA3_MODEL_REPO))
+def load_da3_config(repo: str = DA3_MODEL_REPO) -> DA3Config:
+    return DA3Config(da3_model=snapshot_download(repo_id=repo))
