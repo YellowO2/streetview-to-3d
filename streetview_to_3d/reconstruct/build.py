@@ -221,8 +221,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
     hfov: solo mode's view width (see reconstruct.solo); None keeps its
     default. The walk ignores it.
 
-    model: the DA3 repo to use; None keeps the mode's own
-    (config.DA3_MODEL_REPO linked, DA3_SOLO_MODEL_REPO solo).
+    model: the DA3 repo to use; None is config.DA3_MODEL_REPO.
     """
     from streetview_to_3d.services.pipeline_runner import run_pathfind_and_join_gpu, run_solo_gpu
     t0 = time.monotonic()

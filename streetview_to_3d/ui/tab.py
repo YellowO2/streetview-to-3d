@@ -98,7 +98,7 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model=""):
 
     view_hfov: solo mode's view width, 0 = its default (reconstruct.solo).
 
-    da3_model: a DA3 repo id; blank keeps the mode's own (see config).
+    da3_model: a DA3 repo id; blank is config.DA3_MODEL_REPO.
     """
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -153,7 +153,7 @@ def build_main_tab():
     link_input = gr.Checkbox(value=True, label="Link panoramas (off: each Google pano on its own)")
     # Solo mode's view width, for trying settings over the API; hidden.
     view_hfov_input = gr.Number(value=0, precision=0, minimum=0, visible=False)
-    # Which DA3 to use, blank = the mode's own (config); hidden, for comparing.
+    # Which DA3 to use, blank = config.DA3_MODEL_REPO; hidden, for comparing.
     da3_model_input = gr.Textbox(value="", visible=False)
 
     pathfind_status = gr.HTML()

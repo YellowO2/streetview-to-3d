@@ -154,8 +154,8 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
 
 def run_solo_gpu(places, catalog, conf_lower_percentile=None, gpu_seconds=None, hfov=None, model=None):
     """Solo mode's GPU task (see reconstruct.solo): every place's candidates
-    rated alone with the solo model, the best one's cloud kept. hfov: each
-    view's width; model: a DA3 repo; None keeps solo's defaults."""
+    rated alone, the best one's cloud kept. hfov: each view's width, None
+    keeps solo's default; model: a DA3 repo, None is config.DA3_MODEL_REPO."""
     from streetview_to_3d.reconstruct import solo
     views = dict(hfov=hfov or solo.VIEW_HFOV)
     seconds = float(gpu_seconds) if gpu_seconds else solo.estimate_gpu_seconds(places)
@@ -169,7 +169,6 @@ def _run_solo_impl(places, catalog, conf_lower_percentile=None, views=None, mode
     import time
 
     import torch
-    from streetview_to_3d.config import DA3_SOLO_MODEL_REPO
     from streetview_to_3d.reconstruct import solo
     from streetview_to_3d.services.da3_ops import CONF_LOWER_PERCENTILE, rate_pano as da3_rate_pano
 
@@ -178,7 +177,6 @@ def _run_solo_impl(places, catalog, conf_lower_percentile=None, views=None, mode
     t0 = time.monotonic()
     views = views or {}
     total_s = total_s or solo.estimate_gpu_seconds(places)
-    model = model or DA3_SOLO_MODEL_REPO
     cfg, da3 = gpu.get_da3_config(model), gpu.get_da3(model)
     print(f"timing: model load {time.monotonic() - t0:.1f}s; {model}, views {views}", flush=True)
     try:

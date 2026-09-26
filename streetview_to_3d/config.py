@@ -14,19 +14,17 @@ from huggingface_hub import snapshot_download
 # and fitted nonsense scales.
 DA3_UNITS_TO_METRES = 1.3
 
-# The original Nested, deprecated by DA3 but the best of the three tried
-# on Stockholm (same pairs, same panos):
-#   DA3NESTED-GIANT-LARGE-1.1  more views kept per pano on its own, but no
-#                              pair test kept views on both panos (0 of 34,
-#                              vs 20 of 89 here), so nothing linked.
-#   DA3-GIANT-1.1              links like this one (7 of 30), but relative
-#                              only: each piece came out its own scale
-#                              (Apple about half of Google), so no one
+# Nested 1.1: better than the original Nested on a pano on its own. It
+# links too where a street is open enough (Singapore: 2 of 3 edges); in
+# Stockholm's narrow alleys nothing linked (0 of 34 pair tests), and then
+# every place keeps its own best pano, placed by its GPS and heading --
+# which is the solo result that looked best there.
+#   DA3NESTED-GIANT-LARGE      the original; linked Stockholm (20 of 89),
+#                              its per-pano clouds are worse.
+#   DA3-GIANT-1.1              links, but relative only: each piece came
+#                              out its own scale, so no one
 #                              DA3_UNITS_TO_METRES fits.
-DA3_MODEL_REPO = "depth-anything/DA3NESTED-GIANT-LARGE"
-# Solo mode (reconstruct.solo) never links, so it takes the 1.1 that keeps
-# more views per pano on its own.
-DA3_SOLO_MODEL_REPO = "depth-anything/DA3NESTED-GIANT-LARGE-1.1"
+DA3_MODEL_REPO = "depth-anything/DA3NESTED-GIANT-LARGE-1.1"
 
 
 @dataclass

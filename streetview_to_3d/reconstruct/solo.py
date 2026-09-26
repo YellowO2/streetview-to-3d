@@ -3,9 +3,8 @@
 The linked walk (walk_graph, join_segments) exists to put panos in one
 frame by testing them against each other. Once each pano is placed by its
 own GPS, heading and Google's depth instead (google_base), nothing needs
-linking, so every pano is reconstructed alone -- with the DA3 that is best
-at one pano on its own (config.DA3_SOLO_MODEL_REPO) -- and every place
-Google has a pano can take part, not only the dots the walk could reach:
+linking, so every pano is reconstructed alone, and every place Google has
+a pano can take part, not only the dots the walk could reach:
 
 1. prepare: per dot, the Google candidates of the best-ranked date that has
    any there (within google_base's MAX_YEARS of the others); plus Google's official neighbours of those panos
@@ -29,9 +28,9 @@ from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_p
 # panos. Tilted rings of extra views were tried and made whole panos fail.
 VIEW_HFOV = 100.0
 
-# GPU window: building the solo model from disk inside the call, then one
-# DA3 run per candidate (~2 s measured for rating 12 views, rounded up).
-MODEL_BUILD_S = 45.0
+# GPU window: the model (already built at startup), then one DA3 run per
+# candidate (~2 s measured for rating 12 views, rounded up).
+MODEL_LOAD_S = 5.0
 SECONDS_PER_CANDIDATE = 4.0
 SAVE_BUFFER_S = 10.0
 
@@ -90,7 +89,7 @@ def prepare(prep):
 
 
 def estimate_gpu_seconds(places):
-    return MODEL_BUILD_S + SECONDS_PER_CANDIDATE * sum(map(len, places.values())) + SAVE_BUFFER_S
+    return MODEL_LOAD_S + SECONDS_PER_CANDIDATE * sum(map(len, places.values())) + SAVE_BUFFER_S
 
 
 def reconstruct(places, catalog, rate_pano, deadline):
