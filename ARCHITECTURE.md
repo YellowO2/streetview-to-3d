@@ -14,7 +14,7 @@ Input: `selection_graph`
 With the `selection_graph` from map_selection, we do a series of processing to build our own graph.
 
     - 2.1 Build the fetch_graph  (fetch_nodes.py: `corridor_points`, `fetch_corridor_nodes`)
-    The fetch_graph's dots ARE the selection_graph's own real nodes -- `corridor_points` builds the dot/adjacency structure directly from the corridor's real edges, no synthetic in-between sampling. For each dot, `fetch_corridor_nodes` fetches the nearby Apple and Google panoramic metadata (no images yet), within `POINT_MAX_DIST_M` = 5m of that dot's own real coordinates.
+    The fetch_graph's dots ARE the selection_graph's own real nodes -- `corridor_points` builds the dot/adjacency structure directly from the corridor's real edges, no synthetic in-between sampling. For each dot, `fetch_corridor_nodes` fetches the nearby Google panoramic metadata (no images yet; Apple is off, `USE_APPLE`: its GPS sits 1-1.6 m off Google's and its depth is poor), within `POINT_MAX_DIST_M` = 5m of that dot's own real coordinates.
     Output: a fetch_graph where each dot has a bucket of candidate panoramic metadata (no images), plus that dot's ground elevation, which the same lookup already returned -- see 4.4.
 
     - 2.2 Build the top N date_graphs  (build_street_graph/build_graph.py: `build_corridor_graphs`; date_ranking.py)

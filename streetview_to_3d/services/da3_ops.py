@@ -8,6 +8,7 @@ exposes exactly one primitive (run_da3); this module is the only place
 that calls it and interprets the raw result.
 """
 import os
+from contextlib import contextmanager
 
 import numpy as np
 
@@ -40,14 +41,46 @@ MIN_KEEP_RATE = 1.0 / 3
 # a redeploy; this is only the fallback when a caller doesn't pass one.
 CONF_LOWER_PERCENTILE = 20.0   # keep top 80%
 
-# Leave cars and people out of every point cloud (see services.segment).
+# Width of each view in degrees, same 12 views (panoramic_da3's
+# extract_views_for_da3): 90 reaches ~29 deg above/below the horizon, 100
+# ~33. On Stockholm 95-105 kept as many views as 90 and added points; 110
+# lost panos. Tilted rings of extra views were tried and made whole panos
+# fail.
+VIEW_HFOV = 100.0
+
+# Leave cars, people and poles out of every point cloud (see services.segment).
 MASK_MOVERS = True
+
+# Per-run overrides of VIEW_HFOV and the masker model (see options()).
+_options = {"hfov": None, "masker": None}
+
+
+@contextmanager
+def options(hfov=None, masker=None):
+    """Every DA3 run inside uses this view width and masker model (a
+    SegFormer repo id); None keeps the defaults. For comparing settings
+    per run from the UI, without a redeploy."""
+    old = dict(_options)
+    _options.update(hfov=hfov, masker=masker)
+    try:
+        yield
+    finally:
+        _options.update(old)
+
+
+def _run_da3(*args, **kwargs):
+    """panoramic_da3.run_da3 with this pipeline's view width and mask."""
+    from panoramic_da3 import run_da3
+    return run_da3(*args, hfov=_options["hfov"] or VIEW_HFOV, drop_mask=_drop_mask(), **kwargs)
 
 
 def _drop_mask():
     if not MASK_MOVERS:
         return None
+    from functools import partial
     from streetview_to_3d.services.segment import drop_movers
+    if _options["masker"]:
+        return partial(drop_movers, model_id=_options["masker"])
     return drop_movers
 
 
@@ -59,15 +92,13 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
     (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views),
     plus an 8th per_pano_confidence dict when return_confidence is True --
     see panoramic_da3.run_da3's own docstring for what it covers."""
-    from panoramic_da3 import run_da3
     test_dir = os.path.join(views_base, f"t{test_id}")
     os.makedirs(test_dir, exist_ok=True)
     id_a, id_b = os.path.basename(path_a), os.path.basename(path_b)
-    _, res, pts, cols, per_pano_pts, per_pano_cols = run_da3(
+    _, res, pts, cols, per_pano_pts, per_pano_cols = _run_da3(
         path_a, [path_b], cfg, test_dir,
         da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
-        drop_mask=_drop_mask(),
     )
     ka, ta = res.pano_keep_counts.get(id_a, (0, 1))
     kb, tb = res.pano_keep_counts.get(id_b, (0, 1))
@@ -81,7 +112,7 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
 
 
 def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=VIEW_STEP_DEGREES,
-              conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False, **view_options):
+              conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False):
     """Run DA3 on this pano ALONE (no partner) to get a solo consistency
     score and a real solo point cloud -- so a dot that never pairs with
     any real neighbor can still contribute its own solo reconstruction
@@ -99,18 +130,13 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
       - n_kept, n_total: view counts surviving DA3's filter.
 
     A 7th value, this pano's own per-point confidence array, is appended
-    when return_confidence is True -- index-aligned with pts/cols.
-
-    view_options: hfov for panoramic_da3.run_da3 (solo mode only; the walk
-    keeps the default)."""
-    from panoramic_da3 import run_da3
+    when return_confidence is True -- index-aligned with pts/cols."""
     rate_dir = os.path.join(views_base, f"r{rate_id}")
     os.makedirs(rate_dir, exist_ok=True)
     pano_id = os.path.basename(path)
-    filtered_views, res, _, _, per_pano_pts, per_pano_cols = run_da3(
+    filtered_views, res, _, _, per_pano_pts, per_pano_cols = _run_da3(
         path, [], cfg, rate_dir, da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
-        drop_mask=_drop_mask(), **view_options,
     )
     score = len(filtered_views)
     n_kept, n_total = res.pano_keep_counts.get(pano_id, (score, score))
@@ -141,15 +167,13 @@ def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thres
     meters among that pano's own kept views only; inf if zero kept).
     conf_a/conf_b (each pano's own per-point confidence array) are added
     when return_confidence is True."""
-    from panoramic_da3 import run_da3
     test_dir = os.path.join(views_base, f"b{test_id}")
     os.makedirs(test_dir, exist_ok=True)
     id_a, id_b = os.path.basename(path_a), os.path.basename(path_b)
-    _, res, pts, cols, _, _ = run_da3(
+    _, res, pts, cols, _, _ = _run_da3(
         path_a, [path_b], cfg, test_dir,
         da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
-        drop_mask=_drop_mask(),
     )
     if id_a not in res.pano_poses or id_b not in res.pano_poses:
         return None
@@ -191,16 +215,15 @@ def depth_around(target_path, neighbour_paths, cfg, views_base, da3, dist_thresh
     for the target), n_clean (views surviving DA3's filter across the
     run), neighbours (the paths actually used).
     """
-    from panoramic_da3 import run_da3
     target_id = os.path.basename(target_path)
     used, best = list(neighbour_paths), None
     for attempt in range(len(used) + 1):
         run_dir = os.path.join(views_base, f"around{attempt}")
         os.makedirs(run_dir, exist_ok=True)
-        filtered, res, pts, cols, _, _ = run_da3(
+        filtered, res, pts, cols, _, _ = _run_da3(
             target_path, used, cfg, run_dir, da3=da3, dist_thresh=dist_thresh,
             angle_thresh=angle_thresh, step_degrees=step_degrees,
-            conf_lower_percentile=conf_lower_percentile, drop_mask=_drop_mask())
+            conf_lower_percentile=conf_lower_percentile)
         pose = res.pano_poses.get(target_id)
         run = {
             "points": pts if pts is not None else np.zeros((0, 3)),

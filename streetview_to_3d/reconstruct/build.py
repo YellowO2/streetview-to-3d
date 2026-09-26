@@ -206,7 +206,7 @@ def prepare_pathfind(start, goals, corridor_edges, center, link=True) -> dict:
 
 def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_DEGREES,
                           conf_lower_percentile: float | None = None,
-                          gpu_seconds: float | None = None, hfov=None, model=None):
+                          gpu_seconds: float | None = None, model=None, hfov=None, masker=None):
     """Walk and join in one GPU call, then write the pieces into the scene
     at output_dir. Returns one "piece i: n node(s)" line per piece. A prep
     made for solo mode (prepare_pathfind(link=False)) runs that instead.
@@ -218,16 +218,15 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
     gpu_seconds: the ZeroGPU window to ask for. None sizes it from the dot
     count -- see services.pipeline_runner.estimate_gpu_seconds.
 
-    hfov: solo mode's view width (see reconstruct.solo); None keeps its
-    default. The walk ignores it.
-
-    model: the DA3 repo to use; None is config.DA3_MODEL_REPO.
+    model: the DA3 repo to use; None is config.DA3_MODEL_REPO. hfov, masker:
+    view width and masker model for this run (services.da3_ops.options);
+    None keeps the defaults.
     """
     from streetview_to_3d.services.pipeline_runner import run_pathfind_and_join_gpu, run_solo_gpu
     t0 = time.monotonic()
     if "solo" in prep:
         pieces = run_solo_gpu(prep["solo"], prep["catalog"], conf_lower_percentile=conf_lower_percentile,
-                              gpu_seconds=gpu_seconds, hfov=hfov, model=model)
+                              gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker)
         if not pieces:
             raise RuntimeError("DA3 reconstructed none of the panos.")
         results = _save_joined_pieces(pieces, output_dir, prep["catalog"])
@@ -237,7 +236,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
     segments, pieces = run_pathfind_and_join_gpu(
         prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon,
         step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
-        gpu_seconds=gpu_seconds, model=model,
+        gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker,
     )
     if not segments:
         raise RuntimeError("No connected path found from start toward any goal.")

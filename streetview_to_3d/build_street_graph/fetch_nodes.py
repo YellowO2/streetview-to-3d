@@ -11,6 +11,10 @@ from streetview_to_3d.ui.map_selection.candidates import MAX_NODES, apple_tile_p
 # dot's search reaching into a neighboring dot's own territory.
 POINT_MAX_DIST_M = 5.0
 
+# Apple Look Around is left out: its GPS sits 1-1.6 m off Google's, its
+# depth is poor, and there is no depth map to place it by.
+USE_APPLE = False
+
 # Real selection-graph nodes within this distance of each other collapse
 # into ONE dot (see corridor_points) -- real coverage is frequently
 # double/triple-sampled at the same real spot (a road captured in both
@@ -192,11 +196,12 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
                     "roll": entry.get("roll", meta.get("roll")),
                 })
 
+        apple_candidates = {}
         try:
-            apple_candidates = apple_tile_panos(lat, lon)
+            if USE_APPLE:
+                apple_candidates = apple_tile_panos(lat, lon)
         except Exception as e:
             print(f"Apple lookup failed near ({lat}, {lon}): {e}")
-            apple_candidates = {}
         for p in apple_candidates.values():
             if p.id in seen_apple_ids:
                 continue

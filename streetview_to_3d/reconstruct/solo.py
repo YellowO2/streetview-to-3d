@@ -22,12 +22,6 @@ import aiohttp
 from streetview_to_3d.services.http_headers import BROWSER_HEADERS
 from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, format_date, run_async
 
-# Width of each DA3 view in degrees (panoramic_da3.extract_views_for_da3),
-# same 12 views: 90 reaches ~29 deg above/below the horizon, 100 ~33.
-# On Stockholm 95-105 kept as many views as 90 and added points; 110 lost
-# panos. Tilted rings of extra views were tried and made whole panos fail.
-VIEW_HFOV = 100.0
-
 # GPU window: the model (already built at startup), then one DA3 run per
 # candidate (~2 s measured for rating 12 views, rounded up).
 MODEL_LOAD_S = 5.0

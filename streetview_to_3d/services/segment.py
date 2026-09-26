@@ -26,7 +26,7 @@ THIN = ("pole", "traffic light", "traffic sign")
 GROW_PX = 3
 BATCH = 16
 
-_model = None
+_models = {}
 
 
 def _device():
@@ -38,23 +38,25 @@ def _device():
     return "cpu"
 
 
-def get_segmenter():
-    """(processor, model, class ids to drop): built at startup on a Space
-    (see streetview_to_3d.gpu), on first use elsewhere."""
-    global _model
-    if _model is None:
+def get_segmenter(model_id=None):
+    """(processor, model, class ids to drop) for a Cityscapes SegFormer
+    (default MODEL_ID): the default is built at startup on a Space (see
+    streetview_to_3d.gpu), anything else on first use."""
+    model_id = model_id or MODEL_ID
+    if model_id not in _models:
         from transformers import AutoModelForSemanticSegmentation, AutoProcessor
-        processor = AutoProcessor.from_pretrained(MODEL_ID)
-        model = AutoModelForSemanticSegmentation.from_pretrained(MODEL_ID).to(_device()).eval()
+        processor = AutoProcessor.from_pretrained(model_id)
+        model = AutoModelForSemanticSegmentation.from_pretrained(model_id).to(_device()).eval()
         label_ids = {name: int(i) for i, name in model.config.id2label.items()}
-        _model = (processor, model, [label_ids[n] for n in MOVERS + THIN])
-    return _model
+        _models[model_id] = (processor, model, [label_ids[n] for n in MOVERS + THIN])
+    return _models[model_id]
 
 
-def drop_movers(paths):
-    """One boolean mask per image path, True on cars, people, poles and the like."""
+def drop_movers(paths, model_id=None):
+    """One boolean mask per image path, True on cars, people, poles and the
+    like. model_id: another Cityscapes SegFormer to use (see get_segmenter)."""
     import torch
-    processor, model, drop = get_segmenter()
+    processor, model, drop = get_segmenter(model_id)
     masks = []
     for start in range(0, len(paths), BATCH):
         images = [Image.open(p).convert("RGB") for p in paths[start:start + BATCH]]

@@ -56,20 +56,24 @@ def _walk_budget_s(total_s: float, n_dots: int) -> float:
 
 def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_lon,
                                edge_max_dist_m=None, step_degrees=None,
-                               conf_lower_percentile=None, gpu_seconds=None, model=None):
+                               conf_lower_percentile=None, gpu_seconds=None, model=None,
+                               hfov=None, masker=None):
     """Walk and join in one GPU window (see streetview_to_3d.gpu).
 
     gpu_seconds: the window to ask for. None sizes it from the dot count
-    (estimate_gpu_seconds). model: a DA3 repo; None is config.DA3_MODEL_REPO."""
+    (estimate_gpu_seconds). model: a DA3 repo; None is config.DA3_MODEL_REPO.
+    hfov, masker: per-run view width and masker (services.da3_ops.options)."""
     return gpu.run(_run_pathfind_and_join_impl, date_graphs, points, adjacency,
                    start_lat, start_lon, edge_max_dist_m=edge_max_dist_m,
                    step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
-                   gpu_seconds=gpu_seconds, model=model, seconds=_gpu_seconds(points, gpu_seconds))
+                   gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker,
+                   seconds=_gpu_seconds(points, gpu_seconds))
 
 
 def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
                                  edge_max_dist_m=None, step_degrees=None,
-                                 conf_lower_percentile=None, gpu_seconds=None, model=None):
+                                 conf_lower_percentile=None, gpu_seconds=None, model=None,
+                                 hfov=None, masker=None):
     """The walk (run_pathfind_reconstruction), then the join
     (join_segments), in one GPU session on the same downloaded panos.
 
@@ -88,7 +92,7 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
     import torch
     from streetview_to_3d.services.da3_ops import (
         CONF_LOWER_PERCENTILE, VIEW_STEP_DEGREES, bridge_test_edge as da3_bridge_test_edge,
-        rate_pano as da3_rate_pano, test_edge as da3_test_edge,
+        options, rate_pano as da3_rate_pano, test_edge as da3_test_edge,
     )
     from streetview_to_3d.reconstruct.join_segments import BRIDGE_MAX_DIST_M, join_segments
     from streetview_to_3d.reconstruct.walk_graph import run_pathfind_reconstruction
@@ -112,7 +116,7 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
     # calibrated from -- grep the Space's logs for them.
     print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
     try:
-        with tempfile.TemporaryDirectory() as views_base:
+        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker):
             def test_edge(path_a, path_b, test_id):
                 return da3_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id,
                                      step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile)
@@ -152,40 +156,40 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
         torch.cuda.empty_cache()
 
 
-def run_solo_gpu(places, catalog, conf_lower_percentile=None, gpu_seconds=None, hfov=None, model=None):
+def run_solo_gpu(places, catalog, conf_lower_percentile=None, gpu_seconds=None, model=None,
+                 hfov=None, masker=None):
     """Solo mode's GPU task (see reconstruct.solo): every place's candidates
-    rated alone, the best one's cloud kept. hfov: each view's width, None
-    keeps solo's default; model: a DA3 repo, None is config.DA3_MODEL_REPO."""
+    rated alone, the best one's cloud kept. model: a DA3 repo, None is
+    config.DA3_MODEL_REPO; hfov, masker: as run_pathfind_and_join_gpu."""
     from streetview_to_3d.reconstruct import solo
-    views = dict(hfov=hfov or solo.VIEW_HFOV)
     seconds = float(gpu_seconds) if gpu_seconds else solo.estimate_gpu_seconds(places)
     return gpu.run(_run_solo_impl, places, catalog, conf_lower_percentile=conf_lower_percentile,
-                   views=views, model=model, total_s=seconds, seconds=seconds)
+                   model=model, hfov=hfov, masker=masker, total_s=seconds, seconds=seconds)
 
 
-def _run_solo_impl(places, catalog, conf_lower_percentile=None, views=None, model=None, total_s=None):
+def _run_solo_impl(places, catalog, conf_lower_percentile=None, model=None, hfov=None, masker=None,
+                   total_s=None):
     import itertools
     import tempfile
     import time
 
     import torch
     from streetview_to_3d.reconstruct import solo
-    from streetview_to_3d.services.da3_ops import CONF_LOWER_PERCENTILE, rate_pano as da3_rate_pano
+    from streetview_to_3d.services.da3_ops import CONF_LOWER_PERCENTILE, options, rate_pano as da3_rate_pano
 
     if conf_lower_percentile is None:
         conf_lower_percentile = CONF_LOWER_PERCENTILE
     t0 = time.monotonic()
-    views = views or {}
     total_s = total_s or solo.estimate_gpu_seconds(places)
     cfg, da3 = gpu.get_da3_config(model), gpu.get_da3(model)
-    print(f"timing: model load {time.monotonic() - t0:.1f}s; {model}, views {views}", flush=True)
+    print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
     try:
-        with tempfile.TemporaryDirectory() as views_base:
+        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker):
             rate_ids = itertools.count()
 
             def rate_pano(path):
                 return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids),
-                                     conf_lower_percentile=conf_lower_percentile, **views)
+                                     conf_lower_percentile=conf_lower_percentile)
 
             pieces = solo.reconstruct(places, catalog, rate_pano, t0 + total_s - SAVE_BUFFER_S)
             print(f"timing: solo {time.monotonic() - t0:.1f}s for {len(places)} place(s) "
