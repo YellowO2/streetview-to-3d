@@ -116,17 +116,54 @@ async def download_pano_by_id(pano_id, zoom: int = _DOWNLOAD_ZOOM):
 
 
 
-async def fetch_depth(pano_id):
-    """Google's own depth map for a pano, in metres, laid out like the photo
-    (Street View stores it mirrored left-right), or None if it has none.
+def _parse_depth_keeping_planes(b64):
+    """streetlevel's depth parse, also keeping Google's per-pixel plane
+    numbers, which it otherwise throws away. A depth map IS a list of planes
+    plus one plane number per pixel (0 = sky), so with them every pixel's
+    plane is known exactly instead of guessed back from the depth."""
+    import numpy as np
+    from streetlevel.streetview import depth as sv_depth
+    raw = sv_depth.decode_b64(b64)
+    header = sv_depth.parse_header(raw)
+    dm = sv_depth.parse(b64)
+    dm.plane_index = np.asarray(sv_depth.parse_planes(header, raw)["indices"],
+                                np.int32).reshape(header["height"], header["width"])
+    return dm
 
-    Coarse: a flat plane per wall and one for the ground, no trees, cars or
-    detail. But the ground is exact -- the camera comes out 2.4-2.5 m up --
-    which is what reconstruct.ground_fill uses it for. -1 marks the sky.
+
+def _keep_depth_planes():
+    from streetlevel.streetview import parse as sv_parse
+    sv_parse.parse_depth = _parse_depth_keeping_planes
+
+
+async def fetch_depth_planes(pano_id, session=None):
+    """(depth, plane index) of a pano's Google depth map, both 256 x 512 and
+    laid out like the photo, or None if it has none. depth is in metres
+    along each ray, -1 for the sky; plane index is Google's plane number of
+    each pixel, 0 for the sky.
+
+    streetlevel mirrors its depth grid left-right against the photo; the
+    plane numbers come in the photo's layout already, so only depth flips.
     """
     import numpy as np
-    async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
+    _keep_depth_planes()
+    if session is None:
+        async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as s:
+            pano = await streetview.find_panorama_by_id_async(pano_id, session=s, download_depth=True)
+    else:
         pano = await streetview.find_panorama_by_id_async(pano_id, session=session, download_depth=True)
     if pano is None or pano.depth is None:
         return None
-    return np.asarray(pano.depth.data, np.float32)[:, ::-1]
+    return np.asarray(pano.depth.data, np.float32)[:, ::-1].copy(), pano.depth.plane_index.copy()
+
+
+async def fetch_depth(pano_id):
+    """Google's own depth map for a pano, in metres, laid out like the photo,
+    or None if it has none. -1 marks the sky.
+
+    Coarse: a flat plane per wall and one for the ground, no trees, cars or
+    detail. But the ground is exact -- the camera comes out 2.4-2.5 m up --
+    which is what reconstruct.ground_fill uses it for.
+    """
+    got = await fetch_depth_planes(pano_id)
+    return None if got is None else got[0]

@@ -64,4 +64,12 @@ A piece arrives internally consistent but individually placed: its own DA3 frame
 
 Output: a `transform` on every placed node -- its own stored .ply straight to world metres. Saved into the scene rather than baked into the clouds, so rendering any subset (`postprocess.render_pieces`) is a matrix multiply with nothing re-solved.
 
+- 5. Google base (google_base/, CPU) -- built per scene; not yet wired into the Space's pipeline
+Input: a scene. Output: a clean shape of the street from Google's own depth maps -- shape only, colour comes later from painting -- meant as the reference DA3 is fitted onto and whose surfaces fill DA3's gaps. `python -m streetview_to_3d.google_base SCENE_DIR OUT_DIR` writes it as a scene folder (one piece per Google pano, one for the ground).
+
+    - 5.1 Panos (fetch.py). The scene's Google nodes plus official neighbours within 15 m and 5 years of the scene's date. Each is placed by its own GPS, elevation and heading and nothing else: nudging panos to agree with each other was tried and made walls worse.
+    - 5.2 Own planes (build.py). A Google depth map IS a list of planes plus a plane number per pixel (`services.streetview_fetch.fetch_depth_planes` keeps the numbers streetlevel throws away), so every ray lands exactly on its own plane. Only the dense part is kept: where one depth pixel covers under 75 cm of surface.
+    - 5.3 Walls merged. Planes of different panos that are the same surface become one plane between them. Floors take no part -- moving some of a floor's planes and not their neighbours tears it.
+    - 5.4 One ground. Every pano's ground (`postprocess.ground`, the one ground detector: faces up, lowest in its spot, connected to where the cameras stand -- slopes included) goes into one height map, each spot taken from the nearest camera's pano, and the ground is rebuilt on it as an even 5 cm grid. Google draws a level floor 2.5 m under every camera, so on a slope neighbouring panos' floors stack; the one map removes that.
+
 Coordinates are Y-DOWN throughout (+X east, +Y down, +Z north, metres from the scene's centre), which is DA3's own convention; the viewer flips it only for display. Anything from outside must be converted: Google's `elevation` is metres above sea level (Y-up), so it is negated on the way in (see `road_align/ground_elevation.py`).
