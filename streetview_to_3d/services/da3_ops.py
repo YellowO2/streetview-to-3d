@@ -40,6 +40,16 @@ MIN_KEEP_RATE = 1.0 / 3
 # a redeploy; this is only the fallback when a caller doesn't pass one.
 CONF_LOWER_PERCENTILE = 20.0   # keep top 80%
 
+# Leave cars and people out of every point cloud (see services.segment).
+MASK_MOVERS = True
+
+
+def _drop_mask():
+    if not MASK_MOVERS:
+        return None
+    from streetview_to_3d.services.segment import drop_movers
+    return drop_movers
+
 
 def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1,
               step_degrees=VIEW_STEP_DEGREES, keep_rate_threshold=KEEP_RATE_THRESHOLD,
@@ -57,6 +67,7 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
         path_a, [path_b], cfg, test_dir,
         da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
+        drop_mask=_drop_mask(),
     )
     ka, ta = res.pano_keep_counts.get(id_a, (0, 1))
     kb, tb = res.pano_keep_counts.get(id_b, (0, 1))
@@ -96,6 +107,7 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
     filtered_views, res, _, _, per_pano_pts, per_pano_cols = run_da3(
         path, [], cfg, rate_dir, da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
+        drop_mask=_drop_mask(),
     )
     score = len(filtered_views)
     n_kept, n_total = res.pano_keep_counts.get(pano_id, (score, score))
@@ -134,6 +146,7 @@ def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thres
         path_a, [path_b], cfg, test_dir,
         da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
+        drop_mask=_drop_mask(),
     )
     if id_a not in res.pano_poses or id_b not in res.pano_poses:
         return None
@@ -184,7 +197,7 @@ def depth_around(target_path, neighbour_paths, cfg, views_base, da3, dist_thresh
         filtered, res, pts, cols, _, _ = run_da3(
             target_path, used, cfg, run_dir, da3=da3, dist_thresh=dist_thresh,
             angle_thresh=angle_thresh, step_degrees=step_degrees,
-            conf_lower_percentile=conf_lower_percentile)
+            conf_lower_percentile=conf_lower_percentile, drop_mask=_drop_mask())
         pose = res.pano_poses.get(target_id)
         run = {
             "points": pts if pts is not None else np.zeros((0, 3)),

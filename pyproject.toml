@@ -16,6 +16,7 @@ dependencies = [
     "huggingface_hub",
     "gradio",
     "spaces",
+    "transformers",  # the car/person segmenter (services.segment)
     # depth_anything_3 imports these without declaring them
     "addict",
     "tqdm",

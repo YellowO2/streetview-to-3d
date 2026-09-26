@@ -67,3 +67,5 @@ if ON_SPACES:
     # import without ever loading it. (Same fix the old 3DGS app used.)
     sys.modules.setdefault("pycolmap", types.ModuleType("pycolmap"))
     get_da3()
+    from streetview_to_3d.services.segment import get_segmenter
+    get_segmenter()  # the car/person masker, small, same treatment as DA3
