@@ -1,4 +1,5 @@
-"""Find cars and people in DA3's views, so their pixels never become points.
+"""Find cars, people and thin poles in DA3's views, so their pixels never
+become points.
 
 Moving things are what ghost when panoramas are merged: the same car shows
 up once per photo, in a different place each time. A small street-scene
@@ -8,6 +9,10 @@ itself still sees the whole view, so poses are unchanged.
 
 Parked cars are dropped too -- the class can't tell them apart -- which
 leaves a gap on the road that other panoramas usually fill.
+
+Poles, traffic lights and signs go too: DA3 smears anything this thin into
+a streak or a broken stick, and a missing street light reads better than a
+wrong one.
 """
 import numpy as np
 from PIL import Image
@@ -15,6 +20,7 @@ from scipy.ndimage import binary_dilation
 
 MODEL_ID = "nvidia/segformer-b0-finetuned-cityscapes-1024-1024"
 MOVERS = ("person", "rider", "car", "truck", "bus", "train", "motorcycle", "bicycle")
+THIN = ("pole", "traffic light", "traffic sign")
 # Grow each mask by a few pixels: depth at an object's edge smears between
 # it and what's behind, and those in-between points are the worst floaters.
 GROW_PX = 3
@@ -41,12 +47,12 @@ def get_segmenter():
         processor = AutoProcessor.from_pretrained(MODEL_ID)
         model = AutoModelForSemanticSegmentation.from_pretrained(MODEL_ID).to(_device()).eval()
         label_ids = {name: int(i) for i, name in model.config.id2label.items()}
-        _model = (processor, model, [label_ids[n] for n in MOVERS])
+        _model = (processor, model, [label_ids[n] for n in MOVERS + THIN])
     return _model
 
 
 def drop_movers(paths):
-    """One boolean mask per image path, True on cars, people and the like."""
+    """One boolean mask per image path, True on cars, people, poles and the like."""
     import torch
     processor, model, drop = get_segmenter()
     masks = []
