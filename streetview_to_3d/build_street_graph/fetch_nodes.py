@@ -181,11 +181,15 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
             if elevations[i] is None:
                 elevations[i] = meta.get("elevation")
             for entry in meta["dates"]:
+                # each date's own pose: older captures are separate drives,
+                # metres away and often facing another way
                 buckets[i].append({
                     "key": node_key("google", entry["id"]), "source": "google", "id": entry["id"],
-                    "lat": gc["lat"], "lon": gc["lon"], "date": entry["label"],
-                    "heading": meta.get("heading"), "pitch": meta.get("pitch"),
-                    "roll": meta.get("roll"),
+                    "lat": entry.get("lat", gc["lat"]), "lon": entry.get("lon", gc["lon"]),
+                    "date": entry["label"],
+                    "heading": entry.get("heading", meta.get("heading")),
+                    "pitch": entry.get("pitch", meta.get("pitch")),
+                    "roll": entry.get("roll", meta.get("roll")),
                 })
 
         try:

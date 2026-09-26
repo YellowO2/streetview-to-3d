@@ -65,9 +65,11 @@ def pano_to_meta(pano):
         if n and n.lat is not None:
             neighbors.append({"id": n.id, "lat": n.lat, "lon": n.lon})
 
-    dates = [{"id": pano.id, "label": format_date(pano.date)}]
-    for h in pano.historical or []:
-        dates.append({"id": h.id, "label": format_date(h.date)})
+    # every date is its own capture -- a different drive, so its own position
+    # and heading, metres and tens of degrees off the newest one's
+    dates = [{"id": p.id, "label": format_date(p.date), "lat": p.lat, "lon": p.lon,
+              "heading": p.heading, "pitch": p.pitch, "roll": p.roll}
+             for p in [pano, *(pano.historical or [])]]
 
     return {
         "id": pano.id,
