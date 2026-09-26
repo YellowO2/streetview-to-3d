@@ -21,7 +21,7 @@ from scipy.ndimage import binary_dilation
 # B2 caught poles and people B0 missed on Singapore; B5 ran out of GPU
 # memory next to DA3. Any Cityscapes SegFormer (b0-b5) works per run.
 MODEL_ID = "nvidia/segformer-b2-finetuned-cityscapes-1024-1024"
-MOVERS = ("person", "rider", "car", "truck", "bus", "train", "motorcycle", "bicycle")
+MOVERS = ("person", "rider", "car", "truck", "bus", "motorcycle", "bicycle")   # not train: it is part of the place
 THIN = ("pole", "traffic light", "traffic sign")
 # What is dropped by default. Any of Cityscapes' 19 classes can be named
 # per run instead: road, sidewalk, building, wall, fence, pole, traffic
