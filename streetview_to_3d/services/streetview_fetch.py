@@ -2,6 +2,8 @@
 import asyncio
 import os
 
+import struct
+
 import aiohttp
 from aiohttp import ClientSession, TCPConnector
 from PIL import UnidentifiedImageError
@@ -120,14 +122,20 @@ def _parse_depth_keeping_planes(b64):
     """streetlevel's depth parse, also keeping Google's per-pixel plane
     numbers, which it otherwise throws away. A depth map IS a list of planes
     plus one plane number per pixel (0 = sky), so with them every pixel's
-    plane is known exactly instead of guessed back from the depth."""
+    plane is known exactly instead of guessed back from the depth.
+    None for a map that does not parse (some come back truncated), which
+    streetlevel then treats as a pano with no depth."""
     import numpy as np
     from streetlevel.streetview import depth as sv_depth
-    raw = sv_depth.decode_b64(b64)
-    header = sv_depth.parse_header(raw)
-    dm = sv_depth.parse(b64)
-    dm.plane_index = np.asarray(sv_depth.parse_planes(header, raw)["indices"],
-                                np.int32).reshape(header["height"], header["width"])
+    try:
+        raw = sv_depth.decode_b64(b64)
+        header = sv_depth.parse_header(raw)
+        dm = sv_depth.parse(b64)
+        dm.plane_index = np.asarray(sv_depth.parse_planes(header, raw)["indices"],
+                                    np.int32).reshape(header["height"], header["width"])
+    except (ValueError, IndexError, struct.error) as e:
+        print(f"depth map did not parse ({e}) -- treated as none", flush=True)
+        return None
     return dm
 
 
