@@ -16,10 +16,12 @@ import asyncio
 import os
 import time
 
+import numpy as np
+
 from streetview_to_3d.services.da3_ops import VIEW_STEP_DEGREES
 from streetview_to_3d.services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from streetview_to_3d.services.pipeline_runner import save_pointcloud
-from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
+from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id, fetch_depth
 from streetview_to_3d.build_street_graph.build_graph import build_corridor_graphs
 
 # How many panos download at once. Downloads used to run one at a time
@@ -31,6 +33,46 @@ from streetview_to_3d.build_street_graph.build_graph import build_corridor_graph
 # its own per-pano tile connections -- don't burst past what Google's rate
 # limiter tolerates.
 DOWNLOAD_CONCURRENCY = 10
+
+
+def _fill_ground(clouds, metadata, catalog):
+    """clouds with each Google pano's floor hole filled from Google's own
+    ground (see reconstruct.ground_fill). Never fails a run: a pano with no
+    depth map, or any error, just keeps its cloud as it was."""
+    from streetview_to_3d.reconstruct import ground_fill
+    if not ground_fill.FILL_GROUND:
+        return clouds
+    try:
+        panos = {}
+        for key, m in metadata.items():
+            c = catalog.get(key)
+            if c is None or c["source"] != "google" or key not in clouds or m.get("rotation") is None:
+                continue
+            depth = run_async(fetch_depth(c["id"]))
+            if depth is None:
+                continue
+            panos[key] = ground_fill.Pano(
+                np.asarray(clouds[key][0]), np.asarray(m["position"], float),
+                np.asarray(m["rotation"], float), depth,
+                run_async(download_pano_by_id(c["id"], zoom=DA3_ONLY_ZOOM)))
+        ready = ground_fill.prepare_piece(list(panos.values()))
+        if not ready:
+            return clouds
+        existing = np.concatenate([np.asarray(p) for p, _ in clouds.values() if len(p)])
+        filled = dict(clouds)
+        for key, p in panos.items():
+            if p not in ready:
+                continue
+            extra = ground_fill.fill(p, ready, existing)
+            if extra is not None:
+                pts, cols = clouds[key]
+                filled[key] = (np.concatenate([pts, extra[0]]), np.concatenate([cols, extra[1]]))
+        print(f"ground fill: {len(ready)} pano(s), +{sum(len(filled[k][0]) - len(clouds[k][0]) for k in filled)} "
+              f"point(s), {ready[0].scale:.2f} m per DA3 unit", flush=True)
+        return filled
+    except Exception as e:
+        print(f"ground fill skipped: {e}", flush=True)
+        return clouds
 
 
 async def _download_one(node, sem):
@@ -248,6 +290,7 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
     results, taken = [], set()
     for p_i in sorted(range(len(pieces)), key=lambda k: -len(pieces[k][1])):
         clouds, metadata = pieces[p_i]
+        clouds = _fill_ground(clouds, metadata, catalog)
         placed = {}
         for key, m in metadata.items():
             c = catalog.get(key)

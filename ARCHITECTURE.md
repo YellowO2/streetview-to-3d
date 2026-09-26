@@ -51,6 +51,8 @@ Turns downloaded panos into an actual 3d point cloud, via real pairwise DA3 test
 
     Each piece is recorded in the run's `scene.json` as it is saved (see `scene.py`), which is what step 4 reads.
 
+    Before saving, each Google pano's floor hole -- the disc under the camera DA3's views never reach -- is filled from Google's own depth map, which has the ground exactly in metres (`reconstruct.ground_fill`). Colour comes from a neighbour that sees that road unblocked, since a pano's own photo shows its car there.
+
 - 4. Placement (postprocess/, CPU only) -- runs right after reconstruction
 Input: the run's scene -- its centre, its street graph, and one Piece per cloud.
 
