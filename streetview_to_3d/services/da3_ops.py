@@ -81,7 +81,7 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
 
 
 def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=VIEW_STEP_DEGREES,
-              conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False):
+              conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False, **view_options):
     """Run DA3 on this pano ALONE (no partner) to get a solo consistency
     score and a real solo point cloud -- so a dot that never pairs with
     any real neighbor can still contribute its own solo reconstruction
@@ -99,7 +99,10 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
       - n_kept, n_total: view counts surviving DA3's filter.
 
     A 7th value, this pano's own per-point confidence array, is appended
-    when return_confidence is True -- index-aligned with pts/cols."""
+    when return_confidence is True -- index-aligned with pts/cols.
+
+    view_options: hfov / ring_pitches for panoramic_da3.run_da3 (solo mode
+    only; the walk keeps the default horizon ring)."""
     from panoramic_da3 import run_da3
     rate_dir = os.path.join(views_base, f"r{rate_id}")
     os.makedirs(rate_dir, exist_ok=True)
@@ -107,7 +110,7 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
     filtered_views, res, _, _, per_pano_pts, per_pano_cols = run_da3(
         path, [], cfg, rate_dir, da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
-        drop_mask=_drop_mask(),
+        drop_mask=_drop_mask(), **view_options,
     )
     score = len(filtered_views)
     n_kept, n_total = res.pano_keep_counts.get(pano_id, (score, score))

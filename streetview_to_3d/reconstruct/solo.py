@@ -23,8 +23,14 @@ import aiohttp
 from streetview_to_3d.services.http_headers import BROWSER_HEADERS
 from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, format_date, run_async
 
+# How each pano is cut into views for DA3 (panoramic_da3.extract_views_for_da3):
+# slice width in degrees (90 reaches ~29 deg above/below the horizon) and
+# extra tilted rings of 6 views. Per run from the UI; these are the defaults.
+VIEW_HFOV = 90.0
+RING_PITCHES = ()
+
 # GPU window: building the solo model from disk inside the call, then one
-# DA3 run per candidate (~2 s measured for rating, rounded up).
+# DA3 run per candidate (~2 s measured for rating 12 views, rounded up).
 MODEL_BUILD_S = 45.0
 SECONDS_PER_CANDIDATE = 4.0
 SAVE_BUFFER_S = 10.0
@@ -83,8 +89,9 @@ def prepare(prep):
     return prep
 
 
-def estimate_gpu_seconds(places):
-    return MODEL_BUILD_S + SECONDS_PER_CANDIDATE * sum(map(len, places.values())) + SAVE_BUFFER_S
+def estimate_gpu_seconds(places, ring_pitches=RING_PITCHES):
+    per = SECONDS_PER_CANDIDATE * (12 + 6 * len(ring_pitches)) / 12
+    return MODEL_BUILD_S + per * sum(map(len, places.values())) + SAVE_BUFFER_S
 
 
 def reconstruct(places, catalog, rate_pano, deadline):
