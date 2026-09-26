@@ -51,17 +51,17 @@ VIEW_HFOV = 100.0
 # Leave cars, people and poles out of every point cloud (see services.segment).
 MASK_MOVERS = True
 
-# Per-run overrides of VIEW_HFOV and the masker model (see options()).
-_options = {"hfov": None, "masker": None}
+# Per-run overrides of VIEW_HFOV and the masker (see options()).
+_options = {"hfov": None, "masker": None, "mask_classes": None}
 
 
 @contextmanager
-def options(hfov=None, masker=None):
-    """Every DA3 run inside uses this view width and masker model (a
-    SegFormer repo id); None keeps the defaults. For comparing settings
-    per run from the UI, without a redeploy."""
+def options(hfov=None, masker=None, mask_classes=None):
+    """Every DA3 run inside uses this view width, masker model (a SegFormer
+    repo id) and list of class names to drop; None keeps the defaults. For
+    changing them per run from the UI, without a redeploy."""
     old = dict(_options)
-    _options.update(hfov=hfov, masker=masker)
+    _options.update(hfov=hfov, masker=masker, mask_classes=mask_classes)
     try:
         yield
     finally:
@@ -79,9 +79,7 @@ def _drop_mask():
         return None
     from functools import partial
     from streetview_to_3d.services.segment import drop_movers
-    if _options["masker"]:
-        return partial(drop_movers, model_id=_options["masker"])
-    return drop_movers
+    return partial(drop_movers, model_id=_options["masker"], classes=_options["mask_classes"])
 
 
 def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1,

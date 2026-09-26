@@ -57,23 +57,23 @@ def _walk_budget_s(total_s: float, n_dots: int) -> float:
 def run_pathfind_and_join_gpu(date_graphs, points, adjacency, start_lat, start_lon,
                                edge_max_dist_m=None, step_degrees=None,
                                conf_lower_percentile=None, gpu_seconds=None, model=None,
-                               hfov=None, masker=None):
+                               hfov=None, masker=None, mask_classes=None):
     """Walk and join in one GPU window (see streetview_to_3d.gpu).
 
     gpu_seconds: the window to ask for. None sizes it from the dot count
     (estimate_gpu_seconds). model: a DA3 repo; None is config.DA3_MODEL_REPO.
-    hfov, masker: per-run view width and masker (services.da3_ops.options)."""
+    hfov, masker, mask_classes: per-run view width and masker (services.da3_ops.options)."""
     return gpu.run(_run_pathfind_and_join_impl, date_graphs, points, adjacency,
                    start_lat, start_lon, edge_max_dist_m=edge_max_dist_m,
                    step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
-                   gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker,
+                   gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker, mask_classes=mask_classes,
                    seconds=_gpu_seconds(points, gpu_seconds))
 
 
 def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start_lon,
                                  edge_max_dist_m=None, step_degrees=None,
                                  conf_lower_percentile=None, gpu_seconds=None, model=None,
-                                 hfov=None, masker=None):
+                                 hfov=None, masker=None, mask_classes=None):
     """The walk (run_pathfind_reconstruction), then the join
     (join_segments), in one GPU session on the same downloaded panos.
 
@@ -116,7 +116,7 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
     # calibrated from -- grep the Space's logs for them.
     print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
     try:
-        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker):
+        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker, mask_classes=mask_classes):
             def test_edge(path_a, path_b, test_id):
                 return da3_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id,
                                      step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile)
@@ -157,17 +157,17 @@ def _run_pathfind_and_join_impl(date_graphs, points, adjacency, start_lat, start
 
 
 def run_solo_gpu(places, catalog, conf_lower_percentile=None, gpu_seconds=None, model=None,
-                 hfov=None, masker=None):
+                 hfov=None, masker=None, mask_classes=None):
     """Solo mode's GPU task (see reconstruct.solo): every place's candidates
     rated alone, the best one's cloud kept. model: a DA3 repo, None is
     config.DA3_MODEL_REPO; hfov, masker: as run_pathfind_and_join_gpu."""
     from streetview_to_3d.reconstruct import solo
     seconds = float(gpu_seconds) if gpu_seconds else solo.estimate_gpu_seconds(places)
     return gpu.run(_run_solo_impl, places, catalog, conf_lower_percentile=conf_lower_percentile,
-                   model=model, hfov=hfov, masker=masker, total_s=seconds, seconds=seconds)
+                   model=model, hfov=hfov, masker=masker, mask_classes=mask_classes, total_s=seconds, seconds=seconds)
 
 
-def _run_solo_impl(places, catalog, conf_lower_percentile=None, model=None, hfov=None, masker=None,
+def _run_solo_impl(places, catalog, conf_lower_percentile=None, model=None, hfov=None, masker=None, mask_classes=None,
                    total_s=None):
     import itertools
     import tempfile
@@ -184,7 +184,7 @@ def _run_solo_impl(places, catalog, conf_lower_percentile=None, model=None, hfov
     cfg, da3 = gpu.get_da3_config(model), gpu.get_da3(model)
     print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
     try:
-        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker):
+        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker, mask_classes=mask_classes):
             rate_ids = itertools.count()
 
             def rate_pano(path):
