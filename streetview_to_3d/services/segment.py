@@ -1,4 +1,4 @@
-"""Find cars, people, traffic lights and signs in DA3's views, so their pixels never
+"""Find cars, people, poles and signs in DA3's views, so their pixels never
 become points.
 
 Moving things are what ghost when panoramas are merged: the same car shows
@@ -10,9 +10,10 @@ itself still sees the whole view, so poses are unchanged.
 Parked cars are dropped too -- the class can't tell them apart -- which
 leaves a gap on the road that other panoramas usually fill.
 
-Traffic lights and signs go too: DA3 smears them into floating flat
-blobs. Poles stay: the masker caught a lamp post's pole but not its head,
-and in patches from view to view, which left floating balls of lamp.
+Poles, traffic lights and signs go too: DA3 smears anything this thin into
+a streak or a broken stick, and a missing street light reads better than a
+wrong one. Cityscapes' "traffic light" and "traffic sign" are only the
+light box and the board; every post, lamp posts included, is "pole".
 """
 import os
 import re
@@ -26,7 +27,7 @@ from scipy.ndimage import binary_dilation
 # memory next to DA3. Any Cityscapes SegFormer (b0-b5) works per run.
 MODEL_ID = "nvidia/segformer-b2-finetuned-cityscapes-1024-1024"
 MOVERS = ("person", "rider", "car", "truck", "bus", "motorcycle", "bicycle")   # not train: it is part of the place
-THIN = ("traffic light", "traffic sign")
+THIN = ("pole", "traffic light", "traffic sign")
 # What is dropped by default. Any of Cityscapes' 19 classes can be named
 # per run instead: road, sidewalk, building, wall, fence, pole, traffic
 # light, traffic sign, vegetation, terrain, sky, person, rider, car, truck,
@@ -69,7 +70,7 @@ def get_segmenter(model_id=None, device=None):
 
 
 def drop_movers(paths, model_id=None, classes=None, device=None):
-    """One boolean mask per image path, True on cars, people, signs and the
+    """One boolean mask per image path, True on cars, people, poles and the
     like. model_id: another Cityscapes SegFormer (see get_segmenter);
     classes: the class names to drop instead of DROP; device: see
     get_segmenter."""
