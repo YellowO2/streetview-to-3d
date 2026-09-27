@@ -3,7 +3,7 @@
 A reconstruction leaves a scene whose nodes each hold their own points, in
 whatever frame DA3 built them. This places every piece by its panoramas'
 GPS, elevation and orientation (place.py), writing each node's own
-transform back into the scene, then fills the gaps (streetview_to_3d.fill:
+transform back into the scene, removes floating bits (blobs.py), then fills the gaps (streetview_to_3d.fill:
 one ground, Google's walls, their colour) into the node .plys --
 scene.json plus the node .plys are the whole result. A viewer reads transform to place each node, so nothing
 merges the points into one extra file by default.
@@ -17,12 +17,14 @@ import os
 import time
 
 from streetview_to_3d import fill as fill_mod
+from streetview_to_3d.postprocess.blobs import drop_blobs
 from streetview_to_3d.postprocess.render_pieces import render
 from streetview_to_3d.postprocess.place import place
 
 
 def process(run_dir, log=print, merge_ply=None, fill=True):
-    """Place a reconstruction, then fill it (fill=False: placed only).
+    """Place a reconstruction, remove its floating bits, then fill it
+    (fill=False: placed and cleaned only).
     merge_ply: also write one combined .ply there, for local inspection
     outside the viewer -- not needed by the Space, which reads
     scene.json's per-node transforms directly."""
@@ -30,6 +32,9 @@ def process(run_dir, log=print, merge_ply=None, fill=True):
     t = time.monotonic()
     place(run_dir, log=log)
     log(f"timing: placement {time.monotonic() - t:.1f}s")
+    t = time.monotonic()
+    drop_blobs(run_dir, log=log)
+    log(f"timing: floating bits {time.monotonic() - t:.1f}s")
     if fill:
         t = time.monotonic()
         try:
