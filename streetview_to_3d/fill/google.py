@@ -19,10 +19,14 @@ DA3 wins:
    faces within AGREE_DEG of Google's, the fill slides along the Google
    pano's lines of sight onto it (by SLIDE at most), else it is dropped.
    The overlap from 2 lands on DA3's wall, so the two join with no step.
-5. never sideways: a fill point on a DA3 wall's line (any fill, merged or
-   not, whose surface faces the same way) must lie between that wall's ends, measured from DA3's points on
-   it; past every such wall's ends it is dropped. Height is free, so the
-   fill still carries a wall above DA3's top.
+5. never sideways: fill lying on a DA3 wall (within ON_WALL_M of its
+   plane, facing the same way -- not a wall a metre off, nor the one
+   across the street) is kept only along the stretches where DA3 has that
+   wall. A stretch is found by sliding along the wall in SPAN_M steps over
+   ALL of DA3's points on that plane: a step with SPAN_PER_M points per
+   metre or more is wall, and BRIDGE_M or more of empty steps is a break
+   (a doorway, the wall's end). Height is free, so the fill still carries
+   a wall above DA3's top.
 """
 import numpy as np
 from scipy.ndimage import binary_closing, binary_dilation, binary_erosion
@@ -35,7 +39,7 @@ TRIM_M, MIN_AREA_M2, FOOT_M = 0.5, 2.0, 0.25
 SAME_DEG, SAME_M, SAME_NEAR_M, SAME_MIN = 40, 2.5, 5.0, 200
 AGREE_DEG = 15
 SLIDE = (0.5, 2.0)
-ON_WALL_M, SIDE_M = 0.5, 0.2
+ON_WALL_M, SPAN_M, BRIDGE_M, SPAN_PER_M = 0.5, 0.2, 0.6, 60
 VOXEL_M = 0.05
 
 
@@ -87,7 +91,7 @@ def fill(base, da3, da3_normals, scene_points):
     x, s, k = np.concatenate(xs), np.concatenate(ss), np.concatenate(ks)
     keep = _walls_only(base, x, s)
     cams = np.array([p.pos for p in base.panos])
-    walls = []                                   # DA3 walls: (normal, d, along, ends)
+    walls = []                                   # DA3 walls: (normal, d, along, stretches)
     for g in np.unique(s[keep]):
         m = keep & (s == g)
         slid = _onto_da3(base.planes[g][0], base.planes[g][1], x[m], cams[k[m]], da3, da3_normals, walls)
@@ -155,9 +159,11 @@ def _onto_da3(n, d, x, cams, da3, da3_normals, walls):
     d2 = n2 @ c
     along = np.cross(n2, [0.0, 1.0, 0.0])
     along /= np.linalg.norm(along)
-    on = P[np.abs(P @ n2 - d2) < ON_WALL_M]
-    if len(on) >= SAME_MIN:
-        walls.append((n2, d2, along, np.percentile(on @ along, [1, 99])))
+    # its length from ALL of DA3's points on that plane, not just those near
+    # this piece of fill -- or the wall "ends" where the fill's neighbourhood does
+    on = (np.abs(da3 @ n2 - d2) < ON_WALL_M) & (np.abs(da3_normals @ n2) > np.cos(np.radians(SAME_DEG)))
+    if on.sum() >= SAME_MIN:
+        walls.append((n2, d2, along, _stretches(da3[on] @ along)))
     ray = x - cams
     den = ray @ n2
     t = (d2 - cams @ n2) / np.where(np.abs(den) > 1e-6, den, np.nan)
@@ -165,14 +171,28 @@ def _onto_da3(n, d, x, cams, da3, da3_normals, walls):
     return np.where(ok[:, None], cams + ray * np.nan_to_num(t)[:, None], np.nan)
 
 
+def _stretches(a):
+    """[(start, end), ...] along a wall where DA3 has it: SPAN_M steps with
+    at least SPAN_PER_M points per metre, gaps up to BRIDGE_M closed."""
+    steps, count = np.unique(np.floor(a / SPAN_M).astype(int), return_counts=True)
+    steps = steps[count >= SPAN_PER_M * SPAN_M]
+    if not len(steps):
+        return []
+    breaks = np.flatnonzero((np.diff(steps) - 1) * SPAN_M >= BRIDGE_M)   # empty steps between
+    starts = np.r_[steps[0], steps[breaks + 1]]
+    ends = np.r_[steps[breaks], steps[-1]] + 1
+    return [(a0 * SPAN_M, a1 * SPAN_M) for a0, a1 in zip(starts, ends)]
+
+
 def _within_walls(x, normals, walls):
-    """False for fill on some DA3 wall's line (near its plane, its surface
-    facing the same way) but past the ends of every such wall."""
+    """False for fill lying on some DA3 wall (within ON_WALL_M of its plane,
+    its surface facing the same way) but along no stretch of any such wall."""
     on_line = np.zeros(len(x), bool)
     inside = np.zeros(len(x), bool)
-    for n2, d2, along, (a0, a1) in walls:
-        line = (np.abs(x @ n2 - d2) < SAME_M) & (np.abs(normals @ n2) > np.cos(np.radians(SAME_DEG)))
+    for n2, d2, along, stretches in walls:
+        line = (np.abs(x @ n2 - d2) < ON_WALL_M) & (normals @ n2 > np.cos(np.radians(SAME_DEG)))
         a = x @ along
         on_line |= line
-        inside |= line & (a > a0 - SIDE_M) & (a < a1 + SIDE_M)
+        for a0, a1 in stretches:
+            inside |= line & (a >= a0) & (a <= a1)
     return ~on_line | inside
