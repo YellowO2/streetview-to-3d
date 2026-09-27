@@ -1,7 +1,16 @@
 """Colour for what fill adds (the one ground, Google's walls).
 
-DA3's own points keep the colours DA3 gave them. The added points are
-coloured patch by patch (PATCH_M cubes): a patch takes the nearest camera
+DA3's own points keep the colours DA3 gave them.
+
+Two questions, answered separately. Is an added point IN VIEW of some
+camera -- nothing of DA3's in front of it along the line of sight, over
+the camera's whole sphere, within MAX_M? If not, no camera has ever seen
+it (floor behind a fence) and fill leaves it out. And which camera may
+COLOUR it? That is stricter, below. The spot right under a camera is in
+view (it looks straight down at it) but no camera may colour it; such
+points take the colour of the painted points around them.
+
+The added points are coloured patch by patch (PATCH_M cubes): a patch takes the nearest camera
 that can colour at least half of it, so neighbouring points do not flicker
 between photos of different exposure. A camera can colour a point when it:
   - sees it: no DA3 point in front of it along that line of sight. Only
@@ -55,10 +64,11 @@ def _at(grid, u, v):
 
 
 def paint(points, occluders, cameras, photos):
-    """(colours, which camera painted each point, -1 for none).
+    """(colours, which camera painted each point or -1, which are in view).
     points: the added points; occluders: DA3's points, what can hide them;
     photos[k]: (image path, drop mask) of cameras[k]'s pano, or None."""
     n, K = len(points), len(cameras)
+    in_view = np.zeros(n, bool)
     sees = np.zeros((K, n), bool)
     dist = np.full((K, n), np.inf)
     looks = [None] * K
@@ -75,7 +85,9 @@ def paint(points, occluders, cameras, photos):
                 near[np.clip(iv + dv, 0, h - 1) * w + (iu + du) % w] = r[o]
         u, v, r, below = cam.look(points)
         px = np.clip((v * h).astype(int), 0, h - 1) * w + (u * w).astype(int) % w
-        sees[k] = (r <= near[px] + 0.1) & (below < NADIR_DEG) & (r < MAX_M) & ~_at(ph[1], u, v)
+        visible = (r <= near[px] + 0.1) & (r < MAX_M)
+        in_view |= visible
+        sees[k] = visible & (below < NADIR_DEG) & ~_at(ph[1], u, v)
         dist[k] = r
         looks[k] = (u, v)
 
@@ -104,4 +116,4 @@ def paint(points, occluders, cameras, photos):
             img = np.asarray(Image.open(ph[0]).convert("RGB"))
             u, v = looks[k]
             colours[idx] = _at(img, u[idx], v[idx]) / 255.0
-    return colours, who
+    return colours, who, in_view
