@@ -26,6 +26,8 @@ class GooglePano:
     lat: float
     lon: float
     heading: float
+    pitch: float
+    roll: float
     elevation: float
     depth: np.ndarray
     plane_index: np.ndarray
@@ -34,11 +36,14 @@ class GooglePano:
     R: np.ndarray = field(default=None)    # direction in the photo frame = R @ (world direction)
 
     def place(self, lat0, lon0):
-        """Camera at its GPS and elevation, turned by its heading."""
+        """Camera at its GPS and elevation, turned by its heading, pitch and
+        roll: the depth map keeps the camera's tilt like the photo does (on
+        Stockholm's backpack captures its walls lean by exactly minus the
+        pitch and roll), so heading alone left walls leaning up to 9 deg."""
+        from streetview_to_3d.postprocess.place import photo_from_world
         e, n = latlon_to_local_m(self.lat, self.lon, lat0, lon0)
         self.pos = np.array([e, -(self.elevation + CAM_H), n])
-        h = self.heading
-        self.R = np.array([[np.cos(h), 0, -np.sin(h)], [0, 1, 0], [np.sin(h), 0, np.cos(h)]])
+        self.R = photo_from_world(self)
         return self
 
 
@@ -88,7 +93,8 @@ async def _gather(scene):
             if got is None:
                 continue
             panos.append(GooglePano(id=meta.id, date=str(meta.date), lat=meta.lat, lon=meta.lon,
-                                    heading=meta.heading, elevation=meta.elevation,
+                                    heading=meta.heading, pitch=meta.pitch or 0.0, roll=meta.roll or 0.0,
+                                    elevation=meta.elevation,
                                     depth=got[0], plane_index=got[1], in_scene=meta.id in seed_ids))
     panos.sort(key=lambda p: p.id)
     return [p.place(lat0, lon0) for p in panos]
