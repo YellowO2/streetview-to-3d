@@ -1,8 +1,8 @@
 """One ground under the whole scene.
 
 Every DA3 cloud has its own ground, a little bumpy, and none of them has
-anything under its own camera: DA3's views stop about 34 degrees below the
-horizon, so each camera leaves a blind disc about 4 m across. Here all of
+anything under its own camera: DA3's views stop about 29 degrees below the
+horizon, so each camera leaves a blind disc reaching about 4.5 m out. Here all of
 them become one smooth surface:
 
 1. each cloud's ground (postprocess.ground, started from a ring around the
@@ -25,7 +25,7 @@ from streetview_to_3d.postprocess.ground import GroundMap, ground
 from streetview_to_3d.services.da3_ops import VIEW_HFOV
 
 CELL_M, SMOOTH_M, STEP_M = 0.5, 0.5, 0.05
-DA3_SEED_M = 7.0        # the ground detector may start this far out (DA3's blind disc is ~4 m)
+DA3_SEED_M = 7.0        # the ground detector may start this far out (DA3's blind disc reaches ~4.5 m)
 CLOSE_M = 1.5           # gaps in the ground area this wide are closed
 ON_GROUND_M = 0.12      # a cloud's points this close to the surface are the surface
 BLIND_MARGIN_M = 1.0    # the blind disc under a camera, plus this

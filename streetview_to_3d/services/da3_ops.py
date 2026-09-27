@@ -44,8 +44,9 @@ CONF_LOWER_PERCENTILE = 20.0   # keep top 80%
 # extract_views_for_da3): 90 reaches ~29 deg above/below the horizon, 100
 # ~33. On Stockholm 95-105 kept as many views as 90 and added points; 110
 # lost panos. Tilted rings of extra views were tried and made whole panos
-# fail.
-VIEW_HFOV = 100.0
+# fail. Back to 90: on New York, 100 kept more views and points but 90
+# looked a lot better.
+VIEW_HFOV = 90.0
 
 # Leave cars, people and poles out of every point cloud (see services.segment).
 MASK_MOVERS = True
