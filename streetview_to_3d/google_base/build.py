@@ -33,7 +33,9 @@ MAX_M = 50.0                   # a backstop only; density decides where surfaces
 PLANE_MIN_PX = 30              # smaller planes (native pixels) are edge junk
 PIXEL_RAD = 2 * np.pi / 512    # one native depth pixel
 MAX_SPACING_M = 0.45           # keep where one depth pixel covers less surface than this
-MERGE_DEG, MERGE_M, OVERLAP, FOOT_M = 30.0, 0.4, 0.3, 0.5
+# 30 deg let each pano's copy of a wall lean its own way; with panos turned
+# by pitch and roll, copies agree within 3 deg (90%, four scenes)
+MERGE_DEG, MERGE_M, OVERLAP, FOOT_M = 15.0, 0.4, 0.3, 0.5
 FLOOR_UP_DEG = 20              # planes facing up within this are floors (step 3's business)
 GROUND_CELL_M, GROUND_SMOOTH_M, GROUND_STEP_M = 0.5, 0.5, 0.05
 
