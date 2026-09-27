@@ -34,7 +34,7 @@ GRID_W = 1024                  # rays per pano: GRID_W x GRID_W/2
 MAX_M = 50.0                   # a backstop only; density decides where surfaces stop
 PLANE_MIN_PX = 30              # smaller planes (native pixels) are edge junk
 PIXEL_RAD = 2 * np.pi / 512    # one native depth pixel
-MAX_SPACING_M = 0.75           # keep where one depth pixel covers less surface than this
+MAX_SPACING_M = 0.6            # keep where one depth pixel covers less surface than this
 MERGE_DEG, MERGE_M, OVERLAP, FOOT_M = 30.0, 0.4, 0.3, 0.5
 FLOOR_UP_DEG = 20              # planes facing up within this are floors (step 3's business)
 GROUND_CELL_M, GROUND_SMOOTH_M, GROUND_STEP_M = 0.5, 0.5, 0.05
@@ -91,10 +91,12 @@ def group_planes(entries):
     """Merge planes of different panos that are the same surface.
 
     entries: dicts with world normal n, distance d (n . x = d), dense world
-    points x and pano k. Returns each entry's final (n, d). Biggest planes
-    go first; a plane joins the first group within MERGE_DEG and MERGE_M
-    whose footprint it overlaps by OVERLAP, and the group's plane is refitted
-    to all its members' points. Floors keep their own plane and take no members.
+    points x and pano k. Returns (each entry's final (n, d), number of
+    surfaces, how many are shared by 2+ panos, each entry's surface number).
+    Biggest planes go first; a plane joins the first group within MERGE_DEG
+    and MERGE_M whose footprint it overlaps by OVERLAP, and the group's plane
+    is refitted to all its members' points. Floors keep their own plane and
+    take no members.
     """
     order = sorted(range(len(entries)), key=lambda i: -len(entries[i]["x"]))
     groups, of = [], [None] * len(entries)
@@ -126,7 +128,8 @@ def group_planes(entries):
         best["foot"] = np.union1d(best["foot"], _footprint(a["x"], best["n"], best["d"]))
         of[i] = best
     shared = sum(len({entries[m]["k"] for m in g["members"]}) > 1 for g in groups)
-    return [(g["n"], g["d"]) for g in of], len(groups), shared
+    number = {id(g): j for j, g in enumerate(groups)}
+    return [(g["n"], g["d"]) for g in of], len(groups), shared, [number[id(g)] for g in of]
 
 
 def shared_ground(xs, cams):
@@ -189,11 +192,15 @@ def shared_ground(xs, cams):
 @dataclass
 class Base:
     """The Google base in the scene's frame: each pano's surfaces except the
-    ground (points[k]), and the one shared ground."""
+    ground (points[k]), the surface each of those points lies on
+    (surfaces[k], an index into planes: (normal, d) with normal . x = d),
+    and the one shared ground."""
     panos: list
     points: list
     ground: np.ndarray
     ground_owner: np.ndarray
+    surfaces: list = None
+    planes: list = None
 
 
 def build(panos, log=print):
@@ -224,24 +231,31 @@ def build(panos, log=print):
     t1 = time.time()
 
     # 2. walls merged across panos, rays re-cast onto the merged planes
-    final, n_surfaces, shared = group_planes(entries)
+    final, n_surfaces, shared, number = group_planes(entries)
     lookup = {(e["k"], e["j"]): nd for e, nd in zip(entries, final)}
-    xs, ns = [], []
+    surface_of = {(e["k"], e["j"]): g for e, g in zip(entries, number)}
+    planes = [None] * n_surfaces
+    for nd, g in zip(final, number):
+        planes[g] = nd
+    xs, ns, ss = [], [], []
     for k, p in enumerate(panos):
         ray_label, keep = per_pano[k]
         dirs = R_ @ p.R
         t = np.full(len(U), np.nan)
         nw = np.zeros((len(U), 3))
+        sid = np.full(len(U), -1)
         for j in np.unique(ray_label[ray_label >= 0]):
             n, dist = lookup[(k, j)]
             m = ray_label == j
             nw[m] = n
+            sid[m] = surface_of[(k, j)]
             den = dirs[m] @ n
             tt = (dist - n @ p.pos) / np.where(np.abs(den) > 0.05, den, np.nan)
             t[m] = np.where((tt > 0) & (tt < MAX_M), tt, np.nan)
         ok = np.isfinite(t) & keep
         xs.append(p.pos + dirs[ok] * t[ok, None])
         ns.append(nw[ok])
+        ss.append(sid[ok])
     t2 = time.time()
 
     # 3. one shared ground, rebuilt as an even grid
@@ -251,4 +265,5 @@ def build(panos, log=print):
     log(f"google base: {len(panos)} panos, {len(entries)} planes -> {n_surfaces} surfaces "
         f"({shared} shared by 2+ panos); ground {len(G)} points on one map  "
         f"[planes {t1 - t0:.1f}s, merge {t2 - t1:.1f}s, ground {time.time() - t2:.1f}s]")
-    return Base(panos=panos, points=points, ground=G, ground_owner=owner)
+    return Base(panos=panos, points=points, ground=G, ground_owner=owner,
+                surfaces=[s[~m] for s, m in zip(ss, gmask)], planes=planes)
