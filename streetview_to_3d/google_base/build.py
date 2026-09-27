@@ -26,9 +26,7 @@ import time
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
-
-from streetview_to_3d.postprocess.ground import ground
+from streetview_to_3d.postprocess.ground import GroundMap, ground
 
 GRID_W = 1024                  # rays per pano: GRID_W x GRID_W/2
 MAX_M = 50.0                   # a backstop only; density decides where surfaces stop
@@ -138,55 +136,10 @@ def shared_ground(xs, cams):
     (cams[k]) is closest, the map is lightly smoothed, and the ground is laid
     out as an even GROUND_STEP_M grid over the squares that had any.
     Returns (points, owner pano of each point)."""
-    who = np.concatenate([np.full(len(x), k) for k, x in enumerate(xs)])
-    X = np.concatenate(xs)
-    if not len(X):
+    if not sum(len(x) for x in xs):
         return np.zeros((0, 3)), np.zeros(0, int)
-    lo = X[:, [0, 2]].min(0) - 2 * GROUND_CELL_M
-    ij = np.floor((X[:, [0, 2]] - lo) / GROUND_CELL_M).astype(int)
-    dims = ij.max(0) + 3
-    centre = (ij + .5) * GROUND_CELL_M + lo
-    dcam = np.hypot(centre[:, 0] - cams[who, 0], centre[:, 1] - cams[who, 2])
-    flat = ij[:, 0] * dims[1] + ij[:, 1]
-    order = np.lexsort((dcam, flat))
-    fs = flat[order]
-    first = np.r_[True, fs[1:] != fs[:-1]]
-    win = np.full(dims.prod(), -1)
-    win[fs[first]] = who[order][first]
-    mine = win[flat] == who
-    o2 = np.argsort(flat[mine])
-    keys, start = np.unique(flat[mine][o2], return_index=True)
-    H = np.full(dims.prod(), np.nan)
-    H[keys] = [np.median(s) for s in np.split(X[mine][o2, 1], start[1:])]
-    H = H.reshape(dims)
-    have = np.isfinite(H)
-    sigma = GROUND_SMOOTH_M / GROUND_CELL_M
-    num = gaussian_filter(np.where(have, H, 0), sigma)
-    den = gaussian_filter(have.astype(float), sigma)
-    Hs = np.where(den > 1e-3, num / np.maximum(den, 1e-9), np.nan)
-
-    per = int(round(GROUND_CELL_M / GROUND_STEP_M))
-    sq = np.argwhere(have)
-    off = (np.arange(per) + .5) * GROUND_STEP_M
-    ox, oz = np.meshgrid(off, off, indexing="ij")
-    xz = (lo + sq[:, None, :] * GROUND_CELL_M + np.stack([ox.ravel(), oz.ravel()], 1)[None]).reshape(-1, 2)
-    owner = np.repeat(win[sq[:, 0] * dims[1] + sq[:, 1]], per * per)
-    # bilinear on the smoothed map, empty corners left out
-    g = (xz - lo) / GROUND_CELL_M - .5
-    i0 = np.clip(np.floor(g).astype(int), 0, dims - 2)
-    f = g - i0
-    val = np.zeros(len(xz))
-    wsum = np.zeros(len(xz))
-    for a in (0, 1):
-        for b in (0, 1):
-            c = Hs[i0[:, 0] + a, i0[:, 1] + b]
-            w = (f[:, 0] if a else 1 - f[:, 0]) * (f[:, 1] if b else 1 - f[:, 1])
-            w = np.where(np.isfinite(c), w, 0)
-            val += w * np.nan_to_num(c)
-            wsum += w
-    ok = wsum > 0
-    y = val[ok] / wsum[ok]
-    return np.stack([xz[ok, 0], y, xz[ok, 1]], 1), owner[ok]
+    m = GroundMap(xs, cams, GROUND_CELL_M, GROUND_SMOOTH_M)
+    return m.grid(m.have, GROUND_STEP_M)
 
 
 @dataclass

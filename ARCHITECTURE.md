@@ -51,7 +51,6 @@ Turns downloaded panos into an actual 3d point cloud, via real pairwise DA3 test
 
     Each piece is recorded in the run's `scene.json` as it is saved (see `scene.py`), which is what step 4 reads.
 
-    Before saving, each Google pano's floor hole -- the disc under the camera DA3's views never reach -- is filled from Google's own depth map, which has the ground exactly in metres (`reconstruct.ground_fill`). Colour comes from a neighbour that sees that road unblocked, since a pano's own photo shows its car there.
 
     - 3.3 Solo mode (solo.py) -- the "Link panoramas" toggle off. No walk, no join: every Google pano is reconstructed on its own, with 100 degree views instead of 90 (reach further up and down, same 12 views), one piece each. The panos are each route dot's Google candidates (best-ranked date within 5 years of the others) plus Google's official neighbours of them (the same ones google_base uses). Apple takes no part: it has no depth map to be placed by. Meant to be placed on the Google base rather than by links.
 
@@ -66,12 +65,19 @@ A piece arrives internally consistent but individually placed: its own DA3 frame
 
 Output: a `transform` on every placed node -- its own stored .ply straight to world metres. Saved into the scene rather than baked into the clouds, so rendering any subset (`postprocess.render_pieces`) is a matrix multiply with nothing re-solved.
 
-- 5. Google base (google_base/, CPU) -- built per scene; not yet wired into the Space's pipeline
+- 5. Google base (google_base/, CPU) -- built per scene, used by step 6
 Input: a scene. Output: a clean shape of the street from Google's own depth maps -- shape only, colour comes later from painting -- meant as the reference DA3 is fitted onto and whose surfaces fill DA3's gaps. `python -m streetview_to_3d.google_base SCENE_DIR OUT_DIR` writes it as a scene folder (one piece per Google pano, one for the ground).
 
     - 5.1 Panos (fetch.py). The scene's Google nodes plus official neighbours within 15 m and 5 years of the scene's date. Each is placed by its own GPS, elevation and heading and nothing else: nudging panos to agree with each other was tried and made walls worse.
     - 5.2 Own planes (build.py). A Google depth map IS a list of planes plus a plane number per pixel (`services.streetview_fetch.fetch_depth_planes` keeps the numbers streetlevel throws away), so every ray lands exactly on its own plane. Only the dense part is kept: where one depth pixel covers under 45 cm of surface.
     - 5.3 Walls merged. Planes of different panos that are the same surface become one plane between them. Floors take no part -- moving some of a floor's planes and not their neighbours tears it.
     - 5.4 One ground. Every pano's ground (`postprocess.ground`, the one ground detector: faces up, lowest in its spot, connected to where the cameras stand -- slopes included) goes into one height map, each spot taken from the nearest camera's pano, and the ground is rebuilt on it as an even 5 cm grid. Google draws a level floor 2.5 m under every camera, so on a slope neighbouring panos' floors stack; the one map removes that.
+
+- 6. Fill (fill/, CPU) -- runs right after placement, on the scene in place
+Input: a placed scene. DA3's shape is never moved; its ground is replaced and its gaps filled, and every added point is written into the node whose pano coloured it (points belong to nodes), so the viewer needs nothing new. `python -m streetview_to_3d.fill SCENE_DIR [OUT_DIR]`.
+
+    - 6.1 One ground (one_ground.py). Every cloud's ground (`postprocess.ground`) goes into one height map (`postprocess.ground.GroundMap`, the same one step 5.4 uses): each square takes the nearest camera's ground; where DA3 has none, Google's ground fills in, shifted onto DA3's height. The area is every square with ground, gaps closed, plus each camera's blind disc -- DA3's views stop ~34 deg down, so ~4 m under each camera is empty -- out to where its views stop but never past the nearest wall. It is laid out as an even 5 cm grid, and DA3's own points lying on it are removed.
+    - 6.2 Google's walls (google.py). Google panos whose depth disagrees with DA3's are not used. From the rest, Google's walls fill where DA3 has nothing along the line of sight, reaching slightly into DA3's edge. Only near-vertical, trimmed, not-tiny surfaces. Where DA3 has the same wall, DA3 wins: the fill slides onto DA3's plane (no step), and never runs past DA3's wall's ends sideways -- only up.
+    - 6.3 Colour (paint.py). DA3 keeps its own colours. Each added point takes the nearest pano that sees it cleanly (visible, not masked, not its own rig), so a filled blind disc matches the ground around it.
 
 Coordinates are Y-DOWN throughout (+X east, +Y down, +Z north, metres from the scene's centre), which is DA3's own convention; the viewer flips it only for display. Anything from outside must be converted: Google's `elevation` is metres above sea level (Y-up), so it is negated on the way in (see `road_align/ground_elevation.py`).

@@ -45,26 +45,29 @@ def _device():
     return "cpu"
 
 
-def get_segmenter(model_id=None):
+def get_segmenter(model_id=None, device=None):
     """(processor, model, {class name: id}) for a Cityscapes SegFormer
-    (default MODEL_ID): the default is built at startup on a Space (see
-    streetview_to_3d.gpu), anything else on first use."""
-    model_id = model_id or MODEL_ID
-    if model_id not in _models:
+    (default MODEL_ID) on device (default: the GPU if there is one): the
+    default is built at startup on a Space (see streetview_to_3d.gpu),
+    anything else on first use. Outside a GPU call on a Space, ask for
+    "cpu"."""
+    model_id, device = model_id or MODEL_ID, device or _device()
+    if (model_id, device) not in _models:
         from transformers import AutoModelForSemanticSegmentation, AutoProcessor
         processor = AutoProcessor.from_pretrained(model_id)
-        model = AutoModelForSemanticSegmentation.from_pretrained(model_id).to(_device()).eval()
+        model = AutoModelForSemanticSegmentation.from_pretrained(model_id).to(device).eval()
         label_ids = {name: int(i) for i, name in model.config.id2label.items()}
-        _models[model_id] = (processor, model, label_ids)
-    return _models[model_id]
+        _models[(model_id, device)] = (processor, model, label_ids)
+    return _models[(model_id, device)]
 
 
-def drop_movers(paths, model_id=None, classes=None):
+def drop_movers(paths, model_id=None, classes=None, device=None):
     """One boolean mask per image path, True on cars, people, poles and the
     like. model_id: another Cityscapes SegFormer (see get_segmenter);
-    classes: the class names to drop instead of DROP."""
+    classes: the class names to drop instead of DROP; device: see
+    get_segmenter."""
     import torch
-    processor, model, label_ids = get_segmenter(model_id)
+    processor, model, label_ids = get_segmenter(model_id, device)
     unknown = set(classes or ()) - set(label_ids)
     if unknown:
         raise ValueError(f"not Cityscapes classes: {sorted(unknown)}")

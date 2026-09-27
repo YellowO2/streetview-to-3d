@@ -163,15 +163,3 @@ async def fetch_depth_planes(pano_id, session=None):
     if pano is None or pano.depth is None:
         return None
     return np.asarray(pano.depth.data, np.float32)[:, ::-1].copy(), pano.depth.plane_index.copy()
-
-
-async def fetch_depth(pano_id):
-    """Google's own depth map for a pano, in metres, laid out like the photo,
-    or None if it has none. -1 marks the sky.
-
-    Coarse: a flat plane per wall and one for the ground, no trees, cars or
-    detail. But the ground is exact -- the camera comes out 2.4-2.5 m up --
-    which is what reconstruct.ground_fill uses it for.
-    """
-    got = await fetch_depth_planes(pano_id)
-    return None if got is None else got[0]

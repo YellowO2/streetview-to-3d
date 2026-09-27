@@ -9,6 +9,7 @@ import zipfile
 
 import gradio as gr
 
+from streetview_to_3d import fill
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.ui import viewers
 from streetview_to_3d.paths import new_run_dir
@@ -83,7 +84,7 @@ def _zip(run_dir):
 
 def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
                        mask_classes=""):
-    """Reconstruct (GPU) then place (CPU), in one click.
+    """Reconstruct (GPU), then place and fill (CPU), in one click.
 
     Placement never needs its own GPU call, so it runs immediately after
     reconstruction returns rather than waiting for a second click --
@@ -120,6 +121,13 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
         t_place = time.monotonic()
         pipeline.process(output_dir, log=print)
         print(f"timing: placement {time.monotonic() - t_place:.1f}s", flush=True)
+        yield gr.skip(), gr.skip(), "<p>Filling the gaps…</p>"
+        t_fill = time.monotonic()
+        try:
+            fill.run(output_dir, log=print)
+        except Exception as e:           # the placed scene is still a result
+            print(f"fill skipped: {e!r}", flush=True)
+        print(f"timing: fill {time.monotonic() - t_fill:.1f}s", flush=True)
     except Exception as e:
         yield gr.HTML(visible=True), gr.skip(), "<p>Reconstruction failed. Try again.</p>"
         raise gr.Error(f"Reconstruct failed: {e}")
