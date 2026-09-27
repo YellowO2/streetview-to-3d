@@ -13,7 +13,8 @@ between photos of different exposure. A camera can colour a point when it:
     spans metres of ground, and its near end would hide its far end.
   - sees it as itself: not a masked car, person or pole in that photo
   - is not looking at its own rig: not more than NADIR_DEG below the
-    horizon, clear of the blurred spot over a capture car
+    horizon, where every pano has its blurred spot (a capture car's roof
+    is masked as a car; 55 cost backpack captures their clean ground)
   - is within MAX_M
 Points of a patch its camera cannot colour take the nearest camera that
 can. The nearest camera is also the pano whose own blind disc a point
@@ -22,7 +23,7 @@ fills, so a filled hole matches the ground around it.
 import numpy as np
 from PIL import Image
 
-NADIR_DEG = 55
+NADIR_DEG = 70
 MAX_M = 25.0
 ZB_W = 512
 PATCH_M = 0.5

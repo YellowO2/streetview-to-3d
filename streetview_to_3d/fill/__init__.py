@@ -8,7 +8,8 @@ place. DA3's shape is never moved; only its ground points are replaced.
     google.py      Google's walls where DA3 has nothing, slid onto DA3's
                    own copy of a wall where it has one
     paint.py       colour for all of that, patch by patch from the nearest
-                   pano that sees it cleanly; DA3 keeps its own colours
+                   pano that sees it cleanly; what none sees is left out.
+                   DA3 keeps its own colours
 
 Points belong to nodes (see scene.py), so every added point is written into
 the node whose pano coloured it -- in that node's own frame, like the rest
@@ -29,6 +30,9 @@ from streetview_to_3d.fill.one_ground import one_ground
 from streetview_to_3d.fill.paint import Camera, paint
 from streetview_to_3d.postprocess.ground import normals_from_neighbours
 from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
+
+
+SMALL_HOLE_M = 1.0    # unseen ground this close to painted ground takes its colour
 
 
 def _photo(pano):
@@ -75,12 +79,17 @@ def run(scene_dir, log=print):
     photos = [_photo(n.pano) for n in nodes]
     col, who = paint(added, da3, cameras, photos)
     is_ground = np.arange(len(added)) < len(ground)
-    unseen = who < 0
-    if (is_ground & unseen).any() and (is_ground & ~unseen).any():
-        # ground nobody sees cleanly: its nearest painted neighbour's colour and pano
-        _, nb = cKDTree(added[is_ground & ~unseen]).query(added[is_ground & unseen])
-        idx = np.flatnonzero(is_ground & ~unseen)[nb]
-        col[is_ground & unseen], who[is_ground & unseen] = col[idx], who[idx]
+    # what no photo sees cleanly is left out: we have no picture of it, and
+    # copying a neighbour's colour smears one colour over a whole patch --
+    # except small holes in the ground, like the spot right under each
+    # camera no pano can see: they take the painted ground around them
+    seen_g, unseen_g = is_ground & (who >= 0), is_ground & (who < 0)
+    if seen_g.any() and unseen_g.any():
+        d, nb = cKDTree(added[seen_g]).query(added[unseen_g], distance_upper_bound=SMALL_HOLE_M)
+        close = np.isfinite(d)
+        src = np.flatnonzero(seen_g)[nb[close]]
+        dst = np.flatnonzero(unseen_g)[close]
+        col[dst], who[dst] = col[src], who[src]
     ok = who >= 0
 
     for k, n in enumerate(nodes):
@@ -89,7 +98,7 @@ def run(scene_dir, log=print):
         T = np.asarray(n.transform, float)
         write_ply(os.path.join(scene_dir, n.ply), (x - T[:3, 3]) @ np.linalg.inv(T[:3, :3]).T,
                   np.concatenate([colours[k], col[mine]]))
-    log(f"fill: one ground {len(ground)} points ({(~unseen[is_ground]).mean() * 100:.0f}% seen), "
-        f"Google walls {int(ok[~is_ground].sum())} of {len(walls)} (unseen dropped), "
+    log(f"fill: one ground {int(ok[is_ground].sum())} of {len(ground)} points, "
+        f"Google walls {int(ok[~is_ground].sum())} of {len(walls)} (the rest no photo sees cleanly), "
         f"{int(sum(len(c) for c in clouds))} DA3 points kept  "
         f"[base {t1 - t0:.1f}s, fill {t2 - t1:.1f}s, paint {time.monotonic() - t2:.1f}s]")
