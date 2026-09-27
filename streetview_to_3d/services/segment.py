@@ -40,6 +40,12 @@ BATCH = 8   # views per pass; 16 ran a bigger model out of GPU memory
 # The masker's input width, the image's own shape kept (None: the
 # processor's square 512 x 512, which stretched a 16:9 view)
 MASK_W = 1024
+# A pole is dropped only when it is a long straight stick (a lamp post, a
+# sign's post): at least POLE_LONG times taller than it is wide, and
+# POLE_STRAIGHT of its rows within POLE_TOL widths of one straight line --
+# a lamp's arm is only a few rows, a bollard, a thick pillar or a curved
+# pole is kept.
+POLE_LONG, POLE_STRAIGHT, POLE_TOL = 4.0, 0.8, 1.0
 
 _models = {}
 
@@ -69,18 +75,13 @@ def get_segmenter(model_id=None, device=None):
     return _models[(model_id, device)]
 
 
-def drop_movers(paths, model_id=None, classes=None, device=None):
-    """One boolean mask per image path, True on cars, people, poles and the
-    like. model_id: another Cityscapes SegFormer (see get_segmenter);
-    classes: the class names to drop instead of DROP; device: see
+def label_views(paths, model_id=None, device=None):
+    """(one Cityscapes class-id map per image path, {class name: id}), each
+    image fed at its own shape, MASK_W wide. model_id, device: see
     get_segmenter."""
     import torch
     processor, model, label_ids = get_segmenter(model_id, device)
-    unknown = set(classes or ()) - set(label_ids)
-    if unknown:
-        raise ValueError(f"not Cityscapes classes: {sorted(unknown)}")
-    drop = [label_ids[n] for n in (classes or DROP)]
-    masks = []
+    out = []
     for start in range(0, len(paths), BATCH):
         images = [Image.open(p).convert("RGB") for p in paths[start:start + BATCH]]
         w, h = images[0].size
@@ -89,10 +90,55 @@ def drop_movers(paths, model_id=None, classes=None, device=None):
             inputs = processor(images=images, return_tensors="pt", **({"size": size} if size else {})).to(model.device)
             labels = processor.post_process_semantic_segmentation(
                 model(**inputs), target_sizes=[im.size[::-1] for im in images])
-        for lab in labels:
-            m = np.isin(lab.cpu().numpy(), drop)
-            masks.append(binary_dilation(m, iterations=GROW_PX) if m.any() else m)
+        out += [lab.cpu().numpy().astype(np.uint8) for lab in labels]
+    return out, label_ids
+
+
+def masks_from_labels(labels, label_ids, classes=None, long_only=True):
+    """One boolean mask per class map, True on the classes to drop (DROP by
+    default; poles only where long_poles says so, unless not long_only),
+    grown by GROW_PX."""
+    unknown = set(classes or ()) - set(label_ids)
+    if unknown:
+        raise ValueError(f"not Cityscapes classes: {sorted(unknown)}")
+    names = classes or DROP
+    others = [label_ids[n] for n in names if n != "pole"]
+    masks = []
+    for lab in labels:
+        m = np.isin(lab, others)
+        if "pole" in names:
+            pole = lab == label_ids["pole"]
+            m |= long_poles(pole) if long_only else pole
+        masks.append(binary_dilation(m, iterations=GROW_PX) if m.any() else m)
     return masks
+
+
+def long_poles(pole):
+    """The parts of a pole mask that are long straight sticks (see POLE_LONG)."""
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(pole.astype(np.uint8), connectivity=8)
+    keep = np.zeros(n, bool)
+    for k in range(1, n):
+        x, y, w, h, area = stats[k]
+        if h < 8:
+            continue
+        rows = lab[y:y + h, x:x + w] == k
+        filled = rows.any(1)
+        width = area / filled.sum()                       # its typical width per row
+        if h < POLE_LONG * width:
+            continue
+        ys = np.flatnonzero(filled)
+        cx = np.array([np.flatnonzero(r).mean() for r in rows[filled]])
+        a, b = np.polyfit(ys, cx, 1)
+        keep[k] = (np.abs(cx - (a * ys + b)) <= POLE_TOL * width).mean() >= POLE_STRAIGHT
+    return keep[lab]
+
+
+def drop_movers(paths, model_id=None, classes=None, device=None):
+    """One boolean mask per image path, True on cars, people, poles and the
+    like. model_id: another Cityscapes SegFormer (see get_segmenter);
+    classes: the class names to drop instead of DROP; device: see
+    get_segmenter."""
+    return masks_from_labels(*label_views(paths, model_id, device), classes)
 
 
 _VIEW_NAME = re.compile(r"^(.*)da3_(-?\d+)_0\.\w+$")
@@ -101,12 +147,16 @@ _VIEW_NAME = re.compile(r"^(.*)da3_(-?\d+)_0\.\w+$")
 def drop_in_views(paths, hfov, **kw):
     """drop_movers for DA3's views (panoramic_da3's "{prefix}da3_{yaw}_0"
     files, hfov wide), a pixel dropped only where every view of the same
+    pano that sees it drops it (agree). kw: see drop_movers."""
+    return agree(drop_movers(paths, **kw), paths, hfov)
+
+
+def agree(masks, paths, hfov):
+    """masks, each pixel kept dropped only where every view of the same
     pano that sees it drops it. Each spot is seen by about 3 views; on node
     10 of NTU the real cars, people and signs were dropped by all of them,
     while the masker's mistakes (a long white walkway roof taken for a bus
-    or truck, here and there) were each one or two views'. kw: see
-    drop_movers."""
-    masks = drop_movers(paths, **kw)
+    or truck, here and there) were each one or two views'."""
     views = {}
     for i, p in enumerate(paths):
         m = _VIEW_NAME.match(os.path.basename(p))

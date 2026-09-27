@@ -13,6 +13,7 @@ from streetview_to_3d.ui import viewers
 from streetview_to_3d.paths import new_run_dir
 from streetview_to_3d.postprocess import pipeline
 from streetview_to_3d.reconstruct import build as street_main
+from streetview_to_3d.services import mask_api
 from streetview_to_3d.ui.map_selection.tab import build_map_section, nodes_by_key
 
 def _run_dir(prep):
@@ -178,6 +179,9 @@ def build_main_tab():
         show_progress="hidden",
         show_progress_on=[pathfind_status],
     )
+
+    # The masker alone on one pano, API only (see services.mask_api).
+    gr.api(mask_api.mask_pano, api_name="mask_pano")
 
     pathfind_run_btn.click(
         fn=handle_reconstruct,
