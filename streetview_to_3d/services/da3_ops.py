@@ -160,7 +160,8 @@ def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thres
 
     Returns None only if a pano has no pose at all (extremely rare --
     DA3Model always provides a fallback pose regardless of keep-rate).
-    Else a dict: pose_a/pose_b, pts, cols, keep_a/keep_b ((kept, total)
+    Else a dict: pose_a/pose_b, pts, cols, pts_a/cols_a and pts_b/cols_b
+    (each pano's own share of pts), keep_a/keep_b ((kept, total)
     view counts), avg_dev_a/avg_dev_b (average real-world deviation in
     meters among that pano's own kept views only; inf if zero kept).
     conf_a/conf_b (each pano's own per-point confidence array) are added
@@ -168,7 +169,7 @@ def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thres
     test_dir = os.path.join(views_base, f"b{test_id}")
     os.makedirs(test_dir, exist_ok=True)
     id_a, id_b = os.path.basename(path_a), os.path.basename(path_b)
-    _, res, pts, cols, _, _ = _run_da3(
+    _, res, pts, cols, per_pano_pts, per_pano_cols = _run_da3(
         path_a, [path_b], cfg, test_dir,
         da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
@@ -183,6 +184,8 @@ def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thres
         "pose_a": pose_a, "pose_b": pose_b,
         "pts": pts if pts is not None else np.zeros((0, 3)),
         "cols": cols if cols is not None else np.zeros((0, 3)),
+        "pts_a": per_pano_pts.get(id_a, np.zeros((0, 3))), "cols_a": per_pano_cols.get(id_a, np.zeros((0, 3))),
+        "pts_b": per_pano_pts.get(id_b, np.zeros((0, 3))), "cols_b": per_pano_cols.get(id_b, np.zeros((0, 3))),
         "keep_a": (ka, ta), "keep_b": (kb, tb),
         "avg_dev_a": res.pano_avg_deviation.get(id_a, float("inf")),
         "avg_dev_b": res.pano_avg_deviation.get(id_b, float("inf")),

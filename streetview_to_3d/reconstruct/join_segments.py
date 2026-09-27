@@ -132,19 +132,25 @@ def _try_bridge(a, b, bridge_test_edge, edge_max_dist_m, deadline, bridge_test_i
     b_to_a_R, b_to_a_t = rigid_align([(b_own_center, b_own_rot)], [(b_key_center_in_a, b_key_rot_in_a)])
 
     # The bridge test's own cloud is a second copy of these two panoramas,
-    # which both pieces already carry. Only its transform is new.
+    # which both pieces already carry -- except an end that was never
+    # linked (in no edge of its piece): it still holds its solo run, and a
+    # link beats that, so it takes its own share of the bridge instead.
     merged_clouds = {**a_clouds,
                      **{k: (pts @ b_to_a_R.T + b_to_a_t, cols)
                         for k, (pts, cols) in b_clouds.items()}}
+    merged_frame_poses = {**a_frame_poses,
+                           **{k: (b_to_a_R @ p + b_to_a_t, r @ b_to_a_R.T, path, lat, lon, n_kept, n_total)
+                              for k, (p, r, path, lat, lon, n_kept, n_total) in b_frame_poses.items()}}
+    for key, edges, side in ((a_key, a_edges, "a"), (b_key, b_edges, "b")):
+        if not any(key in e[:2] for e in edges):
+            merged_clouds[key] = (result[f"pts_{side}"] @ local_R.T + local_t, result[f"cols_{side}"])
+            merged_frame_poses[key] = merged_frame_poses[key][:5] + tuple(result[f"keep_{side}"])
     # carries its own keep counts like any other edge -- a bridge is a real
     # DA3 test between two panoramas, and how well they agreed is exactly
     # what decides whether the link should later be trusted
     merged_edges = a_edges + [(a_key, b_key, list(result["keep_a"]),
                                list(result["keep_b"]))] + b_edges
     merged_positions = {**a_positions, **{k: b_to_a_R @ p + b_to_a_t for k, p in b_positions.items()}}
-    merged_frame_poses = {**a_frame_poses,
-                           **{k: (b_to_a_R @ p + b_to_a_t, r @ b_to_a_R.T, path, lat, lon, n_kept, n_total)
-                              for k, (p, r, path, lat, lon, n_kept, n_total) in b_frame_poses.items()}}
     print(f"[bridge] {a_date}+{b_date}: merged via {a_key} -> {b_key} (keep={result['keep_a']},{result['keep_b']})")
     merged = (merged_clouds, merged_edges, a_date, a_reached, merged_positions, merged_frame_poses)
     return merged, bridge_test_id
