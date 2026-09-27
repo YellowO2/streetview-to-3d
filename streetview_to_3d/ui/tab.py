@@ -4,12 +4,10 @@ Mounts map_selection's own map-picking section above its own controls,
 wired against the same shared `state` that section's handlers update.
 """
 import os
-import time
 import zipfile
 
 import gradio as gr
 
-from streetview_to_3d import fill
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.ui import viewers
 from streetview_to_3d.paths import new_run_dir
@@ -83,7 +81,7 @@ def _zip(run_dir):
 
 
 def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
-                       mask_classes=""):
+                       mask_classes="", fill=True):
     """Reconstruct (GPU), then place and fill (CPU), in one click.
 
     Placement never needs its own GPU call, so it runs immediately after
@@ -101,7 +99,7 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
     view_hfov, da3_model, masker, mask_classes: the view width (0), DA3 repo,
     masker SegFormer repo and comma-separated Cityscapes classes to drop
     (blank) for this run; defaults otherwise (config, services.da3_ops,
-    services.segment).
+    services.segment). fill: False leaves the placed scene unfilled.
     """
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -117,17 +115,8 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
             gpu_seconds=gpu_seconds or None, hfov=view_hfov or None,
             model=(da3_model or "").strip() or None, masker=(masker or "").strip() or None,
             mask_classes=[c.strip() for c in (mask_classes or "").split(",") if c.strip()] or None)
-        yield gr.skip(), gr.skip(), "<p>Aligning the scene…</p>"
-        t_place = time.monotonic()
-        pipeline.process(output_dir, log=print)
-        print(f"timing: placement {time.monotonic() - t_place:.1f}s", flush=True)
-        yield gr.skip(), gr.skip(), "<p>Filling the gaps…</p>"
-        t_fill = time.monotonic()
-        try:
-            fill.run(output_dir, log=print)
-        except Exception as e:           # the placed scene is still a result
-            print(f"fill skipped: {e!r}", flush=True)
-        print(f"timing: fill {time.monotonic() - t_fill:.1f}s", flush=True)
+        yield gr.skip(), gr.skip(), "<p>Aligning the scene and filling the gaps…</p>"
+        pipeline.process(output_dir, log=lambda m: print(m, flush=True), fill=bool(fill))
     except Exception as e:
         yield gr.HTML(visible=True), gr.skip(), "<p>Reconstruction failed. Try again.</p>"
         raise gr.Error(f"Reconstruct failed: {e}")
@@ -168,6 +157,7 @@ def build_main_tab():
     da3_model_input = gr.Textbox(value="", visible=False)
     masker_input = gr.Textbox(value="", visible=False)
     mask_classes_input = gr.Textbox(value="", visible=False)
+    fill_input = gr.Checkbox(value=True, visible=False)
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
@@ -191,7 +181,7 @@ def build_main_tab():
 
     pathfind_run_btn.click(
         fn=handle_reconstruct,
-        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input, da3_model_input, masker_input, mask_classes_input],
+        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input, da3_model_input, masker_input, mask_classes_input, fill_input],
         outputs=[reconstruct_view, download_btn, pathfind_status],
         show_progress="hidden",
         show_progress_on=[reconstruct_view],
