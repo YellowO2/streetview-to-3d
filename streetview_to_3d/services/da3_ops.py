@@ -71,15 +71,16 @@ def options(hfov=None, masker=None, mask_classes=None):
 def _run_da3(*args, **kwargs):
     """panoramic_da3.run_da3 with this pipeline's view width and mask."""
     from panoramic_da3 import run_da3
-    return run_da3(*args, hfov=_options["hfov"] or VIEW_HFOV, drop_mask=_drop_mask(), **kwargs)
+    hfov = _options["hfov"] or VIEW_HFOV
+    return run_da3(*args, hfov=hfov, drop_mask=_drop_mask(hfov), **kwargs)
 
 
-def _drop_mask():
+def _drop_mask(hfov):
     if not MASK_MOVERS:
         return None
     from functools import partial
-    from streetview_to_3d.services.segment import drop_movers
-    return partial(drop_movers, model_id=_options["masker"], classes=_options["mask_classes"])
+    from streetview_to_3d.services.segment import drop_in_views
+    return partial(drop_in_views, hfov=hfov, model_id=_options["masker"], classes=_options["mask_classes"])
 
 
 def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1,
