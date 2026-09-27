@@ -20,7 +20,8 @@ between photos of different exposure. A camera can colour a point when it:
     rather than leaking through the gaps between its points. The added
     ground and walls never hide each other: at a shallow angle one pixel
     spans metres of ground, and its near end would hide its far end.
-  - sees it as itself: not a masked car, person or pole in that photo
+  - sees it as itself: not a masked car, person or pole in that photo,
+    nor the blur some panos have below the horizon (blurred, below)
   - is not looking at its own rig: not more than NADIR_DEG below the
     horizon, where every pano has its blurred spot (a capture car's roof
     is masked as a car; 55 cost backpack captures their clean ground)
@@ -31,11 +32,14 @@ fills, so a filled hole matches the ground around it.
 """
 import numpy as np
 from PIL import Image
+from scipy.ndimage import binary_dilation, label, uniform_filter
 
 NADIR_DEG = 70
 MAX_M = 25.0
 ZB_W = 512
 PATCH_M = 0.5
+BLUR_DETAIL, BLUR_WIN = 0.5, 15     # under this grey-level change per pixel, over BLUR_WIN px: blur
+BLUR_GROW_DEG, SEAM_DEG = 6, 2
 
 
 class Camera:
@@ -56,6 +60,32 @@ class Camera:
         s = np.clip(d[:, 1] / np.maximum(r, 1e-9), -1, 1)
         below = np.degrees(np.arcsin(s))
         return np.arctan2(d[:, 0], d[:, 2]) / (2 * np.pi) + .5, below / 180 + .5, r * self.scale, below
+
+
+def blurred(path):
+    """Where a pano's photo is blur below the horizon, as a mask.
+
+    Many Google panos hide the capture rig under a smooth grey smear
+    reaching 15-35 deg below the horizon, ragged with where the car was --
+    no road in it at all, and nearest-camera colour made the road a
+    patchwork of it and real asphalt. Blur is what has next to no detail
+    (BLUR_DETAIL); only blur joined to straight down counts (a smooth car
+    door or wall does not), everything under it in its column too (the
+    "(c) Google" marks in it), and its edge grows BLUR_GROW_DEG upward
+    over the fade into the real photo. The photo's last SEAM_DEG rows are
+    a hard seam and are left out of the search."""
+    g = np.asarray(Image.open(path).convert("L"), float)
+    h = g.shape[0]
+    d = np.zeros_like(g)
+    d[:, :-1] += np.abs(np.diff(g, axis=1))
+    d[:-1] += np.abs(np.diff(g, axis=0))
+    m = uniform_filter(d[:h - int(SEAM_DEG / 180 * h)], BLUR_WIN, mode=["nearest", "wrap"]) < BLUR_DETAIL
+    m[:h // 2] = False
+    lab, _ = label(m)
+    m = np.isin(lab, np.unique(lab[-1][lab[-1] > 0]))
+    top = np.where(m.any(0), m.argmax(0), h)
+    grow = int(BLUR_GROW_DEG / 180 * h)
+    return binary_dilation(np.arange(h)[:, None] >= top[None, :], np.ones((2 * grow + 1, 1), bool))
 
 
 def _at(grid, u, v):

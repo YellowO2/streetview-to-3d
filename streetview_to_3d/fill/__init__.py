@@ -28,7 +28,7 @@ from scipy.spatial import cKDTree
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.fill.google import fill
 from streetview_to_3d.fill.one_ground import one_ground
-from streetview_to_3d.fill.paint import Camera, paint
+from streetview_to_3d.fill.paint import Camera, blurred, paint
 from streetview_to_3d.postprocess.ground import normals_from_neighbours
 from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
 
@@ -36,13 +36,13 @@ from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
 def _photo(pano):
     """(image path, drop mask) of a pano, or None: the same download the
     reconstruction used (cached), masked like its points were -- on the
-    CPU, since this runs after the GPU call."""
+    CPU, since this runs after the GPU call -- plus its blur (paint.blurred)."""
     from streetview_to_3d.services.segment import drop_movers
     from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
     if pano.source != "google":
         return None
     path = run_async(download_pano_by_id(pano.id, zoom=DA3_ONLY_ZOOM))
-    return (path, drop_movers([path], device="cpu")[0]) if path else None
+    return (path, drop_movers([path], device="cpu")[0] | blurred(path)) if path else None
 
 
 def run(scene_dir, log=print):
