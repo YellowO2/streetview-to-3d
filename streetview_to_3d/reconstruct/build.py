@@ -3,12 +3,9 @@
 1. prepare_pathfind (no GPU): build_corridor_graphs gathers candidate
    panos along the clicked graph and splits them into isolated per-date
    graphs (see build_street_graph/), then every candidate is downloaded.
-2. run_prepared_pathfind: ONE GPU call (pipeline_runner.
-   run_pathfind_and_join_gpu) that walks the date graphs
-   (reconstruct/walk_graph.py) and then bridges the pieces it left
-   (reconstruct/join_segments.py). One call, not two: each @spaces.GPU call
-   requests a fresh session credential, and a second one can arrive after
-   the first has already expired.
+2. run_prepared_pathfind: ONE GPU call (pipeline_runner.run_walk_gpu)
+   that walks the date graphs (reconstruct/walk_graph.py). Pieces it
+   leaves separate stay separate, each placed by GPS in postprocess/.
 3. The result is written into the run's scene (open_scene,
    _save_joined_pieces); placement happens afterwards, in postprocess/.
 """
@@ -64,7 +61,7 @@ def _download_date_graphs(date_graphs):
     dropped entirely -- the walk algorithm treats it exactly like a dot
     that was never populated, same skip-one handling either way);
     node_entries -- flat (key, path, lat, lon, date) list across ALL
-    graphs, for join_segments' GPS lookup (see join_segments.join_segments);
+    graphs;
     catalog -- {pano key: {dot, source, id, lat, lon, date, heading, pitch,
     roll}} for every candidate, whichever date it belongs to. It is what
     lets a reconstructed pano be matched back to the place it came from,
@@ -181,7 +178,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
     mask_classes: view width, masker model and the class names it drops, for
     this run (services.da3_ops.options); None keeps the defaults.
     """
-    from streetview_to_3d.services.pipeline_runner import run_pathfind_and_join_gpu, run_solo_gpu
+    from streetview_to_3d.services.pipeline_runner import run_solo_gpu, run_walk_gpu
     t0 = time.monotonic()
     if "solo" in prep:
         pieces = run_solo_gpu(prep["solo"], prep["catalog"], conf_lower_percentile=conf_lower_percentile,
@@ -193,21 +190,14 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
         print(f"run_prepared_pathfind (solo): done in {time.monotonic() - t0:.1f}s")
         return results
     start_lat, start_lon = prep["start"]
-    segments, pieces = run_pathfind_and_join_gpu(
+    pieces = run_walk_gpu(
         prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon,
         step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
         gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker, mask_classes=mask_classes,
     )
-    if not segments:
+    if not pieces:
         raise RuntimeError("No connected path found from start toward any goal.")
-
-    results = []
-    if pieces is None:
-        # a lone segment has nothing to bridge TO, but it is still a piece,
-        # and the scene is only filled in by saving one
-        from streetview_to_3d.reconstruct.join_segments import pieces_to_output
-        pieces = pieces_to_output(segments)
-    results.extend(_save_joined_pieces(pieces, output_dir, prep["catalog"]))
+    results = _save_joined_pieces(pieces, output_dir, prep["catalog"])
     print(f"run_prepared_pathfind: done in {time.monotonic() - t0:.1f}s")
     return results
 
@@ -261,7 +251,7 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
     DA3 frames into one piece.
     """
     from streetview_to_3d import scene as scene_mod
-    from streetview_to_3d.reconstruct.join_segments import _piece_edges
+    from streetview_to_3d.reconstruct.pieces import _piece_edges
     sc = scene_mod.Scene.load(output_dir)
     node_of_dot = {catalog[n.key]["dot"]: i
                    for i, n in enumerate(sc.nodes) if n.key in catalog}

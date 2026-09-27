@@ -1,8 +1,8 @@
 """Our own domain-specific decisions about DA3 results: what counts as a
-passing edge test, a usable solo rating, or a good bridge candidate. Lives
+passing edge test or a usable solo rating. Lives
 here rather than in panoramic_da3 on purpose -- these are OUR
 pipeline's own thresholds/shape choices (keep-rate cutoffs, what "rating"
-or "bridging" means for our corridor search), not something a general
+means for our corridor search), not something a general
 "run DA3 on a list of panos" library should know about. panoramic_da3
 exposes exactly one primitive (run_da3); this module is the only place
 that calls it and interprets the raw result.
@@ -23,8 +23,7 @@ VIEW_STEP_DEGREES = 30
 
 # Below this share of a pano's views surviving DA3's consensus filter,
 # DA3 has not made sense of the pano: a date whose sampled panos sit under
-# it is not walked (walk_graph._sample_dates), and a bridge whose best
-# attempt sits under it is rejected (join_segments). The solo-score
+# it is not walked (walk_graph._sample_dates). The solo-score
 # experiment (README, Dev notes) saw links mostly fail
 # around there and mostly succeed above ~2/3.
 MIN_KEEP_RATE = 1.0 / 3
@@ -147,53 +146,6 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
     cols = per_pano_cols.get(pano_id, np.zeros((0, 3)))
     out = (score, pose, pts, cols, n_kept, n_total)
     return out + (conf,) if return_confidence else out
-
-
-def bridge_test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=VIEW_STEP_DEGREES,
-                     conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False):
-    """Diagnostic variant of test_edge for the bridging search (joining two
-    already-built pieces -- a real DA3 estimate, even a poor one, is
-    trusted over independent GPS placement). Never gates pass/fail itself
-    -- the caller (join_segments.py's _try_bridge) ranks several attempts
-    using the raw keep-rate/deviation data returned here and always uses
-    the best one found, however weak.
-
-    Returns None only if a pano has no pose at all (extremely rare --
-    DA3Model always provides a fallback pose regardless of keep-rate).
-    Else a dict: pose_a/pose_b, pts, cols, pts_a/cols_a and pts_b/cols_b
-    (each pano's own share of pts), keep_a/keep_b ((kept, total)
-    view counts), avg_dev_a/avg_dev_b (average real-world deviation in
-    meters among that pano's own kept views only; inf if zero kept).
-    conf_a/conf_b (each pano's own per-point confidence array) are added
-    when return_confidence is True."""
-    test_dir = os.path.join(views_base, f"b{test_id}")
-    os.makedirs(test_dir, exist_ok=True)
-    id_a, id_b = os.path.basename(path_a), os.path.basename(path_b)
-    _, res, pts, cols, per_pano_pts, per_pano_cols = _run_da3(
-        path_a, [path_b], cfg, test_dir,
-        da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
-        conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
-    )
-    if id_a not in res.pano_poses or id_b not in res.pano_poses:
-        return None
-    ka, ta = res.pano_keep_counts.get(id_a, (0, 1))
-    kb, tb = res.pano_keep_counts.get(id_b, (0, 1))
-    pose_a = (res.pano_poses[id_a]["center"], res.pano_poses[id_a]["rotation"])
-    pose_b = (res.pano_poses[id_b]["center"], res.pano_poses[id_b]["rotation"])
-    out = {
-        "pose_a": pose_a, "pose_b": pose_b,
-        "pts": pts if pts is not None else np.zeros((0, 3)),
-        "cols": cols if cols is not None else np.zeros((0, 3)),
-        "pts_a": per_pano_pts.get(id_a, np.zeros((0, 3))), "cols_a": per_pano_cols.get(id_a, np.zeros((0, 3))),
-        "pts_b": per_pano_pts.get(id_b, np.zeros((0, 3))), "cols_b": per_pano_cols.get(id_b, np.zeros((0, 3))),
-        "keep_a": (ka, ta), "keep_b": (kb, tb),
-        "avg_dev_a": res.pano_avg_deviation.get(id_a, float("inf")),
-        "avg_dev_b": res.pano_avg_deviation.get(id_b, float("inf")),
-    }
-    if return_confidence:
-        out["conf_a"] = res.pano_point_confidence.get(id_a, np.zeros((0,), dtype=np.float32))
-        out["conf_b"] = res.pano_point_confidence.get(id_b, np.zeros((0,), dtype=np.float32))
-    return out
 
 
 def depth_around(target_path, neighbour_paths, cfg, views_base, da3, dist_thresh=0.2, angle_thresh=1,

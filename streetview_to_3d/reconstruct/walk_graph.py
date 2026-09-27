@@ -256,17 +256,15 @@ def run_pathfind_reconstruction(
       one, never through a joint cloud covering two panoramas at once.
 
     Segments are NOT stitched together -- each is DA3's own arbitrary
-    frame; bridging them is the caller's job (join_segments, later in the
-    same GPU call).
+    frame, placed by its nodes' GPS later (postprocess/).
 
     Returns [(clouds, path_edges, date, reached_all, node_positions,
     frame_poses), ...], phase 2's (set_cover's) chosen pieces.
     reached_all: whole corridor covered. node_positions: {key:
     np.ndarray(3,)}, DA3's placement in that piece's own frame.
     frame_poses: {key: (center, rotation, path, lat, lon, n_views_kept,
-    n_views_total)} -- the fuller per-node data join_segments.py's
-    bridge_pieces needs to chain a NEW rigid_align onto this piece's frame
-    and gate candidate pairs by real distance, plus view-count diagnostics
+    n_views_total)} -- each node's pose in the piece's frame, its real
+    lat/lon (what places it later), plus view-count diagnostics
     (see services.da3_ops.rate_pano/test_edge -- whichever DA3 call actually
     produced this node's current points); node_positions is just
     frame_poses' own center field, kept separate since it's all the
@@ -509,15 +507,7 @@ def run_pathfind_reconstruction(
             node_positions = {confirmed[d]["key"]: confirmed[d]["seg_R"] @ confirmed[d]["pose"][0] + confirmed[d]["seg_t"] for d in dots}
             # Each node's own (center, rotation, path, real lat, real lon)
             # re-expressed in the piece's shared frame (path/lat/lon are
-            # unchanged, just carried along) -- node_positions alone is
-            # enough for GPS-fitting (join_segments.py), but bridging two
-            # pieces together (see bridge_pieces) needs the full pose +
-            # path to run a NEW real test and chain rigid_align onto this
-            # piece's existing frame, and REAL lat/lon (not the DA3-frame
-            # position, which is meaningless to compare across two
-            # different pieces' unrelated local coordinate frames) to
-            # decide which node pairs are even worth attempting.
-            # Internal-only: never leaves run_pathfind_reconstruction.
+            # unchanged, just carried along).
             frame_poses = {confirmed[d]["key"]: (node_positions[confirmed[d]["key"]], confirmed[d]["pose"][1] @ confirmed[d]["seg_R"].T,
                                                    confirmed[d]["path"], confirmed[d]["lat"], confirmed[d]["lon"],
                                                    confirmed[d]["n_views_kept"], confirmed[d]["n_views_total"]) for d in dots}

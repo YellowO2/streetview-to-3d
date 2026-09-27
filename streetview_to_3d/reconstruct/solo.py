@@ -1,6 +1,6 @@
 """Solo mode: DA3 on each Google pano on its own, no links.
 
-The linked walk (walk_graph, join_segments) exists to put panos in one
+The linked walk (walk_graph) exists to put panos in one
 frame by testing them against each other. Once each pano is placed by its
 own GPS, heading and Google's depth instead (google_base), nothing needs
 linking, so every pano is reconstructed alone, and every place Google has
@@ -88,7 +88,7 @@ def estimate_gpu_seconds(places):
 
 def reconstruct(places, catalog, rate_pano, deadline):
     """One piece per place: its best-rated candidate's own cloud.
-    Returns [(clouds, metadata), ...] as join_segments.pieces_to_output."""
+    Returns [(clouds, metadata), ...] as pieces.pieces_to_output."""
     pieces = []
     for n_done, (dot, bucket) in enumerate(sorted(places.items())):
         if time.monotonic() >= deadline:
