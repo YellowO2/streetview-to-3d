@@ -6,7 +6,7 @@
 - DA3: Nested 1.1 everywhere, 90 deg views, Google only (Apple off: GPS 1-1.6 m off, poor depth). Links where it can; unlinked places keep their best pano placed by GPS + heading. Solo mode (the "Link panoramas" toggle off) also adds Google's neighbour panos.
 - Masker: SegFormer-B2 (B5 ran out of GPU memory); drops people, vehicles (not trains), poles, traffic lights and signs. Model and class list settable per run.
 - Fill (fill/, ARCHITECTURE step 6): done -- one ground, Google's walls in DA3's gaps (DA3 wins where both), colour from the nearest pano.
-- Not done: Google nodes are still placed by the road snap, not exactly at their pano pose like the Google base; walls of neighbouring panos are not merged with each other (DA3 vs DA3); rebuilding thin poles as clean cylinders.
+- Not done: the Google base still places its panos by heading only (level), not heading, pitch and roll like placement does; walls of neighbouring panos are not merged with each other (DA3 vs DA3); rebuilding thin poles as clean cylinders.
 - DA3 on forward-facing views only (180° instead of 360°): may link better, and halves the views.
 - Splats from several panos (future work).
 - Mapillary as an extra image source where Google/Apple have none.

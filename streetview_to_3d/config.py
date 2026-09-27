@@ -4,7 +4,7 @@ from huggingface_hub import snapshot_download
 
 # How many metres one DA3 unit is, when a scene cannot measure its own.
 # Placement fits the scale per scene from its linked pieces' GPS (see
-# postprocess/gps_fit/load_pieces.scene_scale); this is only the fallback,
+# postprocess/place.scene_scale); this is only the fallback,
 # for a scene of lone panoramas or a fit out of range.
 #
 # It is not one constant: per-scene fits have come out 1.17 (NTU), 1.62
