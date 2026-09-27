@@ -340,7 +340,7 @@ def run_pathfind_reconstruction(
             next_piece_id[0] += 1
             confirmed[dot] = {"key": key, "path": path, "lat": lat, "lon": lon,
                                "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose, "piece_id": pid,
-                               "n_views_kept": n_kept, "n_views_total": n_total}
+                               "n_views_kept": n_kept, "n_views_total": n_total, "solo": True}
             piece_data[pid] = {"clouds": {key: (pts, cols)}, "path_edges": []}
 
         def covered_points(dots):
@@ -370,10 +370,11 @@ def run_pathfind_reconstruction(
             success, to_dot's own solo/prior piece is discarded and
             replaced by this edge's own per-pano points for to_dot (higher
             quality, jointly reconstructed with from_dot), merged into
-            from_dot's existing piece via rigid_align. from_dot's own side
-            is left untouched -- never re-added, so an already-established
-            node's points don't get duplicated across however many further
-            edges touch it."""
+            from_dot's existing piece via rigid_align. from_dot's side is
+            replaced too while it still holds only its solo cloud -- a
+            linked node never keeps its solo run. Once it holds a link's
+            points it is left untouched, so they are never added twice
+            however many further edges touch it."""
             if out_of_time():
                 return False
             t0 = time.monotonic()
@@ -408,10 +409,18 @@ def run_pathfind_reconstruction(
             seg_t = pf["seg_R"] @ local_t + pf["seg_t"]
             pd = piece_data[pid]
             pd["clouds"][to_key] = (to_pts @ seg_R.T + seg_t, to_cols)
+            if pf["solo"]:
+                # from_dot still holds its solo cloud: a link beats it, so
+                # it takes its own slice of this one too (a seed whose solo
+                # run kept no views at all would otherwise stay empty)
+                from_id = os.path.basename(from_path)
+                pd["clouds"][from_key] = (per_pano_pts.get(from_id, np.zeros((0, 3))) @ seg_R.T + seg_t,
+                                          per_pano_cols.get(from_id, np.zeros((0, 3))))
+                pf.update(solo=False, n_views_kept=from_kept, n_views_total=from_total)
             pd["path_edges"].append(edge)
             confirmed[to_dot] = {"key": to_key, "path": to_path, "lat": to_lat, "lon": to_lon,
                                   "seg_R": seg_R, "seg_t": seg_t, "pose": pose_b, "piece_id": pid,
-                                  "n_views_kept": to_kept, "n_views_total": to_total}
+                                  "n_views_kept": to_kept, "n_views_total": to_total, "solo": False}
 
             print(f"[{date}] {from_key} -> {to_key}: OK ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
             return True
