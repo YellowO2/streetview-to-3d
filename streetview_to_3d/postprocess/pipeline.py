@@ -24,7 +24,7 @@ from streetview_to_3d.postprocess.place import place
 
 def process(run_dir, log=print, merge_ply=None, fill=True):
     """Place a reconstruction, remove its floating bits, then fill it
-    (fill=False: placed and cleaned only).
+    (fill=False: placed only, DA3's points untouched).
     merge_ply: also write one combined .ply there, for local inspection
     outside the viewer -- not needed by the Space, which reads
     scene.json's per-node transforms directly."""
@@ -32,10 +32,10 @@ def process(run_dir, log=print, merge_ply=None, fill=True):
     t = time.monotonic()
     place(run_dir, log=log)
     log(f"timing: placement {time.monotonic() - t:.1f}s")
-    t = time.monotonic()
-    drop_blobs(run_dir, log=log)
-    log(f"timing: floating bits {time.monotonic() - t:.1f}s")
     if fill:
+        t = time.monotonic()
+        drop_blobs(run_dir, log=log)
+        log(f"timing: floating bits {time.monotonic() - t:.1f}s")
         t = time.monotonic()
         try:
             fill_mod.run(run_dir, log=log)
