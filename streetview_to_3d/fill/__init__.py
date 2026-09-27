@@ -7,8 +7,8 @@ place. DA3's shape is never moved; only its ground points are replaced.
                    surface, the blind disc under each camera included
     google.py      Google's walls where DA3 has nothing, slid onto DA3's
                    own copy of a wall where it has one
-    paint.py       colour for all of that, each point from the nearest pano
-                   that sees it cleanly; DA3 keeps its own colours
+    paint.py       colour for all of that, patch by patch from the nearest
+                   pano that sees it cleanly; DA3 keeps its own colours
 
 Points belong to nodes (see scene.py), so every added point is written into
 the node whose pano coloured it -- in that node's own frame, like the rest
@@ -73,7 +73,7 @@ def run(scene_dir, log=print):
 
     added = np.concatenate([ground, walls])
     photos = [_photo(n.pano) for n in nodes]
-    col, who = paint(added, np.concatenate([da3, added]), cameras, photos)
+    col, who = paint(added, da3, cameras, photos)
     is_ground = np.arange(len(added)) < len(ground)
     unseen = who < 0
     if (is_ground & unseen).any() and (is_ground & ~unseen).any():
