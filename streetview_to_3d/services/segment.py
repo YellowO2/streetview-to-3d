@@ -28,15 +28,17 @@ from scipy.ndimage import binary_dilation
 MODEL_ID = "nvidia/segformer-b2-finetuned-cityscapes-1024-1024"
 MOVERS = ("person", "rider", "car", "truck", "bus", "motorcycle", "bicycle")   # not train: it is part of the place
 THIN = ("pole", "traffic light", "traffic sign")
-# Sky has no real distance: DA3 puts it on a dome 100-140 m out, which the
-# confidence filter used to hide along with everything far (a harbour's
-# water and far shore).
+# Sky has no real distance: DA3 puts it on a dome 100-140 m out. Off by
+# default -- the confidence floor (services.da3_ops.CONF_FLOOR) already
+# cuts it, with everything else far; name it per run (mask_classes) to drop
+# it by label instead, e.g. with the floor lowered. At a harbour the masker
+# missed patches of sky that views disagreed on.
 SKY = ("sky",)
 # What is dropped by default. Any of Cityscapes' 19 classes can be named
 # per run instead: road, sidewalk, building, wall, fence, pole, traffic
 # light, traffic sign, vegetation, terrain, sky, person, rider, car, truck,
 # bus, train, motorcycle, bicycle.
-DROP = MOVERS + THIN + SKY
+DROP = MOVERS + THIN
 # Grow each mask by a few pixels: depth at an object's edge smears between
 # it and what's behind, and those in-between points are the worst floaters.
 GROW_PX = 3
