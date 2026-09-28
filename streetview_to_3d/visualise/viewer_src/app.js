@@ -127,9 +127,16 @@ function configure() {
   view.styles.configure(store, radius);
   setPointSize();
 }
+// The sky sphere's points are about 0.6 degrees apart (postprocess/sky.py):
+// sized to that, not to the scene, so it reads as one surface.
+const SKY_POINT = 0.01;
 function setPointSize() {
   store.group?.traverse((o) => {
-    if (o.isPoints) o.material.size = radius * 0.002 * pointMultiplier;
+    if (!o.isPoints) return;
+    o.material.size =
+      o.userData.surroundings === 'sky'
+        ? o.geometry.boundingSphere.radius * SKY_POINT
+        : radius * 0.002 * pointMultiplier;
   });
 }
 function frameAll() {

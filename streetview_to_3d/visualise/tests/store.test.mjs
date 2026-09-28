@@ -106,3 +106,32 @@ test('raw GPS preparation keeps points and exported transform equivalent', () =>
     .applyMatrix4(flip);
   assert(new THREE.Vector3().fromBufferAttribute(p, 0).distanceTo(expected) < 1e-5);
 });
+test('a placed scene loads its backdrop and sky, left out of its bounds', async () => {
+  const ply = (n, r) =>
+    new TextEncoder().encode(
+      `ply\nformat ascii 1.0\nelement vertex ${n}\nproperty float x\nproperty float y\nproperty float z\nend_header\n` +
+        Array.from({ length: n }, (_, i) => `${r * Math.cos(i)} ${r * Math.sin(i)} 0`).join('\n') +
+        '\n',
+    ).buffer;
+  const files = {
+    'node_0.ply': ply(3, 1),
+    'backdrop.ply': ply(3, 40),
+    'sky.ply': ply(3, 100),
+    'scene.json': new TextEncoder().encode(
+      JSON.stringify({
+        center: [1, 103],
+        nodes: [{ pano: {}, ply: 'node_0.ply', position: [0, 0, 0], transform: structuredClone(T) }],
+        edges: [],
+        backdrop: 'backdrop.ply',
+        sky: 'sky.ply',
+      }),
+    ).buffer,
+  };
+  const source = (name) => ({ arrayBuffer: async () => files[name] });
+  const asset = await loadAsset(source('scene.json'), source, () => {}, () => false);
+  const kinds = asset.group.children.map((o) => o.userData.surroundings || 'node');
+  assert.deepEqual(kinds, ['node', 'backdrop', 'sky']);
+  const store = new SceneStore();
+  store.install(asset, 'Test');
+  assert(store.box().getBoundingSphere(new THREE.Sphere()).radius < 20);
+});

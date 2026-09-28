@@ -22,6 +22,9 @@ export function scenePieces(data, threshold = 0) {
   });
   return [...groups.values()];
 }
+// What surrounds the scene, each one .ply already in the world
+// (postprocess/backdrop.py, postprocess/sky.py): loaded with it, not part of it.
+export const SURROUNDINGS = ['backdrop', 'sky'];
 export function relativePath(path) {
   if (
     typeof path !== 'string' ||
@@ -67,6 +70,7 @@ export function validateScene(data) {
         throw new Error(`Node ${i} has an invalid 4×4 transform.`);
     }
   });
+  for (const key of SURROUNDINGS) if (data[key] != null) relativePath(data[key]);
   for (const edge of data.edges) {
     if (
       !edge ||

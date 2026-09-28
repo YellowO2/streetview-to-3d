@@ -6,6 +6,7 @@ import {
   relativePath,
   scenePieces,
   gpsPlacement,
+  SURROUNDINGS,
 } from '@viewer/scene-format';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
@@ -109,6 +110,19 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
         points.userData.nodeIndex = assets[j].i;
         group.add(points);
         await new Promise((r) => setTimeout(r, 0));
+      }
+      // in the world already, so only with a placed scene
+      for (const key of placement === 'world' ? SURROUNDINGS : []) {
+        if (!data[key]) continue;
+        progress(`Loading the ${key}…`);
+        const buffer = await readBuffer(resolve(relativePath(data[key])));
+        if (cancelled()) {
+          dispose(group);
+          return null;
+        }
+        const points = parsePoints(buffer);
+        points.userData.surroundings = key;
+        group.add(points);
       }
     }
     if (cancelled()) {
@@ -217,7 +231,7 @@ export class SceneStore {
     // points only: a splat has no bounds to read (see app.js's splat view)
     const objects = members
       ? members.map((i) => this.nodes.get(i)).filter(Boolean)
-      : (this.group?.children || []).filter((o) => o.isPoints);
+      : (this.group?.children || []).filter((o) => o.isPoints && !o.userData.surroundings);
     objects.forEach((o) => {
       o.updateMatrixWorld(true);
       if (!visibleOnly || o.visible)
