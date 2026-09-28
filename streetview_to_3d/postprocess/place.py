@@ -66,7 +66,8 @@ def place(scene_dir, log=print):
         T, off_m, off_deg = fit_piece(nodes, s, sc.origin)
         for m in members:
             sc.nodes[m].transform = T.tolist()
-        log(f"  piece {gi}: {len(nodes)} node(s), scale {s:.2f} ({'its own' if s is own else "the scene's"}), "
+        whose = "its own" if s is own else "the scene's"
+        log(f"  piece {gi}: {len(nodes)} node(s), scale {s:.2f} ({whose}), "
             f"cameras off their GPS point by up to {off_m:.2f} m, "
             f"off their pano's orientation by up to {off_deg:.1f} deg")
     sc.save(scene_dir)
