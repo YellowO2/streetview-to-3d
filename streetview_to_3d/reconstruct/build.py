@@ -297,9 +297,12 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
             # A pano DA3 kept none of the views of has no points. Its
             # camera still places the piece, but an empty .ply would
             # stop the viewer opening the scene at all.
-            if len(clouds[key][0]):
+            pts, cols, far = clouds[key]
+            if len(pts):
                 node.ply = f"node_{i}.ply"
-                save_pointcloud(*clouds[key], os.path.join(output_dir, node.ply))
+                save_pointcloud(pts, cols, os.path.join(output_dir, node.ply))
+                if len(far[0]):
+                    save_pointcloud(*far, os.path.join(output_dir, node.far_ply))
             _keep_labels(node.pano, output_dir)
             placed[key] = i
 

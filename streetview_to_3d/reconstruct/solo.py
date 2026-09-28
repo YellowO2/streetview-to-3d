@@ -95,13 +95,13 @@ def reconstruct(places, catalog, rate_pano, deadline):
             print(f"solo: out of time, {len(places) - n_done} place(s) left")
             break
         rated = [(rate_pano(path), key) for key, path, _, _ in bucket]
-        (score, pose, pts, cols, n_kept, n_total), key = max(rated, key=lambda r: r[0][0])
+        (score, pose, pts, cols, n_kept, n_total, far), key = max(rated, key=lambda r: r[0][0])
         print(f"solo: dot {dot} {key}: {n_kept}/{n_total} views kept, {len(pts)} points"
               f"{f' (best of {len(bucket)})' if len(bucket) > 1 else ''}", flush=True)
         if pose is None:
             continue
         c = catalog[key]
-        pieces.append(({key: (pts, cols)},
+        pieces.append(({key: (pts, cols, far)},
                        {key: {"lat": c["lat"], "lon": c["lon"], "date": c["date"],
                               "position": list(map(float, pose[0])), "rotation": [list(map(float, r)) for r in pose[1]],
                               "n_views_kept": n_kept, "n_views_total": n_total}}))

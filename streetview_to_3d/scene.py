@@ -80,6 +80,13 @@ class Node:
     def key(self):
         return self.pano.key
 
+    @property
+    def far_ply(self):
+        """Beside ply, in the same frame: what DA3 dropped as unsure, sky
+        left out (services.da3_ops.FAR_EVERY) -- mostly what is far away.
+        Never part of the node's points."""
+        return self.ply and self.ply[:-len(".ply")] + "_far.ply"
+
 
 @dataclass
 class Edge:

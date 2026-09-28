@@ -57,6 +57,12 @@ CONF_FLOOR = 1.05
 # Leave cars, people and poles out of every point cloud (see services.segment).
 MASK_MOVERS = True
 
+# Every run also keeps what the confidence filter dropped, DA3's own sky
+# left out, every FAR_EVERY-th pixel row and column of it: mostly what is
+# far away, for a rough backdrop beyond the scene. Carried per node next
+# to its points (a node's "far" cloud), never mixed into them.
+FAR_EVERY = 4
+
 # Per-run overrides of VIEW_HFOV, the masker and CONF_FLOOR (see options()).
 _options = {"hfov": None, "masker": None, "mask_classes": None, "conf_floor": None}
 
@@ -83,7 +89,8 @@ def _run_da3(target, support, *args, **kwargs):
     floor = utils.CONF_ABS_FLOOR
     utils.CONF_ABS_FLOOR = CONF_FLOOR if _options["conf_floor"] is None else _options["conf_floor"]
     try:
-        return run_da3(target, support, *args, hfov=hfov, drop_mask=_drop_mask([target, *support], hfov), **kwargs)
+        return run_da3(target, support, *args, hfov=hfov, drop_mask=_drop_mask([target, *support], hfov),
+                       far_every=FAR_EVERY, **kwargs)
     finally:
         utils.CONF_ABS_FLOOR = floor
 
@@ -101,8 +108,9 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
               conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False):
     """One real pairwise DA3 test between two already-downloaded panos.
     Returns None if either pano fails the keep-rate health check, else
-    (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views),
-    plus an 8th per_pano_confidence dict when return_confidence is True --
+    (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views,
+    per_pano_far) -- per_pano_far: {id: (points, colors)}, see FAR_EVERY --
+    plus a 9th per_pano_confidence dict when return_confidence is True --
     see panoramic_da3.run_da3's own docstring for what it covers."""
     test_dir = os.path.join(views_base, f"t{test_id}")
     os.makedirs(test_dir, exist_ok=True)
@@ -119,7 +127,7 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
     pose_a = (res.pano_poses[id_a]["center"], res.pano_poses[id_a]["rotation"])
     pose_b = (res.pano_poses[id_b]["center"], res.pano_poses[id_b]["rotation"])
     per_pano_views = {id_a: (ka, ta), id_b: (kb, tb)}
-    out = (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views)
+    out = (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views, res.pano_far_points)
     return out + (res.pano_point_confidence,) if return_confidence else out
 
 
@@ -130,7 +138,7 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
     any real neighbor can still contribute its own solo reconstruction
     instead of nothing (see walk_graph.py's ensure_piece).
 
-    Returns (score, pose, pts, cols, n_kept, n_total):
+    Returns (score, pose, pts, cols, n_kept, n_total, far):
       - score: how many of this pano's own views survived DA3's
         consensus filter. Validated against real data (the solo-score
         experiment, README Dev notes): pairwise success rate
@@ -140,8 +148,10 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
         all for this pano (rare).
       - pts, cols: this pano's own backprojected points/colors.
       - n_kept, n_total: view counts surviving DA3's filter.
+      - far: this pano's (points, colors) the confidence filter dropped
+        (see FAR_EVERY), same frame as pts.
 
-    A 7th value, this pano's own per-point confidence array, is appended
+    An 8th value, this pano's own per-point confidence array, is appended
     when return_confidence is True -- index-aligned with pts/cols."""
     rate_dir = os.path.join(views_base, f"r{rate_id}")
     os.makedirs(rate_dir, exist_ok=True)
@@ -153,13 +163,14 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
     score = len(filtered_views)
     n_kept, n_total = res.pano_keep_counts.get(pano_id, (score, score))
     conf = res.pano_point_confidence.get(pano_id, np.zeros((0,), dtype=np.float32))
+    far = res.pano_far_points.get(pano_id, (np.zeros((0, 3)), np.zeros((0, 3))))
     if pano_id not in res.pano_poses:
-        out = (score, None, np.zeros((0, 3)), np.zeros((0, 3)), n_kept, n_total)
+        out = (score, None, np.zeros((0, 3)), np.zeros((0, 3)), n_kept, n_total, far)
         return out + (conf,) if return_confidence else out
     pose = (res.pano_poses[pano_id]["center"], res.pano_poses[pano_id]["rotation"])
     pts = per_pano_pts.get(pano_id, np.zeros((0, 3)))
     cols = per_pano_cols.get(pano_id, np.zeros((0, 3)))
-    out = (score, pose, pts, cols, n_kept, n_total)
+    out = (score, pose, pts, cols, n_kept, n_total, far)
     return out + (conf,) if return_confidence else out
 
 

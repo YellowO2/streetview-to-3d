@@ -34,7 +34,8 @@ def _piece_edges(metadata):
 def pieces_to_output(pieces):
     """[(clouds, metadata), ...] -- one entry per still-separate piece.
 
-    clouds is {node key: (points, colors)}: DA3 only ever reconstructs one
+    clouds is {node key: (points, colors, far)}, far being (points,
+    colors) DA3 dropped as unsure (services.da3_ops.FAR_EVERY): DA3 only ever reconstructs one
     or two panoramas at a time and a node's points enter exactly once, so
     every point belongs to a known node and nothing needs re-deriving it.
 
