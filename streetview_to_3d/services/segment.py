@@ -52,6 +52,10 @@ MASK_W = 1024
 # a lamp's arm is only a few rows, a bollard, a thick pillar or a curved
 # pole is kept.
 POLE_LONG, POLE_STRAIGHT, POLE_TOL = 4.0, 0.8, 1.0
+# Masking views reach this far above and below the horizon (DA3's own reach
+# about 29): the fill colours from the photo down to 70 (fill.paint's
+# NADIR_DEG), and a view's corner reaches less far than its middle.
+REACH_DEG = 72
 
 _models = {}
 
@@ -148,6 +152,53 @@ def drop_movers(paths, model_id=None, classes=None, device=None):
 
 
 _VIEW_NAME = re.compile(r"^(.*)da3_(-?\d+)_0\.\w+$")
+
+
+def tall_views(pano_path, out_dir, yaws, hfov, width, prefix="pano_0_"):
+    """DA3's views of a pano made tall: same direction, width and focal
+    length, reaching REACH_DEG above and below the horizon, so a DA3 view
+    is exactly the middle rows of its tall one (crop). Named like DA3's
+    ("{prefix}da3_{yaw}_0.jpg"), for agree. Returns the paths."""
+    from panoramic_da3.components.ViewExtractor import Equirec2Perspec as E2P
+    equ = E2P.Equirectangular(pano_path)
+    f = width / 2 / np.tan(np.radians(hfov) / 2)
+    h = 2 * int(np.ceil(f * np.tan(np.radians(REACH_DEG))))
+    paths = []
+    for yaw in yaws:
+        p = os.path.join(out_dir, f"{prefix}da3_{int(round(yaw))}_0.jpg")
+        cv2.imwrite(p, equ.GetPerspective(hfov, yaw, 0, h, width))
+        paths.append(p)
+    return paths
+
+
+def crop(tall, h):
+    """The middle h rows of a tall view's mask: the DA3 view's own."""
+    top = (tall.shape[0] - h) // 2
+    return tall[top:top + h]
+
+
+def to_pano(masks, yaws, hfov, shape):
+    """Per-view masks as one mask over the pano (shape: its (H, W)): each
+    pano pixel from the view whose yaw is nearest, as DA3 takes each view's
+    points from its centre wedge. Also returns where some view reaches."""
+    H, W = shape
+    lon, lat = np.meshgrid((np.arange(W) / (W - 1) - .5) * 2 * np.pi, (np.arange(H) / (H - 1) - .5) * np.pi)
+    d = np.stack([np.cos(lat) * np.sin(lon), np.sin(lat), np.cos(lat) * np.cos(lon)], -1)
+    step = 360 / len(yaws)
+    drop, cov = np.zeros((H, W), bool), np.zeros((H, W), bool)
+    for yaw, m in zip(yaws, masks):
+        h, w = m.shape
+        f = w / 2 / np.tan(np.radians(hfov) / 2)
+        t = np.radians(yaw)
+        c = d @ np.array([[np.cos(t), 0, np.sin(t)], [0, 1, 0], [-np.sin(t), 0, np.cos(t)]])
+        ok = c[..., 2] > 1e-6
+        z = np.where(ok, c[..., 2], 1)
+        x, y = f * c[..., 0] / z + (w - 1) / 2, f * c[..., 1] / z + (h - 1) / 2
+        ok &= (x >= 0) & (x <= w - 1) & (y >= 0) & (y <= h - 1)
+        ok &= np.abs(np.degrees(np.arctan2(c[..., 0], c[..., 2]))) <= step / 2
+        cov |= ok
+        drop[ok] = m[np.round(y[ok]).astype(int), np.round(x[ok]).astype(int)]
+    return drop, cov
 
 
 def drop_in_views(paths, hfov, **kw):
