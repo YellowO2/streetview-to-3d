@@ -60,8 +60,9 @@ MASK_MOVERS = True
 # Every run also keeps what the confidence filter dropped, DA3's own sky
 # left out, every FAR_EVERY-th pixel row and column of it: mostly what is
 # far away, for a rough backdrop beyond the scene. Carried per node next
-# to its points (a node's "far" cloud), never mixed into them.
-FAR_EVERY = 4
+# to its points (a node's "far" cloud), never mixed into them. 1: every
+# pixel, as dense as the points themselves (4 made them too sparse to judge).
+FAR_EVERY = 1
 
 # Per-run overrides of VIEW_HFOV, the masker and CONF_FLOOR (see options()).
 _options = {"hfov": None, "masker": None, "mask_classes": None, "conf_floor": None}
