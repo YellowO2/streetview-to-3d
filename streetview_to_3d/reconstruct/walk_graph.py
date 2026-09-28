@@ -109,7 +109,7 @@ def _sample_dates(date_graphs, n_points, rate):
         k = min(DATE_SAMPLES_MAX, max(1, -(-len(dots) // 2)))
         rates = []
         for d in _sample_dots(dots, k):
-            *_, n_kept, n_total = rate(g["dot_candidates"][d][0])
+            n_kept, n_total = rate(g["dot_candidates"][d][0])[4:6]
             rates.append(n_kept / n_total if n_total else 0.0)
         median = float(np.median(rates))
         coverage = len(dots) / n_points
