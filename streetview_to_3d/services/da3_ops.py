@@ -48,20 +48,26 @@ CONF_LOWER_PERCENTILE = 20.0   # keep top 80%
 # looked a lot better.
 VIEW_HFOV = 90.0
 
+# The lowest DA3 confidence a pixel needs to become a point, on top of
+# CONF_LOWER_PERCENTILE (both apply). panoramic_da3's own value; it is what
+# cut a harbour's water and far shore (everything past ~35 m) at any keep
+# percentage. Per run: options(conf_floor=...).
+CONF_FLOOR = 1.05
+
 # Leave cars, people and poles out of every point cloud (see services.segment).
 MASK_MOVERS = True
 
-# Per-run overrides of VIEW_HFOV and the masker (see options()).
-_options = {"hfov": None, "masker": None, "mask_classes": None}
+# Per-run overrides of VIEW_HFOV, the masker and CONF_FLOOR (see options()).
+_options = {"hfov": None, "masker": None, "mask_classes": None, "conf_floor": None}
 
 
 @contextmanager
-def options(hfov=None, masker=None, mask_classes=None):
+def options(hfov=None, masker=None, mask_classes=None, conf_floor=None):
     """Every DA3 run inside uses this view width, masker model (a SegFormer
-    repo id) and list of class names to drop; None keeps the defaults. For
-    changing them per run from the UI, without a redeploy."""
+    repo id), list of class names to drop and confidence floor; None keeps
+    the defaults. For changing them per run from the UI, without a redeploy."""
     old = dict(_options)
-    _options.update(hfov=hfov, masker=masker, mask_classes=mask_classes)
+    _options.update(hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor)
     try:
         yield
     finally:
@@ -69,15 +75,13 @@ def options(hfov=None, masker=None, mask_classes=None):
 
 
 def _run_da3(*args, **kwargs):
-    """panoramic_da3.run_da3 with this pipeline's view width and mask.
-    Only conf_lower_percentile filters by confidence: panoramic_da3's own
-    fixed floor is lifted, or it overrides any percentile under 100 --
-    at a harbour, 80 and 90 both cut everything past ~35 m."""
+    """panoramic_da3.run_da3 with this pipeline's view width, mask and
+    confidence floor."""
     from panoramic_da3 import run_da3
     from panoramic_da3.components.SplatProcessor import utils
     hfov = _options["hfov"] or VIEW_HFOV
     floor = utils.CONF_ABS_FLOOR
-    utils.CONF_ABS_FLOOR = 0.0
+    utils.CONF_ABS_FLOOR = CONF_FLOOR if _options["conf_floor"] is None else _options["conf_floor"]
     try:
         return run_da3(*args, hfov=hfov, drop_mask=_drop_mask(hfov), **kwargs)
     finally:

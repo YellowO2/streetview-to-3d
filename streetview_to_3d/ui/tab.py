@@ -82,7 +82,7 @@ def _zip(run_dir):
 
 
 def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
-                       mask_classes="", fill=True):
+                       mask_classes="", fill=True, conf_floor=0):
     """Reconstruct (GPU), then place and fill (CPU), in one click.
 
     Placement never needs its own GPU call, so it runs immediately after
@@ -101,6 +101,7 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
     masker SegFormer repo and comma-separated Cityscapes classes to drop
     (blank) for this run; defaults otherwise (config, services.da3_ops,
     services.segment). fill: False leaves the placed scene unfilled.
+    conf_floor: the lowest DA3 confidence kept (0: services.da3_ops.CONF_FLOOR).
     """
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -115,7 +116,8 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
             prep, output_dir, conf_lower_percentile=100 - keep_pct,
             gpu_seconds=gpu_seconds or None, hfov=view_hfov or None,
             model=(da3_model or "").strip() or None, masker=(masker or "").strip() or None,
-            mask_classes=[c.strip() for c in (mask_classes or "").split(",") if c.strip()] or None)
+            mask_classes=[c.strip() for c in (mask_classes or "").split(",") if c.strip()] or None,
+            conf_floor=conf_floor or None)
         yield gr.skip(), gr.skip(), "<p>Aligning the scene and filling the gaps…</p>"
         pipeline.process(output_dir, log=lambda m: print(m, flush=True), fill=bool(fill))
     except Exception as e:
@@ -159,6 +161,7 @@ def build_main_tab():
     masker_input = gr.Textbox(value="", visible=False)
     mask_classes_input = gr.Textbox(value="", visible=False)
     fill_input = gr.Checkbox(value=True, visible=False)
+    conf_floor_input = gr.Number(value=0, minimum=0, visible=False)
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
@@ -186,7 +189,7 @@ def build_main_tab():
 
     pathfind_run_btn.click(
         fn=handle_reconstruct,
-        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input, da3_model_input, masker_input, mask_classes_input, fill_input],
+        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input, da3_model_input, masker_input, mask_classes_input, fill_input, conf_floor_input],
         outputs=[reconstruct_view, download_btn, pathfind_status],
         show_progress="hidden",
         show_progress_on=[reconstruct_view],

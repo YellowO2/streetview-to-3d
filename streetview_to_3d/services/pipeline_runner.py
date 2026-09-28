@@ -34,21 +34,22 @@ def _gpu_seconds(points, gpu_seconds=None) -> float:
 
 def run_walk_gpu(date_graphs, points, adjacency, start_lat, start_lon,
                  step_degrees=None, conf_lower_percentile=None, gpu_seconds=None, model=None,
-                 hfov=None, masker=None, mask_classes=None):
+                 hfov=None, masker=None, mask_classes=None, conf_floor=None):
     """The walk in one GPU window (see streetview_to_3d.gpu).
 
     gpu_seconds: the window to ask for. None sizes it from the dot count
     (estimate_gpu_seconds). model: a DA3 repo; None is config.DA3_MODEL_REPO.
-    hfov, masker, mask_classes: per-run view width and masker (services.da3_ops.options)."""
+    hfov, masker, mask_classes, conf_floor: per-run view width, masker and
+    confidence floor (services.da3_ops.options)."""
     return gpu.run(_run_walk_impl, date_graphs, points, adjacency, start_lat, start_lon,
                    step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
-                   gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker, mask_classes=mask_classes,
+                   gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor,
                    seconds=_gpu_seconds(points, gpu_seconds))
 
 
 def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon,
                    step_degrees=None, conf_lower_percentile=None, gpu_seconds=None, model=None,
-                   hfov=None, masker=None, mask_classes=None):
+                   hfov=None, masker=None, mask_classes=None, conf_floor=None):
     """The walk (run_pathfind_reconstruction) on the downloaded panos, with
     the whole window but model load and the save headroom.
 
@@ -81,7 +82,7 @@ def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon,
     # calibrated from -- grep the Space's logs for them.
     print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
     try:
-        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker, mask_classes=mask_classes):
+        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor):
             def test_edge(path_a, path_b, test_id):
                 return da3_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id,
                                      step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile)
@@ -103,17 +104,17 @@ def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon,
 
 
 def run_solo_gpu(places, catalog, conf_lower_percentile=None, gpu_seconds=None, model=None,
-                 hfov=None, masker=None, mask_classes=None):
+                 hfov=None, masker=None, mask_classes=None, conf_floor=None):
     """Solo mode's GPU task (see reconstruct.solo): every place's candidates
     rated alone, the best one's cloud kept. model: a DA3 repo, None is
     config.DA3_MODEL_REPO; hfov, masker: as run_walk_gpu."""
     from streetview_to_3d.reconstruct import solo
     seconds = float(gpu_seconds) if gpu_seconds else solo.estimate_gpu_seconds(places)
     return gpu.run(_run_solo_impl, places, catalog, conf_lower_percentile=conf_lower_percentile,
-                   model=model, hfov=hfov, masker=masker, mask_classes=mask_classes, total_s=seconds, seconds=seconds)
+                   model=model, hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor, total_s=seconds, seconds=seconds)
 
 
-def _run_solo_impl(places, catalog, conf_lower_percentile=None, model=None, hfov=None, masker=None, mask_classes=None,
+def _run_solo_impl(places, catalog, conf_lower_percentile=None, model=None, hfov=None, masker=None, mask_classes=None, conf_floor=None,
                    total_s=None):
     import itertools
     import tempfile
@@ -130,7 +131,7 @@ def _run_solo_impl(places, catalog, conf_lower_percentile=None, model=None, hfov
     cfg, da3 = gpu.get_da3_config(model), gpu.get_da3(model)
     print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
     try:
-        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker, mask_classes=mask_classes):
+        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor):
             rate_ids = itertools.count()
 
             def rate_pano(path):

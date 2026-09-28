@@ -162,7 +162,7 @@ def prepare_pathfind(start, goals, corridor_edges, center, link=True) -> dict:
 def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_DEGREES,
                           conf_lower_percentile: float | None = None,
                           gpu_seconds: float | None = None, model=None, hfov=None, masker=None,
-                          mask_classes=None):
+                          mask_classes=None, conf_floor=None):
     """Walk and join in one GPU call, then write the pieces into the scene
     at output_dir. Returns one "piece i: n node(s)" line per piece. A prep
     made for solo mode (prepare_pathfind(link=False)) runs that instead.
@@ -177,13 +177,14 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
     model: the DA3 repo to use; None is config.DA3_MODEL_REPO. hfov, masker,
     mask_classes: view width, masker model and the class names it drops, for
     this run (services.da3_ops.options); None keeps the defaults.
+    conf_floor: the lowest DA3 confidence kept (services.da3_ops.CONF_FLOOR).
     """
     from streetview_to_3d.services.pipeline_runner import run_solo_gpu, run_walk_gpu
     t0 = time.monotonic()
     if "solo" in prep:
         pieces = run_solo_gpu(prep["solo"], prep["catalog"], conf_lower_percentile=conf_lower_percentile,
                               gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker,
-                              mask_classes=mask_classes)
+                              mask_classes=mask_classes, conf_floor=conf_floor)
         if not pieces:
             raise RuntimeError("DA3 reconstructed none of the panos.")
         results = _save_joined_pieces(pieces, output_dir, prep["catalog"])
@@ -193,7 +194,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
     pieces = run_walk_gpu(
         prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon,
         step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
-        gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker, mask_classes=mask_classes,
+        gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor,
     )
     if not pieces:
         raise RuntimeError("No connected path found from start toward any goal.")
