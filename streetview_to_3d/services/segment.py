@@ -42,7 +42,10 @@ DROP = MOVERS + THIN
 # Grow each mask by a few pixels: depth at an object's edge smears between
 # it and what's behind, and those in-between points are the worst floaters.
 GROW_PX = 3
-BATCH = 8   # views per pass; 16 ran a bigger model out of GPU memory
+# Views per pass: BATCH of DA3's own shape (1024 x 576 fed), fewer of
+# bigger ones by pixel count -- 16 ran a bigger model out of GPU memory, 8
+# tall views (1024 x 3168) ran B2 out of it.
+BATCH = 8
 # The masker's input width, the image's own shape kept (None: the
 # processor's square 512 x 512, which stretched a 16:9 view)
 MASK_W = 1024
@@ -92,10 +95,11 @@ def label_views(paths, model_id=None, device=None):
     import torch
     processor, model, label_ids = get_segmenter(model_id, device)
     out = []
-    for start in range(0, len(paths), BATCH):
-        images = [Image.open(p).convert("RGB") for p in paths[start:start + BATCH]]
-        w, h = images[0].size
-        size = {"width": MASK_W, "height": max(32, round(MASK_W * h / w / 32) * 32)} if MASK_W else None
+    w, h = Image.open(paths[0]).size if paths else (1, 1)
+    size = {"width": MASK_W, "height": max(32, round(MASK_W * h / w / 32) * 32)} if MASK_W else None
+    batch = max(1, BATCH * 1024 * 576 // (size["width"] * size["height"])) if size else BATCH
+    for start in range(0, len(paths), batch):
+        images = [Image.open(p).convert("RGB") for p in paths[start:start + batch]]
         with torch.inference_mode():
             inputs = processor(images=images, return_tensors="pt", **({"size": size} if size else {})).to(model.device)
             labels = processor.post_process_semantic_segmentation(
