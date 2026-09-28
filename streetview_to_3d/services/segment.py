@@ -6,8 +6,8 @@ up once per photo, in a different place each time. A street-scene
 segmenter (SegFormer-B2 trained on Cityscapes, 27M parameters) marks them
 on the whole pano, once; each DA3 view takes its part of that mask and
 panoramic_da3 leaves those pixels out (its drop_mask). DA3 itself still
-sees the whole view, so poses are unchanged. The fill colours by the same
-saved mask. DA3's views masked one by one (every view that saw a spot
+sees the whole view, so poses are unchanged. The pano's full class map is
+kept with the scene (labels_path): the fill colours by the same mask. DA3's views masked one by one (every view that saw a spot
 having to agree) were tried: a little cleaner on NTU, where the whole pano
 takes part of a long walkway roof for a bus, but twice the code, and the
 fill needs the whole pano anyway.
@@ -39,10 +39,13 @@ THIN = ("pole", "traffic light", "traffic sign")
 # it by label instead, e.g. with the floor lowered. At a harbour the masker
 # missed patches of sky that views disagreed on.
 SKY = ("sky",)
-# What is dropped by default. Any of Cityscapes' 19 classes can be named
-# per run instead: road, sidewalk, building, wall, fence, pole, traffic
-# light, traffic sign, vegetation, terrain, sky, person, rider, car, truck,
-# bus, train, motorcycle, bicycle.
+# Cityscapes' 19 classes, by id: every Cityscapes SegFormer labels this way
+# (get_segmenter checks), so a saved class map reads without the model.
+CLASSES = ("road", "sidewalk", "building", "wall", "fence", "pole", "traffic light", "traffic sign",
+           "vegetation", "terrain", "sky", "person", "rider", "car", "truck", "bus", "train",
+           "motorcycle", "bicycle")
+LABEL_IDS = {name: i for i, name in enumerate(CLASSES)}
+# What is dropped by default; any of CLASSES can be named per run instead.
 DROP = MOVERS + THIN
 # Grow each mask by a few pixels: depth at an object's edge smears between
 # it and what's behind, and those in-between points are the worst floaters.
@@ -82,6 +85,8 @@ def get_segmenter(model_id=None, device=None):
         processor = AutoProcessor.from_pretrained(model_id)
         model = AutoModelForSemanticSegmentation.from_pretrained(model_id).to(device).eval()
         label_ids = {name: int(i) for i, name in model.config.id2label.items()}
+        if label_ids != LABEL_IDS:
+            raise ValueError(f"{model_id} does not label as Cityscapes does: {label_ids}")
         _models[(model_id, device)] = (processor, model, label_ids)
     return _models[(model_id, device)]
 
@@ -152,16 +157,28 @@ def drop_movers(paths, model_id=None, classes=None, device=None):
     return masks_from_labels(*label_views(paths, model_id, device), classes)
 
 
-def pano_mask(path, model_id=None, classes=None, device=None, reuse=False):
-    """drop_movers on a whole pano, saved beside it (path + ".mask.png")
-    for the fill to colour by the same mask; reuse: load that instead when
-    it is there."""
-    saved = path + ".mask.png"
-    if reuse and os.path.exists(saved):
-        return np.asarray(Image.open(saved)) > 0
-    m = drop_movers([path], model_id, classes, device)[0]
-    Image.fromarray(m.astype(np.uint8) * 255).save(saved)
-    return m
+def pano_labels(path, model_id=None, device=None, saved=None):
+    """A whole pano's class map (ids as in CLASSES), kept in saved (default
+    beside it, named by the model) for whatever needs it later -- the scene
+    carries a copy (labels_path). A saved one is read, not redone: the walk
+    runs DA3 on one pano many times. model_id, device: see get_segmenter."""
+    saved = saved or f"{path}.{(model_id or MODEL_ID).split('/')[-1]}.labels.png"
+    if os.path.exists(saved):
+        return np.asarray(Image.open(saved))
+    labels = label_views([path], model_id, device)[0][0]
+    os.makedirs(os.path.dirname(saved) or ".", exist_ok=True)
+    Image.fromarray(labels).save(saved)
+    return labels
+
+
+def labels_path(scene_dir, pano_id):
+    """Where a scene keeps a pano's class map."""
+    return os.path.join(scene_dir, "labels", f"{pano_id}.png")
+
+
+def pano_mask(labels, classes=None):
+    """masks_from_labels for one pano's class map."""
+    return masks_from_labels([labels], LABEL_IDS, classes)[0]
 
 
 def in_view(pano, yaw, hfov, w, h):
@@ -181,14 +198,14 @@ def in_view(pano, yaw, hfov, w, h):
 _VIEW_NAME = re.compile(r"^pano_(\d+)_da3_(-?\d+)_0\.\w+$")
 
 
-def drop_in_views(paths, panos, hfov, **kw):
+def drop_in_views(paths, panos, hfov, model_id=None, classes=None, device=None):
     """One mask per DA3 view (panoramic_da3's "pano_{i}_da3_{yaw}_0" files,
-    pano i being panos[i]), cut from its pano's pano_mask: each pano is
-    segmented once, whole. kw: see drop_movers."""
+    pano i being panos[i]), cut from its pano's mask: each pano is
+    segmented once, whole (pano_labels), and its class map kept."""
     masks, whole = [], {}
     for p in paths:
         i, yaw = map(int, _VIEW_NAME.match(os.path.basename(p)).groups())
         if i not in whole:
-            whole[i] = pano_mask(panos[i], **kw)
+            whole[i] = pano_mask(pano_labels(panos[i], model_id, device), classes)
         masks.append(in_view(whole[i], yaw, hfov, *Image.open(p).size))
     return masks

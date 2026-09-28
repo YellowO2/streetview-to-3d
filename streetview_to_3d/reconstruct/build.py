@@ -232,6 +232,21 @@ def open_scene(prep, output_dir):
     return sc
 
 
+def _keep_labels(pano, output_dir):
+    """Copy the class map its mask was made from into the scene, if the run
+    made one (segment.pano_labels)."""
+    import glob
+    import shutil
+    from streetview_to_3d.services.segment import labels_path
+    if pano.source != "google":
+        return
+    path = run_async(download_pano_by_id(pano.id, zoom=DA3_ONLY_ZOOM))
+    made = sorted(glob.glob(f"{glob.escape(path)}.*.labels.png"), key=os.path.getmtime) if path else []
+    if made:
+        os.makedirs(os.path.dirname(labels_path(output_dir, pano.id)), exist_ok=True)
+        shutil.copyfile(made[-1], labels_path(output_dir, pano.id))
+
+
 def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
     """Fill the scene's nodes in with what the reconstruction produced.
 
@@ -285,6 +300,7 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
             if len(clouds[key][0]):
                 node.ply = f"node_{i}.ply"
                 save_pointcloud(*clouds[key], os.path.join(output_dir, node.ply))
+            _keep_labels(node.pano, output_dir)
             placed[key] = i
 
         for a, b, keep_a, keep_b in _piece_edges(metadata):

@@ -65,7 +65,8 @@ def handle_pathfind_prepare(state, link=True):
 
 
 def _zip(run_dir):
-    """The whole scene -- scene.json and every node's .ply -- as one zip.
+    """The whole scene -- scene.json, every node's .ply and its pano's class
+    map (labels/) -- as one zip.
 
     One file, because a browser can only download files, not a folder, and
     the viewer opens exactly this set once unzipped. Stored, not
@@ -78,6 +79,9 @@ def _zip(run_dir):
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as z:
         for n in names:
             z.write(os.path.join(run_dir, n), n)
+        labels = os.path.join(run_dir, "labels")
+        for n in sorted(os.listdir(labels)) if os.path.isdir(labels) else []:
+            z.write(os.path.join(labels, n), f"labels/{n}")
     return archive
 
 
