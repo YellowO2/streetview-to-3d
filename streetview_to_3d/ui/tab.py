@@ -182,6 +182,7 @@ def build_main_tab():
 
     # The masker alone on one pano, API only (see services.mask_api).
     gr.api(mask_api.mask_pano, api_name="mask_pano")
+    gr.api(mask_api.depth_pano, api_name="depth_pano")
 
     pathfind_run_btn.click(
         fn=handle_reconstruct,

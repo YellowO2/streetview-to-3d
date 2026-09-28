@@ -35,6 +35,39 @@ def _label_task(paths, masker):
     return np.stack(labels), ids
 
 
+def _depth_task(paths, yaws, pano_id):
+    from panoramic_da3.datatype import View
+    from streetview_to_3d.services.da3_ops import VIEW_HFOV
+    from streetview_to_3d.services.segment import label_views
+    import math
+    from PIL import Image
+    w, h = Image.open(paths[0]).size
+    f = w / 2 / math.tan(math.radians(VIEW_HFOV) / 2)
+    vs = [View(yaw=y, pitch=0, path=p, width=w, height=h, focal_px=f, hfov=VIEW_HFOV,
+               vfov=math.degrees(2 * math.atan(h / 2 / f)), pano_id=pano_id) for p, y in zip(paths, yaws)]
+    kept, res = gpu.get_da3().process_views(vs, dist_thresh=0.2, angle_thresh=1)
+    labels, ids = label_views(paths)
+    pred = res.prediction
+    return (np.stack(labels), ids, np.array([v.yaw for v in vs]),
+            np.array([vs.index(v) for v in kept]), np.stack(pred.depth).astype(np.float16), np.stack(pred.conf).astype(np.float16))
+
+
+def depth_pano(pano_id: str) -> str:
+    """Base64 .npz of one Google pano's DA3 views run alone: as mask_pano,
+    plus depth and conf (DA3's own, per kept view), kept (which views)."""
+    from streetview_to_3d.services.da3_ops import VIEW_HFOV
+    from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
+    path = run_async(download_pano_by_id(pano_id, zoom=DA3_ONLY_ZOOM))
+    vs = views(path, tempfile.mkdtemp())
+    labels, ids, yaws, kept, depth, conf = gpu.run(_depth_task, [v.path for v in vs], [v.yaw for v in vs],
+                                                   os.path.basename(path), seconds=90)
+    names = [n for n, _ in sorted(ids.items(), key=lambda kv: kv[1])]
+    buf = io.BytesIO()
+    np.savez_compressed(buf, labels=labels, yaws=yaws, kept=kept, depth=depth, conf=conf, hfov=VIEW_HFOV,
+                        names=np.array(names), pano=np.frombuffer(open(path, "rb").read(), np.uint8))
+    return base64.b64encode(buf.getvalue()).decode()
+
+
 def mask_pano(pano_id: str, masker: str = "") -> str:
     """Base64 .npz of one Google pano's DA3 views, segmented: labels (views
     x h x w class ids), yaws, hfov, names (class names by id), pano (the
