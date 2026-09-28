@@ -70,15 +70,14 @@ def options(hfov=None, masker=None, mask_classes=None):
 
 def _run_da3(*args, **kwargs):
     """panoramic_da3.run_da3 with this pipeline's view width and mask.
-    conf_lower_percentile 0 (keep 100%) keeps every pixel: panoramic_da3's
-    own fixed confidence floor is lifted too, or it still drops the least
-    sure ~20% -- everything past ~35 m at a harbour."""
+    Only conf_lower_percentile filters by confidence: panoramic_da3's own
+    fixed floor is lifted, or it overrides any percentile under 100 --
+    at a harbour, 80 and 90 both cut everything past ~35 m."""
     from panoramic_da3 import run_da3
     from panoramic_da3.components.SplatProcessor import utils
     hfov = _options["hfov"] or VIEW_HFOV
     floor = utils.CONF_ABS_FLOOR
-    if kwargs.get("conf_lower_percentile") == 0:
-        utils.CONF_ABS_FLOOR = 0.0
+    utils.CONF_ABS_FLOOR = 0.0
     try:
         return run_da3(*args, hfov=hfov, drop_mask=_drop_mask(hfov), **kwargs)
     finally:
