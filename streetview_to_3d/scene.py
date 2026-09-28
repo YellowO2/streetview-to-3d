@@ -114,10 +114,9 @@ class Scene:
     nodes: list[Node] = field(default_factory=list)
     adjacency: dict[str, list[int]] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
-    # What surrounds the scene, each one .ply beside scene.json already in
-    # the world: postprocess/backdrop.py and postprocess/sky.py
+    # What surrounds the scene: a .ply beside scene.json, already in the
+    # world (postprocess/backdrop.py)
     backdrop: str | None = None
-    sky: str | None = None
 
     @property
     def origin(self):
@@ -175,4 +174,4 @@ class Scene:
                    nodes=[Node(pano=Pano(**n.pop("pano")), **n) for n in d["nodes"]],
                    adjacency={str(k): v for k, v in d["adjacency"].items()},
                    edges=[Edge(**e) for e in d["edges"]],
-                   backdrop=d.get("backdrop"), sky=d.get("sky"))
+                   backdrop=d.get("backdrop"))

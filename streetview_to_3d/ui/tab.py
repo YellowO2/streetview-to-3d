@@ -65,8 +65,8 @@ def handle_pathfind_prepare(state, link=True):
 
 
 def _zip(run_dir):
-    """The whole scene -- scene.json, every .ply (the nodes', the backdrop
-    and sky, and for now the nodes' far clouds, so a backdrop can be
+    """The whole scene -- scene.json, every .ply (the nodes', the backdrop,
+    and for now the nodes' far clouds, so a backdrop can be
     rebuilt without a GPU run) and each pano's class map (labels/) -- as
     one zip.
 

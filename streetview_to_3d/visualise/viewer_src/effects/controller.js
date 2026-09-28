@@ -116,6 +116,7 @@ export function createStyles(scene, camera, renderer) {
               : style,
           camera,
           !!asset?.group && (settings.atmosphere || (settings.water && !asset.splat)),
+          !!asset?.group && !asset.splat,
         );
         scene.background = originalBackground;
         if (style === 'original' || !asset?.group) {

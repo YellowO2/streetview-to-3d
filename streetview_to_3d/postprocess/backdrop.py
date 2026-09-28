@@ -18,8 +18,9 @@ backdrop.ply beside scene.json (its "backdrop"):
    nearest it (a patch a few metres wide), FLAT_PASSES times -- nothing is
    thrown away, the bumps are flattened
 
-On a 7-pano NTU patch: 209k far points past 15 m, 90k agreed, 88k kept;
-flattening moved them a median 16 cm, then 9.
+On a 7-pano NTU patch at 15 m: 209k far points, 90k agreed, 88k kept;
+flattening moved them a median 16 cm, then 9. 15 m came too close to the
+scene; 20 now.
 
     python -m streetview_to_3d.postprocess.backdrop SCENE_DIR
 """
@@ -35,7 +36,7 @@ from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
 
 FILENAME = "backdrop.ply"
-NEAR_M = 15.0
+NEAR_M = 20.0
 AGREE, AGREE_MIN_M = 0.03, 0.5
 CELL_M, LINK_M, MIN_CELLS = 0.5, 1.0, 50
 FLAT_K, FLAT_PASSES = 30, 2

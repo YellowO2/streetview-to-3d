@@ -4,8 +4,8 @@ A reconstruction leaves a scene whose nodes each hold their own points, in
 whatever frame DA3 built them. This places every piece by its panoramas'
 GPS, elevation and orientation (place.py), writing each node's own
 transform back into the scene, removes floating bits (blobs.py), builds
-what surrounds it (backdrop.py from DA3's far points, then sky.py's
-sphere), then fills the gaps (streetview_to_3d.fill:
+what surrounds it (backdrop.py, from DA3's far points; the viewer draws
+the sky), then fills the gaps (streetview_to_3d.fill:
 one ground, Google's walls, their colour) into the node .plys --
 scene.json plus the .plys it names are the whole result. A viewer reads transform to place each node, so nothing
 merges the points into one extra file by default.
@@ -19,15 +19,15 @@ import os
 import time
 
 from streetview_to_3d import fill as fill_mod
-from streetview_to_3d.postprocess import backdrop, sky
+from streetview_to_3d.postprocess import backdrop
 from streetview_to_3d.postprocess.blobs import drop_blobs
 from streetview_to_3d.postprocess.render_pieces import render
 from streetview_to_3d.postprocess.place import place
 
 
 def process(run_dir, log=print, merge_ply=None, fill=True):
-    """Place a reconstruction, remove its floating bits, build its backdrop
-    and sky, then fill it (fill=False: placed only, DA3's points untouched).
+    """Place a reconstruction, remove its floating bits, build its backdrop,
+    then fill it (fill=False: placed only, DA3's points untouched).
     merge_ply: also write one combined .ply there, for local inspection
     outside the viewer -- not needed by the Space, which reads
     scene.json's per-node transforms directly."""
@@ -39,13 +39,12 @@ def process(run_dir, log=print, merge_ply=None, fill=True):
         t = time.monotonic()
         drop_blobs(run_dir, log=log)
         log(f"timing: floating bits {time.monotonic() - t:.1f}s")
-        for name, step in (("backdrop", backdrop.build), ("sky", sky.build)):
-            t = time.monotonic()
-            try:
-                step(run_dir, log=log)
-            except Exception as e:       # the scene is whole without them
-                log(f"{name} skipped: {e!r}")
-            log(f"timing: {name} {time.monotonic() - t:.1f}s")
+        t = time.monotonic()
+        try:
+            backdrop.build(run_dir, log=log)
+        except Exception as e:           # the scene is whole without it
+            log(f"backdrop skipped: {e!r}")
+        log(f"timing: backdrop {time.monotonic() - t:.1f}s")
         t = time.monotonic()
         try:
             fill_mod.run(run_dir, log=log)
