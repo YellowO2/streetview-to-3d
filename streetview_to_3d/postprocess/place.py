@@ -21,8 +21,13 @@ heading, pitch and roll. On NTU (hilly) and Stockholm (a backpack capture)
 every camera came out within 0.2 m of its elevation and 0.8 deg of its
 pano's orientation.
 
-Scale is one number per SCENE, never per piece (scene_scale): per-piece
-scales turn GPS noise into pieces of different sizes.
+Scale is per piece where GPS can measure it (piece_scale: 2+ cameras
+spanning MIN_SCALE_SPAN_M), since each piece is its own DA3 run and comes
+out its own size (NTU: 1.21 and 1.11 in one scene); every other piece, a
+lone pano included, takes the scene's (scene_scale). Tried instead: one
+scale for the whole scene (pieces visibly mismatched), and each pano's DA3
+distances against Google's depth map on ground and walls (NTU and
+Stockholm both looked worse; lone panos came out up to 2.3x the rest).
 
 This replaced a road-by-road alignment (road lines, sliding onto them,
 matching kerbs across the road, a fitted elevation surface, tilt from
@@ -52,14 +57,17 @@ def place(scene_dir, log=print):
     """Solve every piece and save its transform onto its nodes."""
     sc = scene_mod.Scene.load(scene_dir)
     groups = sc.pieces()
-    s, why = scene_scale(sc, groups)
-    log(f"scale: {s:.2f} m per DA3 unit ({why})")
+    s0, why = scene_scale(sc, groups)
+    log(f"scene scale: {s0:.2f} m per DA3 unit ({why})")
     for gi, members in enumerate(groups):
         nodes = [sc.nodes[m] for m in members]
+        own = piece_scale(nodes, sc.origin)
+        s = own if own is not None and SCALE_RANGE[0] <= own <= SCALE_RANGE[1] else s0
         T, off_m, off_deg = fit_piece(nodes, s, sc.origin)
         for m in members:
             sc.nodes[m].transform = T.tolist()
-        log(f"  piece {gi}: {len(nodes)} node(s), cameras off their GPS point by up to {off_m:.2f} m, "
+        log(f"  piece {gi}: {len(nodes)} node(s), scale {s:.2f} ({'its own' if s is own else "the scene's"}), "
+            f"cameras off their GPS point by up to {off_m:.2f} m, "
             f"off their pano's orientation by up to {off_deg:.1f} deg")
     sc.save(scene_dir)
 
@@ -112,23 +120,24 @@ def _world_from_da3(node):
     return photo_from_world(node.pano).T @ np.asarray(node.rotation, float)
 
 
-def scene_scale(sc, groups):
-    """(metres per DA3 unit, reason) for the whole scene.
+def piece_scale(nodes, origin):
+    """A piece's own metres per DA3 unit, fitted against GPS top-down, or
+    None when its cameras span under MIN_SCALE_SPAN_M (a lone pano too)."""
+    if len(nodes) < 2:
+        return None
+    gps = np.array([latlon_to_local_m(n.pano.lat, n.pano.lon, *origin) for n in nodes])
+    if np.linalg.norm(gps[:, None] - gps[None], axis=2).max() < MIN_SCALE_SPAN_M:
+        return None
+    return _scale_2d(np.array([[n.position[0], n.position[2]] for n in nodes]), gps)
 
-    Every multi-node piece whose cameras span at least MIN_SCALE_SPAN_M
-    fits its own scale against GPS, top-down; the scene takes their median,
-    so one bad piece cannot drag it. With no piece to measure, or a median
-    outside SCALE_RANGE, it falls back to config.DA3_UNITS_TO_METRES."""
-    fitted = []
-    for members in groups:
-        nodes = [sc.nodes[m] for m in members]
-        if len(nodes) < 2:
-            continue
-        gps = np.array([latlon_to_local_m(n.pano.lat, n.pano.lon, *sc.origin) for n in nodes])
-        if np.linalg.norm(gps[:, None] - gps[None], axis=2).max() < MIN_SCALE_SPAN_M:
-            continue
-        da3 = np.array([[n.position[0], n.position[2]] for n in nodes])
-        fitted.append(_scale_2d(da3, gps))
+
+def scene_scale(sc, groups):
+    """(metres per DA3 unit, reason) for pieces that cannot measure their own.
+
+    The median of every piece_scale, so one bad piece cannot drag it. With
+    no piece to measure, or a median outside SCALE_RANGE, it falls back to
+    config.DA3_UNITS_TO_METRES."""
+    fitted = [f for m in groups if (f := piece_scale([sc.nodes[k] for k in m], sc.origin)) is not None]
     if not fitted:
         return DA3_UNITS_TO_METRES, "fixed: no piece spans enough to fit one"
     s = float(np.median(fitted))
