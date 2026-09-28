@@ -35,14 +35,15 @@ from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
 
 def _photo(pano):
     """(image path, drop mask) of a pano, or None: the same download the
-    reconstruction used (cached), masked like its points were -- on the
-    CPU, since this runs after the GPU call -- plus its blur (paint.blurred)."""
-    from streetview_to_3d.services.segment import drop_movers
+    reconstruction used (cached), with the mask its points were cut by
+    (segment.pano_mask, saved beside it; made here on the CPU if not),
+    plus its blur (paint.blurred)."""
+    from streetview_to_3d.services.segment import pano_mask
     from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
     if pano.source != "google":
         return None
     path = run_async(download_pano_by_id(pano.id, zoom=DA3_ONLY_ZOOM))
-    return (path, drop_movers([path], device="cpu")[0] | blurred(path)) if path else None
+    return (path, pano_mask(path, device="cpu", reuse=True) | blurred(path)) if path else None
 
 
 def run(scene_dir, log=print):

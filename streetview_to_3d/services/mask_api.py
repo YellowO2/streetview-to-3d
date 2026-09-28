@@ -1,9 +1,9 @@
-"""The masker alone, over the API: one pano's DA3 views, segmented on the
-Space's GPU. For trying masker changes without a full reconstruction (and
-without running the model on a laptop).
+"""The masker alone, over the API: one pano segmented on the Space's GPU.
+For trying masker changes without a full reconstruction (and without
+running the model on a laptop).
 
-The Space returns each view's raw class map; everything after that
-(which classes, long_poles, agree) is cheap and reruns locally from them:
+The Space returns the pano's raw class map; everything after that (which
+classes, long_poles) is cheap and reruns locally from it:
 
     python -m streetview_to_3d.services.mask_api PANO_ID OUT.jpg [--space potato-bug/street-view-to-3d-dev]
 """
@@ -29,12 +29,10 @@ def views(pano_path, out_dir):
                                  prefix="pano_0_", hfov=VIEW_HFOV)
 
 
-def _label_task(paths, masker, pano=None):
-    """The views' class maps and, given a pano path, the whole pano's too."""
+def _label_task(paths, masker):
     from streetview_to_3d.services.segment import label_views
     labels, ids = label_views(paths, model_id=masker or None)
-    whole = label_views([pano], model_id=masker or None)[0][0] if pano else None
-    return np.stack(labels), ids, whole
+    return np.stack(labels), ids
 
 
 def _depth_task(paths, yaws, pano_id):
@@ -71,38 +69,30 @@ def depth_pano(pano_id: str) -> str:
 
 
 def mask_pano(pano_id: str, masker: str = "") -> str:
-    """Base64 .npz of one Google pano's DA3 views made tall (segment.tall_views),
-    segmented: labels (views x h x w class ids), yaws, hfov, names (class
-    names by id), pano (the photo's .jpg bytes)."""
-    from streetview_to_3d.services.da3_ops import VIEW_HFOV
-    from streetview_to_3d.services.segment import tall_views
+    """Base64 .npz of one Google pano, segmented: labels (h x w class ids),
+    names (class names by id), pano (the photo's .jpg bytes)."""
     from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
     path = run_async(download_pano_by_id(pano_id, zoom=DA3_ONLY_ZOOM))
-    tmp = tempfile.mkdtemp()
-    vs = views(path, tmp)
-    tall = tall_views(path, tmp, [v.yaw for v in vs], VIEW_HFOV, vs[0].width)
-    labels, ids, whole = gpu.run(_label_task, tall, masker, path, seconds=GPU_SECONDS)
+    labels, ids = gpu.run(_label_task, [path], masker, seconds=GPU_SECONDS)
     names = [n for n, _ in sorted(ids.items(), key=lambda kv: kv[1])]
     buf = io.BytesIO()
-    np.savez_compressed(buf, labels=labels, whole=whole, yaws=np.array([v.yaw for v in vs]), hfov=VIEW_HFOV,
-                        names=np.array(names), pano=np.frombuffer(open(path, "rb").read(), np.uint8))
+    np.savez_compressed(buf, labels=labels[0], names=np.array(names),
+                        pano=np.frombuffer(open(path, "rb").read(), np.uint8))
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def _overlay(img, drop, cov, text):
-    """The whole pano, red where drop, dark where not cov; lines at DA3's
-    reach (about 29 deg up and down) and at 70 deg down, as far as the
-    fill colours."""
+def _overlay(img, drop, text):
+    """The pano, red where drop; lines at DA3's reach (about 29 deg up and
+    down) and at 70 deg down, as far as the fill colours."""
     from PIL import Image, ImageDraw
     img = img.astype(float)
-    H, W = img.shape[:2]
-    img[~cov] *= .35
+    H = img.shape[0]
     img[drop] = img[drop] * .45 + np.array([255, 0, 0]) * .55
     im = Image.fromarray(img.astype(np.uint8))
     dr = ImageDraw.Draw(im)
     for deg in (-29, 29, 70):
         y = int(H * (.5 + deg / 180))
-        dr.line([0, y, W, y], fill=(255, 255, 0), width=1)
+        dr.line([0, y, img.shape[1], y], fill=(255, 255, 0), width=1)
     dr.rectangle([0, 0, 7 * len(text) + 10, 20], fill=(0, 0, 0))
     dr.text((5, 4), text, fill=(255, 255, 255))
     return np.asarray(im)
@@ -110,10 +100,8 @@ def _overlay(img, drop, cov, text):
 
 def main(argv):
     """Segment on the Space, then draw locally with this checkout's
-    segment.py: the tall views' mask (agreed, long straight poles) over
-    the whole pano, against the whole pano segmented at once."""
+    segment.py: every pole vs long straight poles only."""
     import argparse
-    import cv2
     from gradio_client import Client
     from PIL import Image
     from streetview_to_3d.services import segment
@@ -126,16 +114,11 @@ def main(argv):
     token = open(os.path.expanduser("~/.cache/huggingface/token")).read().strip()
     got = np.load(io.BytesIO(base64.b64decode(Client(a.space, token=token).predict(a.pano_id, a.masker, api_name="/mask_pano"))))
     img = np.asarray(Image.open(io.BytesIO(got["pano"].tobytes())).convert("RGB"))
-    yaws, hfov = got["yaws"], float(got["hfov"])
     ids = {str(n): i for i, n in enumerate(got["names"])}
-    names = [f"pano_0_da3_{int(round(y))}_0.jpg" for y in yaws]
-    masks = segment.agree(segment.masks_from_labels(list(got["labels"]), ids), names, hfov)
-    panels = [_overlay(img, *segment.to_pano(masks, yaws, hfov, img.shape[:2]), "tall views, every view agrees (new)")]
-    whole = cv2.resize(segment.masks_from_labels([got["whole"]], ids)[0].astype(np.uint8), img.shape[1::-1],
-                       interpolation=cv2.INTER_NEAREST) > 0
-    panels.append(_overlay(img, whole, np.ones_like(whole), "whole pano at once (what the fill used)"))
-    gap = np.full((8, panels[0].shape[1], 3), 255, np.uint8)
-    Image.fromarray(np.concatenate(sum([[p, gap] for p in panels], [])[:-1], 0)).save(a.out, quality=92)
+    panels = [_overlay(img, segment.masks_from_labels([got["labels"]], ids, long_only=long_only)[0], text)
+              for long_only, text in [(False, "every pole"), (True, "only long straight poles (what is used)")]]
+    gap = np.full((8, img.shape[1], 3), 255, np.uint8)
+    Image.fromarray(np.concatenate([panels[0], gap, panels[1]], 0)).save(a.out, quality=92)
     print("saved", a.out)
 
 

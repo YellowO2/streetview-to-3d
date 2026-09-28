@@ -1,6 +1,6 @@
 import numpy as np
 
-from streetview_to_3d.services.segment import agree, long_poles
+from streetview_to_3d.services.segment import in_view, long_poles
 
 
 def _canvas():
@@ -32,19 +32,11 @@ def test_bollard_pillar_and_curved_pole_kept():
     assert not long_poles(m).any()
 
 
-def test_agree_keeps_a_drop_only_where_every_view_seeing_it_drops_it():
-    # views at yaw 0 and 330, 90 deg wide: 0's centre is 30 deg right in
-    # 330's view; 0's right edge (40 deg) is outside 330's view
-    h, w = 90, 160
-    f = w / 2
-    a = np.zeros((h, w), bool)
-    a[40:50, 75:85] = True                        # 0's centre
-    a[40:50, 145:155] = True                      # 0's right edge
-    names = ["pano_0_da3_0_0.jpg", "pano_0_da3_330_0.jpg"]
-    out = agree([a, np.zeros((h, w), bool)], names, 90.0)
-    assert not out[0][45, 80]                     # 330 sees it and says keep
-    assert out[0][45, 150]                        # nobody else sees it
-    b = np.zeros((h, w), bool)
-    x = int(round((w - 1) / 2 + f * np.tan(np.radians(30))))
-    b[38:52, x - 7:x + 7] = True                  # 330 drops the same spot
-    assert agree([a, b], names, 90.0)[0][45, 80]
+def test_a_view_takes_its_own_part_of_the_pano_mask():
+    # a spot on the horizon 30 deg right of the pano's middle
+    pano = np.zeros((512, 1024), bool)
+    pano[250:262, 594:614] = True
+    assert in_view(pano, 30, 90.0, 160, 90)[45, 80]           # the view facing it: its centre
+    assert not in_view(pano, 0, 90.0, 160, 90)[45, 80]
+    x = int(round(79.5 + 80 * np.tan(np.radians(30))))       # the view at 0: 30 deg right
+    assert in_view(pano, 0, 90.0, 160, 90)[45, x]

@@ -4,8 +4,13 @@ become points.
 Moving things are what ghost when panoramas are merged: the same car shows
 up once per photo, in a different place each time. A street-scene
 segmenter (SegFormer-B2 trained on Cityscapes, 27M parameters) marks them
-per view; panoramic_da3 then leaves those pixels out (its drop_mask). DA3
-itself still sees the whole view, so poses are unchanged.
+on the whole pano, once; each DA3 view takes its part of that mask and
+panoramic_da3 leaves those pixels out (its drop_mask). DA3 itself still
+sees the whole view, so poses are unchanged. The fill colours by the same
+saved mask. DA3's views masked one by one (every view that saw a spot
+having to agree) were tried: a little cleaner on NTU, where the whole pano
+takes part of a long walkway roof for a bus, but twice the code, and the
+fill needs the whole pano anyway.
 
 Parked cars are dropped too -- the class can't tell them apart -- which
 leaves a gap on the road that other panoramas usually fill.
@@ -42,12 +47,9 @@ DROP = MOVERS + THIN
 # Grow each mask by a few pixels: depth at an object's edge smears between
 # it and what's behind, and those in-between points are the worst floaters.
 GROW_PX = 3
-# Views per pass: BATCH of DA3's own shape (1024 x 576 fed), fewer of
-# bigger ones by pixel count -- 16 ran a bigger model out of GPU memory, 8
-# tall views (1024 x 3168) ran B2 out of it.
-BATCH = 8
+BATCH = 8   # images per pass; 16 ran a bigger model out of GPU memory
 # The masker's input width, the image's own shape kept (None: the
-# processor's square 512 x 512, which stretched a 16:9 view)
+# processor's square 512 x 512, which stretched the image)
 MASK_W = 1024
 # A pole is dropped only when it is a long straight stick (a lamp post, a
 # sign's post): at least POLE_LONG times taller than it is wide, and
@@ -55,10 +57,6 @@ MASK_W = 1024
 # a lamp's arm is only a few rows, a bollard, a thick pillar or a curved
 # pole is kept.
 POLE_LONG, POLE_STRAIGHT, POLE_TOL = 4.0, 0.8, 1.0
-# Masking views reach this far above and below the horizon (DA3's own reach
-# about 29): the fill colours from the photo down to 70 (fill.paint's
-# NADIR_DEG), and a view's corner reaches less far than its middle.
-REACH_DEG = 72
 
 _models = {}
 
@@ -95,11 +93,10 @@ def label_views(paths, model_id=None, device=None):
     import torch
     processor, model, label_ids = get_segmenter(model_id, device)
     out = []
-    w, h = Image.open(paths[0]).size if paths else (1, 1)
-    size = {"width": MASK_W, "height": max(32, round(MASK_W * h / w / 32) * 32)} if MASK_W else None
-    batch = max(1, BATCH * 1024 * 576 // (size["width"] * size["height"])) if size else BATCH
-    for start in range(0, len(paths), batch):
-        images = [Image.open(p).convert("RGB") for p in paths[start:start + batch]]
+    for start in range(0, len(paths), BATCH):
+        images = [Image.open(p).convert("RGB") for p in paths[start:start + BATCH]]
+        w, h = images[0].size
+        size = {"width": MASK_W, "height": max(32, round(MASK_W * h / w / 32) * 32)} if MASK_W else None
         with torch.inference_mode():
             inputs = processor(images=images, return_tensors="pt", **({"size": size} if size else {})).to(model.device)
             labels = processor.post_process_semantic_segmentation(
@@ -155,94 +152,43 @@ def drop_movers(paths, model_id=None, classes=None, device=None):
     return masks_from_labels(*label_views(paths, model_id, device), classes)
 
 
-_VIEW_NAME = re.compile(r"^(.*)da3_(-?\d+)_0\.\w+$")
+def pano_mask(path, model_id=None, classes=None, device=None, reuse=False):
+    """drop_movers on a whole pano, saved beside it (path + ".mask.png")
+    for the fill to colour by the same mask; reuse: load that instead when
+    it is there."""
+    saved = path + ".mask.png"
+    if reuse and os.path.exists(saved):
+        return np.asarray(Image.open(saved)) > 0
+    m = drop_movers([path], model_id, classes, device)[0]
+    Image.fromarray(m.astype(np.uint8) * 255).save(saved)
+    return m
 
 
-def tall_views(pano_path, out_dir, yaws, hfov, width, prefix="pano_0_"):
-    """DA3's views of a pano made tall: same direction, width and focal
-    length, reaching REACH_DEG above and below the horizon, so a DA3 view
-    is exactly the middle rows of its tall one (crop). Named like DA3's
-    ("{prefix}da3_{yaw}_0.jpg"), for agree. Returns the paths."""
-    from panoramic_da3.components.ViewExtractor import Equirec2Perspec as E2P
-    equ = E2P.Equirectangular(pano_path)
-    f = width / 2 / np.tan(np.radians(hfov) / 2)
-    h = 2 * int(np.ceil(f * np.tan(np.radians(REACH_DEG))))
-    paths = []
-    for yaw in yaws:
-        p = os.path.join(out_dir, f"{prefix}da3_{int(round(yaw))}_0.jpg")
-        cv2.imwrite(p, equ.GetPerspective(hfov, yaw, 0, h, width))
-        paths.append(p)
-    return paths
+def in_view(pano, yaw, hfov, w, h):
+    """The part of a pano-shaped mask a w x h view at yaw sees (hfov wide,
+    level, as panoramic_da3's extract_views_for_da3 cuts them)."""
+    H, W = pano.shape
+    f = w / 2 / np.tan(np.radians(hfov) / 2)
+    u, v = np.meshgrid((np.arange(w) - (w - 1) / 2) / f, (np.arange(h) - (h - 1) / 2) / f)
+    t = np.radians(yaw)
+    x, z = np.cos(t) * u + np.sin(t), -np.sin(t) * u + np.cos(t)
+    lon, lat = np.arctan2(x, z), np.arctan2(v, np.hypot(x, z))
+    px = np.round((lon / (2 * np.pi) + .5) * (W - 1)).astype(int) % W
+    py = np.clip(np.round((lat / np.pi + .5) * (H - 1)).astype(int), 0, H - 1)
+    return pano[py, px]
 
 
-def crop(tall, h):
-    """The middle h rows of a tall view's mask: the DA3 view's own."""
-    top = (tall.shape[0] - h) // 2
-    return tall[top:top + h]
+_VIEW_NAME = re.compile(r"^pano_(\d+)_da3_(-?\d+)_0\.\w+$")
 
 
-def to_pano(masks, yaws, hfov, shape):
-    """Per-view masks as one mask over the pano (shape: its (H, W)): each
-    pano pixel from the view whose yaw is nearest, as DA3 takes each view's
-    points from its centre wedge. Also returns where some view reaches."""
-    H, W = shape
-    lon, lat = np.meshgrid((np.arange(W) / (W - 1) - .5) * 2 * np.pi, (np.arange(H) / (H - 1) - .5) * np.pi)
-    d = np.stack([np.cos(lat) * np.sin(lon), np.sin(lat), np.cos(lat) * np.cos(lon)], -1)
-    step = 360 / len(yaws)
-    drop, cov = np.zeros((H, W), bool), np.zeros((H, W), bool)
-    for yaw, m in zip(yaws, masks):
-        h, w = m.shape
-        f = w / 2 / np.tan(np.radians(hfov) / 2)
-        t = np.radians(yaw)
-        c = d @ np.array([[np.cos(t), 0, np.sin(t)], [0, 1, 0], [-np.sin(t), 0, np.cos(t)]])
-        ok = c[..., 2] > 1e-6
-        z = np.where(ok, c[..., 2], 1)
-        x, y = f * c[..., 0] / z + (w - 1) / 2, f * c[..., 1] / z + (h - 1) / 2
-        ok &= (x >= 0) & (x <= w - 1) & (y >= 0) & (y <= h - 1)
-        ok &= np.abs(np.degrees(np.arctan2(c[..., 0], c[..., 2]))) <= step / 2
-        cov |= ok
-        drop[ok] = m[np.round(y[ok]).astype(int), np.round(x[ok]).astype(int)]
-    return drop, cov
-
-
-def drop_in_views(paths, hfov, **kw):
-    """drop_movers for DA3's views (panoramic_da3's "{prefix}da3_{yaw}_0"
-    files, hfov wide), a pixel dropped only where every view of the same
-    pano that sees it drops it (agree). kw: see drop_movers."""
-    return agree(drop_movers(paths, **kw), paths, hfov)
-
-
-def agree(masks, paths, hfov):
-    """masks, each pixel kept dropped only where every view of the same
-    pano that sees it drops it. Each spot is seen by about 3 views; on node
-    10 of NTU the real cars, people and signs were dropped by all of them,
-    while the masker's mistakes (a long white walkway roof taken for a bus
-    or truck, here and there) were each one or two views'."""
-    views = {}
-    for i, p in enumerate(paths):
-        m = _VIEW_NAME.match(os.path.basename(p))
-        if m:
-            views.setdefault(os.path.join(os.path.dirname(p), m[1]), []).append((i, float(m[2])))
-    out = [m.copy() for m in masks]
-    for group in views.values():
-        for i, yi in group:
-            if not masks[i].any():
-                continue
-            h, w = masks[i].shape
-            f = w / 2 / np.tan(np.radians(hfov) / 2)
-            u, v = np.meshgrid((np.arange(w) - (w - 1) / 2) / f, (np.arange(h) - (h - 1) / 2) / f)
-            for j, yj in group:
-                d = np.radians((yi - yj + 180) % 360 - 180)
-                if j == i or abs(d) >= np.radians(hfov):
-                    continue
-                # view i's pixel ray, turned by the yaw between them, into view j
-                x, z = np.cos(d) * u + np.sin(d), -np.sin(d) * u + np.cos(d)
-                front = z > 1e-6
-                zs = np.where(front, z, 1)
-                mj = cv2.resize(masks[j].astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST)
-                xj, yj_ = np.round(f * x / zs + (w - 1) / 2), np.round(f * v / zs + (h - 1) / 2)
-                seen = front & (xj >= 0) & (xj <= w - 1) & (yj_ >= 0) & (yj_ <= h - 1)
-                says = np.zeros((h, w), bool)
-                says[seen] = mj[yj_[seen].astype(int), xj[seen].astype(int)] > 0
-                out[i] &= says | ~seen   # a view that doesn't see the spot has no say
-    return out
+def drop_in_views(paths, panos, hfov, **kw):
+    """One mask per DA3 view (panoramic_da3's "pano_{i}_da3_{yaw}_0" files,
+    pano i being panos[i]), cut from its pano's pano_mask: each pano is
+    segmented once, whole. kw: see drop_movers."""
+    masks, whole = [], {}
+    for p in paths:
+        i, yaw = map(int, _VIEW_NAME.match(os.path.basename(p)).groups())
+        if i not in whole:
+            whole[i] = pano_mask(panos[i], **kw)
+        masks.append(in_view(whole[i], yaw, hfov, *Image.open(p).size))
+    return masks

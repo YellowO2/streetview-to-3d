@@ -74,7 +74,7 @@ def options(hfov=None, masker=None, mask_classes=None, conf_floor=None):
         _options.update(old)
 
 
-def _run_da3(*args, **kwargs):
+def _run_da3(target, support, *args, **kwargs):
     """panoramic_da3.run_da3 with this pipeline's view width, mask and
     confidence floor."""
     from panoramic_da3 import run_da3
@@ -83,17 +83,17 @@ def _run_da3(*args, **kwargs):
     floor = utils.CONF_ABS_FLOOR
     utils.CONF_ABS_FLOOR = CONF_FLOOR if _options["conf_floor"] is None else _options["conf_floor"]
     try:
-        return run_da3(*args, hfov=hfov, drop_mask=_drop_mask(hfov), **kwargs)
+        return run_da3(target, support, *args, hfov=hfov, drop_mask=_drop_mask([target, *support], hfov), **kwargs)
     finally:
         utils.CONF_ABS_FLOOR = floor
 
 
-def _drop_mask(hfov):
+def _drop_mask(panos, hfov):
     if not MASK_MOVERS:
         return None
     from functools import partial
     from streetview_to_3d.services.segment import drop_in_views
-    return partial(drop_in_views, hfov=hfov, model_id=_options["masker"], classes=_options["mask_classes"])
+    return partial(drop_in_views, panos=panos, hfov=hfov, model_id=_options["masker"], classes=_options["mask_classes"])
 
 
 def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1,
