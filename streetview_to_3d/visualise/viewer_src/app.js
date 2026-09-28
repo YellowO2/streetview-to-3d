@@ -1,3 +1,4 @@
+import { panoramaStart, START_HEIGHT } from '@viewer/start-view';
 import * as THREE from 'three';
 import { ViewerState } from '@viewer/state';
 import { SceneStore, loadAsset, dispose } from '@viewer/scene-store';
@@ -15,6 +16,8 @@ const editable = config.editable !== false;
 const ui = createUI(
   {
     mode: setMode,
+    style: (name, options) => view.styles.set(name, options),
+    reveal: () => view.styles.reveal(),
     recenter,
     focus,
     select,
@@ -22,17 +25,8 @@ const ui = createUI(
       state.hidden.clear();
       refresh();
     },
-    group: (threshold) => {
-      state.threshold = threshold;
-      state.regroup(scenePieces(store.data, threshold));
-      refresh();
-    },
     visibility: (members) => {
       state.toggleVisibility(members);
-      refresh();
-    },
-    tool: (tool) => {
-      state.tool = tool;
       refresh();
     },
     history: (redo) => {
@@ -127,9 +121,10 @@ function configure() {
     ? SPLAT_RADIUS
     : Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 0.001);
   navigation.configure(radius);
-  camera.near = Math.max(radius * 0.0001, 0.00001);
+  camera.near = Math.min(0.05, Math.max(radius * 0.0001, 0.00001));
   camera.far = radius * 1000;
   camera.updateProjectionMatrix();
+  view.styles.configure(store, radius);
   setPointSize();
 }
 function setPointSize() {
@@ -165,11 +160,7 @@ async function openEntries(entries) {
   if (entries.length) attempt(() => load(resolveEntries(entries)));
 }
 async function load({ source, resolve, name, splat = false }) {
-  if (
-    store.dirty &&
-    !confirm('Open another scene and discard changes that have not been downloaded?')
-  )
-    return;
+  if (store.dirty && !confirm('Open another scene and discard unsaved changes?')) return;
   const token = ++version;
   editor.cancel();
   navigation.stop();
@@ -196,13 +187,25 @@ async function load({ source, resolve, name, splat = false }) {
     store.install(asset, name);
     scene.add(store.group);
     state.reset();
-    state.regroup(store.data ? scenePieces(store.data) : []);
+    state.regroup(
+      store.data
+        ? scenePieces(store.data)
+            .map((members) => members.filter((n) => store.nodes.has(n)))
+            .filter((members) => members.length)
+        : [],
+    );
     points = store.splat?.numSplats || 0;
     store.group.traverse((o) => {
       if (o.isPoints) points += o.geometry.getAttribute('position').count;
     });
     configure();
-    frameAll();
+    const start = panoramaStart(store.data);
+    if (start) navigation.place(start.position, start.target);
+    else if (!store.splat) {
+      const center = store.box().getCenter(new THREE.Vector3());
+      center.y += START_HEIGHT;
+      navigation.place(center, center.clone().add(new THREE.Vector3(0, 0, -1)));
+    } else frameAll();
   } catch (e) {
     if (token === version) ui.notify(`Could not open scene: ${e.message}`);
   } finally {
@@ -212,11 +215,29 @@ async function load({ source, resolve, name, splat = false }) {
     }
   }
 }
-function save() {
+async function save() {
   if (!editable || store.placement !== 'world' || editor.dragging || busy) return;
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(store.exported(), null, 2) + '\n'], { type: 'application/json' }),
-  );
+  const blob = new Blob([JSON.stringify(store.exported(), null, 2) + '\n'], {
+    type: 'application/json',
+  });
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: 'scene.json',
+        types: [{ description: 'Saved scene', accept: { 'application/json': ['.json'] } }],
+      });
+      const writer = await handle.createWritable();
+      await writer.write(blob);
+      await writer.close();
+      store.markExportRequested();
+      refresh();
+      ui.notify('Scene saved. Keep it with the original scene files.');
+    } catch (error) {
+      if (error.name !== 'AbortError') ui.notify(`Could not save scene: ${error.message}`);
+    }
+    return;
+  }
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = 'scene.json';
@@ -227,47 +248,9 @@ function save() {
   store.markExportRequested();
   refresh();
   ui.notify(
-    'Download requested. Replace scene.json beside the original PLYs with the downloaded file. Your original files have not been overwritten.',
+    'Scene file exported. Keep it in the original scene folder to reopen your saved placement.',
   );
 }
-let down = null;
-canvas.addEventListener(
-  'pointerdown',
-  (e) => (down = e.button === 0 ? { x: e.clientX, y: e.clientY, dragged: false } : null),
-);
-canvas.addEventListener('pointermove', (e) => {
-  if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) down.dragged = true;
-});
-canvas.addEventListener('pointercancel', () => (down = null));
-canvas.addEventListener('pointerup', (e) => {
-  const previous = down;
-  down = null;
-  if (
-    editor.consumePick() ||
-    editor.dragging ||
-    !previous ||
-    previous.dragged ||
-    state.mode === 'fly' ||
-    busy
-  )
-    return;
-  const hit = view.pick(e, store, radius * 0.002 * pointMultiplier);
-  select(hit ? state.groups.find((m) => m.includes(hit.object.userData.nodeIndex)) || null : null);
-});
-canvas.addEventListener('dblclick', (e) => {
-  if (state.mode === 'fly' || editor.overHandle || editor.dragging || busy) return;
-  const hit = view.pick(e, store, radius * 0.002 * pointMultiplier);
-  if (hit) {
-    const members = state.groups.find((m) => m.includes(hit.object.userData.nodeIndex));
-    if (members && editable) {
-      select(members);
-      focus();
-    } else {
-      navigation.orbit.target.copy(hit.point);
-      navigation.orbit.update();
-    }
-  }
-});
 addEventListener('keydown', (e) => {
   if (e.target.matches('input,textarea,select') || busy) return;
   if (e.code === 'Escape') {
@@ -328,7 +311,7 @@ const tick = (now) => {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
   navigation.tick(dt);
-  renderer.render(scene, camera);
+  view.styles.render(dt, state.mode === 'edit' || editor.dragging);
 };
 renderer.setAnimationLoop(tick);
 document.addEventListener('visibilitychange', () => {
@@ -342,6 +325,7 @@ document.addEventListener('visibilitychange', () => {
 });
 clearTimeout(window.viewerBootTimer);
 ui.settings();
+ui.styles(config.style || 'original');
 refresh();
 if (config.sceneUrl) {
   const base = config.sceneUrl.slice(0, config.sceneUrl.lastIndexOf('/') + 1);

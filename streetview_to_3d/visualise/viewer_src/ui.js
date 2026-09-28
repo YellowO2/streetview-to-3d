@@ -1,9 +1,22 @@
+import { createStyleControls } from '@viewer/effects/ui';
 import { createSceneManager } from '@viewer/scene-manager';
 const $ = (id) => document.getElementById(id);
 
 // One viewer shell for every host. Editing adds only the Scene Manager.
 export function createUI(actions, { editable = true } = {}) {
   $('scene-manager').hidden = !editable;
+  $('expand-manager').hidden = true;
+  $('collapse-manager').onclick = () => {
+    $('scene-manager').hidden = true;
+    $('expand-manager').hidden = false;
+    $('expand-manager').focus();
+  };
+  $('expand-manager').onclick = () => {
+    $('scene-manager').hidden = false;
+    $('expand-manager').hidden = true;
+    $('collapse-manager').focus();
+  };
+  const styles = createStyleControls(actions);
   const manager = editable ? createSceneManager(actions) : null;
   const bind = (id, fn) => ($(id).onclick = fn);
   for (const mode of ['inspect', 'fly']) bind(mode, () => actions.mode(mode));
@@ -43,6 +56,7 @@ export function createUI(actions, { editable = true } = {}) {
       $('dropzone').hidden = !visible;
     },
     settings,
+    styles: styles.select,
     pointStep(direction) {
       $('point-size').value = Number($('point-size').value) + direction * 0.2;
       settings();
@@ -63,6 +77,7 @@ export function createUI(actions, { editable = true } = {}) {
       $('recenter').disabled = blocked || !store.group;
       for (const id of ['open-folder', 'toggle-settings']) $(id).disabled = blocked;
       for (const input of document.querySelectorAll('#view-panel input')) input.disabled = blocked;
+      styles.render(store, blocked);
       manager?.render(store, state, { busy, dragging });
       $('scene-info').hidden = !store.group;
       $('scene-info').textContent = store.group

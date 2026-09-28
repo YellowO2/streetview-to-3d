@@ -5,8 +5,19 @@ export class WebGLRenderer {
   constructor() {
     this.domElement = document.createElement('canvas');
   }
-  setPixelRatio() {}
-  setSize() {}
+  setPixelRatio(value) {
+    this.pixelRatio = value;
+  }
+  getPixelRatio() {
+    return this.pixelRatio || 1;
+  }
+  setSize(width, height) {
+    this.width = width;
+    this.height = height;
+  }
+  getSize(target) {
+    return target.set(this.width || 1, this.height || 1);
+  }
   setAnimationLoop(callback) {
     this.loop = callback;
   }

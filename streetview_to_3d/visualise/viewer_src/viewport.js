@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createStyles } from '@viewer/effects/controller';
 export function createViewport(host) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#11171e');
@@ -14,12 +15,14 @@ export function createViewport(host) {
   const sun = new THREE.DirectionalLight(0xffefd5, 2.2);
   sun.position.set(3, 5, 4);
   scene.add(sun);
+  const styles = createStyles(scene, camera, renderer);
   const resize = () => {
     const w = Math.max(host.clientWidth, 1),
       h = Math.max(host.clientHeight, 1);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h, false);
+    styles.resize();
   };
   new ResizeObserver(resize).observe(host);
   resize();
@@ -28,31 +31,14 @@ export function createViewport(host) {
   highlight.material.transparent = true;
   highlight.renderOrder = 10;
   highlight.visible = false;
+  highlight.userData.styleOverlay = true;
   scene.add(highlight);
-  const ray = new THREE.Raycaster();
   return {
     scene,
     camera,
     renderer,
     canvas,
     highlight,
-    pick(event, store, pointSize) {
-      if (!store.group) return null;
-      const r = canvas.getBoundingClientRect();
-      ray.params.Points.threshold = pointSize * 2;
-      ray.setFromCamera(
-        new THREE.Vector2(
-          ((event.clientX - r.left) / r.width) * 2 - 1,
-          1 - ((event.clientY - r.top) / r.height) * 2,
-        ),
-        camera,
-      );
-      return (
-        ray.intersectObjects(
-          store.group.children.filter((o) => o.visible && o.isPoints),
-          false,
-        )[0] || null
-      );
-    },
+    styles,
   };
 }

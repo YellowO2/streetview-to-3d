@@ -4,6 +4,14 @@
       <h2>Scene Manager</h2>
       <div id="scene-info" class="muted" hidden></div>
     </div>
+    <button
+      id="collapse-manager"
+      class="small quiet"
+      aria-label="Collapse Scene Manager"
+      title="Collapse Scene Manager"
+    >
+      ‹
+    </button>
     <button id="show-all" class="small quiet" disabled>Show all</button>
   </div>
   <div class="scene-hierarchy">
@@ -12,14 +20,6 @@
     </div>
     <p id="piece-guide" class="muted">Open a scene to see its pieces.</p>
     <div id="piece-list" aria-label="Pieces and nodes"></div>
-    <details id="grouping" hidden>
-      <summary>Connection confidence</summary>
-      <label
-        >Minimum <output id="confidence-value">All links</output>
-        <input id="confidence" type="range" min="0" max="100" step="1" value="0" />
-      </label>
-      <p class="muted">Higher values split weaker connections.</p>
-    </details>
   </div>
   <section class="selection-panel">
     <div class="section-heading">
@@ -27,12 +27,6 @@
     </div>
     <h2 id="selection-title">Nothing selected</h2>
     <p id="selection-description" class="muted">Select a piece or node.</p>
-    <div id="selection-actions" hidden>
-      <div class="row">
-        <button id="focus">Focus</button
-        ><button id="clear-selection" class="quiet">Deselect</button>
-      </div>
-    </div>
     <div id="editing" hidden>
       <div id="prepare" hidden>
         <p class="muted">
@@ -44,11 +38,6 @@
         <button id="prepare-gps">Place from GPS</button>
       </div>
       <div id="edit-tools" hidden>
-        <div class="row">
-          <button id="move" aria-pressed="true">Move</button
-          ><button id="rotate" aria-pressed="false">Rotate</button>
-        </div>
-        <p id="tool-help" class="muted"></p>
         <div class="fields position-fields">
           <label>East (m)<input id="east" type="number" step=".1" value="0" /></label>
           <label>North (m)<input id="north" type="number" step=".1" value="0" /></label>
@@ -56,8 +45,7 @@
         </div>
         <label>Heading (°)<input id="turn" type="number" step="1" value="0" /></label>
         <div class="row">
-          <button id="apply">Apply offsets</button
-          ><button id="reset" class="quiet" title="Restore opening placement; this can be undone">
+          <button id="reset" class="quiet" title="Restore opening placement; this can be undone">
             Reset
           </button>
         </div>
@@ -71,7 +59,11 @@
       <button id="undo" disabled title="Undo (Ctrl/Cmd+Z)">Undo</button
       ><button id="redo" disabled title="Redo (Ctrl/Cmd+Shift+Z)">Redo</button>
     </div>
-    <button id="save" disabled>Download scene.json</button>
+    <button id="save" disabled>Save scene</button>
     <span id="edit-state" class="muted">No scene open</span>
   </div>
 </aside>
+
+<button id="expand-manager" aria-label="Open Scene Manager" title="Open Scene Manager" hidden>
+  ›
+</button>

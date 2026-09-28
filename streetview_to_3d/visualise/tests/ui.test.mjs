@@ -22,8 +22,7 @@ test('user flow: select, switch modes, open settings, regroup, hide and restore'
     redo: [],
     dirty: false,
   };
-  let focused = false,
-    ui;
+  let ui;
   const render = () => ui.render(store, state, { points: 100 });
   const noop = () => {};
   const actions = {
@@ -36,7 +35,7 @@ test('user flow: select, switch modes, open settings, regroup, hide and restore'
       if (members) state.mode = 'edit';
       render();
     },
-    focus: () => (focused = true),
+    focus: noop,
     visibility: (members) => {
       state.toggleVisibility(members);
       render();
@@ -62,6 +61,8 @@ test('user flow: select, switch modes, open settings, regroup, hide and restore'
   ui = createUI(actions);
   render();
   const $ = (id) => document.getElementById(id);
+  for (const id of ['focus', 'clear-selection', 'move', 'rotate', 'apply', 'confidence'])
+    assert.equal($(id), null);
   document.querySelector('.piece-select').click();
   assert.equal($('selection-title').textContent, 'Piece 1');
   $('view-settings').open = true;
@@ -74,13 +75,8 @@ test('user flow: select, switch modes, open settings, regroup, hide and restore'
   assert($('editing').hidden);
   $('fly').click();
   assert.equal($('selection-title').textContent, 'Piece 1');
-  assert($('confidence').disabled);
-  assert($('focus').disabled);
   $('exit-fly').click();
   assert.equal(state.mode, 'inspect');
-  assert(!$('focus').disabled);
-  $('clear-selection').click();
-  assert.equal(state.selected, null);
   document.querySelector('.visibility').click();
   assert(state.hidden.has(0));
   $('show-all').click();
@@ -92,11 +88,8 @@ test('user flow: select, switch modes, open settings, regroup, hide and restore'
   assert.equal($('piece-count').textContent, '(4)');
   assert(state.hidden.has(3));
   assert.equal($('selection-title').textContent, 'Piece 1');
-  $('focus').click();
-  assert(focused);
   ui.render(store, state, { busy: true });
   assert($('open-folder').disabled);
-  assert($('focus').disabled);
   render();
   assert(!$('open-folder').disabled);
   dom.window.close();
@@ -147,4 +140,22 @@ test('editor and demo render identical shared toolbar and view settings', () => 
     return result;
   };
   assert.deepEqual(shell(true), shell(false));
+});
+
+test('manager collapses and reopens with accessible focus restoration', () => {
+  const dom = new JSDOM(viewerTemplate());
+  globalThis.document = dom.window.document;
+  createUI({});
+  const manager = document.getElementById('scene-manager');
+  const close = document.getElementById('collapse-manager');
+  const open = document.getElementById('expand-manager');
+  close.click();
+  assert(manager.hidden);
+  assert(!open.hidden);
+  assert.equal(document.activeElement, open);
+  open.click();
+  assert(!manager.hidden);
+  assert(open.hidden);
+  assert.equal(document.activeElement, close);
+  dom.window.close();
 });

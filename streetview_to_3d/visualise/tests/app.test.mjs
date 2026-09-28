@@ -57,18 +57,19 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
   Object.defineProperty($('folder'), 'files', { configurable: true, value: files });
   $('folder').dispatchEvent(new win.Event('change'));
   await waitFor(() => $('scene-info').textContent === '8 points' && $('status').hidden);
+  $('visual-style').value = 'dither';
+  $('visual-style').dispatchEvent(new win.Event('change'));
+  assert(!$('style-controls').hidden);
+
   document.querySelector('.piece-select').click();
   assert(!$('prepare').hidden);
   $('prepare-gps').click();
   assert($('prepare').hidden);
   assert.match($('edit-state').textContent, /Unsaved/);
-  $('confidence').value = '76';
-  $('confidence').dispatchEvent(new win.Event('input'));
-  assert.equal($('piece-count').textContent, '(2)');
   document.querySelector('.piece-select').click();
   assert(!$('edit-tools').hidden);
   $('east').value = '2';
-  $('apply').click();
+  $('east').dispatchEvent(new win.Event('change'));
   assert(!$('undo').disabled);
   $('inspect').click();
   assert.equal($('selection-title').textContent, 'Piece 1');
@@ -83,17 +84,13 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
   assert.equal($('selection-title').textContent, 'Node 0');
   assert.equal(document.body.dataset.mode, 'edit');
   $('east').value = '3';
-  $('apply').click();
+  $('east').dispatchEvent(new win.Event('change'));
   assert.equal($('east').value, '0');
-  $('confidence').value = '0';
-  $('confidence').dispatchEvent(new win.Event('input'));
   assert.equal($('selection-title').textContent, 'Node 0');
   document.querySelector('.piece-select').click();
   $('view-settings').open = true;
-  $('rotate').click();
   $('inspect').click();
   document.querySelector('.piece-select').click();
-  assert.equal($('rotate').getAttribute('aria-pressed'), 'true');
   assert($('view-settings').open);
   // Reproduce denied pointer lock without a browser. The app must recover to Inspect.
   document.querySelector('canvas').requestPointerLock = () => {
@@ -104,7 +101,6 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
   $('fly').click();
   assert.equal(document.body.dataset.mode, 'inspect');
   assert.equal($('selection-title').textContent, 'Piece 1');
-  assert(!$('focus').disabled);
   const drop = new win.Event('drop', { cancelable: true });
   Object.defineProperty(drop, 'dataTransfer', {
     value: { items: [], files: [new File([ply], 'single.ply')] },

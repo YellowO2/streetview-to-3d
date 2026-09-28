@@ -1,3 +1,4 @@
+import { FLIGHT, advanceFlight } from '@viewer/flight-motion';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
@@ -15,31 +16,33 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
   look.minPolarAngle = 0.12;
   look.maxPolarAngle = Math.PI - 0.12;
   look.pointerSpeed = 0.65;
-  const { bird, wings } = createBird();
+  const { bird, animate, resetTrails } = createBird();
   scene.add(bird);
   const keys = new Set(),
     forward = new THREE.Vector3(),
     right = new THREE.Vector3(),
     move = new THREE.Vector3(),
-    offset = new THREE.Vector3();
+    offset = new THREE.Vector3(),
+    velocity = new THREE.Vector3(),
+    smoothHeading = new THREE.Quaternion(),
+    cameraTarget = new THREE.Vector3();
   let flying = false,
     radius = 5,
-    wingTime = 0,
     speed = 1,
     chase = 1;
   const captured = () => document.pointerLockElement === canvas;
   const chaseOffset = () =>
-    offset
-      .set(0, radius * 0.025 * 1.1, radius * 0.025 * 4.5 * chase)
-      .applyQuaternion(heading.quaternion);
+    offset.set(0, FLIGHT.height, FLIGHT.distance * chase).applyQuaternion(smoothHeading);
   const stop = () => {
     keys.clear();
+    velocity.set(0, 0, 0);
     if (!flying) return;
     flying = false;
     look.unlock();
     bird.visible = false;
+    resetTrails();
     camera.getWorldDirection(forward);
-    orbit.target.copy(camera.position).addScaledVector(forward, radius * 0.1125);
+    orbit.target.copy(camera.position).addScaledVector(forward, FLIGHT.distance * chase);
     orbit.enabled = true;
     orbit.update();
   };
@@ -90,7 +93,7 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
     },
     configure(r) {
       radius = Math.max(r, 0.001);
-      bird.scale.setScalar(radius * 0.025);
+      bird.scale.setScalar(FLIGHT.birdScale);
       orbit.minDistance = radius * 0.001;
       orbit.maxDistance = radius * 100;
     },
@@ -111,8 +114,11 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
       angles.x = THREE.MathUtils.clamp(angles.x, -Math.PI / 2 + 0.12, Math.PI / 2 - 0.12);
       angles.z = 0;
       heading.quaternion.setFromEuler(angles);
+      smoothHeading.copy(heading.quaternion);
+      velocity.set(0, 0, 0);
       bird.position.copy(camera.position).sub(chaseOffset());
       bird.quaternion.copy(heading.quaternion);
+      resetTrails();
       bird.visible = true;
       flying = true;
       look.lock();
@@ -147,9 +153,11 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
         if (orbit.enabled) orbit.update();
         return;
       }
+      dt = Math.min(Math.max(dt, 0), 0.05);
+      smoothHeading.slerp(heading.quaternion, 1 - Math.exp(-10 * dt));
       move.set(0, 0, 0);
-      heading.getWorldDirection(forward);
-      right.set(1, 0, 0).applyQuaternion(heading.quaternion);
+      forward.set(0, 0, -1).applyQuaternion(smoothHeading);
+      right.set(1, 0, 0).applyQuaternion(smoothHeading);
       if (captured()) {
         if (keys.has('KeyW')) move.add(forward);
         if (keys.has('KeyS')) move.sub(forward);
@@ -160,13 +168,13 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
       }
       const moving = move.lengthSq() > 0,
         boost = keys.has('ShiftLeft') || keys.has('ShiftRight');
-      bird.position.addScaledVector(move.normalize(), radius * 0.35 * speed * (boost ? 3 : 1) * dt);
-      bird.quaternion.slerp(heading.quaternion, 1 - Math.exp(-12 * dt));
-      wingTime += dt * (moving ? 13 : 5);
-      wings[0].rotation.z = Math.sin(wingTime) * 0.32;
-      wings[1].rotation.z = -Math.sin(wingTime) * 0.32;
-      camera.position.copy(bird.position).add(chaseOffset());
-      camera.quaternion.copy(heading.quaternion);
+      move.normalize().multiplyScalar(FLIGHT.speed * speed * (boost ? FLIGHT.boost : 1));
+      advanceFlight(bird.position, velocity, move, dt);
+      bird.quaternion.slerp(smoothHeading, 1 - Math.exp(-12 * dt));
+      animate(dt, moving);
+      cameraTarget.copy(bird.position).add(chaseOffset());
+      camera.position.lerp(cameraTarget, 1 - Math.exp(-12 * dt));
+      camera.quaternion.copy(smoothHeading);
     },
   };
 }

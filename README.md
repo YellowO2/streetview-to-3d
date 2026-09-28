@@ -28,6 +28,9 @@ python3.12 -m venv .venv && source .venv/bin/activate
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 pip install -r requirements.txt
 python app.py
+
+#viewer
+cd streetview_to_3d/visualise && python3 -m http.server 8000
 ```
 
 ## Acknowledgments

@@ -280,11 +280,6 @@ summary {
 .node-select {
   font-size: 12px;
 }
-#grouping {
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
-  margin-top: 14px;
-}
 .selection-panel {
   padding: 16px;
   border-top: 1px solid var(--border);
@@ -295,9 +290,6 @@ summary {
 #edit-tools {
   border-top: 1px solid var(--border);
   padding-top: 12px;
-}
-#tool-help {
-  min-height: 30px;
 }
 .manager-save {
   margin-top: auto;
@@ -443,4 +435,27 @@ body[data-mode='fly'] canvas {
   #scene-manager {
     width: 250px;
   }
+}
+
+#visual-style {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid #455263;
+  border-radius: 6px;
+  padding: 7px;
+}
+#style-controls {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+#expand-manager {
+  align-self: flex-start;
+  margin: 12px 0 0 8px;
+  padding: 6px 10px;
+}
+body[data-mode='fly'] #expand-manager {
+  display: none;
 }

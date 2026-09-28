@@ -10,10 +10,10 @@ export function createEditor(scene, camera, canvas, navigation, store, state, ch
   control.setSize(0.8);
   control.setSpace('world');
   const helper = control.getHelper();
+  helper.userData.styleOverlay = true;
   scene.add(helper);
   control.enabled = false;
-  let drag = null,
-    consumed = false;
+  let drag = null;
   const sync = () => {
     if (drag) return;
     const active =
@@ -53,8 +53,7 @@ export function createEditor(scene, camera, canvas, navigation, store, state, ch
         y: 1 - ((e.clientY - rect.top) / rect.height) * 2,
         button: 0,
       });
-      consumed = !!control.axis;
-      if (consumed) {
+      if (control.axis) {
         navigation.orbit.enableDamping = false;
         navigation.orbit.update();
         navigation.orbit.enableDamping = true;
@@ -65,7 +64,6 @@ export function createEditor(scene, camera, canvas, navigation, store, state, ch
   );
   control.addEventListener('mouseDown', () => {
     pivot.updateMatrixWorld(true);
-    consumed = true;
     drag = {
       before: store.snapshot(),
       inverse: pivot.matrixWorld.clone().invert(),
@@ -105,14 +103,6 @@ export function createEditor(scene, camera, canvas, navigation, store, state, ch
     cancel,
     get dragging() {
       return !!drag;
-    },
-    consumePick() {
-      const value = consumed;
-      consumed = false;
-      return value;
-    },
-    get overHandle() {
-      return control.enabled && !!control.axis;
     },
     adjust(east, north, height, degrees) {
       if (!state.selected || store.placement !== 'world') return;

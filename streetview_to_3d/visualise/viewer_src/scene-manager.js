@@ -6,21 +6,18 @@ const eyeIcon = (visible) =>
 // the shared viewer shell never needs to know their layout or state.
 export function createSceneManager(actions) {
   const bind = (id, fn) => ($(id).onclick = fn);
-  bind('focus', actions.focus);
-  bind('clear-selection', () => actions.select(null));
   bind('show-all', actions.showAll);
-  $('confidence').oninput = () => actions.group(Number($('confidence').value) / 100);
-  bind('move', () => actions.tool('translate'));
-  bind('rotate', () => actions.tool('rotate'));
   bind('undo', () => actions.history(false));
   bind('redo', () => actions.history(true));
   bind('reset', actions.reset);
   bind('prepare-gps', () => actions.gps(Number($('da3-scale').value)));
   const fields = ['east', 'north', 'up', 'turn'];
-  bind('apply', () => {
+  function applyFields() {
     const values = fields.map((id) => ($(id).value.trim() === '' ? NaN : Number($(id).value)));
+    if (values.every((v) => v === 0)) return;
     if (actions.adjust(...values)) fields.forEach((id) => ($(id).value = '0'));
-  });
+  }
+  fields.forEach((id) => ($(id).onchange = applyFields));
   bind('save', actions.save);
   let rows = [],
     lastGroups = null,
@@ -79,16 +76,6 @@ export function createSceneManager(actions) {
       branch.append(heading, children);
       $('piece-list').append(branch);
     });
-    // Panorama metadata without a DA3 pose still belongs in the scene tree.
-    const grouped = new Set(state.groups.flat());
-    const other = (store.data?.nodes || []).flatMap((_, i) => (grouped.has(i) ? [] : [i]));
-    if (other.length) {
-      const label = document.createElement('p');
-      label.className = 'muted';
-      label.textContent = 'Other nodes';
-      $('piece-list').append(label);
-      other.forEach((n) => $('piece-list').append(row([n], `Node ${n}`, 'node', store)));
-    }
   }
   return {
     render(store, state, { busy, dragging }) {
@@ -100,16 +87,11 @@ export function createSceneManager(actions) {
       ))
         control.disabled = blocked;
       $('show-all').disabled = blocked || !store.data;
-      $('grouping').hidden = !store.data;
       $('piece-count').textContent = store.data ? `(${state.groups.length})` : '';
       $('piece-guide').hidden = !!store.data;
       $('piece-guide').textContent = store.group
         ? 'Open a scene folder to work with pieces.'
         : 'Open a scene to see its pieces.';
-      $('confidence').value = String(state.threshold * 100);
-      $('confidence-value').textContent = state.threshold
-        ? `${Math.round(state.threshold * 100)}%`
-        : 'All links';
       if (lastGroups !== state.groups || lastData !== store.data) {
         lastGroups = state.groups;
         lastData = store.data;
@@ -141,17 +123,10 @@ export function createSceneManager(actions) {
         : state.selectionKind === 'node'
           ? store.data.nodes?.[selected[0]]?.ply || 'Panorama node'
           : `${selected.length} nodes · Move together`;
-      $('selection-actions').hidden = !selected;
       $('editing').hidden = state.mode !== 'edit';
       $('prepare').hidden = world;
       $('edit-tools').hidden = !world || !selected;
       $('edit-prompt').hidden = !!selected || !world;
-      $('move').setAttribute('aria-pressed', String(state.tool === 'translate'));
-      $('rotate').setAttribute('aria-pressed', String(state.tool === 'rotate'));
-      $('tool-help').textContent =
-        state.tool === 'translate'
-          ? 'Drag an arrow or enter offsets below.'
-          : 'Drag the ring or enter a heading offset.';
       $('placement').textContent = world
         ? 'World coordinates · Metres'
         : store.data
@@ -165,7 +140,7 @@ export function createSceneManager(actions) {
         : store.dirty
           ? 'Unsaved changes'
           : store.exportRequested
-            ? 'Downloaded JSON replaces the original'
+            ? 'Scene file exported'
             : store.data
               ? 'No placement changes'
               : 'No scene open';

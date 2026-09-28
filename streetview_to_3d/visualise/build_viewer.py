@@ -24,9 +24,9 @@ def build_document(config: dict | None = None) -> str:
         # Gaussian splats; imported only when one is opened (scene-store.parseSplat)
         "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.10/spark.module.js",
     }
-    for source in sorted(SOURCE.glob("*.js")):
+    for source in sorted(SOURCE.rglob("*.js")):
         encoded = base64.b64encode(source.read_bytes()).decode("ascii")
-        imports[f"@viewer/{source.stem}"] = f"data:text/javascript;base64,{encoded}"
+        imports[f"@viewer/{source.relative_to(SOURCE).with_suffix('').as_posix()}"] = f"data:text/javascript;base64,{encoded}"
     template = (SOURCE / "template.html").read_text(encoding="utf-8")
     template = template.replace("<!-- SCENE_MANAGER -->", (SOURCE / "scene-manager.html").read_text(encoding="utf-8"))
     config_json = json.dumps(config or {}).replace("<", "\\u003c")

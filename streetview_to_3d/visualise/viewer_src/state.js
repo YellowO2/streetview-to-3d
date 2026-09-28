@@ -5,7 +5,6 @@ export class ViewerState {
   selected = null;
   selectionKind = 'piece';
   hidden = new Set();
-  threshold = 0;
   groups = [];
   tool = 'translate';
   select(members, kind = 'piece') {
@@ -36,7 +35,6 @@ export class ViewerState {
     this.selected = null;
     this.selectionKind = 'piece';
     this.hidden.clear();
-    this.threshold = 0;
     this.groups = [];
     this.tool = 'translate';
   }
