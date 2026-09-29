@@ -17,7 +17,7 @@ import urllib.request
 OVERPASS_URLS = ("https://overpass-api.de/api/interpreter",
                  "https://overpass.kumi.systems/api/interpreter",
                  "https://overpass.private.coffee/api/interpreter")
-TIMEOUT_S = 60
+TIMEOUT_S = 180         # a busy server took 72 s for a city centre (Lund, 4 MB)
 CACHE = "osm.json"        # beside scene.json: a rebuild never asks again
 
 
@@ -31,7 +31,7 @@ def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None
             return json.load(f)
     box = lambda r: (f"{lat0 - r / m_per_lat},{lon0 - r / m_per_lon},"
                      f"{lat0 + r / m_per_lat},{lon0 + r / m_per_lon}")
-    query = (f'[out:json][timeout:90];(way["building"]({box(buildings_m)});'
+    query = (f'[out:json][timeout:180];(way["building"]({box(buildings_m)});'
              f'relation["building"]({box(buildings_m)});way["highway"]({box(roads_m)}););out geom;')
     data = urllib.parse.urlencode({"data": query}).encode()
     error = None
