@@ -1,5 +1,7 @@
-"""The Google panos a base is built from: the scene's own Google nodes plus
-their official neighbours nearby, each with its depth map and pose."""
+"""The Google panos a base is built from: the scene's own Google nodes,
+each with its depth map and pose. Their official neighbours (neighbours,
+still used by reconstruct.solo) were taken in too once: on NTU80 that was
+77 depth maps for 21 nodes, most of a minute of the fill."""
 import asyncio
 from dataclasses import dataclass, field
 
@@ -88,7 +90,7 @@ async def _gather(scene):
         metas = [await streetview.find_panorama_by_id_async(p["id"], session=s) for p in seeds]
         metas = [m for m in metas if m is not None and m.elevation is not None and m.date is not None]
         seed_ids = {m.id for m in metas}
-        for meta in metas + await neighbours(seeds, lat0, lon0, s):
+        for meta in metas:
             got = await fetch_depth_planes(meta.id, session=s)
             if got is None:
                 continue
