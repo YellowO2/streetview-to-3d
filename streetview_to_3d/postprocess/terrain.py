@@ -238,14 +238,10 @@ def build(scene_dir, log=print):
         raw = heights(*to_ll(xy)) if raw is None else raw
         return np.where(raw <= SEA_M, 0.0, raw) + shift + bend(xy)
 
-
     # water is a flat surface of its own (water.py), reaching under the
-    # shore: no land points under it, the land's edge over its edge; DA3's
-    # own water, wrong, left out of the scene first
+    # shore: no land points under it, the land's edge over its edge
     radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
-    panos_ground = (anchors, np.array([n.pano.elevation for n in known]))
-    wet = water.Water(radius, to_ll, heights, shift, panos_ground)
-    n_dried = water.dry(sc, scene_dir, wet, panos_ground)
+    wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])))
 
     # the scene always wins: the map only around it, faded in at its edge
     scene, scene_cols = scene_points(sc, scene_dir)
@@ -372,8 +368,7 @@ def build(scene_dir, log=print):
     sc.save(scene_dir)
     fix = np.abs(fixes - shift)
     log(f"terrain: {len(pts)} points to {radius:.0f} m, {len(bp)} building points, {n_painted} of them "
-        f"painted from the panos ({len(surfaces)} water surfaces ({wet.source}), {n_dried} of DA3's "
-        f"points over them left out, {source} colour, "
+        f"painted from the panos ({len(surfaces)} water surfaces ({wet.source}), {source} colour, "
         f"{n_buildings} buildings -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
         f"{n_cut} of their points "
         f"left to DA3's own, {n_seen} coloured by the panos -- {n_roads} roads), map shifted "

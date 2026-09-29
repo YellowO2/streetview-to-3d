@@ -19,6 +19,13 @@ Poles, traffic lights and signs go too: DA3 smears anything this thin into
 a streak or a broken stick, and a missing street light reads better than a
 wrong one. Cityscapes' "traffic light" and "traffic sign" are only the
 light box and the board; every post, lamp posts included, is "pole".
+
+And water: DA3 lays it at about street height (Stockholm: the harbour 3 m
+too high, grainy) where the scene's flat water surface belongs
+(postprocess/water.py). Cityscapes has no water class -- it calls it road,
+terrain or sky -- so a second SegFormer-B2, trained on ADE20K, marks it
+(WATER_MODEL_ID, WATER_CLASSES), written into the same class map as class
+"water".
 """
 import os
 import re
@@ -40,13 +47,17 @@ THIN = ("pole", "traffic light", "traffic sign")
 # missed patches of sky that views disagreed on.
 SKY = ("sky",)
 # Cityscapes' 19 classes, by id: every Cityscapes SegFormer labels this way
-# (get_segmenter checks), so a saved class map reads without the model.
-CLASSES = ("road", "sidewalk", "building", "wall", "fence", "pole", "traffic light", "traffic sign",
-           "vegetation", "terrain", "sky", "person", "rider", "car", "truck", "bus", "train",
-           "motorcycle", "bicycle")
+# (get_segmenter checks), so a saved class map reads without the model --
+# then "water", from WATER_MODEL_ID.
+CITYSCAPES = ("road", "sidewalk", "building", "wall", "fence", "pole", "traffic light", "traffic sign",
+              "vegetation", "terrain", "sky", "person", "rider", "car", "truck", "bus", "train",
+              "motorcycle", "bicycle")
+CLASSES = CITYSCAPES + ("water",)
 LABEL_IDS = {name: i for i, name in enumerate(CLASSES)}
+WATER_MODEL_ID = "nvidia/segformer-b2-finetuned-ade-512-512"
+WATER_CLASSES = ("water", "sea", "river", "lake", "swimming pool")   # ADE20K's
 # What is dropped by default; any of CLASSES can be named per run instead.
-DROP = MOVERS + THIN
+DROP = MOVERS + THIN + ("water",)
 # Grow each mask by a few pixels: depth at an object's edge smears between
 # it and what's behind, and those in-between points are the worst floaters.
 GROW_PX = 3
@@ -73,41 +84,59 @@ def _device():
     return "cpu"
 
 
-def get_segmenter(model_id=None, device=None):
-    """(processor, model, {class name: id}) for a Cityscapes SegFormer
-    (default MODEL_ID) on device (default: the GPU if there is one): the
-    default is built at startup on a Space (see streetview_to_3d.gpu),
-    anything else on first use. Outside a GPU call on a Space, ask for
-    "cpu"."""
-    model_id, device = model_id or MODEL_ID, device or _device()
+def _load(model_id, device):
+    """(processor, model, {class name: id}), each built once per device."""
     if (model_id, device) not in _models:
         from transformers import AutoModelForSemanticSegmentation, AutoProcessor
         processor = AutoProcessor.from_pretrained(model_id)
         model = AutoModelForSemanticSegmentation.from_pretrained(model_id).to(device).eval()
-        label_ids = {name: int(i) for i, name in model.config.id2label.items()}
-        if label_ids != LABEL_IDS:
-            raise ValueError(f"{model_id} does not label as Cityscapes does: {label_ids}")
-        _models[(model_id, device)] = (processor, model, label_ids)
+        _models[(model_id, device)] = (processor, model,
+                                       {name: int(i) for i, name in model.config.id2label.items()})
     return _models[(model_id, device)]
 
 
-def label_views(paths, model_id=None, device=None):
-    """(one Cityscapes class-id map per image path, {class name: id}), each
-    image fed at its own shape, MASK_W wide. model_id, device: see
-    get_segmenter."""
+def get_segmenter(model_id=None, device=None):
+    """(processor, model, {class name: id}) for a Cityscapes SegFormer
+    (default MODEL_ID) on device (default: the GPU if there is one), the
+    water one (WATER_MODEL_ID) loaded beside it: the default is built at
+    startup on a Space (see streetview_to_3d.gpu), anything else on first
+    use. Outside a GPU call on a Space, ask for "cpu"."""
+    model_id, device = model_id or MODEL_ID, device or _device()
+    processor, model, label_ids = _load(model_id, device)
+    if label_ids != {n: i for i, n in enumerate(CITYSCAPES)}:
+        raise ValueError(f"{model_id} does not label as Cityscapes does: {label_ids}")
+    _load(WATER_MODEL_ID, device)
+    return processor, model, label_ids
+
+
+def _segment(images, processor, model):
+    """One class-id map per image, each fed at its own shape, MASK_W wide."""
     import torch
-    processor, model, label_ids = get_segmenter(model_id, device)
+    w, h = images[0].size
+    size = {"width": MASK_W, "height": max(32, round(MASK_W * h / w / 32) * 32)} if MASK_W else None
+    with torch.inference_mode():
+        inputs = processor(images=images, return_tensors="pt", **({"size": size} if size else {})).to(model.device)
+        labels = processor.post_process_semantic_segmentation(
+            model(**inputs), target_sizes=[im.size[::-1] for im in images])
+    return [lab.cpu().numpy() for lab in labels]
+
+
+def label_views(paths, model_id=None, device=None):
+    """(one class-id map per image path -- Cityscapes', water marked over
+    it -- and {class name: id}, as LABEL_IDS). model_id, device: see
+    get_segmenter."""
+    device = device or _device()
+    processor, model, _ = get_segmenter(model_id, device)
+    w_processor, w_model, w_ids = _load(WATER_MODEL_ID, device)
+    water = [w_ids[n] for n in WATER_CLASSES]
     out = []
     for start in range(0, len(paths), BATCH):
         images = [Image.open(p).convert("RGB") for p in paths[start:start + BATCH]]
-        w, h = images[0].size
-        size = {"width": MASK_W, "height": max(32, round(MASK_W * h / w / 32) * 32)} if MASK_W else None
-        with torch.inference_mode():
-            inputs = processor(images=images, return_tensors="pt", **({"size": size} if size else {})).to(model.device)
-            labels = processor.post_process_semantic_segmentation(
-                model(**inputs), target_sizes=[im.size[::-1] for im in images])
-        out += [lab.cpu().numpy().astype(np.uint8) for lab in labels]
-    return out, label_ids
+        for lab, wet in zip(_segment(images, processor, model), _segment(images, w_processor, w_model)):
+            lab = lab.astype(np.uint8)
+            lab[np.isin(wet, water)] = LABEL_IDS["water"]
+            out.append(lab)
+    return out, LABEL_IDS
 
 
 def masks_from_labels(labels, label_ids, classes=None, long_only=True):
@@ -116,7 +145,7 @@ def masks_from_labels(labels, label_ids, classes=None, long_only=True):
     grown by GROW_PX."""
     unknown = set(classes or ()) - set(label_ids)
     if unknown:
-        raise ValueError(f"not Cityscapes classes: {sorted(unknown)}")
+        raise ValueError(f"not classes we label: {sorted(unknown)}")
     names = classes or DROP
     others = [label_ids[n] for n in names if n != "pole"]
     masks = []
@@ -154,7 +183,7 @@ def pano_labels(path, model_id=None, device=None, saved=None):
     beside it, named by the model) for whatever needs it later -- the scene
     carries a copy (labels_path). A saved one is read, not redone: the walk
     runs DA3 on one pano many times. model_id, device: see get_segmenter."""
-    saved = saved or f"{path}.{(model_id or MODEL_ID).split('/')[-1]}.labels.png"
+    saved = saved or f"{path}.{(model_id or MODEL_ID).split('/')[-1]}+water.labels.png"
     if os.path.exists(saved):
         return np.asarray(Image.open(saved))
     labels = label_views([path], model_id, device)[0][0]
