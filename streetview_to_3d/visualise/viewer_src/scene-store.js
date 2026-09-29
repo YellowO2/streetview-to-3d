@@ -54,17 +54,17 @@ export function parsePoints(buffer, transform) {
   }
 }
 // postprocess/terrain.py spaces its points further apart the further they
-// are -- the land from the centre (terrain.step_at), the buildings from
-// the nearest camera (terrain.building_step) -- out to 2 km: drawn at one
-// size they would be dust far out. So split into rings, each drawn its own
-// size in metres (userData.pointSize), just over its spacing.
-const TERRAIN_RINGS = [3, 6, 10, 15, 20, 30, 50, 100, 200, 400, 800, 1600, Infinity];
+// are, out to 2 km (SPACING, as terrain.step_at and terrain.building_step):
+// drawn at one size they would be dust far out. So they are grouped by
+// their spacing, each group drawn its own size in metres
+// (userData.pointSize), just over that spacing.
+const GAPS = [0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 8, 12, 20, Infinity];
+const nearest = (x, z, places) => Math.min(...places.map(([a, b]) => Math.hypot(x - a, z - b)));
 export const SPACING = {
-  terrain: { at: (d) => Math.max(0.5, 0.01 * d) },
-  buildings: {
-    at: (d) => Math.min(0.05 * 2 ** (d / 8), Math.max(0.05, 0.02 * d)),
-    fromCameras: true,
-  },
+  terrain: (x, z) => Math.max(0.5, 0.01 * Math.hypot(x, z)),
+  // the land's, but DA3-dense near a camera: 5 cm there, doubling every 8 m
+  buildings: (x, z, cams) =>
+    Math.min(Math.max(0.5, 0.01 * Math.hypot(x, z)), 0.05 * 2 ** (nearest(x, z, cams) / 8)),
 };
 // Each placed node's camera, seen from above, in the viewer's frame.
 export function cameraPlaces(data) {
@@ -77,19 +77,18 @@ export function cameraPlaces(data) {
       return [v.x, v.z];
     });
 }
-export function terrainBands(points, { at } = SPACING.terrain, centres = [[0, 0]]) {
+export function terrainBands(points, spacing = SPACING.terrain, cams = [[0, 0]]) {
   const geometry = points.geometry;
   const p = geometry.getAttribute('position'),
     c = geometry.getAttribute('color');
-  const ring = new Uint8Array(p.count);
+  const group = new Uint8Array(p.count);
   for (let i = 0; i < p.count; i++) {
-    let d = Infinity;
-    for (const [x, z] of centres) d = Math.min(d, Math.hypot(p.getX(i) - x, p.getZ(i) - z));
-    while (d > TERRAIN_RINGS[ring[i]]) ring[i]++;
+    const gap = spacing(p.getX(i), p.getZ(i), cams) * 0.999;
+    while (gap > GAPS[group[i]]) group[i]++;
   }
-  const bands = TERRAIN_RINGS.flatMap((outer, r) => {
+  const bands = GAPS.flatMap((gap, g) => {
     const members = [];
-    for (let i = 0; i < p.count; i++) if (ring[i] === r) members.push(i);
+    for (let i = 0; i < p.count; i++) if (group[i] === g) members.push(i);
     if (!members.length) return [];
     const part = new THREE.BufferGeometry();
     const pick = (attr) =>
@@ -102,8 +101,7 @@ export function terrainBands(points, { at } = SPACING.terrain, centres = [[0, 0]
     part.computeBoundingBox();
     part.computeBoundingSphere();
     const band = new THREE.Points(part, points.material.clone());
-    const reach = Number.isFinite(outer) ? outer : 2000;
-    band.userData.pointSize = 1.5 * at(reach);
+    band.userData.pointSize = 1.5 * (Number.isFinite(gap) ? gap : 30);
     return [band];
   });
   geometry.dispose();
@@ -178,9 +176,8 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           return null;
         }
         const points = parsePoints(buffer);
-        const spacing = SPACING[key],
-          centres = spacing?.fromCameras ? cameraPlaces(data) : undefined;
-        for (const part of spacing ? terrainBands(points, spacing, centres) : [points]) {
+        const spacing = SPACING[key];
+        for (const part of spacing ? terrainBands(points, spacing, cameraPlaces(data)) : [points]) {
           part.userData.surroundings = key;
           group.add(part);
         }
