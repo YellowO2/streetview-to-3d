@@ -27,7 +27,7 @@ share of the view:
    buildings fitted onto DA3's walls, what DA3 has of them left to it
 
 Written to terrain.ply beside scene.json (its "terrain"), the buildings,
-spaced finer (building_step), to buildings.ply (its "buildings"), both
+spaced by distance to the nearest camera (B_STEP), to buildings.ply (its "buildings"), both
 already in the world frame. The viewer draws its points larger with distance, as they
 are spaced (scene-store.js, terrainBands).
 
@@ -58,8 +58,7 @@ BUILDINGS_M, ROADS_M = 1000.0, 700.0         # OSM's reach (roads are drawn only
 FADE_M, TINT_M, MEET_M = 4.0, 8.0, 10.0  # the ground's seam with the scene (seams.py): bands
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
 WALL_ABOVE_M = 1.0                        # scene points this far over the ground are walls, trees
-CUT_M, BUILDING_FADE_M = 2.0, 7.0         # OSM buildings: dropped this near DA3's points, faded in over this
-B_STEP, B_MIN_STEP_M = 0.01, 0.3          # buildings' spacing: the land's, but finer near, where they meet DA3
+B_STEP, B_MIN_STEP_M = 0.01, 0.15         # buildings' spacing by distance to the nearest camera: DA3's next to them
 STEP, MIN_STEP_M = 0.01, 0.5
 M_PER_LAT = 111320.0
 PLAIN = np.array([0.50, 0.55, 0.45])
@@ -116,11 +115,6 @@ def colour_map():
 def step_at(d):
     """Point spacing d metres from the centre."""
     return max(MIN_STEP_M, STEP * d)
-
-
-def building_step(d):
-    """Building point spacing d metres from the centre."""
-    return max(B_MIN_STEP_M, B_STEP * d)
 
 
 def reach(ground, ground_here):
@@ -195,6 +189,8 @@ def build(scene_dir, log=print):
     if not cams:
         log("terrain: no placed cameras")
         return
+    cam_xz = np.array([(np.asarray(n.transform)[:3, :3] @ n.position + np.asarray(n.transform)[:3, 3])[[0, 2]]
+                       for n in cams])
 
     # the ground: the map, one shift to Google's datum, then bent onto every
     # pano's own elevation near them
@@ -257,33 +253,27 @@ def build(scene_dir, log=print):
     bp = bc = np.zeros((0, 3))
     n_fitted = n_cut = 0
     if outlines:
+        from scipy.spatial import cKDTree
         above = -scene[:, 1] > ground(scene[:, [0, 2]]) + WALL_ABOVE_M
         outlines, n_fitted = buildings.fit_to_scene(outlines, scene[above], ground)
-        bp, bc, which, light = buildings.points(
-            outlines, building_step, ground,
+        cam_tree = cKDTree(cam_xz)
+        blocks = buildings.points(
+            outlines, lambda xy: np.maximum(B_MIN_STEP_M, B_STEP * cam_tree.query(xy)[0]), ground,
             lambda xy: colours(*to_ll(xy)) ** LIFT if colours else np.tile(PLAIN, (len(xy), 1)),
             SUN / np.linalg.norm(SUN))
         n_buildings = len(outlines)
         try:
-            own = _pano_colours(sc, scene_dir, bp, which, len(outlines), scene)
-            wall = ~np.isnan(light) & ~np.isnan(own[which, 0])
-            bc[wall] = own[which[wall]] * (0.85 + 0.15 * light[wall, None])
+            own = _pano_colours(sc, scene_dir, blocks.pts, blocks.which, len(outlines), scene)
+            wall = ~np.isnan(blocks.light) & ~np.isnan(own[blocks.which, 0])
+            blocks.cols[wall] = own[blocks.which[wall]] * (0.85 + 0.15 * blocks.light[wall, None])
             n_seen = int((~np.isnan(own[:, 0])).sum())
         except (OSError, ValueError) as e:  # the satellite's colour stands
             log(f"terrain: no pano colour for buildings ({e!r})")
-        # what DA3 already has of a building goes; the rest fades in next to it
-        if len(scene):
-            from scipy.spatial import cKDTree
-            d, k = cKDTree(scene).query(bp, k=8, distance_upper_bound=CUT_M + BUILDING_FADE_M)
-            hit = np.isfinite(d)
-            nearby = np.where(hit[..., None], scene_cols[np.minimum(k, len(scene) - 1)], np.nan)
-            n_near = hit.sum(1)[:, None]
-            near_c = np.where(n_near > 0, np.nansum(nearby, 1) / np.maximum(n_near, 1), np.nan)
-            d = d[:, 0]
-            keep = seams.fade(d, CUT_M, BUILDING_FADE_M, seed=1)
-            n_cut = int((d <= CUT_M).sum())
-            bc = seams.tint(bc, near_c, d, CUT_M, BUILDING_FADE_M, TINT)
-            bp, bc = bp[keep], bc[keep]
+        # what DA3 already has of a building is left to it; the rest meets it
+        roofs_near = cKDTree(scene).query(blocks.pts, distance_upper_bound=1.0)[0] if len(scene) \
+            else np.full(len(blocks.pts), np.inf)
+        n_cut = buildings.seam(blocks, scene[above], scene_cols[above], roofs_near, np.random.default_rng(1))
+        bp, bc = blocks.pts, blocks.cols
     lines = roads.lines(elements, to_xy)
     if lines:
         rp, rc = roads.points(lines, step_at, ground)

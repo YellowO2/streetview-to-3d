@@ -54,22 +54,34 @@ export function parsePoints(buffer, transform) {
   }
 }
 // postprocess/terrain.py spaces its points further apart the further they
-// are from the centre (SPACING, as terrain.step_at and building_step), out
-// to 2 km: drawn at one size they would be dust far out. So split into
-// rings, each drawn its own size in metres (userData.pointSize), just over
-// its spacing.
-const TERRAIN_RINGS = [50, 100, 200, 400, 800, 1600, Infinity];
+// are -- the land from the centre (terrain.step_at), the buildings from
+// the nearest camera (terrain.B_STEP) -- out to 2 km: drawn at one size
+// they would be dust far out. So split into rings, each drawn its own size
+// in metres (userData.pointSize), just over its spacing.
+const TERRAIN_RINGS = [10, 20, 35, 50, 100, 200, 400, 800, 1600, Infinity];
 export const SPACING = {
   terrain: { per: 0.01, min: 0.5 },
-  buildings: { per: 0.01, min: 0.3 },
+  buildings: { per: 0.01, min: 0.15, fromCameras: true },
 };
-export function terrainBands(points, { per, min } = SPACING.terrain) {
+// Each placed node's camera, seen from above, in the viewer's frame.
+export function cameraPlaces(data) {
+  return data.nodes
+    .filter((n) => n.transform && n.position)
+    .map((n) => {
+      const v = new THREE.Vector3(...n.position)
+        .applyMatrix4(new THREE.Matrix4().set(...n.transform.flat()))
+        .applyMatrix4(flip);
+      return [v.x, v.z];
+    });
+}
+export function terrainBands(points, { per, min } = SPACING.terrain, centres = [[0, 0]]) {
   const geometry = points.geometry;
   const p = geometry.getAttribute('position'),
     c = geometry.getAttribute('color');
   const ring = new Uint8Array(p.count);
   for (let i = 0; i < p.count; i++) {
-    const d = Math.hypot(p.getX(i), p.getZ(i));
+    let d = Infinity;
+    for (const [x, z] of centres) d = Math.min(d, Math.hypot(p.getX(i) - x, p.getZ(i) - z));
     while (d > TERRAIN_RINGS[ring[i]]) ring[i]++;
   }
   const bands = TERRAIN_RINGS.flatMap((outer, r) => {
@@ -163,7 +175,9 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           return null;
         }
         const points = parsePoints(buffer);
-        for (const part of SPACING[key] ? terrainBands(points, SPACING[key]) : [points]) {
+        const spacing = SPACING[key],
+          centres = spacing?.fromCameras ? cameraPlaces(data) : undefined;
+        for (const part of spacing ? terrainBands(points, spacing, centres) : [points]) {
           part.userData.surroundings = key;
           group.add(part);
         }

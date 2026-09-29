@@ -6,16 +6,17 @@ Footprints from osm.py, each raised into a block of points:
     guess by kind (DEFAULT_M; most buildings carry neither -- NTU: 1864 of
     2628)
   - one DA3 built a wall of is slid onto it, a guessed height made DA3's
-    (fit_to_scene); terrain.py then drops what DA3 already has of it and
-    fades the rest in (seams.py)
+    (fit_to_scene); what DA3 already has of it is left to DA3 and the rest
+    faded in next to it, judged on the wall itself (seam)
   - standing on the lowest ground under its outline (terrain.py's map)
-  - walls and a flat roof, spaced as the terrain is at that distance
+  - walls and a flat roof, spaced by how near the scene's cameras they
+    are -- as densely as DA3 next to them (points)
   - roof coloured from the satellite straight above it; walls the
     building's own colour where the scene's panos see enough of it
     (pano_colours), else its roof colour darkened -- either shaded by
     which way the wall faces
 
-Called by terrain.build, whose points they join in terrain.ply.
+Called by terrain.build, which writes them to buildings.ply.
 """
 import numpy as np
 
@@ -32,6 +33,11 @@ ON_WALL_M = 1.5               # after the snap, DA3's points this near an edge a
 TOP_PERCENTILE = 97
 MIN_HEIGHT_M = 2.5
 SAMPLE_M = 0.25
+CHUNK_M = 10.0                # a wall is spaced in pieces this long, each as at its middle
+ROOF_MIN_STEP_M = 0.5         # roofs are seen from above only
+COVER_M = 0.35                # an OSM point DA3 has a point this near (on the wall) is DA3's
+SEAM_DEPTH_M, SEAM_FADE_M = 3.0, 3.0   # DA3's copy of a wall: this far in front or behind; the seam's width
+SEAM_TINT, SEAM_MIN = 0.8, 20
 
 
 def _height(tags):
@@ -128,46 +134,133 @@ def _inside(pts, ring):
     return crosses.sum(1) % 2 == 1
 
 
-def points(outlines, step, ground, colour, sun):
-    """(points (n, 3) world, colours (n, 3)) for every outline.
+class Blocks:
+    """Every building's points, and for each where on its building it is:
+    which building, how lit (NaN on a roof), which wall edge (-1 on a
+    roof) and its place on that wall, u metres along and v metres up
+    (height above sea level). edges[e]: (start, along, outward, length)."""
 
-    step(d): spacing at d metres from the centre; ground(xy): height of the
-    ground at east/north points; colour(xy): the satellite's RGB there."""
-    roofs, walls, lights = [], [], []
+    def __init__(self, pts, cols, which, light, edge, u, v, edges):
+        self.pts, self.cols, self.which, self.light = pts, cols, which, light
+        self.edge, self.u, self.v, self.edges = edge, u, v, edges
+
+    def take(self, keep):
+        for k in ("pts", "cols", "which", "light", "edge", "u", "v"):
+            setattr(self, k, getattr(self, k)[keep])
+
+
+def points(outlines, spacing, ground, colour, sun):
+    """Blocks for every outline.
+
+    spacing(xy): point spacing at east/north points -- a wall is laid in
+    pieces up to CHUNK_M long, each spaced as at its middle, so only what
+    is near gets dense; ground(xy): the ground's height there; colour(xy):
+    the satellite's RGB there."""
+    roofs, walls, lights, edge_of, us, vs, edges = [], [], [], [], [], [], []
     for xy, h, _ in outlines:
-        s = step(float(np.linalg.norm(xy.mean(0))))
         base = ground(xy).min()
         top = base + h
-        # roof: a grid over the outline, plus its corners
+        # roof: a grid over the outline, plus its corners, spaced as at its middle
+        s = float(max(spacing(xy.mean(0)[None])[0], ROOF_MIN_STEP_M))
         lo, hi = xy.min(0), xy.max(0)
         gx, gy = np.meshgrid(np.arange(lo[0], hi[0], s) + s / 2, np.arange(lo[1], hi[1], s) + s / 2)
         grid = np.stack([gx.ravel(), gy.ravel()], 1)
         roof = np.concatenate([grid[_inside(grid, xy)], xy[:-1]])
         roofs.append(np.column_stack([roof[:, 0], np.full(len(roof), -top), roof[:, 1]]))
         # walls: along each edge and up it; lit by how squarely it faces the sun
-        levels = np.arange(base, top, s)
-        w, light = [], []
+        w, light, eo, uu, vv = [], [], [], [], []
         for a, c in zip(xy[:-1], xy[1:]):
-            n = max(1, int(np.linalg.norm(c - a) / s))
-            along = a + (c - a) * (np.arange(n) / n)[:, None]
-            w.append(np.column_stack([np.repeat(along[:, 0], len(levels)), -np.tile(levels, n),
-                                      np.repeat(along[:, 1], len(levels))]))
-            edge = (c - a) / (np.linalg.norm(c - a) + 1e-9)
-            light.append(np.full(n * len(levels), abs(np.array([edge[1], 0.0, -edge[0]]) @ sun)))
-        walls.append(np.concatenate(w))
-        lights.append(np.concatenate(light))
+            length = float(np.linalg.norm(c - a))
+            if length < 1e-6:
+                continue
+            t = (c - a) / length
+            out = np.array([t[1], -t[0]])                    # outward for a counter-clockwise ring
+            e = len(edges)
+            edges.append((a, t, out, length))
+            lit = abs(np.array([out[0], 0.0, out[1]]) @ sun)
+            for c0 in np.arange(0, length, CHUNK_M):
+                c1 = min(length, c0 + CHUNK_M)
+                s = float(spacing((a + t * (c0 + c1) / 2)[None])[0])
+                along = np.arange(c0, c1, s)
+                levels = np.arange(base, top, s)
+                U, V = np.repeat(along, len(levels)), np.tile(levels, len(along))
+                w.append(np.column_stack([a[0] + t[0] * U, -V, a[1] + t[1] * U]))
+                light.append(np.full(len(U), lit))
+                eo.append(np.full(len(U), e))
+                uu.append(U)
+                vv.append(V)
+        walls.append(np.concatenate(w) if w else np.zeros((0, 3)))
+        lights.append(np.concatenate(light) if light else np.zeros(0))
+        edge_of.append(np.concatenate(eo) if eo else np.zeros(0, int))
+        us.append(np.concatenate(uu) if uu else np.zeros(0))
+        vs.append(np.concatenate(vv) if vv else np.zeros(0))
     if not roofs:
-        return np.zeros((0, 3)), np.zeros((0, 3))
+        z = np.zeros((0, 3))
+        return Blocks(z, z, np.zeros(0, int), np.zeros(0), np.zeros(0, int), np.zeros(0), np.zeros(0), [])
     rgb = colour(np.concatenate(roofs)[:, [0, 2]])
-    pts, cols, which, lit, at = [], [], [], [], 0
-    for i, (roof, wall, light) in enumerate(zip(roofs, walls, lights)):
+    pts, cols, which, lit, edge, u, v, at = [], [], [], [], [], [], [], 0
+    for i, (roof, wall, light, eo, uu, vv) in enumerate(zip(roofs, walls, lights, edge_of, us, vs)):
         mine = rgb[at:at + len(roof)]
         at += len(roof)
         pts += [roof, wall]
         cols += [mine, mine.mean(0) * 0.85 * (0.7 + 0.3 * light[:, None])]
         which.append(np.full(len(roof) + len(wall), i))
         lit += [np.full(len(roof), np.nan), light]
-    return np.concatenate(pts), np.concatenate(cols), np.concatenate(which), np.concatenate(lit)
+        edge += [np.full(len(roof), -1), eo.astype(int)]
+        u += [np.zeros(len(roof)), uu]
+        v += [-roof[:, 1], vv]
+    return Blocks(np.concatenate(pts), np.concatenate(cols), np.concatenate(which), np.concatenate(lit),
+                  np.concatenate(edge), np.concatenate(u), np.concatenate(v), edges)
+
+
+def seam(blocks, walls, wall_cols, roofs_near, rng):
+    """Leave to DA3 what it has of each building, and fade the rest in.
+
+    A wall's points against DA3's own copy of that wall, on the wall: DA3's
+    points within SEAM_DEPTH_M in front of or behind it (walls: the scene's
+    points above its ground), flattened onto it as (along, up). An OSM
+    point DA3 covers (within COVER_M there) goes, however far in front or
+    behind DA3's copy stands -- a 3D distance left a strip as wide as that
+    gap empty. Next to what DA3 covers, over SEAM_FADE_M: half of them
+    kept rising to all, pulled onto DA3's depth for that wall (its median)
+    and to DA3's colour there -- the two meet and interleave rather than
+    stop. A roof goes where DA3 has points within COVER_M of it
+    (roofs_near: their distance).
+    Returns how many points DA3 already had."""
+    from scipy.spatial import cKDTree
+    from streetview_to_3d.postprocess.seams import ramp
+    keep = np.ones(len(blocks.pts), bool)
+    keep[blocks.edge < 0] = roofs_near[blocks.edge < 0] > COVER_M
+    if not len(walls):
+        blocks.take(keep)
+        return int((~keep).sum())
+    tree = cKDTree(walls[:, [0, 2]])
+    order = np.argsort(blocks.edge, kind="stable")
+    bounds = np.searchsorted(blocks.edge[order], np.arange(len(blocks.edges) + 1))
+    for e, (a, t, out, length) in enumerate(blocks.edges):
+        mine = order[bounds[e]:bounds[e + 1]]
+        if not len(mine):
+            continue
+        near = tree.query_ball_point(a + t * length / 2, length / 2 + SEAM_DEPTH_M)
+        if len(near) < SEAM_MIN:
+            continue
+        near = np.asarray(near)
+        rel = walls[near][:, [0, 2]] - a
+        u, n = rel @ t, rel @ out
+        on = (np.abs(n) < SEAM_DEPTH_M) & (u > -SEAM_FADE_M) & (u < length + SEAM_FADE_M)
+        if on.sum() < SEAM_MIN:
+            continue
+        near, u, n = near[on], u[on], n[on]
+        d, k = cKDTree(np.c_[u, -walls[near, 1]]).query(np.c_[blocks.u[mine], blocks.v[mine]])
+        band = ramp(d / SEAM_FADE_M)
+        keep[mine] = (d > COVER_M) & (rng.random(len(mine)) < 0.5 + 0.5 * band)
+        pull = (1 - band) * np.median(n)
+        blocks.pts[mine, 0] += pull * out[0]
+        blocks.pts[mine, 2] += pull * out[1]
+        w = (SEAM_TINT * (1 - band))[:, None]
+        blocks.cols[mine] = blocks.cols[mine] * (1 - w) + wall_cols[near[k]] * w
+    blocks.take(keep)
+    return int(len(keep) - keep.sum())
 
 
 def pano_colours(pts, which, n, cameras, photos, occluders):

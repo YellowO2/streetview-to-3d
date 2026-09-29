@@ -135,7 +135,7 @@ test('a placed scene loads its terrain, left out of its bounds', async () => {
     () => false,
   );
   const kinds = asset.group.children.map((o) => o.userData.surroundings || 'node');
-  assert.deepEqual(kinds, ['node', 'terrain']);
+  assert.deepEqual([...new Set(kinds)], ['node', 'terrain']); // the terrain in rings by distance
   const store = new SceneStore();
   store.install(asset, 'Test');
   assert(store.box().getBoundingSphere(new THREE.Sphere()).radius < 20);
