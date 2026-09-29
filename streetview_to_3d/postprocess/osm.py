@@ -21,18 +21,18 @@ TIMEOUT_S = 60
 CACHE = "osm.json"        # beside scene.json: a rebuild never asks again
 
 
-def fetch(lat0, lon0, radius_m, m_per_lat, m_per_lon, scene_dir=None):
-    """Every building and road way (and building relation) within
-    radius_m, geometry included, as Overpass returns them; kept in
+def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None):
+    """Every building way and relation within buildings_m and road way
+    within roads_m, geometry included, as Overpass returns them; kept in
     scene_dir's CACHE once had."""
     cache = scene_dir and os.path.join(scene_dir, CACHE)
     if cache and os.path.exists(cache):
         with open(cache) as f:
             return json.load(f)
-    dlat, dlon = radius_m / m_per_lat, radius_m / m_per_lon
-    box = f"{lat0 - dlat},{lon0 - dlon},{lat0 + dlat},{lon0 + dlon}"
-    query = (f'[out:json][timeout:90];(way["building"]({box});relation["building"]({box});'
-             f'way["highway"]({box}););out geom;')
+    box = lambda r: (f"{lat0 - r / m_per_lat},{lon0 - r / m_per_lon},"
+                     f"{lat0 + r / m_per_lat},{lon0 + r / m_per_lon}")
+    query = (f'[out:json][timeout:90];(way["building"]({box(buildings_m)});'
+             f'relation["building"]({box(buildings_m)});way["highway"]({box(roads_m)}););out geom;')
     data = urllib.parse.urlencode({"data": query}).encode()
     error = None
     for url in OVERPASS_URLS:

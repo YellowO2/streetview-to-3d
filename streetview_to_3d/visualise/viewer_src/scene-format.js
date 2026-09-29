@@ -24,7 +24,7 @@ export function scenePieces(data, threshold = 0) {
 }
 // What surrounds the scene, each one .ply already in the world
 // (postprocess/terrain.py): loaded with it, not part of it.
-export const SURROUNDINGS = ['terrain'];
+export const SURROUNDINGS = ['terrain', 'buildings'];
 export function relativePath(path) {
   if (
     typeof path !== 'string' ||

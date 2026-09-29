@@ -53,12 +53,17 @@ export function parsePoints(buffer, transform) {
     throw e;
   }
 }
-// postprocess/terrain.py spaces its points a hundredth of their distance
-// from the centre apart (never under half a metre), out to 2 km: drawn at
-// one size they would be dust far out. So split into rings, each drawn
-// its own size in metres (userData.pointSize), just over its spacing.
+// postprocess/terrain.py spaces its points further apart the further they
+// are from the centre (SPACING, as terrain.step_at and building_step), out
+// to 2 km: drawn at one size they would be dust far out. So split into
+// rings, each drawn its own size in metres (userData.pointSize), just over
+// its spacing.
 const TERRAIN_RINGS = [50, 100, 200, 400, 800, 1600, Infinity];
-export function terrainBands(points) {
+export const SPACING = {
+  terrain: { per: 0.01, min: 0.5 },
+  buildings: { per: 0.01, min: 0.3 },
+};
+export function terrainBands(points, { per, min } = SPACING.terrain) {
   const geometry = points.geometry;
   const p = geometry.getAttribute('position'),
     c = geometry.getAttribute('color');
@@ -83,7 +88,7 @@ export function terrainBands(points) {
     part.computeBoundingSphere();
     const band = new THREE.Points(part, points.material.clone());
     const reach = Number.isFinite(outer) ? outer : 2000;
-    band.userData.pointSize = 1.5 * Math.max(0.5, 0.01 * reach);
+    band.userData.pointSize = 1.5 * Math.max(min, per * reach);
     return [band];
   });
   geometry.dispose();
@@ -158,7 +163,7 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           return null;
         }
         const points = parsePoints(buffer);
-        for (const part of key === 'terrain' ? terrainBands(points) : [points]) {
+        for (const part of SPACING[key] ? terrainBands(points, SPACING[key]) : [points]) {
           part.userData.surroundings = key;
           group.add(part);
         }

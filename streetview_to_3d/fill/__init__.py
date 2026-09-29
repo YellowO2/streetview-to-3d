@@ -47,8 +47,10 @@ def _photo(pano, scene_dir):
     return (path, pano_labels(path, device="cpu", saved=labels_path(scene_dir, pano.id))) if path else None
 
 
-def run(scene_dir, log=print):
-    """Fill the placed scene at scene_dir in place."""
+def run(scene_dir, log=print, google=True):
+    """Fill the placed scene at scene_dir in place. google=False: DA3's own
+    ground only -- its holes and blind discs still filled, no Google depth
+    downloaded, no Google walls (the terrain's OSM buildings stand in)."""
     from streetview_to_3d.google_base import build, gather
     t0 = time.monotonic()
     sc = scene_mod.Scene.load(scene_dir)
@@ -64,15 +66,16 @@ def run(scene_dir, log=print):
     cameras = [Camera(n) for n in nodes]
     cams = np.array([c.centre for c in cameras])
     normals = [normals_from_neighbours(x) for x in clouds]
-    base = build(gather(json.load(open(os.path.join(scene_dir, scene_mod.FILENAME)))), log=log)
+    base = build(gather(json.load(open(os.path.join(scene_dir, scene_mod.FILENAME)))), log=log) \
+        if google else None
     t1 = time.monotonic()
 
-    keep, ground = one_ground(clouds, cams, normals, base.ground)
+    keep, ground = one_ground(clouds, cams, normals, base.ground if base else np.zeros((0, 3)))
     clouds = [x[k] for x, k in zip(clouds, keep)]
     colours = [c[k] for c, k in zip(colours, keep)]
     da3 = np.concatenate(clouds)
     photos = [_photo(n.pano, scene_dir) for n in nodes]
-    walls_from = {n.pano.id for n, ph in zip(nodes, photos) if ph and needs_walls(ph[1])}
+    walls_from = {n.pano.id for n, ph in zip(nodes, photos) if base and ph and needs_walls(ph[1])}
     log(f"fill: Google walls from {len(walls_from)} of {len(nodes)} panos (tall buildings above DA3's views)")
     walls = (fill(base, da3, np.concatenate([nm[k] for nm, k in zip(normals, keep)]),
                   np.concatenate([da3, ground]), walls_from)

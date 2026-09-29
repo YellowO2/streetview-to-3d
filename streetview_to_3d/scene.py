@@ -110,6 +110,8 @@ class Scene:
     # the land, buildings and roads around the scene: a .ply beside
     # scene.json, already in the world (postprocess/terrain.py)
     terrain: str | None = None
+    # the OSM buildings around it, spaced finer than the land (same module)
+    buildings: str | None = None
 
     @property
     def origin(self):
@@ -167,4 +169,4 @@ class Scene:
                    nodes=[Node(pano=Pano(**n.pop("pano")), **n) for n in d["nodes"]],
                    adjacency={str(k): v for k, v in d["adjacency"].items()},
                    edges=[Edge(**e) for e in d["edges"]],
-                   terrain=d.get("terrain"))
+                   terrain=d.get("terrain"), buildings=d.get("buildings"))
