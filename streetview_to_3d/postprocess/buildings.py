@@ -23,6 +23,7 @@ Footprints from osm.py, each raised into a block of points:
 Called by terrain.build, which writes them to buildings.ply.
 """
 import numpy as np
+from scipy.spatial import cKDTree
 
 LEVEL_M = 3.2
 DEFAULT_M = {"house": 7, "detached": 7, "semidetached_house": 7, "terrace": 7, "bungalow": 5,
@@ -52,6 +53,13 @@ NAMED = {"white": (0.95, 0.95, 0.93), "grey": (0.6, 0.6, 0.6), "gray": (0.6, 0.6
          "cream": (0.95, 0.9, 0.78), "tan": (0.82, 0.7, 0.55)}
 WALL_SHADE = 0.85             # a wall facing away from the sun, of one facing it (0.6 looked dull)
 ROOF, INNER = -1, -2          # Blocks.edge for a roof's points and an inner wall's
+# DA3's own copy of a wall (da3_copy, on_plane, stretches): its points within SAME_M of the wall's
+# plane, facing within SAME_DEG of its way, within SAME_NEAR_M of it, SAME_MIN at least; agreeing when
+# its fitted plane faces within AGREE_DEG; on it within ON_WALL_M; along it in SPAN_M steps of
+# SPAN_PER_M points a metre, gaps up to BRIDGE_M closed
+SAME_DEG, SAME_M, SAME_NEAR_M, SAME_MIN = 40, 2.5, 5.0, 200
+AGREE_DEG = 15
+ON_WALL_M, SPAN_M, BRIDGE_M, SPAN_PER_M = 0.5, 0.2, 0.6, 60
 INNER_M, INNER_GAP = (0.6, 1.5), 2.0   # walls again this far inside, this many times sparser: gaps in the
                                        # outer wall show more building, not through it (a solid box behind
                                        # the points looked wrong)
@@ -178,6 +186,47 @@ def colours(outlines, tags, palette_):
     return out
 
 
+def da3_copy(n, d, x, da3, da3_normals):
+    """DA3's own copy of the wall plane (n, d) that the points x lie on:
+    (n2, d2, agrees) fitted to DA3's points within SAME_M of it, facing
+    within SAME_DEG of its way and within SAME_NEAR_M of x -- trees face
+    every way and the ground up, so neither counts -- agrees when it faces
+    within AGREE_DEG of n; None if DA3 has under SAME_MIN such points."""
+    lo, hi = x.min(0) - SAME_NEAR_M, x.max(0) + SAME_NEAR_M
+    cand = np.flatnonzero(np.all((da3 >= lo) & (da3 <= hi), axis=1))
+    cand = cand[(np.abs(da3[cand] @ n - d) < SAME_M)
+                & (np.abs(da3_normals[cand] @ n) > np.cos(np.radians(SAME_DEG)))]
+    if len(cand) < SAME_MIN:
+        return None
+    near, _ = cKDTree(x).query(da3[cand], distance_upper_bound=SAME_NEAR_M)
+    P = da3[cand[np.isfinite(near)]]
+    if len(P) < SAME_MIN:
+        return None
+    c = P.mean(0)
+    n2 = np.linalg.svd(P - c, full_matrices=False)[2][-1]
+    n2 = n2 if n2 @ n > 0 else -n2
+    return n2, float(n2 @ c), bool(n2 @ n >= np.cos(np.radians(AGREE_DEG)))
+
+
+def on_plane(n2, d2, da3, da3_normals):
+    """True for DA3's points on the plane (n2, d2): within ON_WALL_M of it,
+    facing its way."""
+    return (np.abs(da3 @ n2 - d2) < ON_WALL_M) & (np.abs(da3_normals @ n2) > np.cos(np.radians(SAME_DEG)))
+
+
+def stretches(a):
+    """[(start, end), ...] along a wall where DA3 has it: SPAN_M steps with
+    at least SPAN_PER_M points per metre, gaps up to BRIDGE_M closed."""
+    steps, count = np.unique(np.floor(a / SPAN_M).astype(int), return_counts=True)
+    steps = steps[count >= SPAN_PER_M * SPAN_M]
+    if not len(steps):
+        return []
+    breaks = np.flatnonzero((np.diff(steps) - 1) * SPAN_M >= BRIDGE_M)   # empty steps between
+    starts = np.r_[steps[0], steps[breaks + 1]]
+    ends = np.r_[steps[breaks], steps[-1]] + 1
+    return [(a0 * SPAN_M, a1 * SPAN_M) for a0, a1 in zip(starts, ends)]
+
+
 def _wall_samples(a, c, base, top):
     """Points every WALL_SAMPLE_M over the wall from a to c, base to top."""
     length = float(np.linalg.norm(c - a))
@@ -189,10 +238,9 @@ def _wall_samples(a, c, base, top):
 
 def _walls(xy, base, h, da3, da3_normals):
     """{edge index: (n2, d2, DA3's points on that plane)} for the walls of
-    outline xy DA3 has a copy of (fill.google.da3_copy: DA3's points near
+    outline xy DA3 has a copy of (da3_copy: DA3's points near
     its plane that face its way, so trees, poles and the ground never
     count), n2 facing out of the building."""
-    from streetview_to_3d.fill.google import da3_copy, on_plane
     walls = {}
     for j, (a, c) in enumerate(zip(xy[:-1], xy[1:])):
         length = float(np.linalg.norm(c - a))
@@ -216,14 +264,13 @@ def _trim(xy, walls, da3):
     re-drawn round it): DA3's wall is the building's real face, and the
     camera saw it, so nothing of the building stands between them. Only in
     front of the stretches along it where DA3 has that wall
-    (fill.google._stretches) -- its plane runs on past them, maybe through
+    (stretches) -- its plane runs on past them, maybe through
     another wing -- from TRIM_TOL_M out, past DA3's own noise, and only by
     straight walls (TRIM_EDGE_M). None
     when that cuts under TRIM_MIN_M2 or over TRIM_MAX of it."""
     from shapely.geometry import Polygon
     from shapely.geometry.polygon import orient
     from shapely.ops import unary_union
-    from streetview_to_3d.fill.google import _stretches
     poly = Polygon(xy).buffer(0)
     strips = []
     for j, (n2, _, on) in walls.items():
@@ -232,7 +279,7 @@ def _trim(xy, walls, da3):
         n = n2[[0, 2]] / np.linalg.norm(n2[[0, 2]])
         along = np.array([-n[1], n[0]])
         c = da3[on][:, [0, 2]].mean(0)
-        for u0, u1 in _stretches((da3[on][:, [0, 2]] - c) @ along):
+        for u0, u1 in stretches((da3[on][:, [0, 2]] - c) @ along):
             near, far = c + n * TRIM_TOL_M, c + n * TRIM_FRONT_M
             strips.append(Polygon([near + along * u0, near + along * u1, far + along * u1, far + along * u0]))
     if not strips:
@@ -435,7 +482,7 @@ def seam(blocks, da3, da3_normals, da3_cols, roofs_near):
     """Leave to DA3 what it has of each building, and fade the rest in.
 
     Only walls DA3 has a copy of (fit_to_scene's planes) are touched, and
-    only against DA3's points on that plane (fill.google.on_plane), seen
+    only against DA3's points on that plane (on_plane), seen
     on the wall as (along, up): an OSM point goes where DA3 has a point
     within COVER of its own gap there -- however far in front or behind
     DA3's copy stands -- and stays, every one, where it has not: OSM fills
@@ -446,7 +493,6 @@ def seam(blocks, da3, da3_normals, da3_cols, roofs_near):
     where DA3 has a point within COVER of its gap (roofs_near: their
     distance). Returns how many points DA3 already had."""
     from scipy.spatial import cKDTree
-    from streetview_to_3d.fill.google import on_plane
     from streetview_to_3d.postprocess.seams import ramp
     keep = np.ones(len(blocks.pts), bool)
     roof = blocks.edge == ROOF

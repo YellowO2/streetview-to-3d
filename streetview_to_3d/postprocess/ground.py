@@ -93,13 +93,12 @@ class GroundMap:
     xs[k] are cloud k's ground points and cams[k] its camera; each square
     takes the median height of the cloud whose camera is nearest to it, and
     `height` is that, lightly smoothed (smooth_m), ignoring empty squares.
-    extent: more points the map must reach (e.g. another ground to add).
     """
 
-    def __init__(self, xs, cams, cell, smooth_m, extent=None):
+    def __init__(self, xs, cams, cell, smooth_m):
         who = np.concatenate([np.full(len(x), k) for k, x in enumerate(xs)])
         X = np.concatenate(xs)
-        span = X[:, [0, 2]] if extent is None or not len(extent) else np.concatenate([X, extent])[:, [0, 2]]
+        span = X[:, [0, 2]]
         self.cell, self.smooth_m = cell, smooth_m
         self.lo = span.min(0) - 2 * cell
         self.dims = np.floor((span - self.lo) / cell).astype(int).max(0) + 3
@@ -121,15 +120,6 @@ class GroundMap:
 
     def squares(self, xz):
         return np.floor((xz - self.lo) / self.cell).astype(int)
-
-    def medians(self, pts):
-        """Median height of pts per square of this map (NaN where none)."""
-        ij = np.clip(self.squares(pts[:, [0, 2]]), 0, self.dims - 1)
-        flat = ij[:, 0] * self.dims[1] + ij[:, 1]
-        out = np.full(self.dims.prod(), np.nan)
-        if len(pts):
-            out[np.unique(flat)] = _medians(flat, pts[:, 1])
-        return out.reshape(self.dims)
 
     @property
     def have(self):

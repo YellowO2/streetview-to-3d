@@ -35,24 +35,15 @@ CAM_H = 2.45            # camera height, where a camera has no ground under it
 VIEW_BOTTOM_DEG = np.degrees(np.arctan(np.tan(np.radians(VIEW_HFOV / 2)) * 9 / 16))
 
 
-def one_ground(clouds, cams, normals, google_ground):
+def one_ground(clouds, cams, normals):
     """(clouds without their ground points, the one ground's points).
 
     clouds[k]: cloud k's points in world metres (y down), cams[k] its
-    camera, normals[k] its points' normals. google_ground: the Google
-    base's ground points, for where DA3 has none."""
+    camera, normals[k] its points' normals."""
     G = [ground(x, c, normals=n, seed_m=DA3_SEED_M) for x, c, n in zip(clouds, cams, normals)]
-    m = GroundMap([x[g] for x, g in zip(clouds, G)], cams, CELL_M, SMOOTH_M, extent=google_ground)
+    m = GroundMap([x[g] for x, g in zip(clouds, G)], cams, CELL_M, SMOOTH_M)
 
-    # Google's ground where DA3 has none, shifted onto DA3's height
-    g_raw = m.medians(google_ground)
-    both = m.have & np.isfinite(g_raw)
-    shift = float(np.median(m.raw[both] - g_raw[both])) if both.sum() > 20 else 0.0
-    from_google = ~m.have & np.isfinite(g_raw)
-    m.raw[from_google] = g_raw[from_google] + shift
-    m.height = m.smoothed()
-
-    area = from_google.copy()
+    area = np.zeros(m.dims, bool)
     for x, g in zip(clouds, G):
         ij = m.squares(x[g][:, [0, 2]])
         area[ij[:, 0], ij[:, 1]] = True

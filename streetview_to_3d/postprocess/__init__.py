@@ -2,7 +2,7 @@
 
     pipeline.py   the whole thing as one call: place, then fill
     place.py      every piece by its panoramas' GPS, elevation and orientation
-    ground.py     the one ground detector and height map (fill, google_base)
+    ground.py     the one ground detector and height map (fill)
 
 A piece is the nodes sharing a DA3 frame -- a connected component of the
 scene's edges, derived rather than stored. Each arrives internally

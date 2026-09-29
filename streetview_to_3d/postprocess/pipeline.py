@@ -4,7 +4,7 @@ A reconstruction leaves a scene whose nodes each hold their own points, in
 whatever frame DA3 built them. This places every piece by its panoramas'
 GPS, elevation and orientation (place.py), writing each node's own
 transform back into the scene, removes floating bits (blobs.py), fills
-the gaps (streetview_to_3d.fill: one ground, Google's walls, their colour)
+the gaps (streetview_to_3d.fill: one ground, its colour)
 into the node .plys, then lays the land, buildings and roads around it
 (terrain.py, from public maps; the viewer draws the sky) -- scene.json
 plus the .plys it names are the whole result. A viewer reads transform to
@@ -26,10 +26,9 @@ from streetview_to_3d.postprocess.render_pieces import render
 from streetview_to_3d.postprocess.place import place
 
 
-def process(run_dir, log=print, merge_ply=None, fill=True, google=True):
+def process(run_dir, log=print, merge_ply=None, fill=True):
     """Place a reconstruction, remove its floating bits, fill it,
-    then lay its terrain (fill=False: placed only, DA3's points untouched;
-    google=False: the fill from DA3's own ground only, see fill.run).
+    then lay its terrain (fill=False: placed only, DA3's points untouched).
     merge_ply: also write one combined .ply there, for local inspection
     outside the viewer -- not needed by the Space, which reads
     scene.json's per-node transforms directly."""
@@ -43,7 +42,7 @@ def process(run_dir, log=print, merge_ply=None, fill=True, google=True):
         log(f"timing: floating bits {time.monotonic() - t:.1f}s")
         t = time.monotonic()
         try:
-            fill_mod.run(run_dir, log=log, google=google)
+            fill_mod.run(run_dir, log=log)
         except Exception as e:           # the placed scene is still a result
             log(f"fill skipped: {e!r}")
         log(f"timing: fill {time.monotonic() - t:.1f}s")
@@ -61,9 +60,8 @@ def main():
     ap.add_argument("--dir", required=True, help="a reconstruction run's directory")
     ap.add_argument("--merge", help="also write one combined .ply here")
     ap.add_argument("--no-fill", action="store_true", help="place only, no gap fill")
-    ap.add_argument("--no-google", action="store_true", help="fill from DA3's own ground only")
     args = ap.parse_args()
-    process(args.dir, merge_ply=args.merge, fill=not args.no_fill, google=not args.no_google)
+    process(args.dir, merge_ply=args.merge, fill=not args.no_fill)
 
 
 if __name__ == "__main__":

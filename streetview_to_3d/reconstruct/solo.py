@@ -2,23 +2,26 @@
 
 The linked walk (walk_graph) exists to put panos in one
 frame by testing them against each other. Once each pano is placed by its
-own GPS, heading and Google's depth instead (google_base), nothing needs
+own GPS, heading and elevation instead (postprocess.place), nothing needs
 linking, so every pano is reconstructed alone, and every place Google has
 a pano can take part, not only the dots the walk could reach:
 
 1. prepare: per dot, the Google candidates of the best-ranked date that has
-   any there (within google_base's MAX_YEARS of the others); plus Google's official neighbours of those panos
-   (google_base.neighbours), each as a place of its own.
+   any there (within MAX_YEARS of the others); plus Google's official neighbours of those panos
+   (neighbours), each as a place of its own.
 2. reconstruct (GPU): rate each place's candidates, keep the best one's
    own cloud. One piece per pano, each in its own DA3 frame.
 
-Apple panos take no part: they have no depth map to be placed by.
+Apple panos take no part: Google's neighbours are how places are added.
 """
 import asyncio
 import time
 
 import aiohttp
+import numpy as np
+from streetlevel import streetview
 
+from streetview_to_3d.services.geo import latlon_to_local_m
 from streetview_to_3d.services.http_headers import BROWSER_HEADERS
 from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, format_date, run_async
 
@@ -27,6 +30,39 @@ from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_p
 MODEL_LOAD_S = 5.0
 SECONDS_PER_CANDIDATE = 4.0
 SAVE_BUFFER_S = 10.0
+NEAR_M = 15.0        # Google's neighbours this close to a chosen pano join in
+MAX_YEARS = 5        # ...if captured within this many years of it
+
+
+def _official(pano_id):
+    """Google's own captures -- not user-uploaded photospheres."""
+    return len(pano_id) == 22 and not pano_id.startswith("CIHM")
+
+
+async def neighbours(seeds, lat0, lon0, session):
+    """Google's own metadata for the official panos near a set of seed
+    panos (dicts with id, lat, lon, date): each seed's neighbours within
+    NEAR_M of any seed, captured within MAX_YEARS of the seeds' median
+    year, with an elevation. Seeds themselves are left out."""
+    if not seeds:
+        return []
+    seed_ids = {p["id"] for p in seeds}
+    seed_en = np.array([latlon_to_local_m(p["lat"], p["lon"], lat0, lon0) for p in seeds])
+    year = int(np.median([int(str(p["date"])[:4]) for p in seeds]))
+    ids = set()
+    for p in seeds:
+        meta = await streetview.find_panorama_by_id_async(p["id"], session=session)
+        for nb in (meta.neighbors if meta else []):
+            en = np.array(latlon_to_local_m(nb.lat, nb.lon, lat0, lon0))
+            if _official(nb.id) and nb.id not in seed_ids and np.linalg.norm(seed_en - en, axis=1).min() < NEAR_M:
+                ids.add(nb.id)
+    out = []
+    for i in sorted(ids):
+        meta = await streetview.find_panorama_by_id_async(i, session=session)
+        if (meta is not None and meta.elevation is not None and meta.date is not None
+                and abs(meta.date.year - year) <= MAX_YEARS):
+            out.append(meta)
+    return out
 
 
 def _places(date_graphs, catalog):
@@ -34,7 +70,6 @@ def _places(date_graphs, catalog):
     best-ranked date (date_graphs is in rank order) that has any there,
     within MAX_YEARS of the best-ranked date with Google at all -- a place
     captured ten years apart is a different street."""
-    from streetview_to_3d.google_base.fetch import MAX_YEARS
     places, year = {}, None
     for g in date_graphs:
         for dot, bucket in g["dot_candidates"].items():
@@ -50,7 +85,6 @@ def _places(date_graphs, catalog):
 async def _add_neighbours(prep, places):
     """Google's official neighbours of the chosen panos, downloaded and
     added to the catalog, each as a new place (dot) with no road links."""
-    from streetview_to_3d.google_base.fetch import neighbours
     from streetview_to_3d.ui.map_selection.candidates import node_key
     catalog = prep["catalog"]
     seeds = [dict(catalog[c[0]]) for bucket in places.values() for c in bucket]
