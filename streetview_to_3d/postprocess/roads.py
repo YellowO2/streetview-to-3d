@@ -3,7 +3,10 @@
 OSM draws a road as its centreline, so each is given a width -- its own
 "width" tag, else "lanes" x LANE_M, else a guess by kind (WIDTH_M) -- and
 laid as a strip of points LIFT_M above the ground under it, spaced as the
-terrain is at that distance. Paths, steps and the like are narrow ones.
+terrain is at that distance, and only where that spacing leaves it a point
+wide at least: further out it would be a blob, and the satellite shows it.
+Paths, steps and the like are narrow ones. Coloured by its "surface" tag
+(SURFACE), else asphalt for a road and paving for a path.
 
 Called by terrain.build, whose points they join in terrain.ply.
 """
@@ -17,7 +20,12 @@ WIDTH_M = {"motorway": 14, "trunk": 12, "primary": 10, "secondary": 9, "tertiary
 NARROW_M = 2.0            # footways, paths, cycleways, steps, anything else
 SKIP = ("proposed", "construction", "raceway", "bus_stop", "platform", "elevator", "corridor")
 LIFT_M = 0.15
-COLOUR = np.array([1.0, 0.2, 0.8])     # bright, to judge the fit against DA3's own roads
+SURFACE = {"asphalt": (0.33, 0.33, 0.35), "concrete": (0.60, 0.60, 0.58), "paving_stones": (0.58, 0.51, 0.45),
+           "sett": (0.50, 0.47, 0.44), "tiles": (0.63, 0.54, 0.47), "wood": (0.50, 0.38, 0.26),
+           "gravel": (0.58, 0.55, 0.49), "fine_gravel": (0.62, 0.58, 0.50), "compacted": (0.58, 0.54, 0.46),
+           "ground": (0.48, 0.41, 0.31), "dirt": (0.48, 0.41, 0.31), "earth": (0.48, 0.41, 0.31),
+           "sand": (0.72, 0.66, 0.52), "grass": (0.36, 0.50, 0.30)}
+PATHS = ("footway", "path", "pedestrian", "steps", "cycleway", "bridleway")
 
 
 def _width(tags):
@@ -31,8 +39,15 @@ def _width(tags):
     return WIDTH_M.get(tags["highway"], NARROW_M)
 
 
+def _colour(tags):
+    s = tags.get("surface")
+    if s in SURFACE:
+        return np.array(SURFACE[s])
+    return np.array(SURFACE["concrete" if tags["highway"] in PATHS or s == "paving" else "asphalt"])
+
+
 def lines(elements, to_xy):
-    """[(centreline (n, 2) east/north metres, width m)] of the roads among
+    """[(centreline (n, 2) east/north metres, width m, colour)] of the roads among
     osm.fetch's elements that are not tunnels or bridges -- neither lies on
     the ground."""
     out = []
@@ -43,7 +58,7 @@ def lines(elements, to_xy):
         if tags.get("tunnel", "no") != "no" or tags.get("bridge", "no") != "no" or not e.get("geometry"):
             continue
         if len(e["geometry"]) >= 2:
-            out.append((to_xy(e["geometry"]), _width(tags)))
+            out.append((to_xy(e["geometry"]), _width(tags), _colour(tags)))
     return out
 
 
@@ -52,19 +67,22 @@ def points(roads, step, ground):
 
     step(d): spacing at d metres from the centre; ground(xy): height of the
     ground at east/north points."""
-    strips = []
-    for xy, width in roads:
+    strips, cols = [], []
+    for xy, width, colour in roads:
         for a, b in zip(xy[:-1], xy[1:]):
             length = np.linalg.norm(b - a)
             if length < 1e-6:
                 continue
             s = step(float(np.linalg.norm((a + b) / 2)))
+            if s > width:
+                continue
             along = a + (b - a) * (np.arange(max(1, int(length / s)) + 1) / max(1, int(length / s)))[:, None]
             side = np.array([-(b - a)[1], (b - a)[0]]) / length
-            across = np.arange(-width / 2, width / 2 + 1e-9, s) if width > s else np.array([0.0])
+            across = np.arange(-width / 2, width / 2 + 1e-9, s)
             strips.append((along[:, None, :] + across[None, :, None] * side).reshape(-1, 2))
+            cols.append(np.tile(colour, (len(strips[-1]), 1)))
     if not strips:
         return np.zeros((0, 3)), np.zeros((0, 3))
     xy = np.concatenate(strips)
     h = ground(xy) + LIFT_M
-    return np.column_stack([xy[:, 0], -h, xy[:, 1]]), np.tile(COLOUR, (len(xy), 1))
+    return np.column_stack([xy[:, 0], -h, xy[:, 1]]), np.concatenate(cols)

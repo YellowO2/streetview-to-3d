@@ -203,6 +203,7 @@ def build(scene_dir, log=print):
     sea = raw <= SEA_M                      # the tiles carry the sea bed too; laid flat
     h = seams.meet(ground(en, raw), edge_h, dist, MEET_M)
     pts = np.stack([en[:, 0], -h, en[:, 1]], 1)
+    n_ground = len(pts)
 
     # slope shading from the map's height a metre east and north
     d = 1.0
@@ -267,6 +268,14 @@ def build(scene_dir, log=print):
         keep = seams.fade(d, 0.0, FADE_M, seed=2)
         rp, d, g = rp[keep], d[keep], g[keep]
         rp[:, 1] = -(seams.meet(-rp[:, 1] - roads.LIFT_M, g, d, MEET_M) + roads.LIFT_M)
+        # no ground under a road: two layers 15 cm apart fight in the depth buffer far off
+        if len(rp):
+            from scipy.spatial import cKDTree
+            xz = pts[:n_ground][:, [0, 2]]
+            spacing = np.maximum(MIN_STEP_M, STEP * np.linalg.norm(xz, axis=1))
+            under = cKDTree(rp[:, [0, 2]]).query(xz)[0] < spacing / 2
+            pts, cols = pts[np.r_[~under, np.ones(len(pts) - n_ground, bool)]], \
+                cols[np.r_[~under, np.ones(len(cols) - n_ground, bool)]]
         pts, cols = np.concatenate([pts, rp]), np.concatenate([cols, rc[keep]])
         n_roads = len(lines)
 
