@@ -8,12 +8,16 @@ of thousands of ways, and around Stockholm the request timed out. The sea
 is also where the height tiles are at sea level (terrain.SEA_M), as the
 land has always laid it.
 
-Laid on a grid of CELL_M, the wet cells become outlines (shapely), each
-grown UNDER_LAND_M, under its shore: the map's outline is rough (30 m),
-and cut exactly to it the land stopped short of the water or the water of
-the land, a gap between them. Grown, the land's edge stands over the
-water's (terrain.py leaves out only land below its level), as a game lays
-its sea under the coast. Water whose grown outlines touch is one body --
+As a game has it: the land is one ground that goes on under the water,
+the water a flat surface over it, and the shore is wherever the one
+crosses the other -- nothing is cut. Laid on a grid of CELL_M, the wet
+cells become outlines (shapely), each grown UNDER_LAND_M under its shore,
+so its edge is under the land; and the land is carved under the water
+(carve): SLOPE deeper a metre from the shore, down to DEPTH_M, whatever
+the height map says there (by a bridge it blurs the bridge and the island
+into the harbour: 9-13 m over Stockholm's water). Land deeper than SEE_M
+is left out (keep): the water hides it; shallower, it shows through the
+water near the shore. Water whose grown outlines touch is one body --
 the map breaks a harbour at every bridge -- flat at one level, in metres
 above the sea as Google's elevation is (it matched the scene's own ground
 to 0.1 m, Stockholm):
@@ -27,11 +31,15 @@ to 0.1 m, Stockholm):
     was dry
 
 Written to water.json beside scene.json (its "water"), east/north metres:
-    {"surfaces": [{"level": m, "outer": [[e, n], ...], "holes": [[[e, n], ...], ...]}]}
-The viewer draws each as one flat shape (effects/water.js); terrain.py
-leaves out its points where there is water. DA3's own water -- at about
+    {"surfaces": [{"level": m, "outer": [[e, n], ...], "holes": [[[e, n], ...], ...]}],
+     "shore": {"lo": m, "cell": m, "size": n, "metres": [n x n, row by row north-wards]}}
+shore being how far each cell is from dry land, 0 on it, to SHORE_MAX_M: the
+viewer draws each surface as one flat shape (effects/water.js), light and
+clear near the shore, deep further out. DA3's own water -- at about
 street height, grainy -- never becomes points: the masker marks it
-(services.segment, "water").
+(services.segment, "water"). Not what it sees through a bridge's railing
+(ADE20K calls that strip railing): the fill leaves that out, and lays no
+ground over the water past the railing (fill.one_ground, wet_map).
 """
 import json
 import os
@@ -46,6 +54,9 @@ WET = 0.5                 # water at least this share of the time
 CELL_M = 5.0
 MIN_M2 = 400.0            # smaller bodies are left to the land
 UNDER_LAND_M = 20.0
+SLOPE, DEPTH_M = 0.2, 3.0
+SEE_M = 1.5
+SHORE_CELL_M, SHORE_MAX_M = 10.0, 60
 LOW_PCT = 5
 CAP_M, CLEAR_M = 200.0, 0.5
 
@@ -69,11 +80,8 @@ class Water:
     ground height (n,)) of the cameras.
 
     surfaces are its outlines, grown under the land, each at its level;
-    under(xy, height) whether land at east/north points, that high, is
-    under water: wherever the map has water, whatever the height map says
-    there (by a bridge it blurs the bridge and the island into the
-    harbour: 9-13 m over Stockholm's water), and where it grew under the
-    shore, land below its level."""
+    carve and keep shape the land under it; shore how far from dry land
+    (see the module)."""
 
     def __init__(self, radius_m, to_ll, height, shift, panos):
         n = int(np.ceil(radius_m / CELL_M))
@@ -92,7 +100,9 @@ class Water:
         h = height(lat, lon)
         mask = ((often >= WET) | (h <= SEA_M)).reshape(gx.shape)
         mask &= (gx ** 2 + gy ** 2) < radius_m ** 2
+        from scipy.ndimage import distance_transform_edt
         self.mask = mask
+        self.shore = distance_transform_edt(mask) * CELL_M
         wet = mask.ravel()
         self.surfaces, self.level = [], np.full(gx.shape, -np.inf)
         bodies = _bodies(mask, self.lo)
@@ -114,13 +124,53 @@ class Water:
                                   "outer": np.round(body.exterior.coords, 2).tolist(),
                                   "holes": [np.round(r.coords, 2).tolist() for r in body.interiors]})
 
-    def under(self, xy, height):
+    def _at(self, grid, xy, outside):
         i = np.floor((xy - self.lo) / CELL_M).astype(int)
-        inside = ((i >= 0) & (i < self.level.shape[0])).all(1)
-        wet, level = np.zeros(len(xy), bool), np.full(len(xy), -np.inf)
-        wet[inside] = self.mask[i[inside, 1], i[inside, 0]]
-        level[inside] = self.level[i[inside, 1], i[inside, 0]]
-        return wet | (height < level)
+        inside = ((i >= 0) & (i < grid.shape[0])).all(1)
+        out = np.full(len(xy), outside, grid.dtype)
+        out[inside] = grid[i[inside, 1], i[inside, 0]]
+        return out
+
+    def carve(self, xy, height):
+        """height of the land at east/north points, under the water where
+        the map has water: SLOPE deeper a metre from its shore, to DEPTH_M."""
+        level = self._at(self.level, xy, -np.inf)
+        wet = self._at(self.mask, xy, False) & np.isfinite(level)   # a pond too small to be a body: land
+        bed = np.where(wet, level, 0.0) - np.minimum(DEPTH_M, SLOPE * self._at(self.shore, xy, 0.0))
+        return np.where(wet, np.minimum(height, bed), height)
+
+    def keep(self, xy, height):
+        """Whether land at east/north points, that high, is seen: not
+        deeper than SEE_M under the water."""
+        return height >= self._at(self.level, xy, -np.inf) - SEE_M
+
+    def shore_grid(self):
+        """water.json's "shore": the distance from dry land, SHORE_CELL_M a
+        cell, whole metres to SHORE_MAX_M."""
+        k = int(round(SHORE_CELL_M / CELL_M))
+        d = self.shore[k // 2::k, k // 2::k]
+        return {"lo": self.lo, "cell": SHORE_CELL_M, "size": len(d),
+                "metres": np.minimum(np.round(d), SHORE_MAX_M).astype(int).ravel().tolist()}
+
+
+def wet_map(sc):
+    """f(east/north (n, 2)) -> whether the map has water there, around
+    scene sc: the same water as Water's, without its bodies and levels
+    (for the fill, before the land is laid); nowhere if the maps cannot be
+    had."""
+    import math
+    from streetview_to_3d.postprocess.terrain import M_PER_LAT, SEA_M, height_map
+    lat0, lon0 = sc.origin
+    m_per_lon = M_PER_LAT * math.cos(math.radians(lat0))
+    often, height = occurrence_map(), height_map()
+
+    def f(xy):
+        lat, lon = lat0 + xy[:, 1] / M_PER_LAT, lon0 + xy[:, 0] / m_per_lon
+        try:
+            return (often(lat, lon) >= WET) | (height(lat, lon) <= SEA_M)
+        except OSError:
+            return np.zeros(len(xy), bool)
+    return f
 
 
 def _bodies(mask, lo):
@@ -139,7 +189,7 @@ def _bodies(mask, lo):
     return [p for p in getattr(merged, "geoms", [merged]) if p.area >= MIN_M2]
 
 
-def save(scene_dir, surfaces):
+def save(scene_dir, wet):
     with open(os.path.join(scene_dir, FILENAME), "w") as f:
-        json.dump({"surfaces": surfaces}, f)
+        json.dump({"surfaces": wet.surfaces, "shore": wet.shore_grid()}, f, separators=(",", ":"))
     return FILENAME

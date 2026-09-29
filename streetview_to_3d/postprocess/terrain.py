@@ -30,8 +30,9 @@ share of the view:
    from the scene's own panos as the fill colours its ground (_paint), so
    it matches DA3 where they meet; the maps' colours are only for what no
    pano sees
-6. water as flat surfaces of its own (water.py), each body at its level,
-   reaching under the shore; no land or road points below it
+6. water as flat surfaces over the land (water.py), each body at its
+   level; the land goes on under it, carved down from the shore, the
+   shore wherever it crosses the water
 
 Written to terrain.ply beside scene.json (its "terrain"), the buildings,
 spaced the same way, to buildings.ply (its "buildings"), both already in
@@ -238,15 +239,7 @@ def build(scene_dir, log=print):
         raw = heights(*to_ll(xy)) if raw is None else raw
         return np.where(raw <= SEA_M, 0.0, raw) + shift + bend(xy)
 
-    def unbent(xy):
-        """The map on Google's datum, not bent onto the panos: whether land
-        is under water is read off this -- the bend lifts it near the panos
-        to the street, the harbour by a bridge with it."""
-        raw = heights(*to_ll(xy))
-        return np.where(raw <= SEA_M, 0.0, raw) + shift
-
-    # water is a flat surface of its own (water.py), reaching under the
-    # shore: no land points under it, the land's edge over its edge
+    # water: a flat surface over the land, which goes on under it (water.py)
     radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
     wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])))
 
@@ -258,7 +251,6 @@ def build(scene_dir, log=print):
     cam_tree = cKDTree(cam_xz)
     gap = lambda xy: gap_at(cam_tree.query(xy)[0])
     en = sample_points(radius, cam_xz)
-    en = en[~wet.under(en, unbent(en))]
     # the scene's ground-level points: the land fills exactly where they are not
     low = scene[-scene[:, 1] < ground(scene[:, [0, 2]]) + LOW_M] if len(scene) else scene
     low_tree = cKDTree(low[:, [0, 2]]) if len(low) else None
@@ -272,6 +264,10 @@ def build(scene_dir, log=print):
     # under the scene's own ground too, just beneath it: one shared ground,
     # so the scene's is not seen through, the land never over it
     h = np.where(under & np.isfinite(edge_h), np.minimum(h, np.nan_to_num(edge_h) - UNDER_M), h)
+    # under the water the land goes on, carved down (water.py); too deep to see, left out
+    h = wet.carve(en, h)
+    seen = wet.keep(en, h)
+    en, h, dist, edge_c, lat, lon, raw = (a[seen] for a in (en, h, dist, edge_c, lat, lon, raw))
     pts = np.stack([en[:, 0], -h, en[:, 1]], 1)
     n_ground = len(pts)
 
@@ -342,7 +338,7 @@ def build(scene_dir, log=print):
     if lines:
         rp, rc = roads.points(lines, gap, ground)
         keep = uncovered(rp[:, [0, 2]], gap(rp[:, [0, 2]]))
-        keep &= ~wet.under(rp[:, [0, 2]], unbent(rp[:, [0, 2]]))
+        keep &= wet.carve(rp[:, [0, 2]], -rp[:, 1]) >= -rp[:, 1]       # no road where the land dives under the water
         rp = rp[keep]
         d, g, _ = near(rp[:, [0, 2]])
         rp[:, 1] = -(seams.meet(-rp[:, 1] - roads.LIFT_M, g, d, MEET_M) + roads.LIFT_M)
@@ -367,7 +363,7 @@ def build(scene_dir, log=print):
     write_ply(os.path.join(scene_dir, FILENAME), pts, cols)
     sc.terrain = FILENAME
     surfaces = wet.surfaces
-    sc.water = water.save(scene_dir, surfaces) if surfaces else None
+    sc.water = water.save(scene_dir, wet) if surfaces else None
     sc.buildings = None
     if len(bp):
         write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc)

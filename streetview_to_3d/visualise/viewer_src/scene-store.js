@@ -9,7 +9,7 @@ import {
   SURROUNDINGS,
   WATER,
 } from '@viewer/scene-format';
-import { waterSurfaces } from '@viewer/effects/water';
+import { waterSurfaces, disposeWater } from '@viewer/effects/water';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
 export function matrixRows(m) {
@@ -32,7 +32,10 @@ export function dispose(group) {
       o.geometry.dispose();
       o.material.dispose();
     } else if (o.userData.splat) o.dispose();
-    else if (o.isMesh) o.geometry.dispose(); // water: its material is shared
+    else if (o.isMesh) {
+      o.geometry.dispose(); // water: its surfaces share one material
+      disposeWater(o.material);
+    }
   });
 }
 const loader = new PLYLoader();

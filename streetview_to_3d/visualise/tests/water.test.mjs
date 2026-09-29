@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { tickWater, waterSurfaces } from '@viewer/effects/water';
+import { tickWater, waterSurfaces, disposeWater } from '@viewer/effects/water';
 test('water surfaces lie flat at their level, east/north turned into the viewer frame', () => {
   const [lake] = waterSurfaces({
     surfaces: [
@@ -30,4 +30,6 @@ test('water surfaces lie flat at their level, east/north turned into the viewer 
   tickWater(0.05);
   assert(lake.material.uniforms.time.value > time);
   assert.equal(waterSurfaces(null).length, 0);
+  disposeWater(lake.material);
+  disposeWater(lake.material);
 });

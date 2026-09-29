@@ -60,7 +60,8 @@ def run(scene_dir, log=print):
     cameras = [Camera(n) for n in nodes]
     cams = np.array([c.centre for c in cameras])
     normals = [normals_from_neighbours(x) for x in clouds]
-    keep, ground = one_ground(clouds, cams, normals)
+    from streetview_to_3d.postprocess.water import wet_map
+    keep, ground = one_ground(clouds, cams, normals, wet_map(sc))
     clouds = [x[k] for x, k in zip(clouds, keep)]
     colours = [c[k] for c, k in zip(colours, keep)]
     da3 = np.concatenate(clouds)
