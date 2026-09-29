@@ -1,14 +1,13 @@
-"""Low-level fetch of real Street View / Look Around panoramas near a
+"""Low-level fetch of real Street View panoramas near a
 location. Used by the map picker and by build_street_graph/.
 """
 from streetlevel import streetview
 from streetlevel.geo import wgs84_to_tile_coord
-from streetlevel.lookaround import lookaround as apple_lookaround
 
 from streetview_to_3d.services.geo import haversine_m as _haversine_m
 from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id, run_async
 
-# Both services publish coverage on zoom-17 Slippy Map tiles.
+# Street View publishes coverage on zoom-17 Slippy Map tiles.
 _TILE_ZOOM = 17
 
 
@@ -24,16 +23,6 @@ def google_tile_panos(lat, lon):
     seen = {}
     for tx, ty in _tile_neighborhood(lat, lon):
         for p in streetview.get_coverage_tile(tx, ty):
-            seen[p.id] = p
-    return seen
-
-
-def apple_tile_panos(lat, lon):
-    """All Look Around panos on the 3x3 tile neighborhood around (lat, lon), keyed by id."""
-    seen = {}
-    for tx, ty in _tile_neighborhood(lat, lon):
-        tile = apple_lookaround.get_coverage_tile(tx, ty)
-        for p in tile.panos:
             seen[p.id] = p
     return seen
 
@@ -124,21 +113,13 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
     anything found just past the boundary is kept as a leaf in the
     result but never itself expanded further.
 
-    Apple has no real link data (same limitation _augment_real_links
-    documents) -- this only ever discovers Google coverage. Not a
-    problem in practice: Apple candidates still get pulled in later,
-    per corridor dot, by fetch_corridor_nodes's own radius lookup --
-    exactly how a manually-clicked selection already works today, since
-    clicks were always Google-link-driven too.
-
     Returns (nodes, edges) -- same shape nearby_nodes/tab.py's
     state["nodes"]/state["edges"] already use.
     """
     seed_nodes, _ = nearby_nodes(center_lat, center_lon, radius_m=min(radius_m, DEFAULT_RADIUS_M))
     google_seeds = [n for n in seed_nodes if n["key"].startswith("google:")]
     if not google_seeds:
-        # Nothing to walk real links from -- either nothing nearby at
-        # all, or only Apple coverage nearby (no real link data to BFS).
+        # Nothing to walk real links from: nothing nearby at all.
         return (seed_nodes[:1], []) if seed_nodes else ([], [])
 
     start_node = min(google_seeds, key=lambda n: _haversine_m(center_lat, center_lon, n["lat"], n["lon"]))

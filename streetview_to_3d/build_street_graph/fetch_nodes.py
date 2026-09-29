@@ -1,19 +1,15 @@
-"""Gather every Google + Apple panorama along a street corridor (no GPU)."""
+"""Gather every Google panorama along a street corridor (no GPU)."""
 import asyncio
 
 from streetview_to_3d.services.geo import haversine_m
-from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id, format_date
-from streetview_to_3d.ui.map_selection.candidates import MAX_NODES, apple_tile_panos, nearby_nodes, node_key
+from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id
+from streetview_to_3d.ui.map_selection.candidates import MAX_NODES, nearby_nodes, node_key
 
 # Catchment radius for candidate lookup around each real selection-graph
 # node. Real Street View node spacing is commonly ~10-20m, so this is
-# generous enough to catch nearby Apple/Google coverage without one
+# generous enough to catch nearby coverage without one
 # dot's search reaching into a neighboring dot's own territory.
 POINT_MAX_DIST_M = 5.0
-
-# Apple Look Around is left out: its GPS sits 1-1.6 m off Google's, its
-# depth is poor, and there is no depth map to place it by.
-USE_APPLE = False
 
 # Real selection-graph nodes within this distance of each other collapse
 # into ONE dot (see corridor_points) -- real coverage is frequently
@@ -118,34 +114,19 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
     return points, adjacency
 
 
-def _apple_heading(rad):
-    """Apple's heading, in Street View's convention.
-
-    Look Around measures it the opposite way round -- anticlockwise from
-    north where Street View is clockwise. Over 1,625 real panoramas,
-    negating it agrees with the direction of travel to 3.4 deg, matching
-    Street View's own 2.5 deg on the same street; left alone it disagrees
-    by 29.4 deg. The road centre line takes its direction from heading, so
-    an unconverted Apple panorama bends the line the wrong way.
-
-    pitch and roll are not converted: nothing reads them yet, and there is
-    no measurement to say which way round they run.
-    """
-    return None if rad is None else -rad
-
-
 def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
-    """Every Google + Apple pano within max_dist_m of any real corridor
-    node (see corridor_points).
+    """Every Google pano within max_dist_m of any real corridor node (see
+    corridor_points). (Apple Look Around was here too: its GPS sits 1-1.6 m
+    off Google's and its depth is poor, so it is gone.)
 
-    - For each point: nearby_nodes (Google stops) + apple_tile_panos
-      (Apple), both metadata only. A newly-seen Google stop gets one extra
+    - For each point: nearby_nodes (Google stops), metadata only. A
+      newly-seen Google stop gets one extra
       fetch_pano_by_id call for its real historical dates (one graph node
       per date); already-seen stops/panos aren't re-fetched.
 
     Each real pano is assigned to exactly one dot -- the first (lowest-
     index) dot it's found within max_dist_m of, tracked globally via
-    seen_google_ids/seen_apple_ids so a pano already claimed by an earlier
+    seen_google_ids so a pano already claimed by an earlier
     dot never gets double-counted by a later one. The "first dot wins"
     rule resolves the rare case of a pano sitting within range of two
     real dots at once.
@@ -163,7 +144,6 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
     buckets = {i: [] for i in range(len(points))}
     elevations = [None] * len(points)
     seen_google_ids = set()
-    seen_apple_ids = set()
 
     for i, (lat, lon) in enumerate(points):
         try:
@@ -195,26 +175,5 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
                     "pitch": entry.get("pitch", meta.get("pitch")),
                     "roll": entry.get("roll", meta.get("roll")),
                 })
-
-        apple_candidates = {}
-        try:
-            if USE_APPLE:
-                apple_candidates = apple_tile_panos(lat, lon)
-        except Exception as e:
-            print(f"Apple lookup failed near ({lat}, {lon}): {e}")
-        for p in apple_candidates.values():
-            if p.id in seen_apple_ids:
-                continue
-            if haversine_m(lat, lon, p.lat, p.lon) > max_dist_m:
-                continue
-            seen_apple_ids.add(p.id)
-            if elevations[i] is None:
-                elevations[i] = p.elevation
-            buckets[i].append({
-                "key": node_key("apple", p.id), "source": "apple", "id": p.id,
-                "lat": p.lat, "lon": p.lon, "date": format_date(p.date),
-                "heading": _apple_heading(p.heading), "pitch": p.pitch, "roll": p.roll,
-                "_pano": p,  # kept for download_lookaround (needs the object, not just the id)
-            })
 
     return buckets, points, adjacency, elevations

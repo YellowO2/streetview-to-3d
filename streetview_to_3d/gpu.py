@@ -10,9 +10,9 @@ ask: ZeroGPU then moves it onto the GPU for each call, quickly. Built inside
 a call instead, it loaded from disk every time (17-28 s of the window),
 because each call runs in a fresh worker and nothing it loads survives.
 
-`spaces` must be imported before anything initialises CUDA -- streetlevel's
-Look Around reprojection does on import -- or it refuses to load. The
-package's __init__ imports this module first for that reason.
+`spaces` must be imported before anything initialises CUDA, or it refuses
+to load. The package's __init__ imports this module first for that
+reason.
 """
 import os
 import sys

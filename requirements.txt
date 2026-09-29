@@ -17,7 +17,6 @@ pyyaml
 
 streetlevel @ git+https://github.com/YellowO2/streetlevel.git
 torchvision
-pillow-heif
 transformers
 # Unpinned -- bump this comment whenever panoramic-da3's HEAD moves and
 # needs to be picked up, since a text-identical requirements.txt won't

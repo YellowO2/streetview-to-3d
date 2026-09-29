@@ -3,8 +3,8 @@
 One scene.json beside the clouds holds everything that is not geometry.
 
 A NODE is a place we have a photograph of. It exists as soon as the street
-graph is built, before any reconstruction: its Pano is what Street View or
-Look Around told us about that spot. Reconstruction then fills in the rest
+graph is built, before any reconstruction: its Pano is what Street View
+told us about that spot. Reconstruction then fills in the rest
 -- the node's own points, where DA3 put the camera, and once solved, where
 that ply belongs in the world.
 

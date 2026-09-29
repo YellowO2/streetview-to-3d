@@ -14,7 +14,6 @@ import os
 import time
 
 from streetview_to_3d.services.da3_ops import VIEW_STEP_DEGREES
-from streetview_to_3d.services.lookaround_fetch import DA3_ONLY_APPLE_ZOOM, download_lookaround
 from streetview_to_3d.services.pipeline_runner import save_pointcloud
 from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
 from streetview_to_3d.build_street_graph.build_graph import build_corridor_graphs
@@ -34,11 +33,6 @@ async def _download_one(node, sem):
     """Download a node's equirectangular image at DA3-only res, return path (None on failure)."""
     async with sem:
         try:
-            if node["source"] == "apple":
-                # download_lookaround is a blocking call (unlike the Google
-                # path) -- off the event loop so it doesn't stall the other
-                # concurrent downloads while it runs.
-                return await asyncio.to_thread(download_lookaround, node["_pano"], DA3_ONLY_APPLE_ZOOM)
             return await download_pano_by_id(node["id"], zoom=DA3_ONLY_ZOOM)
         except Exception as e:
             print(f"Download failed for {node['key']}: {e}")

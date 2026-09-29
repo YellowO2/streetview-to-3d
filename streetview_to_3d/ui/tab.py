@@ -28,7 +28,7 @@ def _run_dir(prep):
     return path
 
 def handle_pathfind_prepare(state):
-    """Experimental button, step 1 of 3: gathers every Google + Apple pano
+    """Experimental button, step 1 of 3: gathers every Google pano
     near the clicked graph's real shape -- branches and loops included,
     since the selection graph (state["selected"] + state["selected_edges"])
     is only ever built from real Street View edges (see

@@ -1,6 +1,6 @@
 """
 Gradio interface for Street Builder: reconstruct a walkable street corridor
-into a 3D point cloud from Google Street View / Apple Look Around panoramas.
+into a 3D point cloud from Google Street View panoramas.
 
 Run locally:  python app.py
 HF Spaces:    set as app.py, add `spaces` to requirements, enable ZeroGPU.

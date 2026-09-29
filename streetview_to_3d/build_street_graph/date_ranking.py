@@ -33,10 +33,7 @@ def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
     """Every date present in ANY dot's bucket, ranked best-first by span
     (earliest to latest dot it has a pano in -- does coverage reach start
     to end), then total dot count, then recency (newer wins) as the final
-    tiebreaker -- without it, ties fall back to insertion order, which
-    happens to always favor Google over Apple since fetch_corridor_nodes
-    fetches Google first for every dot, regardless of which source's
-    coverage is actually better.
+    tiebreaker -- without it, ties fall back to insertion order.
 
     Computed directly from the buckets (no edges needed) -- "which dots
     have a pano of this date" is exactly what a bucket already tells us.

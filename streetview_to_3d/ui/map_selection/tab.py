@@ -105,7 +105,7 @@ def _augment_real_links(state, key):
     from the original load point or what the bulk tile listing happened to
     include."""
     if not key.startswith("google:"):
-        return state  # only Google exposes real link data; Apple has none
+        return state  # only Google panos have real link data
     pano_id = key.split(":", 1)[1]
     try:
         meta = run_async(fetch_pano_by_id(pano_id))
