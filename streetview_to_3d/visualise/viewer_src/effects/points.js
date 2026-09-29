@@ -5,6 +5,7 @@ const patched = new WeakMap();
 export function pointMotion(object) {
   const material = object.material;
   if (patched.has(material)) return patched.get(material);
+  const stableSeed = !!object.geometry.getAttribute('styleSeed');
   const uniforms = {
     styleDensity: { value: 1 },
     stylePointScale: { value: 1 },
@@ -24,6 +25,7 @@ export function pointMotion(object) {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader =
       `
+      ${stableSeed ? 'attribute float styleSeed;' : ''}
       uniform float styleTime, styleFloat, styleRadius, styleDensity, stylePointScale;
       uniform vec3 styleCenter;
       varying vec3 stylePosition;
@@ -33,7 +35,7 @@ export function pointMotion(object) {
       `
       #include <begin_vertex>
       stylePosition = (modelMatrix * vec4(position, 1.0)).xyz - styleCenter;
-      float phase = fract(sin(dot(position, vec3(12.9898,78.233,37.719))) * 43758.5453) * 6.2831853;
+      float phase = ${stableSeed ? 'styleSeed' : 'fract(sin(dot(position, vec3(12.9898,78.233,37.719))) * 43758.5453)'} * 6.2831853;
       vec3 drift = vec3(sin(styleTime*.55+phase)*.45, sin(styleTime*.8+phase)*.65,
         cos(styleTime*.5+phase)*.45);
       transformed += drift * styleRadius * .004 * styleFloat;
@@ -50,6 +52,7 @@ export function pointMotion(object) {
     shader.fragmentShader =
       `
       varying vec3 stylePosition;
+      ${stableSeed ? 'attribute float styleSeed;' : ''}
       uniform float styleTime, styleRadius, styleScan, styleReveal, styleRound;
     ` + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace(
@@ -69,7 +72,7 @@ export function pointMotion(object) {
     `,
     );
   };
-  material.customProgramCacheKey = () => originalKey + ':viewer-point-motion-v1';
+  material.customProgramCacheKey = () => originalKey + ':viewer-point-motion-v2:' + stableSeed;
   material.needsUpdate = true;
   patched.set(material, uniforms);
   return uniforms;

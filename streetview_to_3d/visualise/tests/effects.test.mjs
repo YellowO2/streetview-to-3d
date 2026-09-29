@@ -46,32 +46,21 @@ test('style controls retain per-preset settings and expose only supported splat 
   dom.window.close();
 });
 
-test('mist terrain stays fixed when camera moves and is excluded from capture geometry', () => {
+test('environment supplies only sky and mist, leaving scene terrain untouched', () => {
   const scene = new THREE.Scene(),
     camera = new THREE.PerspectiveCamera();
+  const terrain = new THREE.Group();
+  scene.add(terrain);
   const environment = createEnvironment(scene);
-  const box = new THREE.Box3(new THREE.Vector3(10, -2, 20), new THREE.Vector3(30, 8, 40));
-  environment.configure(box, 15);
+  environment.configure(15);
   environment.update('dither', camera);
-  const anchor = environment.terrain.position.clone();
-  const matrices = environment.terrain.children.map((o) =>
-    o.geometry.attributes.position.array.slice(),
-  );
-  camera.position.set(100, 200, 300);
-  camera.rotation.y = 1.5;
-  environment.update('dither', camera);
-  assert(environment.terrain.position.equals(anchor));
   assert(scene.fog);
-  assert(environment.terrain.visible);
-  environment.terrain.children.forEach((o, i) => {
-    assert.deepEqual(o.geometry.attributes.position.array, matrices[i]);
-    assert(!o.isPoints);
-  });
+  assert.equal(scene.children.length, 2);
+  assert(terrain.visible);
   environment.update('original', camera);
   assert.equal(scene.fog, null);
-  assert(!environment.terrain.visible);
   environment.dispose();
-  assert.equal(scene.children.length, 0);
+  assert.deepEqual(scene.children, [terrain]);
 });
 
 test('point motion keeps source coordinates and material identity intact', () => {
@@ -106,4 +95,29 @@ test('dither density is bounded across viewport sizes and pixel ratios', () => {
     }
   }
   assert.equal(ditherCellSize(640, 480, 2, 8), 16);
+});
+
+test('bird materials compose with shared point styling and stable particle density', async () => {
+  const { createBird } = await import('@viewer/bird');
+  const model = createBird();
+  let cloud;
+  model.bird.traverse((o) => {
+    if (o.isPoints && !cloud) cloud = o;
+  });
+  assert(cloud.userData.styleAnimated);
+  const uniforms = pointMotion(cloud);
+  uniforms.stylePointScale.value = 1.2;
+  uniforms.styleDensity.value = 0.9;
+  const shader = {
+    uniforms: {},
+    vertexShader: THREE.ShaderLib.points.vertexShader,
+    fragmentShader: THREE.ShaderLib.points.fragmentShader,
+  };
+  cloud.material.onBeforeCompile(shader);
+  assert.match(shader.vertexShader, /float phase = styleSeed/);
+  assert.match(shader.vertexShader, /vBirdAlpha = birdAlpha/);
+  assert.match(shader.fragmentShader, /vBirdAlpha/);
+  assert.equal(shader.uniforms.stylePointScale.value, 1.2);
+  assert.equal(shader.uniforms.styleDensity.value, 0.9);
+  model.dispose();
 });

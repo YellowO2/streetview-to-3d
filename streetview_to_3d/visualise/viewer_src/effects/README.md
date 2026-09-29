@@ -8,12 +8,10 @@ is retained as a reference, not imported at runtime.
 - controller.js: lazy postprocessing, resize, point-motion lifecycle and editor overlay rendering.
 - anime.js, dither.js: colour passes; one is active at a time.
 - points.js: patches existing point materials, leaving geometry and scene.json unchanged.
-- environment.js: camera-centred sky dome and three low-detail terrain rings anchored
-  to the loaded scene, with a ground plane below its bounds. It is decorative scenery,
-  not reconstructed landscape.
+- environment.js: camera-centred sky dome and optional mist. Terrain is loaded from the scene.
 
-Original is the default and uses the original direct render path. Builders can set
-config.style to paint, dither or voxel for a demo. Effects are recursively embedded
+Soft paint is the default. Photoreal (`original`) uses the direct render path. Builders can set
+config.style to original, paint, dither or voxel. Effects are recursively embedded
 by build_viewer.py, so standalone and Gradio viewers share the implementation.
 
 The environment has about 3,500 triangles and uses ordinary rasterization. It is
@@ -67,7 +65,7 @@ colour preset. water.js owns a two-triangle world-horizontal opaque surface;
 height is measured above the loaded bounds' minimum Y in scene-radius units.
 The shader uses animated normals, analytic blue-sky reflection and a sun glint.
 It does not reflect scene objects, simulate waves, or provide shoreline foam.
-Water forces the blue sky and replaces mist terrain while enabled. Settings stay
+Water forces the blue sky while enabled. Settings stay
 across style switches; source positions and exports are unchanged. Motion pauses
 while editing, or with Still water (defaults on for reduced-motion users).
 Spark scenes disable water because transparent splats do not reliably occlude it.

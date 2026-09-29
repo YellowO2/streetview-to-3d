@@ -121,7 +121,9 @@ function configure() {
     ? SPLAT_RADIUS
     : Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 0.001);
   navigation.configure(radius);
-  camera.near = Math.min(0.05, Math.max(radius * 0.0001, 0.00001));
+  // as far out as closeness allows: depth precision a kilometre away (the
+  // terrain's) goes with the near plane, and at 1 cm its points flickered
+  camera.near = Math.min(0.2, Math.max(radius * 0.002, 0.00001));
   camera.far = radius * 1000;
   camera.updateProjectionMatrix();
   view.styles.configure(store, radius);

@@ -22,7 +22,7 @@ test('jewel bird uses coloured points with articulated wings and metre-scale spa
   model.bird.scale.setScalar(FLIGHT.birdScale);
   model.bird.traverse((o) => {
     assert(!o.isMesh);
-    if (o.isPoints) {
+    if (o.isPoints && o.userData.styleAnimated) {
       count += o.geometry.attributes.position.count;
       assert(o.geometry.attributes.color);
     }

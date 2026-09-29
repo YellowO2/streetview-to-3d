@@ -52,7 +52,7 @@ export function createBirdPlume(bird, clouds) {
           velocity
             .set(0.035 * Math.sin(seed * 6.28), 0.045, 0.3)
             .transformDirection(bird.matrixWorld)
-            .multiplyScalar(0.13);
+            .multiplyScalar(0.22);
           p.active = true;
         } else {
           position.addScaledVector(velocity, dt);
@@ -62,7 +62,7 @@ export function createBirdPlume(bird, clouds) {
         points.geometry.attributes.position.setXYZ(i, local.x, local.y, local.z);
         const fadeIn = Math.min(1, progress / 0.12);
         const fadeOut = 1 - THREE.MathUtils.smoothstep(progress, 0.3, 1);
-        alpha.setX(i, fadeIn * fadeOut * 0.7);
+        alpha.setX(i, fadeIn * fadeOut * 0.8);
       }
       for (const { points } of transforms) {
         points.geometry.attributes.position.needsUpdate = true;

@@ -10,7 +10,7 @@ export function createBird() {
   const clouds = [];
   const material = new THREE.PointsMaterial({
     vertexColors: true,
-    size: 0.011,
+    size: 0.012,
     transparent: true,
     depthWrite: false,
     sizeAttenuation: true,
@@ -43,6 +43,15 @@ export function createBird() {
     g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     const p = new THREE.Points(g, material);
 
+    p.userData.styleAnimated = true;
+    // Stable density sampling while the particle positions flow through the plume.
+    g.setAttribute(
+      'styleSeed',
+      new THREE.Float32BufferAttribute(
+        Array.from({ length: vertices.length / 3 }, (_, i) => ((i * 73) % 997) / 997),
+        1,
+      ),
+    );
     p.frustumCulled = false;
     clouds.push({ points: p, rest: Float32Array.from(vertices) });
     parent.add(p);
@@ -136,6 +145,7 @@ export function createBird() {
   const trails = createBirdTrails(
     bird,
     clouds.map((cloud) => cloud.points),
+    clouds.map((cloud) => cloud.rest),
   );
   let phase = 0,
     rate = 4;
