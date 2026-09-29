@@ -3,7 +3,6 @@ const BASE = {
   strength: 1,
   density: 100,
   pointSize: 1,
-  blocks: 1,
   pixels: 3,
   floating: false,
   amount: 0.45,
@@ -13,7 +12,6 @@ const BASE = {
 export const STYLE_DEFAULTS = {
   original: { ...BASE },
   paint: { ...BASE, strength: 0.61, density: 100, pointSize: 1, amount: 0.3, floating: true },
-  voxel: { ...BASE, amount: 0 },
   dither: { ...BASE },
 };
 

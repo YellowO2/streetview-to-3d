@@ -13,7 +13,6 @@ export function createStyleControls(actions) {
     return {
       density: Number($('point-density').value),
       pointSize: 2 ** Number($('point-size').value),
-      blocks: Number($('style-blocks').value),
       strength: Number($('style-strength').value),
       pixels: Number($('style-pixels').value),
       floating: $('style-floating').checked,
@@ -23,16 +22,12 @@ export function createStyleControls(actions) {
     };
   }
   function render() {
-    $('point-density').disabled = blocked || !loaded || splat || current === 'voxel';
+    $('point-density').disabled = blocked || !loaded || splat;
     $('point-density-value').textContent = $('point-density').value + '%';
     const original = current === 'original';
-    document.querySelector('option[value="voxel"]').disabled = splat;
-    $('style-blocks-label').hidden = current !== 'voxel';
-    $('style-strength-label').hidden = current === 'voxel';
-    $('style-blocks-value').textContent = $('style-blocks').value + '×';
     $('style-controls').hidden = original;
     $('style-pixels-label').hidden = current !== 'dither';
-    $('style-point-controls').hidden = splat || current === 'voxel';
+    $('style-point-controls').hidden = splat;
     $('style-splat-note').hidden = !splat;
     $('visual-style').disabled = blocked;
     for (const control of document.querySelectorAll(
@@ -50,7 +45,7 @@ export function createStyleControls(actions) {
   }
   function select(next) {
     next = normalizeStyle(next);
-    if (!(next in saved) || (splat && next === 'voxel')) next = 'original';
+    if (!(next in saved)) next = 'original';
     saved[current] = value();
     current = next;
     $('visual-style').value = next;
@@ -58,7 +53,6 @@ export function createStyleControls(actions) {
     $('point-density').value = preset.density;
     $('point-size').value = Math.log2(preset.pointSize);
     $('point-size').oninput?.();
-    $('style-blocks').value = preset.blocks;
     $('style-strength').value = preset.strength;
     $('style-pixels').value = preset.pixels;
     $('style-floating').checked = preset.floating;
@@ -71,10 +65,6 @@ export function createStyleControls(actions) {
   $('point-density').oninput = apply;
   $('visual-style').onchange = () => select($('visual-style').value);
   for (const input of document.querySelectorAll('#style-controls input')) input.oninput = apply;
-  $('style-blocks').oninput = () => {
-    $('style-blocks-value').textContent = $('style-blocks').value + '×';
-  };
-  $('style-blocks').onchange = apply;
   $('style-reveal').onclick = () => actions.reveal?.();
   return {
     select,
@@ -82,8 +72,7 @@ export function createStyleControls(actions) {
       splat = !!store.splat;
       blocked = disabled;
       loaded = !!store.group;
-      if (splat && current === 'voxel') select('original');
-      else render();
+      render();
     },
   };
 }

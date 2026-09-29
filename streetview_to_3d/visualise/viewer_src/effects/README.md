@@ -3,7 +3,7 @@
 The production viewer owns these effects. The earlier experiments/style-lab
 is retained as a reference, not imported at runtime.
 
-- presets.js: Original, Soft paint, Dither and Voxel world defaults.
+- presets.js: Original, Soft paint and Dither defaults.
 - ui.js: toolbar selector and settings; remembers each preset during the page session.
 - controller.js: lazy postprocessing, resize, point-motion lifecycle and editor overlay rendering.
 - anime.js, dither.js: colour passes; one is active at a time.
@@ -11,7 +11,7 @@ is retained as a reference, not imported at runtime.
 - environment.js: camera-centred sky dome and optional mist. Terrain is loaded from the scene.
 
 Soft paint is the default. Photoreal (`original`) uses the direct render path. Builders can set
-config.style to original, paint, dither or voxel. Effects are recursively embedded
+config.style to original, paint or dither. Effects are recursively embedded
 by build_viewer.py, so standalone and Gradio viewers share the implementation.
 
 The environment has about 3,500 triangles and uses ordinary rasterization. It is
@@ -43,22 +43,11 @@ View settings has a 10–100% density control remembered per style. A determinis
 position hash clips rejected points in the vertex shader, reducing rasterization
 without CPU resampling, geometry mutation or camera-dependent flicker. It does
 not reduce vertex processing or memory. Density is unavailable for Gaussian
-splats and voxel proxies. Point size remains a user multiplier on the preset size.
+splats. Point size remains a user multiplier on the preset size.
 
 Dither grain has a minimum 3 CSS pixel cell size and a maximum of 480 cells
 along the viewport’s longest edge. This caps image-pattern density, independently
 of scene point count and display pixel ratio; it does not decimate geometry.
-
-Voxel world (`voxel`) is a static point-cloud preset in voxel.js. Occupied local
-cells average source colours and render as lit instanced cubes. The requested
-cell size is scene radius × .008 × Block size; a shared 60,000-instance budget
-is divided across source clouds, growing cells as needed. Each cloud has its own
-grid, so overlapping pieces are not merged. Proxy transforms and visibility
-follow the source each frame; source visibility is restored even if rendering
-throws. Geometry and exports are unchanged. Instances rebuild on scene load or
-block-size change (on slider release), not on camera movement. Gaussian splats
-and point-motion controls are unavailable for this preset. First conversion of
-large scenes can briefly pause the UI; animation is deferred.
 
 water.js draws a placed scene's water (water.json, postprocess/water.py): each
 body one flat shape at its own level, with animated normals, analytic blue-sky

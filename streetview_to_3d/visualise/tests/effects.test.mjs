@@ -32,11 +32,7 @@ test('style controls retain per-preset settings and expose only supported splat 
   ui.select('paint');
   assert.equal($('style-strength').value, '0.37');
   assert.equal($('point-density').value, '60');
-  ui.select('voxel');
   ui.render({ group: {}, splat: {} }, false);
-  assert.equal($('visual-style').value, 'original');
-  assert(document.querySelector('option[value="voxel"]').disabled);
-  ui.select('paint');
   assert($('style-point-controls').hidden);
   assert(!$('style-splat-note').hidden);
   ui.render({ group: {}, splat: {} }, true);

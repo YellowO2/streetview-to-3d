@@ -27,7 +27,6 @@
         <option value="original">Photoreal</option>
         <option value="paint">1 · Soft paint</option>
         <option value="dither">2 · Dither</option>
-        <option value="voxel">3 · Voxel world</option>
       </select>
       <button id="toggle-settings" class="quiet" aria-pressed="false" aria-controls="view-panel">
         Settings
@@ -54,11 +53,6 @@
             <label id="style-strength-label"
               >Strength <output id="style-strength-value">100%</output>
               <input id="style-strength" type="range" min="0" max="1" step=".01" value="1" />
-            </label>
-            <label id="style-blocks-label" hidden
-              >Block size <output id="style-blocks-value">1×</output>
-              <input id="style-blocks" type="range" min=".5" max="4" step=".25" value="1" />
-              <span class="muted">Up to 60,000 cubes; dense scenes use larger blocks.</span>
             </label>
             <label id="style-pixels-label"
               >Grain size <output id="style-pixels-value">3px</output>

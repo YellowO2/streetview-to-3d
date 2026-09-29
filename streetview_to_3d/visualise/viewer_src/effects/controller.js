@@ -1,5 +1,4 @@
 import { tickWater } from '@viewer/effects/water';
-import { createVoxels } from '@viewer/effects/voxel';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -12,7 +11,6 @@ import { pointMotion } from '@viewer/effects/points';
 import { STYLE_DEFAULTS, normalizeStyle } from '@viewer/effects/presets';
 
 export function createStyles(scene, camera, renderer) {
-  const voxels = createVoxels(scene);
   const environment = createEnvironment(scene);
   const originalBackground = scene.background;
   let style = 'original',
@@ -20,8 +18,8 @@ export function createStyles(scene, camera, renderer) {
     composer,
     anime,
     dither;
-  // A placed scene is in metres, so the look (float, scan, fog, voxel
-  // size) is one fixed size, the small Stockholm scene's radius, whatever
+  // A placed scene is in metres, so the look (float, scan, fog) is one
+  // fixed size, the small Stockholm scene's radius, whatever
   // the scene's extent; the reveal still sweeps the scene's own radius.
   const LOOK_M = 33;
   let asset = null,
@@ -84,7 +82,6 @@ export function createStyles(scene, camera, renderer) {
     },
     configure(store, r) {
       asset = store;
-      voxels.configure(store.group);
       radius = r;
       look = store.placement === 'world' ? LOOK_M : r;
       const box = store.box();
@@ -114,72 +111,69 @@ export function createStyles(scene, camera, renderer) {
     },
     resize,
     render(dt, editing = false) {
-      return voxels.render(style === 'voxel', look * 0.008 * (settings.blocks || 1), () => {
-        if (!editing) time += dt;
-        updateMotion(editing);
-        if (!editing) tickWater(dt);
-        environment.update(
-          ['paint', 'voxel'].includes(style) ? 'anime' : style,
-          camera,
-          !!asset?.group && settings.atmosphere,
-          !!asset?.group && !asset.splat,
-        );
-        scene.background = originalBackground;
-        if (style === 'original' || !asset?.group) {
-          renderer.render(scene, camera);
-          return;
-        }
-        anime.enabled = style === 'paint';
-        dither.enabled = style === 'dither';
-        const depth = composer.readBuffer.depthTexture;
-        // Spark blends transparent Gaussians without reliable surface depth.
-        // Grade its colour normally; do not interpret the background's depth as a splat surface.
-        const useDepth = asset.splat ? 0 : 1;
-        anime.uniforms.tDepth.value = dither.uniforms.tDepth.value = depth;
-        anime.uniforms.useDepth.value = dither.uniforms.useDepth.value = useDepth;
-        anime.uniforms.strength.value = dither.uniforms.strength.value = settings.strength;
-        const viewportSize = renderer.getSize(new THREE.Vector2());
-        dither.uniforms.pixelSize.value = ditherCellSize(
-          viewportSize.x,
-          viewportSize.y,
-          renderer.getPixelRatio(),
-          settings.pixels,
-        );
-        dither.uniforms.near.value = camera.near;
-        dither.uniforms.far.value = camera.far;
-        dither.uniforms.fogDistance.value = look;
-        dither.uniforms.fogAmount.value = settings.atmosphere ? 1 : 0;
-        // Render editor handles after grading so their axis colours stay legible.
-        const overlays = scene.children.filter((o) => o.userData.styleOverlay && o.visible);
-        overlays.forEach((o) => (o.visible = false));
+      if (!editing) time += dt;
+      updateMotion(editing);
+      if (!editing) tickWater(dt);
+      environment.update(
+        style === 'paint' ? 'anime' : style,
+        camera,
+        !!asset?.group && settings.atmosphere,
+        !!asset?.group && !asset.splat,
+      );
+      scene.background = originalBackground;
+      if (style === 'original' || !asset?.group) {
+        renderer.render(scene, camera);
+        return;
+      }
+      anime.enabled = style === 'paint';
+      dither.enabled = style === 'dither';
+      const depth = composer.readBuffer.depthTexture;
+      // Spark blends transparent Gaussians without reliable surface depth.
+      // Grade its colour normally; do not interpret the background's depth as a splat surface.
+      const useDepth = asset.splat ? 0 : 1;
+      anime.uniforms.tDepth.value = dither.uniforms.tDepth.value = depth;
+      anime.uniforms.useDepth.value = dither.uniforms.useDepth.value = useDepth;
+      anime.uniforms.strength.value = dither.uniforms.strength.value = settings.strength;
+      const viewportSize = renderer.getSize(new THREE.Vector2());
+      dither.uniforms.pixelSize.value = ditherCellSize(
+        viewportSize.x,
+        viewportSize.y,
+        renderer.getPixelRatio(),
+        settings.pixels,
+      );
+      dither.uniforms.near.value = camera.near;
+      dither.uniforms.far.value = camera.far;
+      dither.uniforms.fogDistance.value = look;
+      dither.uniforms.fogAmount.value = settings.atmosphere ? 1 : 0;
+      // Render editor handles after grading so their axis colours stay legible.
+      const overlays = scene.children.filter((o) => o.userData.styleOverlay && o.visible);
+      overlays.forEach((o) => (o.visible = false));
+      try {
+        composer.render(dt);
+      } finally {
+        overlays.forEach((o) => (o.visible = true));
+      }
+      if (overlays.length) {
+        const visible = scene.children.map((o) => o.visible);
+        const background = scene.background,
+          fog = scene.fog,
+          autoClear = renderer.autoClear;
         try {
-          composer.render(dt);
+          scene.children.forEach((o) => (o.visible = overlays.includes(o)));
+          scene.background = null;
+          scene.fog = null;
+          renderer.autoClear = false;
+          renderer.clearDepth();
+          renderer.render(scene, camera);
         } finally {
-          overlays.forEach((o) => (o.visible = true));
+          scene.children.forEach((o, i) => (o.visible = visible[i]));
+          scene.background = background;
+          scene.fog = fog;
+          renderer.autoClear = autoClear;
         }
-        if (overlays.length) {
-          const visible = scene.children.map((o) => o.visible);
-          const background = scene.background,
-            fog = scene.fog,
-            autoClear = renderer.autoClear;
-          try {
-            scene.children.forEach((o) => (o.visible = overlays.includes(o)));
-            scene.background = null;
-            scene.fog = null;
-            renderer.autoClear = false;
-            renderer.clearDepth();
-            renderer.render(scene, camera);
-          } finally {
-            scene.children.forEach((o, i) => (o.visible = visible[i]));
-            scene.background = background;
-            scene.fog = fog;
-            renderer.autoClear = autoClear;
-          }
-        }
-      });
+      }
     },
     dispose() {
-      voxels.dispose();
       environment.dispose();
       composer?.passes.forEach((pass) => pass.dispose?.());
       composer?.dispose();
