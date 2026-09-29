@@ -18,6 +18,7 @@ export function createStyleControls(actions) {
   function value() {
     return {
       density: Number($('point-density').value),
+      pointSize: 2 ** Number($('point-size').value),
       blocks: Number($('style-blocks').value),
       strength: Number($('style-strength').value),
       pixels: Number($('style-pixels').value),
@@ -67,6 +68,8 @@ export function createStyleControls(actions) {
     $('visual-style').value = next;
     const preset = saved[next];
     $('point-density').value = preset.density;
+    $('point-size').value = Math.log2(preset.pointSize);
+    $('point-size').oninput?.();
     $('style-blocks').value = preset.blocks;
     $('style-strength').value = preset.strength;
     $('style-pixels').value = preset.pixels;

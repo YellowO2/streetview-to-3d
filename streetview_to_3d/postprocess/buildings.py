@@ -35,6 +35,7 @@ ROAD_SLACK = 0.02             # a slide may put this much more of an outline ont
 PULL_MAX_M = 1.0              # a wall's seam pulled onto DA3's plane by at most this
 TRIM_TOL_M, TRIM_FRONT_M = 0.3, 30.0   # cut from this far in front of a DA3 wall, out to this
 TRIM_MIN_M2, TRIM_MAX = 1.0, 0.2
+SHELL_INSET_M, SHELL_SINK_M, SHELL_SHADE = 0.1, 1.0, 0.85
 TRIM_EDGE_M = 5.0             # only a straight wall this long trims: a curve's short edges found planes in
                               # its own curved, overhung walls and ate NTU's Hive
 TOP_PERCENTILE = 97
@@ -333,6 +334,38 @@ def seam(blocks, da3, da3_normals, da3_cols, roofs_near):
         blocks.cols[mine] = blocks.cols[mine] * (1 - w) + da3_cols[idx[k]] * w
     blocks.take(keep)
     return int(len(keep) - keep.sum())
+
+
+def shells(outlines, ground, cols, which, light):
+    """Each building as a plain solid block, for the viewer to draw just
+    behind its points so the gaps between them show building, not what is
+    behind it: [{"outline": [[east, north], ...], "base": m, "top": m,
+    "colour": [r, g, b]}], heights above sea level. Its outline is
+    SHELL_INSET_M in from the points' (never in front of them), its base
+    SHELL_SINK_M under the ground (no slit on a slope), its colour its
+    walls' points' mean, a little darker (SHELL_SHADE) -- else its roof's.
+    cols/which/light: the building points' colours, building, and light
+    (NaN on a roof), as Blocks has them."""
+    from shapely.geometry import Polygon
+    from shapely.geometry.polygon import orient
+    n = len(outlines)
+    wall = ~np.isnan(light)
+    sums = [np.bincount(which[m], cols[m, j], minlength=n) for m in (wall, ~wall) for j in range(3)]
+    counts = [np.bincount(which[m], minlength=n) for m in (wall, ~wall)]
+    out = []
+    for i, (xy, h, *_) in enumerate(outlines):
+        k = 0 if counts[0][i] else 1
+        colour = np.array(sums[3 * k:3 * k + 3])[:, i] / counts[k][i] if counts[k][i] else np.full(3, 0.5)
+        inset = Polygon(xy).buffer(-SHELL_INSET_M, join_style="mitre")
+        if inset.is_empty:
+            continue
+        if inset.geom_type != "Polygon":
+            inset = max(inset.geoms, key=lambda g: g.area)
+        base = float(ground(xy).min())
+        out.append({"outline": np.round(np.asarray(orient(inset, 1.0).exterior.coords)[:-1], 2).tolist(),
+                    "base": round(base - SHELL_SINK_M, 2), "top": round(base + h - SHELL_INSET_M, 2),
+                    "colour": np.round(np.clip(colour * SHELL_SHADE, 0, 1), 3).tolist()})
+    return out
 
 
 def pano_colours(pts, which, n, cameras, photos, occluders):

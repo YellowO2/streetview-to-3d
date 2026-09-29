@@ -32,13 +32,16 @@ share of the view:
    pano sees
 
 Written to terrain.ply beside scene.json (its "terrain"), the buildings,
-spaced the same way, to buildings.ply (its "buildings"), both
-already in the world frame. The viewer draws its points larger with distance, as they
+spaced the same way, to buildings.ply (its "buildings"), both already in
+the world frame -- and each building as a plain solid block to
+shells.json (its "shells", buildings.shells), which the viewer draws just
+behind their points so nothing is seen through them. The viewer draws its points larger with distance, as they
 are spaced (scene-store.js, terrainBands).
 
     python -m streetview_to_3d.postprocess.terrain SCENE_DIR
 """
 import io
+import json
 import math
 import os
 import sys
@@ -53,6 +56,7 @@ from streetview_to_3d.postprocess.ply_io import write_ply
 
 FILENAME = "terrain.ply"
 BUILDINGS_FILENAME = "buildings.ply"
+SHELLS_FILENAME = "shells.json"
 HEIGHT_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
 HEIGHT_ZOOM = 13          # ~19 m a pixel at the equator, finer than the data
 COLOUR_URL = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/{z}/{y}/{x}.jpg"
@@ -277,6 +281,7 @@ def build(scene_dir, log=print):
     outlines = [o for o in buildings.outlines(elements, to_xy)
                 if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]   # an older, wider osm.json
     bp = bc = np.zeros((0, 3))
+    b_which, b_light = np.zeros(0, int), np.zeros(0)
     n_fitted = n_trimmed = n_cut = 0
     if outlines:
         from streetview_to_3d.postprocess.ground import normals_from_neighbours
@@ -300,7 +305,7 @@ def build(scene_dir, log=print):
         roofs_near = cKDTree(scene).query(blocks.pts, distance_upper_bound=1.0)[0] if len(scene) \
             else np.full(len(blocks.pts), np.inf)
         n_cut = buildings.seam(blocks, scene, scene_normals, scene_cols, roofs_near)
-        bp, bc = blocks.pts, blocks.cols
+        bp, bc, b_which, b_light = blocks.pts, blocks.cols, blocks.which, blocks.light
     lines = roads.lines(elements, to_xy)
     if lines:
         rp, rc = roads.points(lines, gap, ground)
@@ -328,10 +333,14 @@ def build(scene_dir, log=print):
         log(f"terrain: no pano paint ({e!r})")
     write_ply(os.path.join(scene_dir, FILENAME), pts, cols)
     sc.terrain = FILENAME
-    sc.buildings = None
+    sc.buildings = sc.shells = None
     if len(bp):
         write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc)
         sc.buildings = BUILDINGS_FILENAME
+    if outlines:
+        with open(os.path.join(scene_dir, SHELLS_FILENAME), "w") as f:
+            json.dump(buildings.shells(outlines, ground, bc, b_which, b_light), f)
+        sc.shells = SHELLS_FILENAME
     sc.save(scene_dir)
     fix = np.abs(fixes - shift)
     log(f"terrain: {len(pts)} points to {radius:.0f} m, {len(bp)} building points, {n_painted} of them "

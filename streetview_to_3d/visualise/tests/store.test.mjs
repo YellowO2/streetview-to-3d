@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { SceneStore, parsePoints, loadAsset, terrainBands } from '@viewer/scene-store';
+import { SceneStore, parsePoints, loadAsset, terrainBands, shellMesh } from '@viewer/scene-store';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const T = [
   [1.2, 0, 0.3, 10],
@@ -155,4 +155,28 @@ test('terrain splits into rings drawn larger with distance', () => {
   );
   const sizes = bands.map((b) => b.userData.pointSize);
   assert(sizes[0] < sizes[1] && sizes[1] < sizes[2]);
+});
+test('building shells become one mesh, walls and roof, in the viewer frame', () => {
+  const mesh = shellMesh([
+    {
+      outline: [
+        [0, 0],
+        [4, 0],
+        [4, 3],
+        [0, 3],
+      ],
+      base: 10,
+      top: 20,
+      colour: [0.5, 0.4, 0.3],
+    },
+  ]);
+  const p = mesh.geometry.getAttribute('position');
+  assert.equal(p.count, 4 * 6 + 2 * 3); // four walls of two triangles, a roof of two
+  const ys = new Set(Array.from({ length: p.count }, (_, i) => p.getY(i)));
+  assert.deepEqual(
+    [...ys].sort((a, b) => a - b),
+    [10, 20],
+  );
+  assert.equal(Math.min(...Array.from({ length: p.count }, (_, i) => p.getZ(i))), -3); // north is -z
+  assert.equal(mesh.userData.surroundings, 'shells');
 });
