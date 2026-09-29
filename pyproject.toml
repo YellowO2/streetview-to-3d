@@ -5,14 +5,15 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "streetview-to-3d"
 version = "0.1.0"
-description = "Reconstruct a street from Street View / Look Around panoramas into a placed 3D point cloud"
+description = "Reconstruct a street from Street View panoramas into a placed 3D point cloud"
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "scipy",
+    "shapely",
+    "opencv-python",
     "aiohttp",
     "pillow",
-    "pillow-heif",
     "huggingface_hub",
     "gradio",
     "spaces",

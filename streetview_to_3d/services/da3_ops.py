@@ -74,17 +74,18 @@ def options(hfov=None, masker=None, mask_classes=None, conf_floor=None):
         _options.update(old)
 
 
-def _run_da3(target, support, *args, **kwargs):
+def run_da3(target, support, *args, **kwargs):
     """panoramic_da3.run_da3 with this pipeline's view width, mask and
-    confidence floor."""
-    from panoramic_da3 import run_da3
+    confidence floor. Also for callers outside this package (the app's
+    splat tab)."""
+    from panoramic_da3 import run_da3 as run
     from panoramic_da3.components.SplatProcessor import utils
     hfov = _options["hfov"] or VIEW_HFOV
     floor = utils.CONF_ABS_FLOOR
     utils.CONF_ABS_FLOOR = CONF_FLOOR if _options["conf_floor"] is None else _options["conf_floor"]
     try:
-        return run_da3(target, support, *args, hfov=hfov, drop_mask=_drop_mask([target, *support], hfov),
-                       **kwargs)
+        return run(target, support, *args, hfov=hfov, drop_mask=_drop_mask([target, *support], hfov),
+                   **kwargs)
     finally:
         utils.CONF_ABS_FLOOR = floor
 
@@ -108,7 +109,7 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
     test_dir = os.path.join(views_base, f"t{test_id}")
     os.makedirs(test_dir, exist_ok=True)
     id_a, id_b = os.path.basename(path_a), os.path.basename(path_b)
-    _, res, pts, cols, per_pano_pts, per_pano_cols = _run_da3(
+    _, res, pts, cols, per_pano_pts, per_pano_cols = run_da3(
         path_a, [path_b], cfg, test_dir,
         da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
@@ -147,7 +148,7 @@ def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thre
     rate_dir = os.path.join(views_base, f"r{rate_id}")
     os.makedirs(rate_dir, exist_ok=True)
     pano_id = os.path.basename(path)
-    filtered_views, res, _, _, per_pano_pts, per_pano_cols = _run_da3(
+    filtered_views, res, _, _, per_pano_pts, per_pano_cols = run_da3(
         path, [], cfg, rate_dir, da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
     )
