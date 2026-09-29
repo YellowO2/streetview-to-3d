@@ -14,6 +14,7 @@ export function pointMotion(object) {
     styleFloat: { value: 0 },
     styleScan: { value: 0 },
     styleRadius: { value: 1 },
+    styleLook: { value: 1 },
     styleCenter: { value: new Vector3() },
     styleReveal: { value: 1 },
   };
@@ -26,7 +27,7 @@ export function pointMotion(object) {
     shader.vertexShader =
       `
       ${stableSeed ? 'attribute float styleSeed;' : ''}
-      uniform float styleTime, styleFloat, styleRadius, styleDensity, stylePointScale;
+      uniform float styleTime, styleFloat, styleLook, styleDensity, stylePointScale;
       uniform vec3 styleCenter;
       varying vec3 stylePosition;
     ` + shader.vertexShader;
@@ -38,7 +39,7 @@ export function pointMotion(object) {
       float phase = ${stableSeed ? 'styleSeed' : 'fract(sin(dot(position, vec3(12.9898,78.233,37.719))) * 43758.5453)'} * 6.2831853;
       vec3 drift = vec3(sin(styleTime*.55+phase)*.45, sin(styleTime*.8+phase)*.65,
         cos(styleTime*.5+phase)*.45);
-      transformed += drift * styleRadius * .004 * styleFloat;
+      transformed += drift * styleLook * .004 * styleFloat;
     `,
     );
     shader.vertexShader = shader.vertexShader.replace(
@@ -53,7 +54,7 @@ export function pointMotion(object) {
       `
       varying vec3 stylePosition;
       ${stableSeed ? 'attribute float styleSeed;' : ''}
-      uniform float styleTime, styleRadius, styleScan, styleReveal, styleRound;
+      uniform float styleTime, styleRadius, styleLook, styleScan, styleReveal, styleRound;
     ` + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <clipping_planes_fragment>',
@@ -66,13 +67,13 @@ export function pointMotion(object) {
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <opaque_fragment>',
       `
-      float wave = pow(.5+.5*sin(length(stylePosition.xz)/styleRadius*16.0-styleTime*.8),18.0)*styleScan;
+      float wave = pow(.5+.5*sin(length(stylePosition.xz)/styleLook*16.0-styleTime*.8),18.0)*styleScan;
       outgoingLight = mix(outgoingLight, vec3(.65,.86,.76), wave*.25);
       #include <opaque_fragment>
     `,
     );
   };
-  material.customProgramCacheKey = () => originalKey + ':viewer-point-motion-v2:' + stableSeed;
+  material.customProgramCacheKey = () => originalKey + ':viewer-point-motion-v3:' + stableSeed;
   material.needsUpdate = true;
   patched.set(material, uniforms);
   return uniforms;

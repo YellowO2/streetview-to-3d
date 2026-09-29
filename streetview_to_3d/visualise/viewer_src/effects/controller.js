@@ -21,8 +21,13 @@ export function createStyles(scene, camera, renderer) {
     composer,
     anime,
     dither;
+  // A placed scene is in metres, so the look (float, scan, fog, voxel
+  // size) is one fixed size, the small Stockholm scene's radius, whatever
+  // the scene's extent; the reveal still sweeps the scene's own radius.
+  const LOOK_M = 33;
   let asset = null,
     radius = 1,
+    look = 1,
     time = 0,
     revealStart = null,
     entries = [];
@@ -54,6 +59,7 @@ export function createStyles(scene, camera, renderer) {
       uniforms.stylePointScale.value = style === 'paint' ? 1.2 : 1;
       uniforms.styleRound.value = style === 'paint' ? 1 : 0;
       uniforms.styleRadius.value = radius;
+      uniforms.styleLook.value = look;
       uniforms.styleCenter.value.copy(center);
       uniforms.styleTime.value = time;
       uniforms.styleFloat.value =
@@ -81,6 +87,7 @@ export function createStyles(scene, camera, renderer) {
       asset = store;
       voxels.configure(store.group);
       radius = r;
+      look = store.placement === 'world' ? LOOK_M : r;
       const box = store.box();
       box.isEmpty() ? center.set(0, 0, 0) : box.getCenter(center);
       entries = [];
@@ -100,7 +107,7 @@ export function createStyles(scene, camera, renderer) {
         }
       });
       revealStart = null;
-      environment.configure(radius);
+      environment.configure(look);
       water.configure(box, radius);
       updateMotion(false);
     },
@@ -109,7 +116,7 @@ export function createStyles(scene, camera, renderer) {
     },
     resize,
     render(dt, editing = false) {
-      return voxels.render(style === 'voxel', radius * 0.008 * (settings.blocks || 1), () => {
+      return voxels.render(style === 'voxel', look * 0.008 * (settings.blocks || 1), () => {
         if (!editing) time += dt;
         updateMotion(editing);
         water.update(
@@ -151,7 +158,7 @@ export function createStyles(scene, camera, renderer) {
         );
         dither.uniforms.near.value = camera.near;
         dither.uniforms.far.value = camera.far;
-        dither.uniforms.fogDistance.value = radius;
+        dither.uniforms.fogDistance.value = look;
         dither.uniforms.fogAmount.value = settings.atmosphere ? 1 : 0;
         // Render editor handles after grading so their axis colours stay legible.
         const overlays = scene.children.filter((o) => o.userData.styleOverlay && o.visible);
