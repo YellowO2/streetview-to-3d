@@ -12,6 +12,7 @@ export function createBird() {
     vertexColors: true,
     size: 0.012,
     transparent: true,
+    blending: THREE.AdditiveBlending,
     depthWrite: false,
     sizeAttenuation: true,
   });
@@ -76,10 +77,10 @@ export function createBird() {
     }
     points(bird, positions, colors);
   }
-  body([0, 0, 0], [0.16, 0.17, 0.43], 700, '#123e59', '#1bd8bd');
-  body([0, 0.13, -0.4], [0.135, 0.145, 0.18], 320, '#1553a0', '#54f0d1');
+  body([0, 0, 0], [0.16, 0.17, 0.43], 294, '#123e59', '#1bd8bd');
+  body([0, 0.13, -0.4], [0.135, 0.145, 0.18], 134, '#1553a0', '#54f0d1');
 
-  body([0, -0.08, -0.25], [0.13, 0.09, 0.19], 160, '#ff8644', '#ffe284');
+  body([0, -0.08, -0.25], [0.13, 0.09, 0.19], 67, '#ff8644', '#ffe284');
   function feather(parent, base, tip, width, hue) {
     const pivot = new THREE.Group();
     pivot.position.set(...base);
@@ -91,8 +92,8 @@ export function createBird() {
       dy = tip[1] - base[1],
       dz = tip[2] - base[2],
       length = Math.hypot(dx, dz);
-    for (let row = 0; row < 30; row++) {
-      const t = (row + 0.5) / 30,
+    for (let row = 0; row < 13; row++) {
+      const t = (row + 0.5) / 13,
         w = width * Math.pow(Math.sin(Math.PI * t), 0.65);
       for (let col = -2; col <= 2; col++) {
         const jitter = Math.sin(row * 73.31 + col * 13.17);

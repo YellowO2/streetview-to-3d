@@ -21,13 +21,13 @@ test('jewel bird uses coloured points with articulated wings and metre-scale spa
   let count = 0;
   model.bird.scale.setScalar(FLIGHT.birdScale);
   model.bird.traverse((o) => {
-    assert(!o.isMesh);
+    assert(!o.isMesh || o.isLineSegments2);
     if (o.isPoints && o.userData.styleAnimated) {
       count += o.geometry.attributes.position.count;
       assert(o.geometry.attributes.color);
     }
   });
-  assert(count > 3500 && count < 15000);
+  assert(count > 2000 && count < 4000);
   const size = new THREE.Box3().setFromObject(model.bird).getSize(new THREE.Vector3());
   assert(size.x > 0.7 && size.x < 1);
   model.animate(0.1, true);

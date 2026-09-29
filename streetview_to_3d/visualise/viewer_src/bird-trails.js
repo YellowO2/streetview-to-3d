@@ -1,73 +1,67 @@
 import * as THREE from 'three';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
 // Sparse world-space wing histories leave a continuous wake behind flight.
 export function createBirdTrails(bird, clouds, restPositions = []) {
   const samples = [];
   clouds.forEach((cloud, index) => {
-    for (let i = 0; i < cloud.geometry.attributes.position.count; i += 60)
+    for (let i = 0; i < cloud.geometry.attributes.position.count; i += 70)
       samples.push({ cloud, i, rest: restPositions[index], history: [] });
   });
   const steps = 48,
     vertices = new Float32Array(samples.length * (steps - 1) * 6),
     colors = new Float32Array(vertices.length),
-    alphas = new Float32Array(vertices.length / 3),
-    geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    'position',
-    new THREE.BufferAttribute(vertices, 3).setUsage(THREE.DynamicDrawUsage),
+    alphas = new Float32Array(vertices.length / 3);
+  const ribbon = new LineSegmentsGeometry().setPositions(vertices).setColors(colors);
+  const fadeBuffer = new THREE.InstancedInterleavedBuffer(alphas, 2).setUsage(
+    THREE.DynamicDrawUsage,
   );
-  geometry.setAttribute(
-    'color',
-    new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage),
-  );
-  geometry.setAttribute(
-    'trailAlpha',
-    new THREE.BufferAttribute(alphas, 1).setUsage(THREE.DynamicDrawUsage),
-  );
-  geometry.setDrawRange(0, 0);
-  const material = new THREE.LineBasicMaterial({
+  ribbon.setAttribute('fadeStart', new THREE.InterleavedBufferAttribute(fadeBuffer, 1, 0));
+  ribbon.setAttribute('fadeEnd', new THREE.InterleavedBufferAttribute(fadeBuffer, 1, 1));
+  ribbon.instanceCount = 0;
+  const material = new LineMaterial({
     vertexColors: true,
+    linewidth: 1.8,
     transparent: true,
-    opacity: 0.3,
+    opacity: 0.18,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
   material.onBeforeCompile = (shader) => {
     shader.vertexShader =
-      'attribute float trailAlpha; varying float vTrailAlpha;\n' +
-      shader.vertexShader.replace(
-        '#include <begin_vertex>',
-        '#include <begin_vertex>\n vTrailAlpha = trailAlpha;',
-      );
+      'attribute float fadeStart, fadeEnd; varying float wakeFade;\n' +
+      shader.vertexShader
+        .replace(
+          'void main() {',
+          'void main() {\n wakeFade = position.y < .5 ? fadeStart : fadeEnd;',
+        )
+        .replace('offset *= linewidth;', 'offset *= linewidth * mix(.12, 1., pow(wakeFade, .55));');
     shader.fragmentShader =
-      'varying float vTrailAlpha;\n' +
+      'varying float wakeFade;\n' +
       shader.fragmentShader.replace(
-        '#include <opaque_fragment>',
-        'diffuseColor.a *= vTrailAlpha;\n #include <opaque_fragment>',
+        'vec4( diffuseColor.rgb, alpha )',
+        'vec4( diffuseColor.rgb, alpha * wakeFade )',
       );
   };
-  material.customProgramCacheKey = () => 'bird-wake-alpha-v1';
-  const lines = new THREE.LineSegments(geometry, material);
+  material.customProgramCacheKey = () => 'bird-wake-taper-v1';
+  const lines = new LineSegments2(ribbon, material);
   lines.frustumCulled = false;
   lines.matrixAutoUpdate = false;
-  // A faint radial halo shares the trail buffers; no full-screen bloom pass.
-  const haloMaterial = new THREE.PointsMaterial({
-    vertexColors: true,
-    size: 0.025,
-    transparent: true,
-    opacity: 0.035,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
+  // The glow uses the same continuous ribbon, softened across its width.
+  const haloMaterial = material.clone();
+  haloMaterial.linewidth = 6;
+  haloMaterial.opacity = 0.07;
   haloMaterial.onBeforeCompile = (shader) => {
     material.onBeforeCompile(shader);
     shader.fragmentShader = shader.fragmentShader.replace(
-      'diffuseColor.a *= vTrailAlpha;',
-      'float radius = length(gl_PointCoord - .5) * 2.; diffuseColor.a *= vTrailAlpha * exp(-radius * radius * 5.) * (1. - smoothstep(.7, 1., radius));',
+      'alpha * wakeFade',
+      'alpha * wakeFade * exp(-vUv.x * vUv.x * 4.)',
     );
   };
-  haloMaterial.customProgramCacheKey = () => 'bird-wake-halo-v1';
-  const halo = new THREE.Points(geometry, haloMaterial);
+  haloMaterial.customProgramCacheKey = () => 'bird-wake-ribbon-glow-v1';
+  const halo = new LineSegments2(ribbon, haloMaterial);
   halo.frustumCulled = false;
   lines.add(halo);
   bird.add(lines);
@@ -75,7 +69,7 @@ export function createBirdTrails(bird, clouds, restPositions = []) {
   return {
     reset() {
       samples.forEach((s) => (s.history.length = 0));
-      geometry.setDrawRange(0, 0);
+      ribbon.instanceCount = 0;
       elapsed = 0;
     },
     update(dt) {
@@ -94,7 +88,6 @@ export function createBirdTrails(bird, clouds, restPositions = []) {
         if (rest) point.fromArray(rest, i * 3);
         else point.fromBufferAttribute(cloud.geometry.attributes.position, i);
         history.unshift(point.applyMatrix4(cloud.matrixWorld));
-        const color = cloud.geometry.attributes.color;
         for (let j = 0; j < history.length - 1; j++)
           for (let end = 0; end < 2; end++) {
             const p = history[j + end];
@@ -103,20 +96,20 @@ export function createBirdTrails(bird, clouds, restPositions = []) {
             vertices[cursor + 2] = p.z;
             const fade = (1 - (j + end) / (steps - 1)) ** 1.5;
             alphas[cursor / 3] = fade;
-            colors[cursor] = 0.88 + color.getX(i) * 0.12;
-            colors[cursor + 1] = 0.9 + color.getY(i) * 0.1;
-            colors[cursor + 2] = 0.94 + color.getZ(i) * 0.06;
+            colors[cursor] = 1;
+            colors[cursor + 1] = 1;
+            colors[cursor + 2] = 1;
             cursor += 3;
           }
       }
-      geometry.setDrawRange(0, cursor / 3);
-      geometry.attributes.position.needsUpdate = true;
-      geometry.attributes.color.needsUpdate = true;
-      geometry.attributes.trailAlpha.needsUpdate = true;
+      ribbon.instanceCount = cursor / 6;
+      ribbon.attributes.instanceStart.data.needsUpdate = true;
+      ribbon.attributes.instanceColorStart.data.needsUpdate = true;
+      fadeBuffer.needsUpdate = true;
     },
     dispose() {
       lines.removeFromParent();
-      geometry.dispose();
+      ribbon.dispose();
       material.dispose();
       haloMaterial.dispose();
     },

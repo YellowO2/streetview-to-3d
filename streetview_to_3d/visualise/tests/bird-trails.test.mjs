@@ -13,18 +13,18 @@ test('trails retain previous world positions and reset without teleport streaks'
   trail.update(1 / 30);
   bird.position.x = 2;
   trail.update(1 / 30);
-  const lines = bird.children.find((c) => c.isLineSegments);
-  assert.equal(lines.geometry.drawRange.count, 2);
+  const lines = bird.children.find((c) => c.isLineSegments2);
+  assert.equal(lines.geometry.instanceCount, 1);
   assert.deepEqual(
-    Array.from(lines.geometry.attributes.position.array.slice(0, 6)),
+    Array.from(lines.geometry.attributes.instanceStart.data.array.slice(0, 6)),
     [3, 0, 0, 1, 0, 0],
   );
   bird.updateMatrixWorld(true);
   assert.equal(lines.matrixWorld.elements[12], 0);
   trail.reset();
-  assert.equal(lines.geometry.drawRange.count, 0);
+  assert.equal(lines.geometry.instanceCount, 0);
   trail.update(1 / 30);
-  assert.equal(lines.geometry.drawRange.count, 0);
+  assert.equal(lines.geometry.instanceCount, 0);
   trail.dispose();
   assert.equal(lines.parent, null);
 });

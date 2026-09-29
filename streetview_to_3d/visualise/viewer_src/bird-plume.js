@@ -62,7 +62,7 @@ export function createBirdPlume(bird, clouds) {
         points.geometry.attributes.position.setXYZ(i, local.x, local.y, local.z);
         const fadeIn = Math.min(1, progress / 0.12);
         const fadeOut = 1 - THREE.MathUtils.smoothstep(progress, 0.3, 1);
-        alpha.setX(i, fadeIn * fadeOut * 0.8);
+        alpha.setX(i, fadeIn * fadeOut * 0.55);
       }
       for (const { points } of transforms) {
         points.geometry.attributes.position.needsUpdate = true;
