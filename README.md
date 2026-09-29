@@ -16,7 +16,7 @@ short_description: Reconstructs a street corridor into a 3D point cloud
 
 Reconstructs a stretch of street into one placed 3D point cloud, from Google Street View panoramas. Try it in the **Street → point cloud** tab of the [Hugging Face Space](https://huggingface.co/spaces/potato-bug/street-view-to-3d).
 
-For a single panorama as a Gaussian splat, see [panoramic-to-3dgs](https://github.com/YellowO2/panoramic-to-3dgs). How the pipeline works: [ARCHITECTURE.md](ARCHITECTURE.md).
+For a single panorama as a Gaussian splat, see [panoramic-to-3dgs](https://github.com/YellowO2/panoramic-to-3dgs).
 
 ## Run locally
 
