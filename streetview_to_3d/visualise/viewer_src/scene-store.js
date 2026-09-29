@@ -26,7 +26,7 @@ export function exportPlacement(original, correction) {
 }
 export function dispose(group) {
   group?.traverse((o) => {
-    if (o.isPoints || o.isMesh) {
+    if (o.isPoints) {
       o.geometry.dispose();
       o.material.dispose();
     } else if (o.userData.splat) o.dispose();
@@ -105,39 +105,6 @@ export function terrainBands(points, spacing = SPACING.terrain, cams = [[0, 0]])
   points.material.dispose();
   return bands;
 }
-// postprocess/buildings.shells: each OSM building as a plain solid block,
-// drawn just behind its points so the gaps between them show building, not
-// what is behind it. One mesh for all of them, coloured per building.
-export function shellMesh(shells) {
-  const pos = [],
-    col = [];
-  for (const { outline, base, top, colour } of shells) {
-    const c = new THREE.Color().setRGB(...colour, THREE.SRGBColorSpace);
-    const push = (x, y, z) => {
-      pos.push(x, y, z);
-      col.push(c.r, c.g, c.b);
-    };
-    const ring = outline.map(([east, north]) => [east, -north]); // the viewer's x, z
-    ring.forEach(([x0, z0], i) => {
-      const [x1, z1] = ring[(i + 1) % ring.length];
-      (push(x0, base, z0), push(x1, base, z1), push(x1, top, z1));
-      (push(x0, base, z0), push(x1, top, z1), push(x0, top, z0));
-    });
-    const contour = ring.map(([x, z]) => new THREE.Vector2(x, z));
-    for (const face of THREE.ShapeUtils.triangulateShape(contour, []))
-      for (const j of face) push(ring[j][0], top, ring[j][1]);
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  geometry.computeBoundingSphere();
-  const mesh = new THREE.Mesh(
-    geometry,
-    new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }),
-  );
-  mesh.userData.surroundings = 'shells';
-  return mesh;
-}
 // A Gaussian splat (.spz). Spark is imported only when one is opened, so a
 // page showing point clouds never downloads it.
 export async function parseSplat(buffer) {
@@ -211,15 +178,6 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           part.userData.surroundings = key;
           group.add(part);
         }
-      }
-      if (placement === 'world' && data.shells) {
-        progress('Loading the building shells…');
-        const buffer = await readBuffer(resolve(relativePath(data.shells)));
-        if (cancelled()) {
-          dispose(group);
-          return null;
-        }
-        group.add(shellMesh(JSON.parse(new TextDecoder().decode(buffer))));
       }
     }
     if (cancelled()) {

@@ -70,7 +70,7 @@ export function validateScene(data) {
         throw new Error(`Node ${i} has an invalid 4×4 transform.`);
     }
   });
-  for (const key of [...SURROUNDINGS, 'shells']) if (data[key] != null) relativePath(data[key]);
+  for (const key of SURROUNDINGS) if (data[key] != null) relativePath(data[key]);
   for (const edge of data.edges) {
     if (
       !edge ||

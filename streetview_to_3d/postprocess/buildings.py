@@ -11,7 +11,8 @@ Footprints from osm.py, each raised into a block of points:
     faded in next to it, judged on the wall itself (seam)
   - standing on the lowest ground under its outline (terrain.py's map)
   - walls and a flat roof, spaced by how near the scene's cameras they
-    are, as the land is (terrain.gap_at)
+    are, as the land is (terrain.gap_at), and the walls again further in,
+    sparser (INNER_M), so it is not seen through
   - roof coloured from the satellite straight above it; walls the
     building's own colour where the scene's panos see enough of it
     (pano_colours), else its roof colour darkened -- either shaded by
@@ -35,7 +36,10 @@ ROAD_SLACK = 0.02             # a slide may put this much more of an outline ont
 PULL_MAX_M = 1.0              # a wall's seam pulled onto DA3's plane by at most this
 TRIM_TOL_M, TRIM_FRONT_M = 0.3, 30.0   # cut from this far in front of a DA3 wall, out to this
 TRIM_MIN_M2, TRIM_MAX = 1.0, 0.2
-SHELL_INSET_M, SHELL_SINK_M, SHELL_SHADE = 0.1, 1.0, 0.85
+ROOF, INNER = -1, -2          # Blocks.edge for a roof's points and an inner wall's
+INNER_M, INNER_GAP = (0.6, 1.5), 2.0   # walls again this far inside, this many times sparser: gaps in the
+                                       # outer wall show more building, not through it (a solid box behind
+                                       # the points looked wrong)
 TRIM_EDGE_M = 5.0             # only a straight wall this long trims: a curve's short edges found planes in
                               # its own curved, overhung walls and ate NTU's Hive
 TOP_PERCENTILE = 97
@@ -208,8 +212,8 @@ def _inside(pts, ring):
 
 class Blocks:
     """Every building's points, and for each where on its building it is:
-    which building, how lit (NaN on a roof), which wall edge (-1 on a
-    roof) and its place on that wall, u metres along and v metres up
+    which building, how lit (NaN on a roof), which wall edge (ROOF on a
+    roof, INNER on an inner wall) and its place on that wall, u metres along and v metres up
     (height above sea level), and how far it is from its neighbours (gap). edges[e]: (start, along, outward, length,
     DA3's plane for it (n2, d2) or None)."""
 
@@ -220,6 +224,19 @@ class Blocks:
     def take(self, keep):
         for k in ("pts", "cols", "which", "light", "edge", "u", "v", "gap"):
             setattr(self, k, getattr(self, k)[keep])
+
+
+def _inset(xy, d):
+    """Outline xy moved d metres in, counter-clockwise, or None if nothing
+    of it is left."""
+    from shapely.geometry import Polygon
+    from shapely.geometry.polygon import orient
+    p = Polygon(xy).buffer(-d, join_style="mitre")
+    if p.is_empty:
+        return None
+    if p.geom_type != "Polygon":
+        p = max(p.geoms, key=lambda g: g.area)
+    return np.asarray(orient(p, 1.0).exterior.coords)
 
 
 def points(outlines, spacing, ground, colour, sun):
@@ -264,6 +281,25 @@ def points(outlines, spacing, ground, colour, sun):
                 uu.append(U)
                 vv.append(V)
                 gg.append(np.full(len(U), s))
+        # inner walls: the same, further in, sparser, unlit (so darker); not the building's own edges
+        for inset in INNER_M:
+            ring = _inset(xy, inset)
+            for a, c in zip(ring[:-1], ring[1:]) if ring is not None else ():
+                length = float(np.linalg.norm(c - a))
+                if length < 1e-6:
+                    continue
+                t = (c - a) / length
+                for c0 in np.arange(0, length, CHUNK_M):
+                    c1 = min(length, c0 + CHUNK_M)
+                    s = INNER_GAP * float(spacing((a + t * (c0 + c1) / 2)[None])[0])
+                    along, levels = np.arange(c0, c1, s), np.arange(base, top, s)
+                    U, V = np.repeat(along, len(levels)), np.tile(levels, len(along))
+                    w.append(np.column_stack([a[0] + t[0] * U, -V, a[1] + t[1] * U]))
+                    light.append(np.zeros(len(U)))
+                    eo.append(np.full(len(U), INNER))
+                    uu.append(np.zeros(len(U)))
+                    vv.append(V)
+                    gg.append(np.full(len(U), s))
         walls.append(np.concatenate(w) if w else np.zeros((0, 3)))
         lights.append(np.concatenate(light) if light else np.zeros(0))
         edge_of.append(np.concatenate(eo) if eo else np.zeros(0, int))
@@ -284,7 +320,7 @@ def points(outlines, spacing, ground, colour, sun):
         cols += [mine, mine.mean(0) * 0.85 * (0.7 + 0.3 * light[:, None])]
         which.append(np.full(len(roof) + len(wall), i))
         lit += [np.full(len(roof), np.nan), light]
-        edge += [np.full(len(roof), -1), eo.astype(int)]
+        edge += [np.full(len(roof), ROOF), eo.astype(int)]
         u += [np.zeros(len(roof)), uu]
         v += [-roof[:, 1], vv]
         gap += [rg, gg]
@@ -310,7 +346,7 @@ def seam(blocks, da3, da3_normals, da3_cols, roofs_near):
     from streetview_to_3d.fill.google import on_plane
     from streetview_to_3d.postprocess.seams import ramp
     keep = np.ones(len(blocks.pts), bool)
-    roof = blocks.edge < 0
+    roof = blocks.edge == ROOF
     keep[roof] = roofs_near[roof] > COVER * blocks.gap[roof]
     order = np.argsort(blocks.edge, kind="stable")
     bounds = np.searchsorted(blocks.edge[order], np.arange(len(blocks.edges) + 1))
@@ -334,38 +370,6 @@ def seam(blocks, da3, da3_normals, da3_cols, roofs_near):
         blocks.cols[mine] = blocks.cols[mine] * (1 - w) + da3_cols[idx[k]] * w
     blocks.take(keep)
     return int(len(keep) - keep.sum())
-
-
-def shells(outlines, ground, cols, which, light):
-    """Each building as a plain solid block, for the viewer to draw just
-    behind its points so the gaps between them show building, not what is
-    behind it: [{"outline": [[east, north], ...], "base": m, "top": m,
-    "colour": [r, g, b]}], heights above sea level. Its outline is
-    SHELL_INSET_M in from the points' (never in front of them), its base
-    SHELL_SINK_M under the ground (no slit on a slope), its colour its
-    walls' points' mean, a little darker (SHELL_SHADE) -- else its roof's.
-    cols/which/light: the building points' colours, building, and light
-    (NaN on a roof), as Blocks has them."""
-    from shapely.geometry import Polygon
-    from shapely.geometry.polygon import orient
-    n = len(outlines)
-    wall = ~np.isnan(light)
-    sums = [np.bincount(which[m], cols[m, j], minlength=n) for m in (wall, ~wall) for j in range(3)]
-    counts = [np.bincount(which[m], minlength=n) for m in (wall, ~wall)]
-    out = []
-    for i, (xy, h, *_) in enumerate(outlines):
-        k = 0 if counts[0][i] else 1
-        colour = np.array(sums[3 * k:3 * k + 3])[:, i] / counts[k][i] if counts[k][i] else np.full(3, 0.5)
-        inset = Polygon(xy).buffer(-SHELL_INSET_M, join_style="mitre")
-        if inset.is_empty:
-            continue
-        if inset.geom_type != "Polygon":
-            inset = max(inset.geoms, key=lambda g: g.area)
-        base = float(ground(xy).min())
-        out.append({"outline": np.round(np.asarray(orient(inset, 1.0).exterior.coords)[:-1], 2).tolist(),
-                    "base": round(base - SHELL_SINK_M, 2), "top": round(base + h - SHELL_INSET_M, 2),
-                    "colour": np.round(np.clip(colour * SHELL_SHADE, 0, 1), 3).tolist()})
-    return out
 
 
 def pano_colours(pts, which, n, cameras, photos, occluders):
