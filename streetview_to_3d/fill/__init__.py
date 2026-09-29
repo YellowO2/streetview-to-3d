@@ -6,7 +6,8 @@ place. DA3's shape is never moved; only its ground points are replaced.
     one_ground.py  every cloud's ground and Google's become one smooth
                    surface, the blind disc under each camera included
     google.py      Google's walls where DA3 has nothing, slid onto DA3's
-                   own copy of a wall where it has one
+                   own copy of a wall where it has one -- from panos with
+                   tall buildings above DA3's reach only (needs_walls)
     paint.py       colour for all of that, patch by patch from the nearest
                    pano that sees it cleanly; what no camera has in view
                    at all is left out.
@@ -26,24 +27,24 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from streetview_to_3d import scene as scene_mod
-from streetview_to_3d.fill.google import fill
+from streetview_to_3d.fill.google import fill, needs_walls
 from streetview_to_3d.fill.one_ground import one_ground
 from streetview_to_3d.fill.paint import Camera, blurred, paint
 from streetview_to_3d.postprocess.ground import normals_from_neighbours
 from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
+from streetview_to_3d.services.segment import pano_mask
 
 
 def _photo(pano, scene_dir):
-    """(image path, drop mask) of a pano, or None: the same download the
-    reconstruction used (cached), masked by the class map the scene keeps
-    for it (made here on the CPU if it has none), plus its blur
-    (paint.blurred)."""
-    from streetview_to_3d.services.segment import labels_path, pano_labels, pano_mask
+    """(image path, class map) of a pano, or None: the same download the
+    reconstruction used (cached) and the class map the scene keeps for it
+    (made here on the CPU if it has none)."""
+    from streetview_to_3d.services.segment import labels_path, pano_labels
     from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
     if pano.source != "google":
         return None
     path = run_async(download_pano_by_id(pano.id, zoom=DA3_ONLY_ZOOM))
-    return (path, pano_mask(pano_labels(path, device="cpu", saved=labels_path(scene_dir, pano.id))) | blurred(path)) if path else None
+    return (path, pano_labels(path, device="cpu", saved=labels_path(scene_dir, pano.id))) if path else None
 
 
 def run(scene_dir, log=print):
@@ -70,13 +71,17 @@ def run(scene_dir, log=print):
     clouds = [x[k] for x, k in zip(clouds, keep)]
     colours = [c[k] for c, k in zip(colours, keep)]
     da3 = np.concatenate(clouds)
-    walls = fill(base, da3, np.concatenate([nm[k] for nm, k in zip(normals, keep)]),
-                 np.concatenate([da3, ground]))
+    photos = [_photo(n.pano, scene_dir) for n in nodes]
+    walls_from = {n.pano.id for n, ph in zip(nodes, photos) if ph and needs_walls(ph[1])}
+    log(f"fill: Google walls from {len(walls_from)} of {len(nodes)} panos (tall buildings above DA3's views)")
+    walls = (fill(base, da3, np.concatenate([nm[k] for nm, k in zip(normals, keep)]),
+                  np.concatenate([da3, ground]), walls_from)
+             if walls_from else np.zeros((0, 3)))
     t2 = time.monotonic()
 
     added = np.concatenate([ground, walls])
-    photos = [_photo(n.pano, scene_dir) for n in nodes]
-    col, who, in_view = paint(added, da3, cameras, photos)
+    col, who, in_view = paint(added, da3, cameras,
+                              [ph and (ph[0], pano_mask(ph[1]) | blurred(ph[0])) for ph in photos])
     is_ground = np.arange(len(added)) < len(ground)
     # in view but no camera may colour it (the spot under a camera, masked
     # spots): the colour of the nearest painted point. Out of every

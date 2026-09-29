@@ -40,6 +40,12 @@ SAME_DEG, SAME_M, SAME_NEAR_M, SAME_MIN = 40, 2.5, 5.0, 200
 AGREE_DEG = 15
 SLIDE = (0.5, 2.0)
 ON_WALL_M, SPAN_M, BRIDGE_M, SPAN_PER_M = 0.5, 0.2, 0.6, 60
+# Walls only from panos that need them (needs_walls): DA3's views reach ~29
+# deg up, so a pano whose band just above that is mostly building is missing
+# wall tops. Of its 12 directions (one per DA3 view), TALL_DIRECTIONS or more
+# must be over TALL_SHARE building there. Stockholm's alley: 7 of 7 panos;
+# NTU80, open with some tall blocks: 9 of 21 at 8, 14 at 6.
+TALL_BAND_DEG, TALL_SHARE, TALL_DIRECTIONS = (30, 60), 0.3, 7
 VOXEL_M = 0.05
 
 
@@ -70,12 +76,26 @@ def trusted(p, da3):
     return np.median(np.abs(np.log(gd[both] / near[both]))) < np.log(1 + TRUST)
 
 
-def fill(base, da3, da3_normals, scene_points):
+def needs_walls(labels):
+    """Does a pano (its class map, segment.CLASSES ids) have building above
+    DA3's reach in TALL_DIRECTIONS of its 12 directions?"""
+    from streetview_to_3d.services.segment import LABEL_IDS
+    h, w = labels.shape
+    lo, hi = TALL_BAND_DEG
+    band = np.isin(labels[int(h * (.5 - hi / 180)):int(h * (.5 - lo / 180))], [LABEL_IDS["building"], LABEL_IDS["wall"]])
+    shares = [part.mean() for part in np.array_split(band, 12, axis=1)]
+    return sum(s > TALL_SHARE for s in shares) >= TALL_DIRECTIONS
+
+
+def fill(base, da3, da3_normals, scene_points, walls_from=None):
     """Google base points to add: the gaps of scene_points (DA3 and the one
     ground) filled from trusted panos, DA3's walls winning where both
-    have one. da3/da3_normals: DA3's own points (for trust and walls)."""
+    have one. da3/da3_normals: DA3's own points (for trust and walls).
+    walls_from: the ids of the panos to take walls from (None: all)."""
     xs, ss, ks = [], [], []
     for k, (p, x, s) in enumerate(zip(base.panos, base.points, base.surfaces)):
+        if walls_from is not None and p.id not in walls_from:
+            continue
         if not len(x) or not trusted(p, da3):
             continue
         near, _ = _nearest(*_look(p, scene_points), VIEW_W // 2, VIEW_W)
