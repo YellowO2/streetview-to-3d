@@ -37,9 +37,9 @@ shore being how far each cell is from dry land, 0 on it, to SHORE_MAX_M: the
 viewer draws each surface as one flat shape (effects/water.js), light and
 clear near the shore, deep further out. DA3's own water -- at about
 street height, grainy -- never becomes points: the masker marks it
-(services.segment, "water"). Not what it sees through a bridge's railing
-(ADE20K calls that strip railing): the fill leaves that out, and lays no
-ground over the water past the railing (fill.one_ground, wet_map).
+(services.segment, "water"); what it sees through a bridge's railing
+(ADE20K calls that strip railing) the fill does not take for ground
+(fill.one_ground, WALKABLE).
 """
 import json
 import os
@@ -151,26 +151,6 @@ class Water:
         d = self.shore[k // 2::k, k // 2::k]
         return {"lo": self.lo, "cell": SHORE_CELL_M, "size": len(d),
                 "metres": np.minimum(np.round(d), SHORE_MAX_M).astype(int).ravel().tolist()}
-
-
-def wet_map(sc):
-    """f(east/north (n, 2)) -> whether the map has water there, around
-    scene sc: the same water as Water's, without its bodies and levels
-    (for the fill, before the land is laid); nowhere if the maps cannot be
-    had."""
-    import math
-    from streetview_to_3d.postprocess.terrain import M_PER_LAT, SEA_M, height_map
-    lat0, lon0 = sc.origin
-    m_per_lon = M_PER_LAT * math.cos(math.radians(lat0))
-    often, height = occurrence_map(), height_map()
-
-    def f(xy):
-        lat, lon = lat0 + xy[:, 1] / M_PER_LAT, lon0 + xy[:, 0] / m_per_lon
-        try:
-            return (often(lat, lon) >= WET) | (height(lat, lon) <= SEA_M)
-        except OSError:
-            return np.zeros(len(xy), bool)
-    return f
 
 
 def _bodies(mask, lo):

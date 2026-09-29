@@ -42,6 +42,18 @@ def _photo(pano, scene_dir):
     return (path, pano_labels(path, device="cpu", saved=labels_path(scene_dir, pano.id))) if path else None
 
 
+def _walkable(points, camera, photo):
+    """Which of a node's own points its pano's class map calls WALKABLE,
+    each looked up where it came from; all of them without a class map."""
+    from streetview_to_3d.fill.one_ground import WALKABLE
+    from streetview_to_3d.fill.paint import _at
+    from streetview_to_3d.services.segment import LABEL_IDS
+    if photo is None:
+        return np.ones(len(points), bool)
+    u, v, _, _ = camera.look(points)
+    return np.isin(_at(photo[1], u, v), [LABEL_IDS[c] for c in WALKABLE])
+
+
 def run(scene_dir, log=print):
     """Fill the placed scene at scene_dir in place. (Google's depth maps --
     their ground and their walls above DA3's reach -- once filled in too;
@@ -60,12 +72,12 @@ def run(scene_dir, log=print):
     cameras = [Camera(n) for n in nodes]
     cams = np.array([c.centre for c in cameras])
     normals = [normals_from_neighbours(x) for x in clouds]
-    from streetview_to_3d.postprocess.water import wet_map
-    keep, ground = one_ground(clouds, cams, normals, wet_map(sc))
+    photos = [_photo(n.pano, scene_dir) for n in nodes]
+    keep, ground = one_ground(clouds, cams, normals, [_walkable(x, cam, ph) for x, cam, ph
+                                                      in zip(clouds, cameras, photos)])
     clouds = [x[k] for x, k in zip(clouds, keep)]
     colours = [c[k] for c, k in zip(colours, keep)]
     da3 = np.concatenate(clouds)
-    photos = [_photo(n.pano, scene_dir) for n in nodes]
     t1 = time.monotonic()
 
     added = ground
