@@ -238,11 +238,6 @@ def build(scene_dir, log=print):
         raw = heights(*to_ll(xy)) if raw is None else raw
         return np.where(raw <= SEA_M, 0.0, raw) + shift + bend(xy)
 
-    def unbent(xy):
-        """The map on Google's datum, not bent onto the panos: a water level
-        (the bend lifts the land by a quay up to the street)."""
-        raw = heights(*to_ll(xy))
-        return np.where(raw <= SEA_M, 0.0, raw) + shift
 
     # the scene always wins: the map only around it, faded in at its edge
     scene, scene_cols = scene_points(sc, scene_dir)
@@ -254,7 +249,8 @@ def build(scene_dir, log=print):
     gap = lambda xy: gap_at(cam_tree.query(xy)[0])
     # water is a flat surface of its own (water.py), reaching under the
     # shore: no land points under it, the land's edge over its edge
-    wet = water.Water(radius, to_ll, lambda lat, lon: heights(lat, lon) <= SEA_M, unbent)
+    wet = water.Water(radius, to_ll, heights, shift,
+                      (anchors, np.array([n.pano.elevation for n in known])))
     en = sample_points(radius, cam_xz)
     en = en[ground(en) >= wet.level_at(en)]
     # the scene's ground-level points: the land fills exactly where they are not
