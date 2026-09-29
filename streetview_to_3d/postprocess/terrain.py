@@ -8,9 +8,9 @@ from EOX's Sentinel-2 cloudless mosaic (no key, 10 m, CC BY-NC-SA: credit
 near the scene and sparser with distance so each covers about the same
 share of the view:
 
-1. points on rings out to NEAR_RADIUS_M, or FAR_RADIUS_M where hills rise
-   beyond it (reach), STEP of their distance apart (never
-   under MIN_STEP_M), none where the scene has its own ground-level points
+1. points out to NEAR_RADIUS_M, or FAR_RADIUS_M where hills rise beyond it
+   (reach), further apart the further from the nearest camera (gap_at),
+   none where the scene has its own ground-level points
    within most of that spacing: the scene always wins, the land fills
    exactly what it lacks, meeting its ground and taking its colour at its
    edge (seams.py)
@@ -32,7 +32,7 @@ share of the view:
    pano sees
 
 Written to terrain.ply beside scene.json (its "terrain"), the buildings,
-spaced by distance to the nearest camera (building_step), to buildings.ply (its "buildings"), both
+spaced the same way, to buildings.ply (its "buildings"), both
 already in the world frame. The viewer draws its points larger with distance, as they
 are spaced (scene-store.js, terrainBands).
 
@@ -65,8 +65,7 @@ TINT_M, MEET_M = 8.0, 10.0                # the ground's seam with the scene (se
 LOW_M, COVER = 1.0, 0.75                  # the scene's ground: points this near the map's; land it has within
                                           # this much of the land's own gap is the scene's
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
-B_NEAR_M, B_DOUBLE_M = 0.05, 8.0          # buildings' spacing near the cameras (building_step)
-STEP, MIN_STEP_M = 0.015, 0.5              # 1% looked no better far out, for twice the points
+GAP0_M, GAP_PER = 0.05, 0.015              # map points' spacing (gap_at)
 M_PER_LAT = 111320.0
 PLAIN = np.array([0.50, 0.55, 0.45])
 LIFT = 0.75               # colour ** LIFT: brighter shadows, same hues
@@ -119,20 +118,13 @@ def colour_map():
     return TileMap(COLOUR_URL, COLOUR_ZOOM, lambda c: c / 255)
 
 
-def step_at(d):
-    """Point spacing d metres from the centre."""
-    return max(MIN_STEP_M, STEP * d)
-
-
-def building_step(xy, cam_d):
-    """Building point spacing at east/north points cam_d metres from the
-    nearest camera: the land's (step_at, from the centre) -- but nearer
-    DA3's own (~4 cm apart there) close up: B_NEAR_M at a camera, doubling
-    every B_DOUBLE_M, until the land's is the denser (~15-20 m). Tried
-    instead: 1% from the nearest camera, never under 15 cm, and 2% --
-    denser and sparser far out both looked worse."""
-    land = np.maximum(MIN_STEP_M, STEP * np.linalg.norm(xy, axis=1))
-    return np.minimum(land, B_NEAR_M * 2 ** (np.asarray(cam_d) / B_DOUBLE_M))
+def gap_at(cam_d):
+    """How far apart map points are cam_d metres from the nearest camera:
+    GAP0_M there (DA3's own are ~4 cm apart), GAP_PER of the distance more
+    further out -- one even growth from the scene outwards. Measured from
+    the centre with a 50 cm floor instead, the land was coarse right at the
+    scene's edge."""
+    return GAP0_M + GAP_PER * np.asarray(cam_d)
 
 
 def reach(ground, ground_here):
@@ -145,17 +137,25 @@ def reach(ground, ground_here):
     return FAR_RADIUS_M if ground(ring).max() - ground_here > HILL_M else NEAR_RADIUS_M
 
 
-def sample_points(radius_m):
-    """(east, north) on rings about the centre, step_at their radius apart."""
-    r, rings = MIN_STEP_M, []
-    rng = np.random.default_rng(0)
-    while r < radius_m:
-        step = step_at(r)
-        k = max(6, int(2 * math.pi * r / step))
-        a = (np.arange(k) + rng.random()) * 2 * math.pi / k
-        rings.append(np.stack([r * np.cos(a), r * np.sin(a)], 1))
-        r += step
-    return np.concatenate(rings)
+def sample_points(radius_m, cams):
+    """(east, north) within radius_m of the centre, gap_at their distance
+    to the nearest camera (cams, (n, 2)) apart: nested grids, each twice
+    the last's spacing, each laid only where the gap wanted is between its
+    spacing and twice that -- and shaken a little, so no grid shows."""
+    from scipy.spatial import cKDTree
+    tree, rng, out = cKDTree(cams), np.random.default_rng(0), []
+    lo_c, hi_c = cams.min(0), cams.max(0)
+    s = GAP0_M
+    while (s - GAP0_M) / GAP_PER < 2 * radius_m:
+        d_lo, d_hi = (s - GAP0_M) / GAP_PER, (2 * s - GAP0_M) / GAP_PER
+        lo, hi = np.maximum(lo_c - d_hi, -radius_m), np.minimum(hi_c + d_hi, radius_m)
+        if (lo < hi).all():
+            gx, gy = np.meshgrid(np.arange(lo[0], hi[0], s), np.arange(lo[1], hi[1], s))
+            grid = np.stack([gx.ravel(), gy.ravel()], 1) + rng.uniform(-0.3 * s, 0.3 * s, (gx.size, 2))
+            d = tree.query(grid)[0]
+            out.append(grid[(d >= d_lo) & (d < d_hi) & (np.linalg.norm(grid, axis=1) < radius_m)])
+        s *= 2
+    return np.concatenate(out) if out else np.zeros((0, 2))
 
 
 def correction(anchors, fixes):
@@ -231,13 +231,15 @@ def build(scene_dir, log=print):
     near = (lambda xy: foot.at(xy)) if foot else \
         (lambda xy: (np.full(len(xy), np.inf), np.full(len(xy), np.nan), np.full((len(xy), 3), np.nan)))
     radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
-    en = sample_points(radius)
+    cam_tree = cKDTree(cam_xz)
+    gap = lambda xy: gap_at(cam_tree.query(xy)[0])
+    en = sample_points(radius, cam_xz)
     # the scene's ground-level points: the land fills exactly where they are not
     low = scene[-scene[:, 1] < ground(scene[:, [0, 2]]) + LOW_M] if len(scene) else scene
     low_tree = cKDTree(low[:, [0, 2]]) if len(low) else None
     uncovered = (lambda xy, gap: low_tree.query(xy)[0] > COVER * gap) if low_tree else \
         (lambda xy, gap: np.ones(len(xy), bool))
-    en = en[uncovered(en, np.maximum(MIN_STEP_M, STEP * np.linalg.norm(en, axis=1)))]
+    en = en[uncovered(en, gap(en))]
     dist, edge_h, edge_c = near(en)
     lat, lon = to_ll(en)
     raw = heights(lat, lon)
@@ -281,9 +283,8 @@ def build(scene_dir, log=print):
         scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
         outlines, n_fitted = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
                                                     roads.coverage(roads.lines(elements, to_xy)))
-        cam_tree = cKDTree(cam_xz)
         blocks = buildings.points(
-            outlines, lambda xy: building_step(xy, cam_tree.query(xy)[0]), ground,
+            outlines, gap, ground,
             lambda xy: colours(*to_ll(xy)) ** LIFT if colours else np.tile(PLAIN, (len(xy), 1)),
             SUN / np.linalg.norm(SUN))
         n_buildings = len(outlines)
@@ -302,17 +303,15 @@ def build(scene_dir, log=print):
         bp, bc = blocks.pts, blocks.cols
     lines = roads.lines(elements, to_xy)
     if lines:
-        rp, rc = roads.points(lines, step_at, ground)
-        keep = uncovered(rp[:, [0, 2]], np.maximum(MIN_STEP_M, STEP * np.linalg.norm(rp[:, [0, 2]], axis=1)))
+        rp, rc = roads.points(lines, gap, ground)
+        keep = uncovered(rp[:, [0, 2]], gap(rp[:, [0, 2]]))
         rp = rp[keep]
         d, g, _ = near(rp[:, [0, 2]])
         rp[:, 1] = -(seams.meet(-rp[:, 1] - roads.LIFT_M, g, d, MEET_M) + roads.LIFT_M)
         # no ground under a road: two layers 15 cm apart fight in the depth buffer far off
         if len(rp):
-            from scipy.spatial import cKDTree
             xz = pts[:n_ground][:, [0, 2]]
-            spacing = np.maximum(MIN_STEP_M, STEP * np.linalg.norm(xz, axis=1))
-            under = cKDTree(rp[:, [0, 2]]).query(xz)[0] < spacing / 2
+            under = cKDTree(rp[:, [0, 2]]).query(xz)[0] < gap(xz) / 2
             pts, cols = pts[np.r_[~under, np.ones(len(pts) - n_ground, bool)]], \
                 cols[np.r_[~under, np.ones(len(cols) - n_ground, bool)]]
         pts, cols = np.concatenate([pts, rp]), np.concatenate([cols, rc[keep]])

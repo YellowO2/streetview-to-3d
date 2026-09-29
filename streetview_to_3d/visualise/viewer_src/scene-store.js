@@ -54,18 +54,15 @@ export function parsePoints(buffer, transform) {
   }
 }
 // postprocess/terrain.py spaces its points further apart the further they
-// are, out to 2 km (SPACING, as terrain.step_at and terrain.building_step):
+// are from the nearest camera, out to 2 km (SPACING, as terrain.gap_at):
 // drawn at one size they would be dust far out. So they are grouped by
 // their spacing, each group drawn its own size in metres
 // (userData.pointSize), just over that spacing.
-const GAPS = [0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 8, 12, 20, Infinity];
+const GAPS = [0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 8, 12, 20, Infinity];
 const nearest = (x, z, places) => Math.min(...places.map(([a, b]) => Math.hypot(x - a, z - b)));
-export const SPACING = {
-  terrain: (x, z) => Math.max(0.5, 0.015 * Math.hypot(x, z)),
-  // the land's, but DA3-dense near a camera: 5 cm there, doubling every 8 m
-  buildings: (x, z, cams) =>
-    Math.min(Math.max(0.5, 0.015 * Math.hypot(x, z)), 0.05 * 2 ** (nearest(x, z, cams) / 8)),
-};
+// 5 cm at a camera, 1.5% of the distance to the nearest one more further out
+const gapAt = (x, z, cams) => 0.05 + 0.015 * nearest(x, z, cams);
+export const SPACING = { terrain: gapAt, buildings: gapAt };
 // Each placed node's camera, seen from above, in the viewer's frame.
 export function cameraPlaces(data) {
   return data.nodes

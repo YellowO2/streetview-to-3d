@@ -10,7 +10,7 @@ Footprints from osm.py, each raised into a block of points:
     faded in next to it, judged on the wall itself (seam)
   - standing on the lowest ground under its outline (terrain.py's map)
   - walls and a flat roof, spaced by how near the scene's cameras they
-    are -- as densely as DA3 next to them (points)
+    are, as the land is (terrain.gap_at)
   - roof coloured from the satellite straight above it; walls the
     building's own colour where the scene's panos see enough of it
     (pano_colours), else its roof colour darkened -- either shaded by

@@ -87,15 +87,15 @@ def coverage(roads, step_m=0.5):
 def points(roads, step, ground):
     """(points (n, 3) world, colours (n, 3)) for every road.
 
-    step(d): spacing at d metres from the centre; ground(xy): height of the
-    ground at east/north points."""
+    step(xy): point spacing at east/north points; ground(xy): height of the
+    ground there."""
     strips, cols = [], []
     for xy, width, colour in roads:
         for a, b in zip(xy[:-1], xy[1:]):
             length = np.linalg.norm(b - a)
             if length < 1e-6:
                 continue
-            s = step(float(np.linalg.norm((a + b) / 2)))
+            s = float(step(((a + b) / 2)[None])[0])
             if s > width:
                 continue
             along = a + (b - a) * (np.arange(max(1, int(length / s)) + 1) / max(1, int(length / s)))[:, None]
