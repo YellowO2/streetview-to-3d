@@ -5,8 +5,9 @@ Footprints from osm.py, each raised into a block of points:
   - height: its own "height" tag, else building:levels x LEVEL_M, else a
     guess by kind (DEFAULT_M; most buildings carry neither -- NTU: 1864 of
     2628)
-  - one DA3 built a wall of is slid onto it, a guessed height made DA3's
-    (fit_to_scene); what DA3 already has of it is left to DA3 and the rest
+  - one DA3 built a wall of is slid onto it, whatever still stands in
+    front of that wall cut away as from a solid block, a guessed height
+    made DA3's (fit_to_scene); what DA3 already has of it is left to DA3 and the rest
     faded in next to it, judged on the wall itself (seam)
   - standing on the lowest ground under its outline (terrain.py's map)
   - walls and a flat roof, spaced by how near the scene's cameras they
@@ -32,6 +33,10 @@ WALL_SAMPLE_M = 1.0
 SNAP_MAX_M = 2.0              # OSM's real offsets were 0.2-1.3 m (Stockholm, NTU)
 ROAD_SLACK = 0.02             # a slide may put this much more of an outline onto roads
 PULL_MAX_M = 1.0              # a wall's seam pulled onto DA3's plane by at most this
+TRIM_TOL_M, TRIM_FRONT_M = 0.3, 30.0   # cut from this far in front of a DA3 wall, out to this
+TRIM_MIN_M2, TRIM_MAX = 1.0, 0.2
+TRIM_EDGE_M = 5.0             # only a straight wall this long trims: a curve's short edges found planes in
+                              # its own curved, overhung walls and ate NTU's Hive
 TOP_PERCENTILE = 97
 MIN_HEIGHT_M = 2.5
 CHUNK_M = 4.0                 # a wall is spaced in pieces this long, each as at its middle
@@ -66,7 +71,10 @@ def outlines(elements, to_xy):
         for ring in rings:
             if not ring or len(ring) < 4 or ring[0] != ring[-1]:
                 continue                  # a relation's outer split over several ways: left out
-            out.append((to_xy(ring), *_height(e["tags"])))
+            xy = to_xy(ring)
+            if (xy[:-1, 0] * xy[1:, 1] - xy[1:, 0] * xy[:-1, 1]).sum() < 0:   # counter-clockwise: normals face out
+                xy = xy[::-1]
+            out.append((xy, *_height(e["tags"])))
     return out
 
 
@@ -79,63 +87,113 @@ def _wall_samples(a, c, base, top):
     return np.column_stack([np.repeat(xy[:, 0], len(v)), -np.tile(v, len(u)), np.repeat(xy[:, 1], len(v))])
 
 
-def fit_to_scene(outlines, da3, da3_normals, ground, on_road=None):
-    """outlines, each building DA3 built a wall of moved onto it and, where
-    its height was a guess, given DA3's; each outline gains {edge: (n2,
-    d2)}, DA3's plane for each of its walls DA3 has.
+def _walls(xy, base, h, da3, da3_normals):
+    """{edge index: (n2, d2, DA3's points on that plane)} for the walls of
+    outline xy DA3 has a copy of (fill.google.da3_copy: DA3's points near
+    its plane that face its way, so trees, poles and the ground never
+    count), n2 facing out of the building."""
+    from streetview_to_3d.fill.google import da3_copy, on_plane
+    walls = {}
+    for j, (a, c) in enumerate(zip(xy[:-1], xy[1:])):
+        length = float(np.linalg.norm(c - a))
+        if length < 1e-6:
+            continue
+        t = (c - a) / length
+        n = np.array([t[1], 0.0, -t[0]])                 # outward: outlines run counter-clockwise
+        copy = da3_copy(n, float(n @ [a[0], 0, a[1]]), _wall_samples(a, c, base, base + h), da3, da3_normals)
+        if copy is None or not copy[2]:
+            continue
+        n2, d2, _ = copy
+        near = np.all(np.abs(da3[:, [0, 2]] - (a + c) / 2) < length / 2 + FIT_M, axis=1)
+        idx = np.flatnonzero(near)
+        walls[j] = (n2, d2, idx[on_plane(n2, d2, da3[idx], da3_normals[idx])])
+    return walls
 
-    Each wall looks for DA3's copy of it as the fill does for Google's
-    (fill.google.da3_copy: DA3's points near its plane that face its way,
-    so trees, poles and the ground never count). A copy that agrees says
-    how far that wall is off, along its own facing; one slide of the whole
+
+def _trim(xy, walls, da3):
+    """xy with whatever stands in front of a DA3 wall cut away, as a solid
+    block sliced straight down (the cut face a new wall, the outline
+    re-drawn round it): DA3's wall is the building's real face, and the
+    camera saw it, so nothing of the building stands between them. Only in
+    front of the stretches along it where DA3 has that wall
+    (fill.google._stretches) -- its plane runs on past them, maybe through
+    another wing -- from TRIM_TOL_M out, past DA3's own noise, and only by
+    straight walls (TRIM_EDGE_M). None
+    when that cuts under TRIM_MIN_M2 or over TRIM_MAX of it."""
+    from shapely.geometry import Polygon
+    from shapely.geometry.polygon import orient
+    from shapely.ops import unary_union
+    from streetview_to_3d.fill.google import _stretches
+    poly = Polygon(xy).buffer(0)
+    strips = []
+    for j, (n2, _, on) in walls.items():
+        if len(on) < 2 or np.linalg.norm(xy[j + 1] - xy[j]) < TRIM_EDGE_M:
+            continue
+        n = n2[[0, 2]] / np.linalg.norm(n2[[0, 2]])
+        along = np.array([-n[1], n[0]])
+        c = da3[on][:, [0, 2]].mean(0)
+        for u0, u1 in _stretches((da3[on][:, [0, 2]] - c) @ along):
+            near, far = c + n * TRIM_TOL_M, c + n * TRIM_FRONT_M
+            strips.append(Polygon([near + along * u0, near + along * u1, far + along * u1, far + along * u0]))
+    if not strips:
+        return None
+    kept = poly.difference(unary_union(strips))
+    if kept.geom_type != "Polygon":
+        kept = max(getattr(kept, "geoms", []), key=lambda g: g.area, default=kept)
+    removed = poly.area - kept.area
+    if kept.is_empty or removed < TRIM_MIN_M2 or removed > TRIM_MAX * poly.area:
+        return None
+    return np.asarray(orient(kept, 1.0).exterior.coords)
+
+
+def fit_to_scene(outlines, da3, da3_normals, ground, on_road=None):
+    """outlines, each building DA3 built a wall of moved onto it, trimmed
+    to it, and where its height was a guess given DA3's; each outline
+    gains {edge: (n2, d2)}, DA3's plane for each of its walls DA3 has.
+
+    Each wall looks for DA3's copy of it (_walls). A copy says how far
+    that wall is off, along its own facing; one slide of the whole
     building (never turned: OSM's shape is good, its place a metre or two
     off) meets all of them in least squares -- with one wall, or parallel
     ones, it only moves towards them, never sideways along them. Not moved
     if that is over SNAP_MAX_M, or if it moves the outline further onto a
     road (on_road(xy): the share of it there) -- buildings do not stand in
-    roads. A guessed height becomes the top of DA3's points on its walls
-    (TOP_PERCENTILE). Returns the new outlines and how many moved."""
-    from streetview_to_3d.fill.google import da3_copy, on_plane
+    roads. Then whatever of it still stands in front of a DA3 wall is cut
+    away (_trim). A guessed height becomes the top of DA3's points on its
+    walls (TOP_PERCENTILE). Returns the new outlines, how many moved and
+    how many were trimmed."""
     if not len(da3):
-        return [o + ({},) for o in outlines], 0
+        return [o + ({},) for o in outlines], 0, 0
     lo, hi = da3[:, [0, 2]].min(0) - FIT_M, da3[:, [0, 2]].max(0) + FIT_M
-    out, moved = [], 0
+    out, moved, trimmed = [], 0, 0
     for xy, h, guessed in outlines:
         if not ((xy.max(0) >= lo) & (xy.min(0) <= hi)).all():
             out.append((xy, h, guessed, {}))
             continue
         base = ground(xy).min()
-        planes, rows, want, weight, tops = {}, [], [], [], []
-        for j, (a, c) in enumerate(zip(xy[:-1], xy[1:])):
-            length = float(np.linalg.norm(c - a))
-            if length < 1e-6:
-                continue
-            t = (c - a) / length
-            n = np.array([t[1], 0.0, -t[0]])
-            copy = da3_copy(n, float(n @ [a[0], 0, a[1]]), _wall_samples(a, c, base, base + h), da3, da3_normals)
-            if copy is None or not copy[2]:
-                continue
-            n2, d2, _ = copy
-            on = on_plane(n2, d2, da3, da3_normals)
-            planes[j] = (n2, d2)
-            rows.append(n2[[0, 2]])
-            want.append(d2 - n2 @ [a[0], 0, a[1]])
-            weight.append(np.sqrt(on.sum()))
-            tops.append(-da3[on, 1])
-        if not planes:
+        walls = _walls(xy, base, h, da3, da3_normals)
+        if not walls:
             out.append((xy, h, guessed, {}))
             continue
-        w = np.array(weight)[:, None]
-        shift = np.linalg.lstsq(np.array(rows) * w, np.array(want) * w[:, 0], rcond=None)[0]
+        a = xy[:-1]
+        rows = np.array([n2[[0, 2]] for n2, _, _ in walls.values()])
+        want = np.array([d2 - n2 @ [a[j][0], 0, a[j][1]] for j, (n2, d2, _) in walls.items()])
+        w = np.sqrt([max(len(on), 1) for _, _, on in walls.values()])[:, None]
+        shift = np.linalg.lstsq(rows * w, want * w[:, 0], rcond=None)[0]
         if np.linalg.norm(shift) > SNAP_MAX_M or (on_road and on_road(xy + shift) > on_road(xy) + ROAD_SLACK):
             shift = np.zeros(2)
         xy = xy + shift
-        if guessed:
-            top = np.percentile(np.concatenate(tops), TOP_PERCENTILE)
-            h = max(MIN_HEIGHT_M, top - base)
-        out.append((xy, h, guessed, planes))
         moved += bool(shift.any())
-    return out, moved
+        cut = _trim(xy, walls, da3)
+        if cut is not None:
+            xy, trimmed = cut, trimmed + 1
+            walls = _walls(xy, base, h, da3, da3_normals)
+        if guessed and walls:
+            tops = np.concatenate([-da3[on, 1] for _, _, on in walls.values()])
+            if len(tops):
+                h = max(MIN_HEIGHT_M, np.percentile(tops, TOP_PERCENTILE) - base)
+        out.append((xy, h, guessed, {j: (n2, d2) for j, (n2, d2, _) in walls.items()}))
+    return out, moved, trimmed
 
 
 def _inside(pts, ring):

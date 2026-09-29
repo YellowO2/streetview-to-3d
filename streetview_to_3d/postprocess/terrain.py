@@ -277,12 +277,12 @@ def build(scene_dir, log=print):
     outlines = [o for o in buildings.outlines(elements, to_xy)
                 if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]   # an older, wider osm.json
     bp = bc = np.zeros((0, 3))
-    n_fitted = n_cut = 0
+    n_fitted = n_trimmed = n_cut = 0
     if outlines:
         from streetview_to_3d.postprocess.ground import normals_from_neighbours
         scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
-        outlines, n_fitted = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
-                                                    roads.coverage(roads.lines(elements, to_xy)))
+        outlines, n_fitted, n_trimmed = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
+                                                               roads.coverage(roads.lines(elements, to_xy)))
         blocks = buildings.points(
             outlines, gap, ground,
             lambda xy: colours(*to_ll(xy)) ** LIFT if colours else np.tile(PLAIN, (len(xy), 1)),
@@ -336,7 +336,8 @@ def build(scene_dir, log=print):
     fix = np.abs(fixes - shift)
     log(f"terrain: {len(pts)} points to {radius:.0f} m, {len(bp)} building points, {n_painted} of them "
         f"painted from the panos ({int(sea.sum())} sea, {source} colour, "
-        f"{n_buildings} buildings -- {n_fitted} fitted onto DA3's walls, {n_cut} of their points "
+        f"{n_buildings} buildings -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
+        f"{n_cut} of their points "
         f"left to DA3's own, {n_seen} coloured by the panos -- {n_roads} roads), map shifted "
         f"{shift:+.1f} m to Google's datum, then bent onto {len(known)} panos' elevation "
         f"(by up to {fix.max() if len(fix) else 0:.1f} m, median {np.median(fix) if len(fix) else 0:.1f})")

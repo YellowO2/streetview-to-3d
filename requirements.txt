@@ -3,6 +3,7 @@ spaces
 aiohttp
 numpy
 scipy
+shapely
 
 # depth_anything_3 imports these but does not declare them (checked against
 # its pyproject: addict in model/da3.py and utils/registry.py, tqdm in
