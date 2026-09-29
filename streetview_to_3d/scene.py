@@ -117,6 +117,8 @@ class Scene:
     # What surrounds the scene: a .ply beside scene.json, already in the
     # world (postprocess/backdrop.py)
     backdrop: str | None = None
+    # the land further out, from a public elevation map (postprocess/terrain.py)
+    terrain: str | None = None
 
     @property
     def origin(self):
@@ -174,4 +176,4 @@ class Scene:
                    nodes=[Node(pano=Pano(**n.pop("pano")), **n) for n in d["nodes"]],
                    adjacency={str(k): v for k, v in d["adjacency"].items()},
                    edges=[Edge(**e) for e in d["edges"]],
-                   backdrop=d.get("backdrop"))
+                   backdrop=d.get("backdrop"), terrain=d.get("terrain"))

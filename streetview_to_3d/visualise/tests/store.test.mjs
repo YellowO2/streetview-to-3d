@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { SceneStore, parsePoints, loadAsset } from '@viewer/scene-store';
+import { SceneStore, parsePoints, loadAsset, terrainBands } from '@viewer/scene-store';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const T = [
   [1.2, 0, 0.3, 10],
@@ -119,17 +119,40 @@ test('a placed scene loads its backdrop, left out of its bounds', async () => {
     'scene.json': new TextEncoder().encode(
       JSON.stringify({
         center: [1, 103],
-        nodes: [{ pano: {}, ply: 'node_0.ply', position: [0, 0, 0], transform: structuredClone(T) }],
+        nodes: [
+          { pano: {}, ply: 'node_0.ply', position: [0, 0, 0], transform: structuredClone(T) },
+        ],
         edges: [],
         backdrop: 'backdrop.ply',
       }),
     ).buffer,
   };
   const source = (name) => ({ arrayBuffer: async () => files[name] });
-  const asset = await loadAsset(source('scene.json'), source, () => {}, () => false);
+  const asset = await loadAsset(
+    source('scene.json'),
+    source,
+    () => {},
+    () => false,
+  );
   const kinds = asset.group.children.map((o) => o.userData.surroundings || 'node');
   assert.deepEqual(kinds, ['node', 'backdrop']);
   const store = new SceneStore();
   store.install(asset, 'Test');
   assert(store.box().getBoundingSphere(new THREE.Sphere()).radius < 20);
+});
+test('terrain splits into rings drawn larger with distance', () => {
+  const at = [10, 70, 1500];
+  const ply = new TextEncoder().encode(
+    `ply\nformat ascii 1.0\nelement vertex ${at.length}\nproperty float x\nproperty float y\nproperty float z\nend_header\n` +
+      at.map((d) => `${d} 5 0`).join('\n') +
+      '\n',
+  ).buffer;
+  const bands = terrainBands(parsePoints(ply));
+  assert.equal(bands.length, 3);
+  assert.deepEqual(
+    bands.map((b) => b.geometry.getAttribute('position').count),
+    [1, 1, 1],
+  );
+  const sizes = bands.map((b) => b.userData.pointSize);
+  assert(sizes[0] < sizes[1] && sizes[1] < sizes[2]);
 });

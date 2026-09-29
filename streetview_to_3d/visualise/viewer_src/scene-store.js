@@ -53,6 +53,43 @@ export function parsePoints(buffer, transform) {
     throw e;
   }
 }
+// postprocess/terrain.py spaces its points a hundredth of their distance
+// from the centre apart (never under half a metre), out to 2 km: drawn at
+// one size they would be dust far out. So split into rings, each drawn
+// its own size in metres (userData.pointSize), just over its spacing.
+const TERRAIN_RINGS = [50, 100, 200, 400, 800, 1600, Infinity];
+export function terrainBands(points) {
+  const geometry = points.geometry;
+  const p = geometry.getAttribute('position'),
+    c = geometry.getAttribute('color');
+  const ring = new Uint8Array(p.count);
+  for (let i = 0; i < p.count; i++) {
+    const d = Math.hypot(p.getX(i), p.getZ(i));
+    while (d > TERRAIN_RINGS[ring[i]]) ring[i]++;
+  }
+  const bands = TERRAIN_RINGS.flatMap((outer, r) => {
+    const members = [];
+    for (let i = 0; i < p.count; i++) if (ring[i] === r) members.push(i);
+    if (!members.length) return [];
+    const part = new THREE.BufferGeometry();
+    const pick = (attr) =>
+      new THREE.Float32BufferAttribute(
+        members.flatMap((i) => [attr.getX(i), attr.getY(i), attr.getZ(i)]),
+        3,
+      );
+    part.setAttribute('position', pick(p));
+    if (c) part.setAttribute('color', pick(c));
+    part.computeBoundingBox();
+    part.computeBoundingSphere();
+    const band = new THREE.Points(part, points.material.clone());
+    const reach = Number.isFinite(outer) ? outer : 2000;
+    band.userData.pointSize = 1.5 * Math.max(0.5, 0.01 * reach);
+    return [band];
+  });
+  geometry.dispose();
+  points.material.dispose();
+  return bands;
+}
 // A Gaussian splat (.spz). Spark is imported only when one is opened, so a
 // page showing point clouds never downloads it.
 export async function parseSplat(buffer) {
@@ -121,8 +158,10 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           return null;
         }
         const points = parsePoints(buffer);
-        points.userData.surroundings = key;
-        group.add(points);
+        for (const part of key === 'terrain' ? terrainBands(points) : [points]) {
+          part.userData.surroundings = key;
+          group.add(part);
+        }
       }
     }
     if (cancelled()) {

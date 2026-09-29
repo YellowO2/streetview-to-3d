@@ -129,7 +129,7 @@ function configure() {
 }
 function setPointSize() {
   store.group?.traverse((o) => {
-    if (o.isPoints) o.material.size = radius * 0.002 * pointMultiplier;
+    if (o.isPoints) o.material.size = (o.userData.pointSize ?? radius * 0.002) * pointMultiplier;
   });
 }
 function frameAll() {
@@ -325,7 +325,7 @@ document.addEventListener('visibilitychange', () => {
 });
 clearTimeout(window.viewerBootTimer);
 ui.settings();
-ui.styles(config.style || 'original');
+ui.styles(config.style || 'paint');
 refresh();
 if (config.sceneUrl) {
   const base = config.sceneUrl.slice(0, config.sceneUrl.lastIndexOf('/') + 1);

@@ -49,7 +49,7 @@ export function createStyles(scene, camera, renderer) {
     dither.uniforms.resolution.value.set(size.x * ratio, size.y * ratio);
   }
   function updateMotion(editing) {
-    for (const uniforms of entries) {
+    for (const { uniforms, animated } of entries) {
       uniforms.styleDensity.value = settings.density / 100;
       uniforms.stylePointScale.value = style === 'paint' ? 1.2 : 1;
       uniforms.styleRound.value = style === 'paint' ? 1 : 0;
@@ -57,10 +57,10 @@ export function createStyles(scene, camera, renderer) {
       uniforms.styleCenter.value.copy(center);
       uniforms.styleTime.value = time;
       uniforms.styleFloat.value =
-        style !== 'original' && !editing && settings.floating ? settings.amount : 0;
+        style !== 'original' && !animated && !editing && settings.floating ? settings.amount : 0;
       uniforms.styleScan.value = style !== 'original' && !editing && settings.scan ? 1 : 0;
       uniforms.styleReveal.value =
-        editing || revealStart === null || style === 'original'
+        animated || editing || revealStart === null || style === 'original'
           ? 1
           : Math.min(1, (time - revealStart) / 4);
     }
@@ -86,11 +86,21 @@ export function createStyles(scene, camera, renderer) {
       entries = [];
       store.group?.traverse((object) => {
         if (object.isPoints) {
-          entries.push(pointMotion(object));
+          entries.push({ uniforms: pointMotion(object), animated: false });
+        }
+      });
+      // Animated world objects share the point look, but retain their own motion.
+      const materials = new Set(entries.map(({ uniforms }) => uniforms));
+      scene.traverse((object) => {
+        if (!object.isPoints || !object.userData.styleAnimated) return;
+        const uniforms = pointMotion(object);
+        if (!materials.has(uniforms)) {
+          entries.push({ uniforms, animated: true });
+          materials.add(uniforms);
         }
       });
       revealStart = null;
-      environment.configure(box, radius);
+      environment.configure(radius);
       water.configure(box, radius);
       updateMotion(false);
     },
