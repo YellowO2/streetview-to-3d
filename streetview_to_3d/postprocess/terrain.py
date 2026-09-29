@@ -9,10 +9,10 @@ near the scene and sparser with distance so each covers about the same
 share of the view:
 
 1. points out to NEAR_RADIUS_M, or FAR_RADIUS_M where hills rise beyond it
-   (reach), further apart the further from the nearest camera (gap_at),
-   none where the scene has its own ground-level points
-   within most of that spacing: the scene always wins, the land fills
-   exactly what it lacks, meeting its ground and taking its colour at its
+   (reach), further apart the further from the nearest camera (gap_at);
+   where the scene has its own ground, just beneath it (UNDER_M) -- one
+   shared ground, the scene's no longer seen through, the land never over
+   it -- and around it meeting its ground and taking its colour at its
    edge (seams.py)
 2. height read off the tiles, the sea (the tiles also carry the sea bed)
    laid flat at sea level; the whole map shifted onto Google's datum (the
@@ -62,6 +62,7 @@ HILL_M = 50.0
 BUILDINGS_M, ROADS_M = 1000.0, 700.0         # OSM's reach (roads are drawn only where a point wide, ~600 m)
 PAINT_M = 30.0                            # map points this near a camera are coloured from the panos
 TINT_M, MEET_M = 8.0, 10.0                # the ground's seam with the scene (seams.py): bands
+UNDER_M = 0.1                             # the land under the scene: this far beneath its lowest points
 LOW_M, COVER = 1.0, 0.75                  # the scene's ground: points this near the map's; land it has within
                                           # this much of the land's own gap is the scene's
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
@@ -239,12 +240,15 @@ def build(scene_dir, log=print):
     low_tree = cKDTree(low[:, [0, 2]]) if len(low) else None
     uncovered = (lambda xy, gap: low_tree.query(xy)[0] > COVER * gap) if low_tree else \
         (lambda xy, gap: np.ones(len(xy), bool))
-    en = en[uncovered(en, gap(en))]
+    under = ~uncovered(en, gap(en))
     dist, edge_h, edge_c = near(en)
     lat, lon = to_ll(en)
     raw = heights(lat, lon)
     sea = raw <= SEA_M                      # the tiles carry the sea bed too; laid flat
     h = seams.meet(ground(en, raw), edge_h, dist, MEET_M)
+    # under the scene's own ground too, just beneath it: one shared ground,
+    # so the scene's is not seen through, the land never over it
+    h = np.where(under & np.isfinite(edge_h), np.minimum(h, np.nan_to_num(edge_h) - UNDER_M), h)
     pts = np.stack([en[:, 0], -h, en[:, 1]], 1)
     n_ground = len(pts)
 

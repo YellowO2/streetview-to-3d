@@ -129,11 +129,14 @@ function configure() {
   view.styles.configure(store, radius);
   setPointSize();
 }
+const PLACED_POINT_M = 0.1;
 function setPointSize() {
   // the scene's own points at one size; the map's (terrain, buildings) at
   // their spacing's, but never smaller than the scene's, so where they meet
   // they look alike
-  const own = radius * 0.002;
+  // a placed scene is in metres: one size for all, whatever its extent
+  // (0.2% of it drew NTU's 108 m at 22 cm, Stockholm's 33 m at 7 cm)
+  const own = store.placement === 'world' ? PLACED_POINT_M : radius * 0.002;
   store.group?.traverse((o) => {
     if (o.isPoints) o.material.size = Math.max(o.userData.pointSize ?? 0, own) * pointMultiplier;
   });
