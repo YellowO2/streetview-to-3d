@@ -30,8 +30,8 @@ share of the view:
    from the scene's own panos as the fill colours its ground (_paint), so
    it matches DA3 where they meet; the maps' colours are only for what no
    pano sees
-6. no land or road points where there is water: that is a flat surface
-   of its own (water.py), each body at its level
+6. water as flat surfaces of its own (water.py), each body at its level,
+   reaching under the shore; no land or road points below it
 
 Written to terrain.ply beside scene.json (its "terrain"), the buildings,
 spaced the same way, to buildings.ply (its "buildings"), both already in
@@ -252,10 +252,11 @@ def build(scene_dir, log=print):
     radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
     cam_tree = cKDTree(cam_xz)
     gap = lambda xy: gap_at(cam_tree.query(xy)[0])
-    # water is a flat surface of its own (water.py), no land points under it
-    wet = water.Water(radius, to_ll, lambda lat, lon: heights(lat, lon) <= SEA_M)
+    # water is a flat surface of its own (water.py), reaching under the
+    # shore: no land points under it, the land's edge over its edge
+    wet = water.Water(radius, to_ll, lambda lat, lon: heights(lat, lon) <= SEA_M, unbent)
     en = sample_points(radius, cam_xz)
-    en = en[~wet.wet(en)]
+    en = en[ground(en) >= wet.level_at(en)]
     # the scene's ground-level points: the land fills exactly where they are not
     low = scene[-scene[:, 1] < ground(scene[:, [0, 2]]) + LOW_M] if len(scene) else scene
     low_tree = cKDTree(low[:, [0, 2]]) if len(low) else None
@@ -339,7 +340,7 @@ def build(scene_dir, log=print):
     if lines:
         rp, rc = roads.points(lines, gap, ground)
         keep = uncovered(rp[:, [0, 2]], gap(rp[:, [0, 2]]))
-        keep &= ~wet.wet(rp[:, [0, 2]])
+        keep &= -rp[:, 1] >= wet.level_at(rp[:, [0, 2]])
         rp = rp[keep]
         d, g, _ = near(rp[:, [0, 2]])
         rp[:, 1] = -(seams.meet(-rp[:, 1] - roads.LIFT_M, g, d, MEET_M) + roads.LIFT_M)
@@ -363,7 +364,7 @@ def build(scene_dir, log=print):
         log(f"terrain: no pano paint ({e!r})")
     write_ply(os.path.join(scene_dir, FILENAME), pts, cols)
     sc.terrain = FILENAME
-    surfaces = wet.surfaces(unbent)
+    surfaces = wet.surfaces
     sc.water = water.save(scene_dir, surfaces) if surfaces else None
     sc.buildings = None
     if len(bp):
