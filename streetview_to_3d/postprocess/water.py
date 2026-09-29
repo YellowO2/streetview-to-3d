@@ -30,6 +30,12 @@ Written to water.json beside scene.json (its "water"), east/north metres:
     {"surfaces": [{"level": m, "outer": [[e, n], ...], "holes": [[[e, n], ...], ...]}]}
 The viewer draws each as one flat shape (effects/water.js); terrain.py
 leaves out its points where there is water.
+
+DA3's own water is wrong -- at the wrong height, and grainy -- and our
+masker cannot tell it (Cityscapes has no water class), so the scene's
+points over mapped water lower than BELOW_STREET_M under the nearest pano's
+ground are left out too (dry): the flat surface shows instead. A bridge,
+a boat, the quay stand higher and stay.
 """
 import json
 import os
@@ -46,6 +52,7 @@ MIN_M2 = 400.0            # smaller bodies are left to the land
 UNDER_LAND_M = 20.0
 LOW_PCT = 5
 CAP_M, CLEAR_M = 200.0, 0.5
+BELOW_STREET_M = 1.0
 
 
 def occurrence_map():
@@ -87,6 +94,7 @@ class Water:
         h = height(lat, lon)
         mask = ((often >= WET) | (h <= SEA_M)).reshape(gx.shape)
         mask &= (gx ** 2 + gy ** 2) < radius_m ** 2
+        self.mask = mask
         wet = mask.ravel()
         self.surfaces, self.level = [], np.full(gx.shape, -np.inf)
         bodies = _bodies(mask, self.lo)
@@ -108,12 +116,46 @@ class Water:
                                   "outer": np.round(body.exterior.coords, 2).tolist(),
                                   "holes": [np.round(r.coords, 2).tolist() for r in body.interiors]})
 
-    def level_at(self, xy):
+    def _at(self, grid, xy, outside):
         i = np.floor((xy - self.lo) / CELL_M).astype(int)
-        inside = ((i >= 0) & (i < self.level.shape[0])).all(1)
-        out = np.full(len(xy), -np.inf)
-        out[inside] = self.level[i[inside, 1], i[inside, 0]]
+        inside = ((i >= 0) & (i < grid.shape[0])).all(1)
+        out = np.full(len(xy), outside, grid.dtype)
+        out[inside] = grid[i[inside, 1], i[inside, 0]]
         return out
+
+    def level_at(self, xy):
+        return self._at(self.level, xy, -np.inf)
+
+    def over(self, xy):
+        """Whether the map has water at east/north points (not grown)."""
+        return self._at(self.mask, xy, False)
+
+
+def dry(sc, scene_dir, wet, panos):
+    """Leave out of every node's .ply its points over wet's water lower than
+    BELOW_STREET_M under the nearest pano's ground (panos as Water's); how
+    many."""
+    from scipy.spatial import cKDTree
+    from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
+    pano_xy, pano_ground = panos
+    if not len(pano_xy):
+        return 0
+    tree, n = cKDTree(pano_xy), 0
+    for nd in sc.nodes:
+        if not (nd.ply and nd.transform):
+            continue
+        path = os.path.join(scene_dir, nd.ply)
+        p, c = read_ply(path)
+        T = np.asarray(nd.transform, float)
+        w = p @ T[:3, :3].T + T[:3, 3]           # world: x east, y down, z north
+        drop = wet.over(w[:, [0, 2]])
+        if drop.any():
+            street = pano_ground[tree.query(w[drop][:, [0, 2]])[1]]
+            drop[drop] = -w[drop, 1] < street - BELOW_STREET_M
+        if drop.any():
+            write_ply(path, p[~drop], None if c is None else c[~drop])
+            n += int(drop.sum())
+    return n
 
 
 def _bodies(mask, lo):
