@@ -93,7 +93,7 @@ def _at(grid, u, v):
     return grid[np.clip((v * h).astype(int), 0, h - 1), np.clip((u * w).astype(int), 0, w - 1)]
 
 
-def paint(points, occluders, cameras, photos):
+def paint(points, occluders, cameras, photos, max_m=MAX_M):
     """(colours, which camera painted each point or -1, which are in view).
     points: the added points; occluders: DA3's points, what can hide them;
     photos[k]: (image path, drop mask) of cameras[k]'s pano, or None."""
@@ -115,7 +115,7 @@ def paint(points, occluders, cameras, photos):
                 near[np.clip(iv + dv, 0, h - 1) * w + (iu + du) % w] = r[o]
         u, v, r, below = cam.look(points)
         px = np.clip((v * h).astype(int), 0, h - 1) * w + (u * w).astype(int) % w
-        visible = (r <= near[px] + 0.1) & (r < MAX_M)
+        visible = (r <= near[px] + 0.1) & (r < max_m)
         in_view |= visible
         sees[k] = visible & (below < NADIR_DEG) & ~_at(ph[1], u, v)
         dist[k] = r

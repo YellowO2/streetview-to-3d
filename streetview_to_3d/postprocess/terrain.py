@@ -26,6 +26,10 @@ share of the view:
 4. OpenStreetMap's buildings (buildings.py) and roads (roads.py) on it
    (osm.py); the roads, like the ground, not where the scene is; the
    buildings fitted onto DA3's walls, what DA3 has of them left to it
+5. near the cameras (PAINT_M), all of it -- land, roads, walls -- coloured
+   from the scene's own panos as the fill colours its ground (_paint), so
+   it matches DA3 where they meet; the maps' colours are only for what no
+   pano sees
 
 Written to terrain.ply beside scene.json (its "terrain"), the buildings,
 spaced by distance to the nearest camera (building_step), to buildings.ply (its "buildings"), both
@@ -56,6 +60,7 @@ COLOUR_ZOOM = 14          # ~10 m a pixel, the imagery's own
 NEAR_RADIUS_M, FAR_RADIUS_M = 1000.0, 2000.0  # the land's reach: far only where hills rise HILL_M over the scene
 HILL_M = 50.0
 BUILDINGS_M, ROADS_M = 1000.0, 700.0         # OSM's reach (roads are drawn only where a point wide, ~600 m)
+PAINT_M = 30.0                            # map points this near a camera are coloured from the panos
 TINT_M, MEET_M = 8.0, 10.0                # the ground's seam with the scene (seams.py): bands
 LOW_M, COVER = 1.0, 0.75                  # the scene's ground: points this near the map's; land it has within
                                           # this much of the land's own gap is the scene's
@@ -260,6 +265,7 @@ def build(scene_dir, log=print):
     cols = seams.tint(cols, edge_c, dist, 0.0, TINT_M, TINT)
 
     # OpenStreetMap's buildings and roads, on this ground
+    panos = None
     n_buildings = n_seen = n_roads = 0
     try:
         elements = osm.fetch(lat0, lon0, BUILDINGS_M, ROADS_M, M_PER_LAT, m_per_lon, scene_dir)
@@ -282,7 +288,8 @@ def build(scene_dir, log=print):
             SUN / np.linalg.norm(SUN))
         n_buildings = len(outlines)
         try:
-            own = _pano_colours(sc, scene_dir, blocks.pts, blocks.which, len(outlines), scene)
+            panos = panos or _panos(sc, scene_dir)
+            own = buildings.pano_colours(blocks.pts, blocks.which, len(outlines), *panos, scene)
             wall = ~np.isnan(blocks.light) & ~np.isnan(own[blocks.which, 0])
             blocks.cols[wall] = own[blocks.which[wall]] * (0.85 + 0.15 * blocks.light[wall, None])
             n_seen = int((~np.isnan(own[:, 0])).sum())
@@ -311,6 +318,15 @@ def build(scene_dir, log=print):
         pts, cols = np.concatenate([pts, rp]), np.concatenate([cols, rc[keep]])
         n_roads = len(lines)
 
+    # near the cameras, everything coloured from the panos as the fill's ground is
+    n_painted = 0
+    try:
+        panos = panos or _panos(sc, scene_dir)
+        cols, n = _paint(panos, pts, cols, scene)
+        bc, m = _paint(panos, bp, bc, scene)
+        n_painted = n + m
+    except (OSError, ValueError) as e:    # the maps' colours stand
+        log(f"terrain: no pano paint ({e!r})")
     write_ply(os.path.join(scene_dir, FILENAME), pts, cols)
     sc.terrain = FILENAME
     sc.buildings = None
@@ -319,16 +335,17 @@ def build(scene_dir, log=print):
         sc.buildings = BUILDINGS_FILENAME
     sc.save(scene_dir)
     fix = np.abs(fixes - shift)
-    log(f"terrain: {len(pts)} points to {radius:.0f} m, {len(bp)} building points ({int(sea.sum())} sea, {source} colour, "
+    log(f"terrain: {len(pts)} points to {radius:.0f} m, {len(bp)} building points, {n_painted} of them "
+        f"painted from the panos ({int(sea.sum())} sea, {source} colour, "
         f"{n_buildings} buildings -- {n_fitted} fitted onto DA3's walls, {n_cut} of their points "
         f"left to DA3's own, {n_seen} coloured by the panos -- {n_roads} roads), map shifted "
         f"{shift:+.1f} m to Google's datum, then bent onto {len(known)} panos' elevation "
         f"(by up to {fix.max() if len(fix) else 0:.1f} m, median {np.median(fix) if len(fix) else 0:.1f})")
 
 
-def _pano_colours(sc, scene_dir, pts, which, n, scene):
-    """buildings.pano_colours, from the scene's own panos, with everything
-    the scene holds (scene, its clouds placed) as what can stand in front."""
+def _panos(sc, scene_dir):
+    """(cameras, photos) of the scene's own panos, as the fill has them:
+    photos[k] is (image, class map, mask of what may not colour) or None."""
     from streetview_to_3d.fill import _photo
     from streetview_to_3d.fill.paint import Camera, blurred
     from streetview_to_3d.services.segment import pano_mask
@@ -337,7 +354,27 @@ def _pano_colours(sc, scene_dir, pts, which, n, scene):
     for nd in nodes:
         ph = _photo(nd.pano, scene_dir)
         photos.append(ph and (ph[0], ph[1], pano_mask(ph[1]) | blurred(ph[0])))
-    return buildings.pano_colours(pts, which, n, [Camera(nd) for nd in nodes], photos, scene)
+    return [Camera(nd) for nd in nodes], photos
+
+
+def _paint(panos, pts, cols, scene):
+    """cols, those of pts within PAINT_M of a camera re-coloured from the
+    panos exactly as the fill colours its ground (fill.paint: the nearest
+    camera that sees a point cleanly, patch by patch, the scene's points
+    what stands in front); how many were."""
+    from streetview_to_3d.fill.paint import paint
+    cams, photos = panos
+    if not cams or not len(pts):
+        return cols, 0
+    centres = np.array([c.centre for c in cams])
+    from scipy.spatial import cKDTree
+    near = np.flatnonzero(cKDTree(centres[:, [0, 2]]).query(pts[:, [0, 2]])[0] < PAINT_M)
+    if not len(near):
+        return cols, 0
+    painted, who, _ = paint(pts[near], scene, cams, [ph and (ph[0], ph[2]) for ph in photos], max_m=PAINT_M)
+    cols = cols.copy()
+    cols[near[who >= 0]] = painted[who >= 0]
+    return cols, int((who >= 0).sum())
 
 
 if __name__ == "__main__":
