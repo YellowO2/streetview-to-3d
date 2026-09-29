@@ -130,8 +130,12 @@ function configure() {
   setPointSize();
 }
 function setPointSize() {
+  // the scene's own points at one size; the map's (terrain, buildings) at
+  // their spacing's, but never smaller than the scene's, so where they meet
+  // they look alike
+  const own = radius * 0.002;
   store.group?.traverse((o) => {
-    if (o.isPoints) o.material.size = (o.userData.pointSize ?? radius * 0.002) * pointMultiplier;
+    if (o.isPoints) o.material.size = Math.max(o.userData.pointSize ?? 0, own) * pointMultiplier;
   });
 }
 function frameAll() {
