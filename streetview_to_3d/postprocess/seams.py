@@ -1,11 +1,11 @@
 """Where the map (terrain.py) meets the scene: faded in, not cut.
 
-The scene always wins -- nothing of the map stands where the scene has its
-own points -- but a hard edge between two sources shows even when they
-agree to a metre. So across a band past the scene's edge the map:
+The scene always wins -- the map only fills what it lacks (terrain.build,
+buildings.seam) -- but a hard edge between two sources shows even when they
+agree to a metre. So across a band past the scene's edge the map, at full
+density (thinning it to interleave left a sparse strip, DA3 thinning out at
+its edges too):
 
-  - thins in (fade): a point is kept with a chance rising from none at the
-    edge to all at the band's end, so the two interleave like a dither
   - takes the scene's colour (tint), mixed back to its own over the band:
     satellite colour is darker and bluer than the panos'
   - meets the scene's ground (meet): its height pulled onto the scene's
@@ -29,12 +29,6 @@ def ramp(t):
     """0 below 0, 1 above 1, smooth between."""
     t = np.clip(t, 0, 1)
     return t * t * (3 - 2 * t)
-
-
-def fade(dist, cut_m, band_m, seed=0):
-    """True for the points kept: none within cut_m of the scene, then a
-    chance rising to all over band_m."""
-    return (dist > cut_m) & (np.random.default_rng(seed).random(len(dist)) < ramp((dist - cut_m) / band_m))
 
 
 def tint(cols, near, dist, cut_m, band_m, strength):

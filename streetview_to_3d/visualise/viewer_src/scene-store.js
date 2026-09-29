@@ -61,10 +61,10 @@ export function parsePoints(buffer, transform) {
 const GAPS = [0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 8, 12, 20, Infinity];
 const nearest = (x, z, places) => Math.min(...places.map(([a, b]) => Math.hypot(x - a, z - b)));
 export const SPACING = {
-  terrain: (x, z) => Math.max(0.5, 0.01 * Math.hypot(x, z)),
+  terrain: (x, z) => Math.max(0.5, 0.015 * Math.hypot(x, z)),
   // the land's, but DA3-dense near a camera: 5 cm there, doubling every 8 m
   buildings: (x, z, cams) =>
-    Math.min(Math.max(0.5, 0.01 * Math.hypot(x, z)), 0.05 * 2 ** (nearest(x, z, cams) / 8)),
+    Math.min(Math.max(0.5, 0.015 * Math.hypot(x, z)), 0.05 * 2 ** (nearest(x, z, cams) / 8)),
 };
 // Each placed node's camera, seen from above, in the viewer's frame.
 export function cameraPlaces(data) {

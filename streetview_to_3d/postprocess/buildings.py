@@ -36,7 +36,7 @@ TOP_PERCENTILE = 97
 MIN_HEIGHT_M = 2.5
 CHUNK_M = 4.0                 # a wall is spaced in pieces this long, each as at its middle
 ROOF_MIN_STEP_M = 0.5         # roofs are seen from above only
-COVER_M = 0.35                # an OSM point DA3 has a point this near (on the wall) is DA3's
+COVER = 0.75                  # an OSM point DA3 has a point within this much of its gap of is DA3's
 SEAM_FADE_M = 3.0             # the seam's width
 SEAM_TINT, SEAM_MIN = 0.8, 20
 
@@ -151,15 +151,15 @@ class Blocks:
     """Every building's points, and for each where on its building it is:
     which building, how lit (NaN on a roof), which wall edge (-1 on a
     roof) and its place on that wall, u metres along and v metres up
-    (height above sea level). edges[e]: (start, along, outward, length,
+    (height above sea level), and how far it is from its neighbours (gap). edges[e]: (start, along, outward, length,
     DA3's plane for it (n2, d2) or None)."""
 
-    def __init__(self, pts, cols, which, light, edge, u, v, edges):
+    def __init__(self, pts, cols, which, light, edge, u, v, gap, edges):
         self.pts, self.cols, self.which, self.light = pts, cols, which, light
-        self.edge, self.u, self.v, self.edges = edge, u, v, edges
+        self.edge, self.u, self.v, self.gap, self.edges = edge, u, v, gap, edges
 
     def take(self, keep):
-        for k in ("pts", "cols", "which", "light", "edge", "u", "v"):
+        for k in ("pts", "cols", "which", "light", "edge", "u", "v", "gap"):
             setattr(self, k, getattr(self, k)[keep])
 
 
@@ -170,7 +170,7 @@ def points(outlines, spacing, ground, colour, sun):
     pieces up to CHUNK_M long, each spaced as at its middle, so only what
     is near gets dense; ground(xy): the ground's height there; colour(xy):
     the satellite's RGB there."""
-    roofs, walls, lights, edge_of, us, vs, edges = [], [], [], [], [], [], []
+    roofs, walls, lights, edge_of, us, vs, gaps, roof_gaps, edges = [], [], [], [], [], [], [], [], []
     for xy, h, _, planes in outlines:
         base = ground(xy).min()
         top = base + h
@@ -181,8 +181,9 @@ def points(outlines, spacing, ground, colour, sun):
         grid = np.stack([gx.ravel(), gy.ravel()], 1)
         roof = np.concatenate([grid[_inside(grid, xy)], xy[:-1]])
         roofs.append(np.column_stack([roof[:, 0], np.full(len(roof), -top), roof[:, 1]]))
+        roof_gaps.append(np.full(len(roof), s))
         # walls: along each edge and up it; lit by how squarely it faces the sun
-        w, light, eo, uu, vv = [], [], [], [], []
+        w, light, eo, uu, vv, gg = [], [], [], [], [], []
         for j, (a, c) in enumerate(zip(xy[:-1], xy[1:])):
             length = float(np.linalg.norm(c - a))
             if length < 1e-6:
@@ -203,17 +204,21 @@ def points(outlines, spacing, ground, colour, sun):
                 eo.append(np.full(len(U), e))
                 uu.append(U)
                 vv.append(V)
+                gg.append(np.full(len(U), s))
         walls.append(np.concatenate(w) if w else np.zeros((0, 3)))
         lights.append(np.concatenate(light) if light else np.zeros(0))
         edge_of.append(np.concatenate(eo) if eo else np.zeros(0, int))
         us.append(np.concatenate(uu) if uu else np.zeros(0))
         vs.append(np.concatenate(vv) if vv else np.zeros(0))
+        gaps.append(np.concatenate(gg) if gg else np.zeros(0))
     if not roofs:
         z = np.zeros((0, 3))
-        return Blocks(z, z, np.zeros(0, int), np.zeros(0), np.zeros(0, int), np.zeros(0), np.zeros(0), [])
+        return Blocks(z, z, np.zeros(0, int), np.zeros(0), np.zeros(0, int), np.zeros(0), np.zeros(0),
+                      np.zeros(0), [])
     rgb = colour(np.concatenate(roofs)[:, [0, 2]])
-    pts, cols, which, lit, edge, u, v, at = [], [], [], [], [], [], [], 0
-    for i, (roof, wall, light, eo, uu, vv) in enumerate(zip(roofs, walls, lights, edge_of, us, vs)):
+    pts, cols, which, lit, edge, u, v, gap, at = [], [], [], [], [], [], [], [], 0
+    for i, (roof, wall, light, eo, uu, vv, rg, gg) in enumerate(zip(roofs, walls, lights, edge_of, us, vs,
+                                                                     roof_gaps, gaps)):
         mine = rgb[at:at + len(roof)]
         at += len(roof)
         pts += [roof, wall]
@@ -223,27 +228,31 @@ def points(outlines, spacing, ground, colour, sun):
         edge += [np.full(len(roof), -1), eo.astype(int)]
         u += [np.zeros(len(roof)), uu]
         v += [-roof[:, 1], vv]
+        gap += [rg, gg]
     return Blocks(np.concatenate(pts), np.concatenate(cols), np.concatenate(which), np.concatenate(lit),
-                  np.concatenate(edge), np.concatenate(u), np.concatenate(v), edges)
+                  np.concatenate(edge), np.concatenate(u), np.concatenate(v), np.concatenate(gap), edges)
 
 
-def seam(blocks, da3, da3_normals, da3_cols, roofs_near, rng):
+def seam(blocks, da3, da3_normals, da3_cols, roofs_near):
     """Leave to DA3 what it has of each building, and fade the rest in.
 
     Only walls DA3 has a copy of (fit_to_scene's planes) are touched, and
     only against DA3's points on that plane (fill.google.on_plane), seen
-    on the wall as (along, up): an OSM point DA3 covers there (within
-    COVER_M) goes, however far in front or behind DA3's copy stands. Next
-    to what DA3 covers, over SEAM_FADE_M: half of them kept rising to all,
-    pulled onto DA3's plane (by at most PULL_MAX_M) and to its colour
-    there -- the two meet and interleave rather than stop. A roof goes
-    where DA3 has points within COVER_M of it (roofs_near: their
+    on the wall as (along, up): an OSM point goes where DA3 has a point
+    within COVER of its own gap there -- however far in front or behind
+    DA3's copy stands -- and stays, every one, where it has not: OSM fills
+    exactly what DA3 lacks, its ragged edge included. (Thinning OSM near
+    DA3 to interleave left a sparse strip: DA3 thins out at its edges too.)
+    Over SEAM_FADE_M next to DA3 they are pulled onto its plane (by at
+    most PULL_MAX_M) and towards its colour, so the two meet. A roof goes
+    where DA3 has a point within COVER of its gap (roofs_near: their
     distance). Returns how many points DA3 already had."""
     from scipy.spatial import cKDTree
     from streetview_to_3d.fill.google import on_plane
     from streetview_to_3d.postprocess.seams import ramp
     keep = np.ones(len(blocks.pts), bool)
-    keep[blocks.edge < 0] = roofs_near[blocks.edge < 0] > COVER_M
+    roof = blocks.edge < 0
+    keep[roof] = roofs_near[roof] > COVER * blocks.gap[roof]
     order = np.argsort(blocks.edge, kind="stable")
     bounds = np.searchsorted(blocks.edge[order], np.arange(len(blocks.edges) + 1))
     for e, (a, t, out, length, plane) in enumerate(blocks.edges):
@@ -259,7 +268,7 @@ def seam(blocks, da3, da3_normals, da3_cols, roofs_near, rng):
         u = (da3[idx][:, [0, 2]] - a) @ t
         d, k = cKDTree(np.c_[u, -da3[idx, 1]]).query(np.c_[blocks.u[mine], blocks.v[mine]])
         band = ramp(d / SEAM_FADE_M)
-        keep[mine] = (d > COVER_M) & (rng.random(len(mine)) < 0.5 + 0.5 * band)
+        keep[mine] = d > COVER * blocks.gap[mine]
         off = np.clip(d2 - blocks.pts[mine] @ n2, -PULL_MAX_M, PULL_MAX_M)
         blocks.pts[mine] += ((1 - band) * off)[:, None] * n2
         w = (SEAM_TINT * (1 - band))[:, None]

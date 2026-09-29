@@ -10,9 +10,10 @@ share of the view:
 
 1. points on rings out to NEAR_RADIUS_M, or FAR_RADIUS_M where hills rise
    beyond it (reach), STEP of their distance apart (never
-   under MIN_STEP_M), none where the scene has its own points: the
-   scene always wins, the map only fills around it, faded in at its edge
-   and meeting its ground (seams.py)
+   under MIN_STEP_M), none where the scene has its own ground-level points
+   within most of that spacing: the scene always wins, the land fills
+   exactly what it lacks, meeting its ground and taking its colour at its
+   edge (seams.py)
 2. height read off the tiles, the sea (the tiles also carry the sea bed)
    laid flat at sea level; the whole map shifted onto Google's datum (the
    median of its panos' elevation minus the map's), then bent near the
@@ -55,10 +56,12 @@ COLOUR_ZOOM = 14          # ~10 m a pixel, the imagery's own
 NEAR_RADIUS_M, FAR_RADIUS_M = 1000.0, 2000.0  # the land's reach: far only where hills rise HILL_M over the scene
 HILL_M = 50.0
 BUILDINGS_M, ROADS_M = 1000.0, 700.0         # OSM's reach (roads are drawn only where a point wide, ~600 m)
-FADE_M, TINT_M, MEET_M = 4.0, 8.0, 10.0  # the ground's seam with the scene (seams.py): bands
+TINT_M, MEET_M = 8.0, 10.0                # the ground's seam with the scene (seams.py): bands
+LOW_M, COVER = 1.0, 0.75                  # the scene's ground: points this near the map's; land it has within
+                                          # this much of the land's own gap is the scene's
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
 B_NEAR_M, B_DOUBLE_M = 0.05, 8.0          # buildings' spacing near the cameras (building_step)
-STEP, MIN_STEP_M = 0.01, 0.5
+STEP, MIN_STEP_M = 0.015, 0.5              # 1% looked no better far out, for twice the points
 M_PER_LAT = 111320.0
 PLAIN = np.array([0.50, 0.55, 0.45])
 LIFT = 0.75               # colour ** LIFT: brighter shadows, same hues
@@ -189,6 +192,7 @@ def scene_points(sc, scene_dir, every=4):
 def build(scene_dir, log=print):
     """Write scene_dir/FILENAME around the placed (and filled) scene's
     cameras."""
+    from scipy.spatial import cKDTree
     sc = scene_mod.Scene.load(scene_dir)
     lat0, lon0 = sc.origin
     m_per_lon = M_PER_LAT * math.cos(math.radians(lat0))
@@ -223,9 +227,13 @@ def build(scene_dir, log=print):
         (lambda xy: (np.full(len(xy), np.inf), np.full(len(xy), np.nan), np.full((len(xy), 3), np.nan)))
     radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
     en = sample_points(radius)
+    # the scene's ground-level points: the land fills exactly where they are not
+    low = scene[-scene[:, 1] < ground(scene[:, [0, 2]]) + LOW_M] if len(scene) else scene
+    low_tree = cKDTree(low[:, [0, 2]]) if len(low) else None
+    uncovered = (lambda xy, gap: low_tree.query(xy)[0] > COVER * gap) if low_tree else \
+        (lambda xy, gap: np.ones(len(xy), bool))
+    en = en[uncovered(en, np.maximum(MIN_STEP_M, STEP * np.linalg.norm(en, axis=1)))]
     dist, edge_h, edge_c = near(en)
-    keep = seams.fade(dist, 0.0, FADE_M)
-    en, dist, edge_h, edge_c = en[keep], dist[keep], edge_h[keep], edge_c[keep]
     lat, lon = to_ll(en)
     raw = heights(lat, lon)
     sea = raw <= SEA_M                      # the tiles carry the sea bed too; laid flat
@@ -263,7 +271,6 @@ def build(scene_dir, log=print):
     bp = bc = np.zeros((0, 3))
     n_fitted = n_cut = 0
     if outlines:
-        from scipy.spatial import cKDTree
         from streetview_to_3d.postprocess.ground import normals_from_neighbours
         scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
         outlines, n_fitted = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
@@ -284,14 +291,14 @@ def build(scene_dir, log=print):
         # what DA3 already has of a building is left to it; the rest meets it
         roofs_near = cKDTree(scene).query(blocks.pts, distance_upper_bound=1.0)[0] if len(scene) \
             else np.full(len(blocks.pts), np.inf)
-        n_cut = buildings.seam(blocks, scene, scene_normals, scene_cols, roofs_near, np.random.default_rng(1))
+        n_cut = buildings.seam(blocks, scene, scene_normals, scene_cols, roofs_near)
         bp, bc = blocks.pts, blocks.cols
     lines = roads.lines(elements, to_xy)
     if lines:
         rp, rc = roads.points(lines, step_at, ground)
+        keep = uncovered(rp[:, [0, 2]], np.maximum(MIN_STEP_M, STEP * np.linalg.norm(rp[:, [0, 2]], axis=1)))
+        rp = rp[keep]
         d, g, _ = near(rp[:, [0, 2]])
-        keep = seams.fade(d, 0.0, FADE_M, seed=2)
-        rp, d, g = rp[keep], d[keep], g[keep]
         rp[:, 1] = -(seams.meet(-rp[:, 1] - roads.LIFT_M, g, d, MEET_M) + roads.LIFT_M)
         # no ground under a road: two layers 15 cm apart fight in the depth buffer far off
         if len(rp):
