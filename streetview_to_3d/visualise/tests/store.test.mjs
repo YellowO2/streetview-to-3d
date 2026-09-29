@@ -106,7 +106,7 @@ test('raw GPS preparation keeps points and exported transform equivalent', () =>
     .applyMatrix4(flip);
   assert(new THREE.Vector3().fromBufferAttribute(p, 0).distanceTo(expected) < 1e-5);
 });
-test('a placed scene loads its backdrop, left out of its bounds', async () => {
+test('a placed scene loads its terrain, left out of its bounds', async () => {
   const ply = (n, r) =>
     new TextEncoder().encode(
       `ply\nformat ascii 1.0\nelement vertex ${n}\nproperty float x\nproperty float y\nproperty float z\nend_header\n` +
@@ -115,7 +115,7 @@ test('a placed scene loads its backdrop, left out of its bounds', async () => {
     ).buffer;
   const files = {
     'node_0.ply': ply(3, 1),
-    'backdrop.ply': ply(3, 40),
+    'terrain.ply': ply(3, 40),
     'scene.json': new TextEncoder().encode(
       JSON.stringify({
         center: [1, 103],
@@ -123,7 +123,7 @@ test('a placed scene loads its backdrop, left out of its bounds', async () => {
           { pano: {}, ply: 'node_0.ply', position: [0, 0, 0], transform: structuredClone(T) },
         ],
         edges: [],
-        backdrop: 'backdrop.ply',
+        terrain: 'terrain.ply',
       }),
     ).buffer,
   };
@@ -135,7 +135,7 @@ test('a placed scene loads its backdrop, left out of its bounds', async () => {
     () => false,
   );
   const kinds = asset.group.children.map((o) => o.userData.surroundings || 'node');
-  assert.deepEqual(kinds, ['node', 'backdrop']);
+  assert.deepEqual(kinds, ['node', 'terrain']);
   const store = new SceneStore();
   store.install(asset, 'Test');
   assert(store.box().getBoundingSphere(new THREE.Sphere()).radius < 20);

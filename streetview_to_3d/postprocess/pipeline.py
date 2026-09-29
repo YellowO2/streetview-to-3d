@@ -3,12 +3,13 @@
 A reconstruction leaves a scene whose nodes each hold their own points, in
 whatever frame DA3 built them. This places every piece by its panoramas'
 GPS, elevation and orientation (place.py), writing each node's own
-transform back into the scene, removes floating bits (blobs.py), builds
-what surrounds it (backdrop.py, from DA3's far points; terrain.py, the
-land further out from an elevation map; the viewer draws the sky), then
-fills the gaps (streetview_to_3d.fill: one ground, Google's walls, their colour) into the node .plys --
-scene.json plus the .plys it names are the whole result. A viewer reads transform to place each node, so nothing
-merges the points into one extra file by default.
+transform back into the scene, removes floating bits (blobs.py), fills
+the gaps (streetview_to_3d.fill: one ground, Google's walls, their colour)
+into the node .plys, then lays the land, buildings and roads around it
+(terrain.py, from public maps; the viewer draws the sky) -- scene.json
+plus the .plys it names are the whole result. A viewer reads transform to
+place each node, so nothing merges the points into one extra file by
+default.
 
     python -m streetview_to_3d.postprocess.pipeline --dir data/runs/<run id>
     python -m streetview_to_3d.postprocess.pipeline --dir data/runs/<run id> --merge out.ply
@@ -19,15 +20,15 @@ import os
 import time
 
 from streetview_to_3d import fill as fill_mod
-from streetview_to_3d.postprocess import backdrop, terrain
+from streetview_to_3d.postprocess import terrain
 from streetview_to_3d.postprocess.blobs import drop_blobs
 from streetview_to_3d.postprocess.render_pieces import render
 from streetview_to_3d.postprocess.place import place
 
 
 def process(run_dir, log=print, merge_ply=None, fill=True):
-    """Place a reconstruction, remove its floating bits, build its backdrop
-    and terrain, then fill it (fill=False: placed only, DA3's points untouched).
+    """Place a reconstruction, remove its floating bits, fill it,
+    then lay its terrain (fill=False: placed only, DA3's points untouched).
     merge_ply: also write one combined .ply there, for local inspection
     outside the viewer -- not needed by the Space, which reads
     scene.json's per-node transforms directly."""
@@ -41,22 +42,16 @@ def process(run_dir, log=print, merge_ply=None, fill=True):
         log(f"timing: floating bits {time.monotonic() - t:.1f}s")
         t = time.monotonic()
         try:
-            backdrop.build(run_dir, log=log)
-        except Exception as e:           # the scene is whole without it
-            log(f"backdrop skipped: {e!r}")
-        log(f"timing: backdrop {time.monotonic() - t:.1f}s")
-        t = time.monotonic()
-        try:
-            terrain.build(run_dir, log=log)
-        except Exception as e:           # a map download failing costs only the land around
-            log(f"terrain skipped: {e!r}")
-        log(f"timing: terrain {time.monotonic() - t:.1f}s")
-        t = time.monotonic()
-        try:
             fill_mod.run(run_dir, log=log)
         except Exception as e:           # the placed scene is still a result
             log(f"fill skipped: {e!r}")
         log(f"timing: fill {time.monotonic() - t:.1f}s")
+        t = time.monotonic()
+        try:                             # after the fill: its panos colour the buildings
+            terrain.build(run_dir, log=log)
+        except Exception as e:           # a map download failing costs only the land around
+            log(f"terrain skipped: {e!r}")
+        log(f"timing: terrain {time.monotonic() - t:.1f}s")
     return render(run_dir, merge_ply, log=log) if merge_ply else None
 
 

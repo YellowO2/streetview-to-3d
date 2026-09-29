@@ -65,10 +65,8 @@ def handle_pathfind_prepare(state, link=True):
 
 
 def _zip(run_dir):
-    """The whole scene -- scene.json, every .ply (the nodes', the backdrop, the terrain,
-    and for now the nodes' far clouds, so a backdrop can be
-    rebuilt without a GPU run) and each pano's class map (labels/) -- as
-    one zip.
+    """The whole scene -- scene.json, every .ply (the nodes', the terrain)
+    and each pano's class map (labels/) -- as one zip.
 
     One file, because a browser can only download files, not a folder, and
     the viewer opens exactly this set once unzipped. Stored, not

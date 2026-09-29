@@ -80,13 +80,6 @@ class Node:
     def key(self):
         return self.pano.key
 
-    @property
-    def far_ply(self):
-        """Beside ply, in the same frame: what DA3 dropped as unsure, sky
-        left out (services.da3_ops.FAR_EVERY) -- mostly what is far away.
-        Never part of the node's points."""
-        return self.ply and self.ply[:-len(".ply")] + "_far.ply"
-
 
 @dataclass
 class Edge:
@@ -114,10 +107,8 @@ class Scene:
     nodes: list[Node] = field(default_factory=list)
     adjacency: dict[str, list[int]] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
-    # What surrounds the scene: a .ply beside scene.json, already in the
-    # world (postprocess/backdrop.py)
-    backdrop: str | None = None
-    # the land further out, from a public elevation map (postprocess/terrain.py)
+    # the land, buildings and roads around the scene: a .ply beside
+    # scene.json, already in the world (postprocess/terrain.py)
     terrain: str | None = None
 
     @property
@@ -176,4 +167,4 @@ class Scene:
                    nodes=[Node(pano=Pano(**n.pop("pano")), **n) for n in d["nodes"]],
                    adjacency={str(k): v for k, v in d["adjacency"].items()},
                    edges=[Edge(**e) for e in d["edges"]],
-                   backdrop=d.get("backdrop"), terrain=d.get("terrain"))
+                   terrain=d.get("terrain"))

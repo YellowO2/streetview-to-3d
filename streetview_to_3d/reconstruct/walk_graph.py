@@ -234,14 +234,14 @@ def run_pathfind_reconstruction(
       structural graph (see fetch_nodes.corridor_points) -- dates
       never share real panos, but they all walk the same structure.
     - test_edge(path_a, path_b, test_id) -> (pose_a, pose_b, pts, cols,
-      per_pano_pts, per_pano_cols, per_pano_views, per_pano_far) or None
-      on failure. per_pano_pts/cols/far: {os.path.basename(path):
-      points/colors/(far points, far colors)} -- used to add only the
+      per_pano_pts, per_pano_cols, per_pano_views) or None
+      on failure. per_pano_pts/cols: {os.path.basename(path):
+      points/colors} -- used to add only the
       newly-reached dot's own slice of a successful pairwise result onto
       an existing piece (see test_and_confirm), not the whole pairwise
       result. The only GPU-touching thing this function calls for real
       connectivity.
-    - rate_pano(path) -> (score, pose, pts, cols, n_kept, n_total, far). A candidate's
+    - rate_pano(path) -> (score, pose, pts, cols, n_kept, n_total). A candidate's
       solo DA3 self-consistency score (higher = more internally coherent,
       correlates with real pairwise success -- the solo-score
       experiment (README Dev notes) is the real-data validation:
@@ -330,7 +330,7 @@ def run_pathfind_reconstruction(
             if not candidates:
                 return
             key, path, lat, lon = candidates[0]
-            score, pose, pts, cols, n_kept, n_total, far = rate_one((key, path, lat, lon))
+            score, pose, pts, cols, n_kept, n_total = rate_one((key, path, lat, lon))
             print(f"[timing] ensure_piece(dot={dot}, {len(raw_candidates)} candidate(s) available): "
                   f"{time.monotonic() - t0:.2f}s total, {deadline - time.monotonic():.1f}s left in budget")
             if pose is None:
@@ -340,7 +340,7 @@ def run_pathfind_reconstruction(
             confirmed[dot] = {"key": key, "path": path, "lat": lat, "lon": lon,
                                "seg_R": np.eye(3), "seg_t": np.zeros(3), "pose": pose, "piece_id": pid,
                                "n_views_kept": n_kept, "n_views_total": n_total, "solo": True}
-            piece_data[pid] = {"clouds": {key: (pts, cols, far)}, "path_edges": []}
+            piece_data[pid] = {"clouds": {key: (pts, cols)}, "path_edges": []}
 
         def covered_points(dots):
             """A dot's own point is always covered by itself. Any OTHER
@@ -383,7 +383,7 @@ def run_pathfind_reconstruction(
             if result is None:
                 print(f"[{date}] {from_key} -> {to_key}: FAIL ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
                 return False
-            pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views, per_pano_far = result
+            pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views = result
             to_id = os.path.basename(to_path)
             to_kept, to_total = per_pano_views.get(to_id, (0, 0))
             from_kept, from_total = per_pano_views.get(os.path.basename(from_path), (0, 0))
@@ -406,12 +406,10 @@ def run_pathfind_reconstruction(
             seg_t = pf["seg_R"] @ local_t + pf["seg_t"]
             pd = piece_data[pid]
             def own(pano_id):
-                """A pano's own slice of this run, (points, colors, far),
-                in the piece's frame."""
+                """A pano's own slice of this run, (points, colors), in the
+                piece's frame."""
                 none = np.zeros((0, 3))
-                far_pts, far_cols = per_pano_far.get(pano_id, (none, none))
-                return (per_pano_pts.get(pano_id, none) @ seg_R.T + seg_t, per_pano_cols.get(pano_id, none),
-                        (far_pts @ seg_R.T + seg_t, far_cols))
+                return per_pano_pts.get(pano_id, none) @ seg_R.T + seg_t, per_pano_cols.get(pano_id, none)
 
             pd["clouds"][to_key] = own(to_id)
             if pf["solo"]:
