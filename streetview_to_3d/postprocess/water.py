@@ -69,8 +69,11 @@ class Water:
     ground height (n,)) of the cameras.
 
     surfaces are its outlines, grown under the land, each at its level;
-    level_at(xy) the level of the water over east/north points (-inf where
-    there is none): land below it is under water."""
+    under(xy, height) whether land at east/north points, that high, is
+    under water: wherever the map has water, whatever the height map says
+    there (by a bridge it blurs the bridge and the island into the
+    harbour: 9-13 m over Stockholm's water), and where it grew under the
+    shore, land below its level."""
 
     def __init__(self, radius_m, to_ll, height, shift, panos):
         n = int(np.ceil(radius_m / CELL_M))
@@ -89,6 +92,7 @@ class Water:
         h = height(lat, lon)
         mask = ((often >= WET) | (h <= SEA_M)).reshape(gx.shape)
         mask &= (gx ** 2 + gy ** 2) < radius_m ** 2
+        self.mask = mask
         wet = mask.ravel()
         self.surfaces, self.level = [], np.full(gx.shape, -np.inf)
         bodies = _bodies(mask, self.lo)
@@ -110,12 +114,13 @@ class Water:
                                   "outer": np.round(body.exterior.coords, 2).tolist(),
                                   "holes": [np.round(r.coords, 2).tolist() for r in body.interiors]})
 
-    def level_at(self, xy):
+    def under(self, xy, height):
         i = np.floor((xy - self.lo) / CELL_M).astype(int)
         inside = ((i >= 0) & (i < self.level.shape[0])).all(1)
-        out = np.full(len(xy), -np.inf)
-        out[inside] = self.level[i[inside, 1], i[inside, 0]]
-        return out
+        wet, level = np.zeros(len(xy), bool), np.full(len(xy), -np.inf)
+        wet[inside] = self.mask[i[inside, 1], i[inside, 0]]
+        level[inside] = self.level[i[inside, 1], i[inside, 0]]
+        return wet | (height < level)
 
 
 def _bodies(mask, lo):

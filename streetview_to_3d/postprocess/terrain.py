@@ -238,6 +238,13 @@ def build(scene_dir, log=print):
         raw = heights(*to_ll(xy)) if raw is None else raw
         return np.where(raw <= SEA_M, 0.0, raw) + shift + bend(xy)
 
+    def unbent(xy):
+        """The map on Google's datum, not bent onto the panos: whether land
+        is under water is read off this -- the bend lifts it near the panos
+        to the street, the harbour by a bridge with it."""
+        raw = heights(*to_ll(xy))
+        return np.where(raw <= SEA_M, 0.0, raw) + shift
+
     # water is a flat surface of its own (water.py), reaching under the
     # shore: no land points under it, the land's edge over its edge
     radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
@@ -251,7 +258,7 @@ def build(scene_dir, log=print):
     cam_tree = cKDTree(cam_xz)
     gap = lambda xy: gap_at(cam_tree.query(xy)[0])
     en = sample_points(radius, cam_xz)
-    en = en[ground(en) >= wet.level_at(en)]
+    en = en[~wet.under(en, unbent(en))]
     # the scene's ground-level points: the land fills exactly where they are not
     low = scene[-scene[:, 1] < ground(scene[:, [0, 2]]) + LOW_M] if len(scene) else scene
     low_tree = cKDTree(low[:, [0, 2]]) if len(low) else None
@@ -335,7 +342,7 @@ def build(scene_dir, log=print):
     if lines:
         rp, rc = roads.points(lines, gap, ground)
         keep = uncovered(rp[:, [0, 2]], gap(rp[:, [0, 2]]))
-        keep &= -rp[:, 1] >= wet.level_at(rp[:, [0, 2]])
+        keep &= ~wet.under(rp[:, [0, 2]], unbent(rp[:, [0, 2]]))
         rp = rp[keep]
         d, g, _ = near(rp[:, [0, 2]])
         rp[:, 1] = -(seams.meet(-rp[:, 1] - roads.LIFT_M, g, d, MEET_M) + roads.LIFT_M)
