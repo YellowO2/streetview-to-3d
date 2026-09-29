@@ -66,7 +66,8 @@ UNDER_M = 0.1                             # the land under the scene: this far b
 LOW_M, COVER = 1.0, 0.75                  # the scene's ground: points this near the map's; land it has within
                                           # this much of the land's own gap is the scene's
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
-GAP0_M, GAP_PER = 0.05, 0.015              # map points' spacing (gap_at)
+GAP0_M, GAP_PER = 0.05, 0.018              # map points' spacing (gap_at); the viewer draws them as if
+                                            # it grew 1.2% (scene-store.js): far points were too big
 M_PER_LAT = 111320.0
 PLAIN = np.array([0.50, 0.55, 0.45])
 LIFT = 0.75               # colour ** LIFT: brighter shadows, same hues
@@ -278,8 +279,9 @@ def build(scene_dir, log=print):
     except (OSError, ValueError) as e:    # the land stands without them
         log(f"terrain: no OpenStreetMap ({e!r})")
         elements = []
-    outlines = [o for o in buildings.outlines(elements, to_xy)
-                if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]   # an older, wider osm.json
+    kept = [(o, t) for o, t in zip(buildings.outlines(elements, to_xy), buildings.tagged(elements))
+            if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]       # an older, wider osm.json
+    outlines, tags = [o for o, _ in kept], [t for _, t in kept]
     bp = bc = np.zeros((0, 3))
     b_roof = np.zeros(0, bool)
     n_fitted = n_trimmed = n_cut = 0
@@ -288,20 +290,27 @@ def build(scene_dir, log=print):
         scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
         outlines, n_fitted, n_trimmed = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
                                                                roads.coverage(roads.lines(elements, to_xy)))
-        blocks = buildings.points(
-            outlines, gap, ground,
-            lambda xy: colours(*to_ll(xy)) ** LIFT if colours else np.tile(PLAIN, (len(xy), 1)),
-            SUN / np.linalg.norm(SUN))
-        n_buildings = len(outlines)
         try:
             panos = panos or _panos(sc, scene_dir)
+            pal = buildings.palette(panos[1])
+        except (OSError, ValueError) as e:  # a pastel palette stands
+            log(f"terrain: no palette from the panos ({e!r})")
+            panos, pal = ([], []), (np.array(buildings.PASTEL), np.full(len(buildings.PASTEL), 1 / 8))
+        base = buildings.colours(outlines, tags, pal)
+        blocks = buildings.points(outlines, gap, ground, base, SUN / np.linalg.norm(SUN))
+        n_buildings = len(outlines)
+        if panos[0]:
+            # a building the panos see enough of: their colour, livelier, over the palette's
             own = buildings.pano_colours(blocks.pts, blocks.which, len(outlines), *panos, scene)
-            wall = ~np.isnan(blocks.light) & ~np.isnan(own[blocks.which, 0])
-            blocks.cols[wall] = buildings.cheer(own[blocks.which[wall]]) * (
-                buildings.WALL_SHADE + (1 - buildings.WALL_SHADE) * blocks.light[wall, None])
-            n_seen = int((~np.isnan(own[:, 0])).sum())
-        except (OSError, ValueError) as e:  # the satellite's colour stands
-            log(f"terrain: no pano colour for buildings ({e!r})")
+            seen = ~np.isnan(own[:, 0])
+            base[seen] = buildings.cheer(own[seen])
+            recolour = seen[blocks.which]
+            b = base[blocks.which[recolour]]
+            roof = np.isnan(blocks.light[recolour])
+            blocks.cols[recolour] = np.where(
+                roof[:, None], np.clip(b * buildings.ROOF_LIFT, 0, 1),
+                b * (buildings.WALL_SHADE + (1 - buildings.WALL_SHADE) * np.nan_to_num(blocks.light[recolour])[:, None]))
+            n_seen = int(seen.sum())
         # what DA3 already has of a building is left to it; the rest meets it
         roofs_near = cKDTree(scene).query(blocks.pts, distance_upper_bound=1.0)[0] if len(scene) \
             else np.full(len(blocks.pts), np.inf)

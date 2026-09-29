@@ -16,9 +16,9 @@ test('style controls retain per-preset settings and expose only supported splat 
   const $ = (id) => document.getElementById(id);
   ui.render({ group: {}, splat: null }, false);
   ui.select('paint');
-  assert.equal($('point-density').value, '95');
-  assert.equal($('style-float').value, '0.25');
-  assert.equal(2 ** Number($('point-size').value), 0.8);
+  assert.equal($('point-density').value, '100');
+  assert.equal($('style-float').value, '0.3');
+  assert.equal(2 ** Number($('point-size').value), 1);
   $('point-density').value = '60';
   $('point-density').dispatchEvent(new dom.window.Event('input'));
   assert.equal(calls.at(-1)[1].density, 60);

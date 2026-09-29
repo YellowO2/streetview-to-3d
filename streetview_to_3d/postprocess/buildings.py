@@ -13,11 +13,12 @@ Footprints from osm.py, each raised into a block of points:
   - walls and a flat roof, spaced by how near the scene's cameras they
     are, as the land is (terrain.gap_at), and the walls again further in,
     sparser (INNER_M), so it is not seen through
-  - roof coloured from the satellite straight above it (never from a pano:
-    from the street they see its edge against the sky); walls the
-    building's own colour where the scene's panos see enough of it
-    (pano_colours), else its roof colour -- either made livelier (cheer)
-    and shaded by which way the wall faces
+  - one colour per building: what the scene's panos see of it where they
+    see enough (pano_colours), else its own "building:colour" tag, else one
+    of the place's own building colours, softened (palette) -- the
+    satellite's, from 10 m up, came out grey-brown; walls shaded by which
+    way they face, the roof a little lighter (never a pano's own pixel:
+    from the street they see its edge against the sky)
 
 Called by terrain.build, which writes them to buildings.ply.
 """
@@ -38,6 +39,17 @@ PULL_MAX_M = 1.0              # a wall's seam pulled onto DA3's plane by at most
 TRIM_TOL_M, TRIM_FRONT_M = 0.3, 30.0   # cut from this far in front of a DA3 wall, out to this
 TRIM_MIN_M2, TRIM_MAX = 1.0, 0.2
 CHEER_SAT, CHEER_LIFT = 1.3, 1.15
+ROOF_LIFT = 1.08              # a roof faces the sky: a little lighter than its walls
+# the colour of a building no pano sees enough of: the place's own (palette)
+PALETTE_K, PALETTE_MIN, PALETTE_STRIDE = 8, 500, 8
+SOFT_LIGHT, SOFT_SAT = (0.62, 0.88), (0.15, 0.45)   # softened: the satellite's grey-brown looked dull
+PASTEL = [(0.95, 0.90, 0.80), (0.90, 0.72, 0.62), (0.74, 0.83, 0.92), (0.78, 0.90, 0.80),
+          (0.94, 0.80, 0.80), (0.93, 0.88, 0.70), (0.82, 0.80, 0.90), (0.86, 0.86, 0.84)]
+NAMED = {"white": (0.95, 0.95, 0.93), "grey": (0.6, 0.6, 0.6), "gray": (0.6, 0.6, 0.6),
+         "black": (0.2, 0.2, 0.2), "red": (0.75, 0.3, 0.25), "brown": (0.55, 0.38, 0.26),
+         "beige": (0.88, 0.8, 0.65), "yellow": (0.93, 0.83, 0.45), "orange": (0.9, 0.6, 0.3),
+         "blue": (0.45, 0.6, 0.8), "green": (0.5, 0.7, 0.5), "pink": (0.93, 0.72, 0.75),
+         "cream": (0.95, 0.9, 0.78), "tan": (0.82, 0.7, 0.55)}
 WALL_SHADE = 0.85             # a wall facing away from the sun, of one facing it (0.6 looked dull)
 ROOF, INNER = -1, -2          # Blocks.edge for a roof's points and an inner wall's
 INNER_M, INNER_GAP = (0.6, 1.5), 2.0   # walls again this far inside, this many times sparser: gaps in the
@@ -66,23 +78,103 @@ def _height(tags):
     return DEFAULT_M.get(tags.get("building"), DEFAULT_OTHER_M), True
 
 
-def outlines(elements, to_xy):
-    """[(outline (n, 2) east/north metres, closed, height m, guessed)] of
-    the buildings among osm.fetch's elements; to_xy(lat, lon) -> east,
-    north."""
-    out = []
+def _rings(elements):
+    """(element, ring) for each building outline among osm.fetch's
+    elements."""
     for e in elements:
         if "building" not in e.get("tags", {}):
             continue
         rings = [e.get("geometry")] if e["type"] == "way" else \
             [m.get("geometry") for m in e.get("members", []) if m.get("role") == "outer"]
         for ring in rings:
-            if not ring or len(ring) < 4 or ring[0] != ring[-1]:
-                continue                  # a relation's outer split over several ways: left out
-            xy = to_xy(ring)
-            if (xy[:-1, 0] * xy[1:, 1] - xy[1:, 0] * xy[:-1, 1]).sum() < 0:   # counter-clockwise: normals face out
-                xy = xy[::-1]
-            out.append((xy, *_height(e["tags"])))
+            if ring and len(ring) >= 4 and ring[0] == ring[-1]:   # a relation's outer split over ways: left out
+                yield e, ring
+
+
+def outlines(elements, to_xy):
+    """[(outline (n, 2) east/north metres, closed, height m, guessed)] of
+    the buildings among osm.fetch's elements; to_xy(lat, lon) -> east,
+    north."""
+    out = []
+    for e, ring in _rings(elements):
+        xy = to_xy(ring)
+        if (xy[:-1, 0] * xy[1:, 1] - xy[1:, 0] * xy[:-1, 1]).sum() < 0:   # counter-clockwise: normals face out
+            xy = xy[::-1]
+        out.append((xy, *_height(e["tags"])))
+    return out
+
+
+def _parse_colour(text):
+    """RGB 0-1 of an OSM colour tag ("#c8a060", "#ca6", or a plain name),
+    or None."""
+    t = str(text).strip().lower()
+    if t.startswith("#") and len(t) in (4, 7):
+        h = t[1:] if len(t) == 7 else "".join(ch * 2 for ch in t[1:])
+        try:
+            return np.array([int(h[i:i + 2], 16) for i in (0, 2, 4)]) / 255
+        except ValueError:
+            return None
+    return np.array(NAMED[t]) if t in NAMED else None
+
+
+def tagged(elements):
+    """[RGB or None] per outline (in outlines' order): its own
+    "building:colour" tag, if it has one."""
+    return [_parse_colour(e["tags"]["building:colour"]) if "building:colour" in e["tags"] else None
+            for e, _ in _rings(elements)]
+
+
+def soften(rgb):
+    """rgb made soft and bright, the paint style's: lightness into
+    SOFT_LIGHT, saturation into SOFT_SAT, its hue kept."""
+    import colorsys
+    h, l, s = colorsys.rgb_to_hls(*np.clip(rgb, 0, 1))
+    l = SOFT_LIGHT[0] + (SOFT_LIGHT[1] - SOFT_LIGHT[0]) * l
+    s = float(np.clip(s * 1.4, *SOFT_SAT))
+    return np.array(colorsys.hls_to_rgb(h, l, s))
+
+
+def palette(photos):
+    """(colours (k, 3), shares (k,)): the place's own building colours,
+    softened -- PALETTE_K groups of what the scene's panos label building
+    or wall -- or PASTEL, evenly, if they see under PALETTE_MIN such
+    pixels. photos: as pano_colours has them (image, class map, mask)."""
+    from PIL import Image
+    from scipy.cluster.vq import kmeans2
+    from streetview_to_3d.services.segment import LABEL_IDS
+    ids = [LABEL_IDS["building"], LABEL_IDS["wall"]]
+    samples = []
+    for ph in photos:
+        if ph is None:
+            continue
+        img = np.asarray(Image.open(ph[0]).convert("RGB"))
+        h, w = img.shape[:2]
+        v, u = np.mgrid[0:h:PALETTE_STRIDE, 0:w:PALETTE_STRIDE]
+        at = lambda grid: grid[(v * grid.shape[0] // h).ravel(), (u * grid.shape[1] // w).ravel()]
+        ok = np.isin(at(ph[1]), ids) & ~at(ph[2])
+        samples.append(img[v.ravel(), u.ravel()][ok] / 255)
+    samples = np.concatenate(samples) if samples else np.zeros((0, 3))
+    if len(samples) < PALETTE_MIN:
+        return np.array(PASTEL), np.full(len(PASTEL), 1 / len(PASTEL))
+    centres, label = kmeans2(samples, PALETTE_K, seed=0, minit="++")
+    share = np.bincount(label, minlength=PALETTE_K) / len(label)
+    return np.array([soften(c) for c in centres]), share
+
+
+def colours(outlines, tags, palette_):
+    """(n, 3) each building's colour: its own tag, else one of the
+    palette's, picked by where it stands (the same every run) as often as
+    that colour is among the place's buildings."""
+    cols, share = palette_
+    cum = np.cumsum(share) / share.sum()
+    out = np.empty((len(outlines), 3))
+    for i, ((xy, *_), tag) in enumerate(zip(outlines, tags)):
+        if tag is not None:
+            out[i] = tag
+            continue
+        c = xy.mean(0)
+        pick = (np.sin(c[0] * 12.9898 + c[1] * 78.233) * 43758.5453) % 1.0
+        out[i] = cols[min(int(np.searchsorted(cum, pick)), len(cols) - 1)]
     return out
 
 
@@ -256,8 +348,9 @@ def points(outlines, spacing, ground, colour, sun):
 
     spacing(xy): point spacing at east/north points -- a wall is laid in
     pieces up to CHUNK_M long, each spaced as at its middle, so only what
-    is near gets dense; ground(xy): the ground's height there; colour(xy):
-    the satellite's RGB there."""
+    is near gets dense; ground(xy): the ground's height there; colour:
+    (n, 3) each building's (colours) -- a roof a little lighter
+    (ROOF_LIFT), walls shaded by which way they face."""
     roofs, walls, lights, edge_of, us, vs, gaps, roof_gaps, edges = [], [], [], [], [], [], [], [], []
     for xy, h, _, planes in outlines:
         base = ground(xy).min()
@@ -322,14 +415,12 @@ def points(outlines, spacing, ground, colour, sun):
         z = np.zeros((0, 3))
         return Blocks(z, z, np.zeros(0, int), np.zeros(0), np.zeros(0, int), np.zeros(0), np.zeros(0),
                       np.zeros(0), [])
-    rgb = colour(np.concatenate(roofs)[:, [0, 2]])
-    pts, cols, which, lit, edge, u, v, gap, at = [], [], [], [], [], [], [], [], 0
+    pts, cols, which, lit, edge, u, v, gap = [], [], [], [], [], [], [], []
     for i, (roof, wall, light, eo, uu, vv, rg, gg) in enumerate(zip(roofs, walls, lights, edge_of, us, vs,
                                                                      roof_gaps, gaps)):
-        mine = rgb[at:at + len(roof)]
-        at += len(roof)
         pts += [roof, wall]
-        cols += [cheer(mine), cheer(mine.mean(0)) * (WALL_SHADE + (1 - WALL_SHADE) * light[:, None])]
+        cols += [np.tile(np.clip(colour[i] * ROOF_LIFT, 0, 1), (len(roof), 1)),
+                 colour[i] * (WALL_SHADE + (1 - WALL_SHADE) * light[:, None])]
         which.append(np.full(len(roof) + len(wall), i))
         lit += [np.full(len(roof), np.nan), light]
         edge += [np.full(len(roof), ROOF), eo.astype(int)]

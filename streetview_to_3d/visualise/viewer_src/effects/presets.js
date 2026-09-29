@@ -12,7 +12,7 @@ const BASE = {
 };
 export const STYLE_DEFAULTS = {
   original: { ...BASE },
-  paint: { ...BASE, strength: 0.61, density: 95, pointSize: 0.8, amount: 0.25, floating: true },
+  paint: { ...BASE, strength: 0.61, density: 100, pointSize: 1, amount: 0.3, floating: true },
   voxel: { ...BASE, amount: 0 },
   dither: { ...BASE },
 };

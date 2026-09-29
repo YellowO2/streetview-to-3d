@@ -60,8 +60,13 @@ export function parsePoints(buffer, transform) {
 // (userData.pointSize), just over that spacing.
 const GAPS = [0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 8, 12, 20, Infinity];
 const nearest = (x, z, places) => Math.min(...places.map(([a, b]) => Math.hypot(x - a, z - b)));
-// 5 cm at a camera, 1.5% of the distance to the nearest one more further out
-const gapAt = (x, z, cams) => 0.05 + 0.015 * nearest(x, z, cams);
+// 5 cm at a camera, GAP_PER of the distance to the nearest one more further
+// out (terrain.gap_at); drawn as if it grew only SIZE_PER, so far points
+// are sparser without growing as fast
+const GAP0 = 0.05,
+  GAP_PER = 0.018,
+  SIZE_PER = 0.012;
+const gapAt = (x, z, cams) => GAP0 + GAP_PER * nearest(x, z, cams);
 export const SPACING = { terrain: gapAt, buildings: gapAt };
 // Each placed node's camera, seen from above, in the viewer's frame.
 export function cameraPlaces(data) {
@@ -98,7 +103,8 @@ export function terrainBands(points, spacing = SPACING.terrain, cams = [[0, 0]])
     part.computeBoundingBox();
     part.computeBoundingSphere();
     const band = new THREE.Points(part, points.material.clone());
-    band.userData.pointSize = 1.5 * (Number.isFinite(gap) ? gap : 30);
+    const spaced = Number.isFinite(gap) ? gap : 30;
+    band.userData.pointSize = 1.5 * (GAP0 + ((spaced - GAP0) * SIZE_PER) / GAP_PER);
     return [band];
   });
   geometry.dispose();
