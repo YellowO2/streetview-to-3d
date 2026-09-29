@@ -157,10 +157,12 @@ def _walls_only(base, x, s):
     return keep
 
 
-def _onto_da3(n, d, x, cams, da3, da3_normals, walls):
-    """x slid along each camera's line of sight onto DA3's copy of the wall
-    (n, d), NaN rows where that is too far or DA3's faces too differently;
-    None if DA3 has no copy. Records DA3's wall in walls."""
+def da3_copy(n, d, x, da3, da3_normals):
+    """DA3's own copy of the wall plane (n, d) that the points x lie on:
+    (n2, d2, agrees) fitted to DA3's points within SAME_M of it, facing
+    within SAME_DEG of its way and within SAME_NEAR_M of x -- trees face
+    every way and the ground up, so neither counts -- agrees when it faces
+    within AGREE_DEG of n; None if DA3 has under SAME_MIN such points."""
     lo, hi = x.min(0) - SAME_NEAR_M, x.max(0) + SAME_NEAR_M
     cand = np.flatnonzero(np.all((da3 >= lo) & (da3 <= hi), axis=1))
     cand = cand[(np.abs(da3[cand] @ n - d) < SAME_M)
@@ -174,14 +176,30 @@ def _onto_da3(n, d, x, cams, da3, da3_normals, walls):
     c = P.mean(0)
     n2 = np.linalg.svd(P - c, full_matrices=False)[2][-1]
     n2 = n2 if n2 @ n > 0 else -n2
-    if n2 @ n < np.cos(np.radians(AGREE_DEG)):
+    return n2, float(n2 @ c), bool(n2 @ n >= np.cos(np.radians(AGREE_DEG)))
+
+
+def on_plane(n2, d2, da3, da3_normals):
+    """True for DA3's points on the plane (n2, d2): within ON_WALL_M of it,
+    facing its way."""
+    return (np.abs(da3 @ n2 - d2) < ON_WALL_M) & (np.abs(da3_normals @ n2) > np.cos(np.radians(SAME_DEG)))
+
+
+def _onto_da3(n, d, x, cams, da3, da3_normals, walls):
+    """x slid along each camera's line of sight onto DA3's copy of the wall
+    (n, d), NaN rows where that is too far or DA3's faces too differently;
+    None if DA3 has no copy. Records DA3's wall in walls."""
+    copy = da3_copy(n, d, x, da3, da3_normals)
+    if copy is None:
+        return None
+    n2, d2, agrees = copy
+    if not agrees:
         return np.full_like(x, np.nan)
-    d2 = n2 @ c
     along = np.cross(n2, [0.0, 1.0, 0.0])
     along /= np.linalg.norm(along)
     # its length from ALL of DA3's points on that plane, not just those near
     # this piece of fill -- or the wall "ends" where the fill's neighbourhood does
-    on = (np.abs(da3 @ n2 - d2) < ON_WALL_M) & (np.abs(da3_normals @ n2) > np.cos(np.radians(SAME_DEG)))
+    on = on_plane(n2, d2, da3, da3_normals)
     if on.sum() >= SAME_MIN:
         walls.append((n2, d2, along, _stretches(da3[on] @ along)))
     ray = x - cams

@@ -57,7 +57,6 @@ HILL_M = 50.0
 BUILDINGS_M, ROADS_M = 1000.0, 700.0         # OSM's reach (roads are drawn only where a point wide, ~600 m)
 FADE_M, TINT_M, MEET_M = 4.0, 8.0, 10.0  # the ground's seam with the scene (seams.py): bands
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
-WALL_ABOVE_M = 1.0                        # scene points this far over the ground are walls, trees
 B_STEP, B_MIN_STEP_M = 0.01, 0.15         # buildings' spacing by distance to the nearest camera: DA3's next to them
 STEP, MIN_STEP_M = 0.01, 0.5
 M_PER_LAT = 111320.0
@@ -254,8 +253,10 @@ def build(scene_dir, log=print):
     n_fitted = n_cut = 0
     if outlines:
         from scipy.spatial import cKDTree
-        above = -scene[:, 1] > ground(scene[:, [0, 2]]) + WALL_ABOVE_M
-        outlines, n_fitted = buildings.fit_to_scene(outlines, scene[above], ground)
+        from streetview_to_3d.postprocess.ground import normals_from_neighbours
+        scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
+        outlines, n_fitted = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
+                                                    roads.coverage(roads.lines(elements, to_xy)))
         cam_tree = cKDTree(cam_xz)
         blocks = buildings.points(
             outlines, lambda xy: np.maximum(B_MIN_STEP_M, B_STEP * cam_tree.query(xy)[0]), ground,
@@ -272,7 +273,7 @@ def build(scene_dir, log=print):
         # what DA3 already has of a building is left to it; the rest meets it
         roofs_near = cKDTree(scene).query(blocks.pts, distance_upper_bound=1.0)[0] if len(scene) \
             else np.full(len(blocks.pts), np.inf)
-        n_cut = buildings.seam(blocks, scene[above], scene_cols[above], roofs_near, np.random.default_rng(1))
+        n_cut = buildings.seam(blocks, scene, scene_normals, scene_cols, roofs_near, np.random.default_rng(1))
         bp, bc = blocks.pts, blocks.cols
     lines = roads.lines(elements, to_xy)
     if lines:

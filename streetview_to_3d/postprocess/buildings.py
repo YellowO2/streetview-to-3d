@@ -27,16 +27,17 @@ DEFAULT_OTHER_M = 12.0
 SEE_M = 150.0                 # panos colour the buildings this close to them
 BEHIND_M, BEHIND = 3.0, 0.05  # how far behind what is in front a wall may stand and still be seen
 SEEN_MIN = 20                 # pixels of a building the panos must see to colour it
-FIT_M, FIT_MIN = 4.0, 200     # a building is DA3's where this many of its points stand this near its outline
-SNAP_PASSES, SNAP_MAX_M = 8, 3.0
-ON_WALL_M = 1.5               # after the snap, DA3's points this near an edge are on that wall
+FIT_M = 5.0                   # buildings this far past the scene's points are not looked at
+WALL_SAMPLE_M = 1.0
+SNAP_MAX_M = 2.0              # OSM's real offsets were 0.2-1.3 m (Stockholm, NTU)
+ROAD_SLACK = 0.02             # a slide may put this much more of an outline onto roads
+PULL_MAX_M = 1.0              # a wall's seam pulled onto DA3's plane by at most this
 TOP_PERCENTILE = 97
 MIN_HEIGHT_M = 2.5
-SAMPLE_M = 0.25
 CHUNK_M = 10.0                # a wall is spaced in pieces this long, each as at its middle
 ROOF_MIN_STEP_M = 0.5         # roofs are seen from above only
 COVER_M = 0.35                # an OSM point DA3 has a point this near (on the wall) is DA3's
-SEAM_DEPTH_M, SEAM_FADE_M = 3.0, 3.0   # DA3's copy of a wall: this far in front or behind; the seam's width
+SEAM_FADE_M = 3.0             # the seam's width
 SEAM_TINT, SEAM_MIN = 0.8, 20
 
 
@@ -69,58 +70,70 @@ def outlines(elements, to_xy):
     return out
 
 
-def _edge_samples(xy, step=SAMPLE_M):
-    """Points every step metres along a closed outline's edges."""
-    parts = []
-    for a, c in zip(xy[:-1], xy[1:]):
-        n = max(1, int(np.linalg.norm(c - a) / step))
-        parts.append(a + (c - a) * (np.arange(n) / n)[:, None])
-    return np.concatenate(parts)
+def _wall_samples(a, c, base, top):
+    """Points every WALL_SAMPLE_M over the wall from a to c, base to top."""
+    length = float(np.linalg.norm(c - a))
+    u = np.arange(0, length + 1e-9, WALL_SAMPLE_M)
+    v = np.arange(base, top + 1e-9, WALL_SAMPLE_M)
+    xy = a + (c - a) * (u / max(length, 1e-9))[:, None]
+    return np.column_stack([np.repeat(xy[:, 0], len(v)), -np.tile(v, len(u)), np.repeat(xy[:, 1], len(v))])
 
 
-def fit_to_scene(outlines, walls, ground):
+def fit_to_scene(outlines, da3, da3_normals, ground, on_road=None):
     """outlines, each building DA3 built a wall of moved onto it and, where
-    its height was a guess, given DA3's.
+    its height was a guess, given DA3's; each outline gains {edge: (n2,
+    d2)}, DA3's plane for each of its walls DA3 has.
 
-    walls: the scene's points standing above the ground (world, (n, 3)).
-    A building counts as DA3's where FIT_MIN of them stand within FIT_M of
-    its outline; it is then slid (never turned: OSM's shape is good, its
-    place a metre or two off) by the robust median of those points' offsets
-    to its nearest edge, SNAP_PASSES times (not at all if that runs past
-    SNAP_MAX_M: then something else is pulling it, NTU's 3 m shelter roof
-    over trees) -- and a
-    guessed height becomes the top of DA3's points on its walls
-    (TOP_PERCENTILE), DA3 having seen that far at least. Returns the new
-    outlines and how many moved."""
-    from scipy.spatial import cKDTree
-    if not len(walls):
-        return outlines, 0
-    tree = cKDTree(walls[:, [0, 2]])
+    Each wall looks for DA3's copy of it as the fill does for Google's
+    (fill.google.da3_copy: DA3's points near its plane that face its way,
+    so trees, poles and the ground never count). A copy that agrees says
+    how far that wall is off, along its own facing; one slide of the whole
+    building (never turned: OSM's shape is good, its place a metre or two
+    off) meets all of them in least squares -- with one wall, or parallel
+    ones, it only moves towards them, never sideways along them. Not moved
+    if that is over SNAP_MAX_M, or if it moves the outline further onto a
+    road (on_road(xy): the share of it there) -- buildings do not stand in
+    roads. A guessed height becomes the top of DA3's points on its walls
+    (TOP_PERCENTILE). Returns the new outlines and how many moved."""
+    from streetview_to_3d.fill.google import da3_copy, on_plane
+    if not len(da3):
+        return [o + ({},) for o in outlines], 0
+    lo, hi = da3[:, [0, 2]].min(0) - FIT_M, da3[:, [0, 2]].max(0) + FIT_M
     out, moved = [], 0
     for xy, h, guessed in outlines:
-        edge = _edge_samples(xy)
-        near = tree.query_ball_point(edge, FIT_M)
-        idx = np.unique(np.concatenate([np.asarray(i, int) for i in near])) if len(near) else []
-        if len(idx) < FIT_MIN:
-            out.append((xy, h, guessed))
+        if not ((xy.max(0) >= lo) & (xy.min(0) <= hi)).all():
+            out.append((xy, h, guessed, {}))
             continue
-        p = walls[idx]
-        shift = np.zeros(2)
-        for _ in range(SNAP_PASSES):
-            d, k = cKDTree(edge + shift).query(p[:, [0, 2]])
-            close = d < FIT_M
-            shift += np.median(p[close][:, [0, 2]] - (edge + shift)[k[close]], 0)
-            if np.linalg.norm(shift) > SNAP_MAX_M:
-                break
-        if np.linalg.norm(shift) > SNAP_MAX_M:
-            shift = np.zeros(2)           # pulled away by something else (trees under a shelter's roof): left where OSM has it
+        base = ground(xy).min()
+        planes, rows, want, weight, tops = {}, [], [], [], []
+        for j, (a, c) in enumerate(zip(xy[:-1], xy[1:])):
+            length = float(np.linalg.norm(c - a))
+            if length < 1e-6:
+                continue
+            t = (c - a) / length
+            n = np.array([t[1], 0.0, -t[0]])
+            copy = da3_copy(n, float(n @ [a[0], 0, a[1]]), _wall_samples(a, c, base, base + h), da3, da3_normals)
+            if copy is None or not copy[2]:
+                continue
+            n2, d2, _ = copy
+            on = on_plane(n2, d2, da3, da3_normals)
+            planes[j] = (n2, d2)
+            rows.append(n2[[0, 2]])
+            want.append(d2 - n2 @ [a[0], 0, a[1]])
+            weight.append(np.sqrt(on.sum()))
+            tops.append(-da3[on, 1])
+        if not planes:
+            out.append((xy, h, guessed, {}))
+            continue
+        w = np.array(weight)[:, None]
+        shift = np.linalg.lstsq(np.array(rows) * w, np.array(want) * w[:, 0], rcond=None)[0]
+        if np.linalg.norm(shift) > SNAP_MAX_M or (on_road and on_road(xy + shift) > on_road(xy) + ROAD_SLACK):
+            shift = np.zeros(2)
         xy = xy + shift
         if guessed:
-            on = cKDTree(edge + shift).query(p[:, [0, 2]])[0] < ON_WALL_M
-            if on.sum() >= FIT_MIN:
-                top = np.percentile(-p[on, 1], TOP_PERCENTILE)
-                h = max(MIN_HEIGHT_M, top - ground(xy).min())
-        out.append((xy, h, guessed))
+            top = np.percentile(np.concatenate(tops), TOP_PERCENTILE)
+            h = max(MIN_HEIGHT_M, top - base)
+        out.append((xy, h, guessed, planes))
         moved += bool(shift.any())
     return out, moved
 
@@ -138,7 +151,8 @@ class Blocks:
     """Every building's points, and for each where on its building it is:
     which building, how lit (NaN on a roof), which wall edge (-1 on a
     roof) and its place on that wall, u metres along and v metres up
-    (height above sea level). edges[e]: (start, along, outward, length)."""
+    (height above sea level). edges[e]: (start, along, outward, length,
+    DA3's plane for it (n2, d2) or None)."""
 
     def __init__(self, pts, cols, which, light, edge, u, v, edges):
         self.pts, self.cols, self.which, self.light = pts, cols, which, light
@@ -157,7 +171,7 @@ def points(outlines, spacing, ground, colour, sun):
     is near gets dense; ground(xy): the ground's height there; colour(xy):
     the satellite's RGB there."""
     roofs, walls, lights, edge_of, us, vs, edges = [], [], [], [], [], [], []
-    for xy, h, _ in outlines:
+    for xy, h, _, planes in outlines:
         base = ground(xy).min()
         top = base + h
         # roof: a grid over the outline, plus its corners, spaced as at its middle
@@ -169,14 +183,14 @@ def points(outlines, spacing, ground, colour, sun):
         roofs.append(np.column_stack([roof[:, 0], np.full(len(roof), -top), roof[:, 1]]))
         # walls: along each edge and up it; lit by how squarely it faces the sun
         w, light, eo, uu, vv = [], [], [], [], []
-        for a, c in zip(xy[:-1], xy[1:]):
+        for j, (a, c) in enumerate(zip(xy[:-1], xy[1:])):
             length = float(np.linalg.norm(c - a))
             if length < 1e-6:
                 continue
             t = (c - a) / length
             out = np.array([t[1], -t[0]])                    # outward for a counter-clockwise ring
             e = len(edges)
-            edges.append((a, t, out, length))
+            edges.append((a, t, out, length, planes.get(j)))
             lit = abs(np.array([out[0], 0.0, out[1]]) @ sun)
             for c0 in np.arange(0, length, CHUNK_M):
                 c1 = min(length, c0 + CHUNK_M)
@@ -213,52 +227,43 @@ def points(outlines, spacing, ground, colour, sun):
                   np.concatenate(edge), np.concatenate(u), np.concatenate(v), edges)
 
 
-def seam(blocks, walls, wall_cols, roofs_near, rng):
+def seam(blocks, da3, da3_normals, da3_cols, roofs_near, rng):
     """Leave to DA3 what it has of each building, and fade the rest in.
 
-    A wall's points against DA3's own copy of that wall, on the wall: DA3's
-    points within SEAM_DEPTH_M in front of or behind it (walls: the scene's
-    points above its ground), flattened onto it as (along, up). An OSM
-    point DA3 covers (within COVER_M there) goes, however far in front or
-    behind DA3's copy stands -- a 3D distance left a strip as wide as that
-    gap empty. Next to what DA3 covers, over SEAM_FADE_M: half of them
-    kept rising to all, pulled onto DA3's depth for that wall (its median)
-    and to DA3's colour there -- the two meet and interleave rather than
-    stop. A roof goes where DA3 has points within COVER_M of it
-    (roofs_near: their distance).
-    Returns how many points DA3 already had."""
+    Only walls DA3 has a copy of (fit_to_scene's planes) are touched, and
+    only against DA3's points on that plane (fill.google.on_plane), seen
+    on the wall as (along, up): an OSM point DA3 covers there (within
+    COVER_M) goes, however far in front or behind DA3's copy stands. Next
+    to what DA3 covers, over SEAM_FADE_M: half of them kept rising to all,
+    pulled onto DA3's plane (by at most PULL_MAX_M) and to its colour
+    there -- the two meet and interleave rather than stop. A roof goes
+    where DA3 has points within COVER_M of it (roofs_near: their
+    distance). Returns how many points DA3 already had."""
     from scipy.spatial import cKDTree
+    from streetview_to_3d.fill.google import on_plane
     from streetview_to_3d.postprocess.seams import ramp
     keep = np.ones(len(blocks.pts), bool)
     keep[blocks.edge < 0] = roofs_near[blocks.edge < 0] > COVER_M
-    if not len(walls):
-        blocks.take(keep)
-        return int((~keep).sum())
-    tree = cKDTree(walls[:, [0, 2]])
     order = np.argsort(blocks.edge, kind="stable")
     bounds = np.searchsorted(blocks.edge[order], np.arange(len(blocks.edges) + 1))
-    for e, (a, t, out, length) in enumerate(blocks.edges):
+    for e, (a, t, out, length, plane) in enumerate(blocks.edges):
         mine = order[bounds[e]:bounds[e + 1]]
-        if not len(mine):
+        if plane is None or not len(mine):
             continue
-        near = tree.query_ball_point(a + t * length / 2, length / 2 + SEAM_DEPTH_M)
-        if len(near) < SEAM_MIN:
+        n2, d2 = plane
+        box = np.all(np.abs(da3[:, [0, 2]] - (a + t * length / 2)) < length / 2 + SEAM_FADE_M + 1, axis=1)
+        idx = np.flatnonzero(box)
+        idx = idx[on_plane(n2, d2, da3[idx], da3_normals[idx])]
+        if len(idx) < SEAM_MIN:
             continue
-        near = np.asarray(near)
-        rel = walls[near][:, [0, 2]] - a
-        u, n = rel @ t, rel @ out
-        on = (np.abs(n) < SEAM_DEPTH_M) & (u > -SEAM_FADE_M) & (u < length + SEAM_FADE_M)
-        if on.sum() < SEAM_MIN:
-            continue
-        near, u, n = near[on], u[on], n[on]
-        d, k = cKDTree(np.c_[u, -walls[near, 1]]).query(np.c_[blocks.u[mine], blocks.v[mine]])
+        u = (da3[idx][:, [0, 2]] - a) @ t
+        d, k = cKDTree(np.c_[u, -da3[idx, 1]]).query(np.c_[blocks.u[mine], blocks.v[mine]])
         band = ramp(d / SEAM_FADE_M)
         keep[mine] = (d > COVER_M) & (rng.random(len(mine)) < 0.5 + 0.5 * band)
-        pull = (1 - band) * np.median(n)
-        blocks.pts[mine, 0] += pull * out[0]
-        blocks.pts[mine, 2] += pull * out[1]
+        off = np.clip(d2 - blocks.pts[mine] @ n2, -PULL_MAX_M, PULL_MAX_M)
+        blocks.pts[mine] += ((1 - band) * off)[:, None] * n2
         w = (SEAM_TINT * (1 - band))[:, None]
-        blocks.cols[mine] = blocks.cols[mine] * (1 - w) + wall_cols[near[k]] * w
+        blocks.cols[mine] = blocks.cols[mine] * (1 - w) + da3_cols[idx[k]] * w
     blocks.take(keep)
     return int(len(keep) - keep.sum())
 

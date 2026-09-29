@@ -62,6 +62,28 @@ def lines(elements, to_xy):
     return out
 
 
+def coverage(roads, step_m=0.5):
+    """f(outline (n, 2)) -> the share of its edges lying on a road (within
+    the road's half width, less half a metre: a pavement edge is not in it)."""
+    from scipy.spatial import cKDTree
+    pts, half = [], []
+    for xy, width, _ in roads:
+        for a, b in zip(xy[:-1], xy[1:]):
+            n = max(2, int(np.linalg.norm(b - a) / step_m))
+            pts.append(a + (b - a) * np.linspace(0, 1, n)[:, None])
+            half.append(np.full(n, width / 2 - 0.5))
+    if not pts:
+        return lambda xy: 0.0
+    tree, half = cKDTree(np.concatenate(pts)), np.concatenate(half)
+
+    def f(xy):
+        e = np.concatenate([a + (c - a) * np.linspace(0, 1, max(2, int(np.linalg.norm(c - a) / step_m)))[:, None]
+                            for a, c in zip(xy[:-1], xy[1:])])
+        d, k = tree.query(e)
+        return float((d < half[k]).mean())
+    return f
+
+
 def points(roads, step, ground):
     """(points (n, 3) world, colours (n, 3)) for every road.
 
