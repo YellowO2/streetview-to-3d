@@ -11,7 +11,7 @@ import gradio as gr
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.ui import viewers
 from streetview_to_3d.paths import new_run_dir
-from streetview_to_3d.postprocess import pipeline
+from streetview_to_3d.postprocess import pipeline, water
 from streetview_to_3d.reconstruct import build as street_main
 from streetview_to_3d.services import mask_api
 from streetview_to_3d.ui.map_selection.tab import build_map_section, nodes_by_key
@@ -64,8 +64,8 @@ def handle_pathfind_prepare(state):
 
 
 def _zip(run_dir):
-    """The whole scene -- scene.json, every .ply (the nodes', the terrain)
-    and each pano's class map (labels/) -- as one zip.
+    """The whole scene -- scene.json, every .ply (the nodes', the terrain),
+    water.json and each pano's class map (labels/) -- as one zip.
 
     One file, because a browser can only download files, not a folder, and
     the viewer opens exactly this set once unzipped. Stored, not
@@ -73,7 +73,7 @@ def _zip(run_dir):
     time. The Space's disk is wiped on restart, so the scene is handed back
     rather than left as a link into it."""
     names = sorted(n for n in os.listdir(run_dir)
-                   if n == scene_mod.FILENAME or n.endswith(".ply"))
+                   if n in (scene_mod.FILENAME, water.FILENAME) or n.endswith(".ply"))
     archive = os.path.join(run_dir, f"scene_{os.path.basename(run_dir)[:8]}.zip")
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as z:
         for n in names:

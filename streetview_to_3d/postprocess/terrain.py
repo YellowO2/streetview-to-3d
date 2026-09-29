@@ -30,11 +30,14 @@ share of the view:
    from the scene's own panos as the fill colours its ground (_paint), so
    it matches DA3 where they meet; the maps' colours are only for what no
    pano sees
+6. no land or road points where there is water: that is a flat surface
+   of its own (water.py), each body at its level
 
 Written to terrain.ply beside scene.json (its "terrain"), the buildings,
 spaced the same way, to buildings.ply (its "buildings"), both already in
-the world frame. The viewer draws its points larger with distance, as they
-are spaced (scene-store.js, terrainBands).
+the world frame, and the water to water.json (its "water"). The viewer
+draws the points larger with distance, as they are spaced (scene-store.js,
+terrainBands).
 
     python -m streetview_to_3d.postprocess.terrain SCENE_DIR
 """
@@ -42,13 +45,14 @@ import io
 import math
 import os
 import sys
+import urllib.error
 import urllib.request
 
 import numpy as np
 from PIL import Image
 
 from streetview_to_3d import scene as scene_mod
-from streetview_to_3d.postprocess import buildings, osm, roads, seams
+from streetview_to_3d.postprocess import buildings, osm, roads, seams, water
 from streetview_to_3d.postprocess.ply_io import write_ply
 
 FILENAME = "terrain.ply"
@@ -79,18 +83,25 @@ BEND_FROM_M, BEND_TO_M = 30.0, 150.0      # the bend fades out between these fro
 
 class TileMap:
     """A web-mercator tile map read at any (lat, lon), bilinear; each tile
-    downloaded once. decode turns a tile's RGB (0-255) into its values."""
+    downloaded once. decode turns a tile's pixels (0-255, in mode) into its
+    values; a map that leaves out empty tiles (a 404) gives missing there."""
 
-    def __init__(self, url, zoom, decode):
+    def __init__(self, url, zoom, decode, mode="RGB", missing=None):
         self.url, self.zoom, self.decode, self.tiles = url, zoom, decode, {}
+        self.mode, self.missing = mode, missing
 
     def _tile(self, x, y):
         if (x, y) not in self.tiles:
             req = urllib.request.Request(self.url.format(z=self.zoom, x=x, y=y),
                                          headers={"User-Agent": "streetview-to-3d"})
-            with urllib.request.urlopen(req, timeout=30) as r:
-                rgb = np.asarray(Image.open(io.BytesIO(r.read())).convert("RGB"), float)
-            self.tiles[x, y] = self.decode(rgb)
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    px = np.asarray(Image.open(io.BytesIO(r.read())).convert(self.mode), float)
+                self.tiles[x, y] = self.decode(px)
+            except urllib.error.HTTPError as e:
+                if e.code != 404 or self.missing is None:
+                    raise
+                self.tiles[x, y] = np.full((256, 256), self.missing)
         return self.tiles[x, y]
 
     def __call__(self, lat, lon):
@@ -227,6 +238,12 @@ def build(scene_dir, log=print):
         raw = heights(*to_ll(xy)) if raw is None else raw
         return np.where(raw <= SEA_M, 0.0, raw) + shift + bend(xy)
 
+    def unbent(xy):
+        """The map on Google's datum, not bent onto the panos: a water level
+        (the bend lifts the land by a quay up to the street)."""
+        raw = heights(*to_ll(xy))
+        return np.where(raw <= SEA_M, 0.0, raw) + shift
+
     # the scene always wins: the map only around it, faded in at its edge
     scene, scene_cols = scene_points(sc, scene_dir)
     foot = seams.Footprint(scene, scene_cols) if len(scene) else None
@@ -235,7 +252,10 @@ def build(scene_dir, log=print):
     radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
     cam_tree = cKDTree(cam_xz)
     gap = lambda xy: gap_at(cam_tree.query(xy)[0])
+    # water is a flat surface of its own (water.py), no land points under it
+    wet = water.Water(radius, to_ll, lambda lat, lon: heights(lat, lon) <= SEA_M)
     en = sample_points(radius, cam_xz)
+    en = en[~wet.wet(en)]
     # the scene's ground-level points: the land fills exactly where they are not
     low = scene[-scene[:, 1] < ground(scene[:, [0, 2]]) + LOW_M] if len(scene) else scene
     low_tree = cKDTree(low[:, [0, 2]]) if len(low) else None
@@ -245,7 +265,6 @@ def build(scene_dir, log=print):
     dist, edge_h, edge_c = near(en)
     lat, lon = to_ll(en)
     raw = heights(lat, lon)
-    sea = raw <= SEA_M                      # the tiles carry the sea bed too; laid flat
     h = seams.meet(ground(en, raw), edge_h, dist, MEET_M)
     # under the scene's own ground too, just beneath it: one shared ground,
     # so the scene's is not seen through, the land never over it
@@ -320,6 +339,7 @@ def build(scene_dir, log=print):
     if lines:
         rp, rc = roads.points(lines, gap, ground)
         keep = uncovered(rp[:, [0, 2]], gap(rp[:, [0, 2]]))
+        keep &= ~wet.wet(rp[:, [0, 2]])
         rp = rp[keep]
         d, g, _ = near(rp[:, [0, 2]])
         rp[:, 1] = -(seams.meet(-rp[:, 1] - roads.LIFT_M, g, d, MEET_M) + roads.LIFT_M)
@@ -343,6 +363,8 @@ def build(scene_dir, log=print):
         log(f"terrain: no pano paint ({e!r})")
     write_ply(os.path.join(scene_dir, FILENAME), pts, cols)
     sc.terrain = FILENAME
+    surfaces = wet.surfaces(unbent)
+    sc.water = water.save(scene_dir, surfaces) if surfaces else None
     sc.buildings = None
     if len(bp):
         write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc)
@@ -350,7 +372,7 @@ def build(scene_dir, log=print):
     sc.save(scene_dir)
     fix = np.abs(fixes - shift)
     log(f"terrain: {len(pts)} points to {radius:.0f} m, {len(bp)} building points, {n_painted} of them "
-        f"painted from the panos ({int(sea.sum())} sea, {source} colour, "
+        f"painted from the panos ({len(surfaces)} water surfaces ({wet.source}), {source} colour, "
         f"{n_buildings} buildings -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
         f"{n_cut} of their points "
         f"left to DA3's own, {n_seen} coloured by the panos -- {n_roads} roads), map shifted "

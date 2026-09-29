@@ -1,4 +1,4 @@
-import { createWater } from '@viewer/effects/water';
+import { tickWater } from '@viewer/effects/water';
 import { createVoxels } from '@viewer/effects/voxel';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -13,7 +13,6 @@ import { STYLE_DEFAULTS, normalizeStyle } from '@viewer/effects/presets';
 
 export function createStyles(scene, camera, renderer) {
   const voxels = createVoxels(scene);
-  const water = createWater(scene);
   const environment = createEnvironment(scene);
   const originalBackground = scene.background;
   let style = 'original',
@@ -108,7 +107,6 @@ export function createStyles(scene, camera, renderer) {
       });
       revealStart = null;
       environment.configure(look);
-      water.configure(box, radius);
       updateMotion(false);
     },
     reveal() {
@@ -119,20 +117,11 @@ export function createStyles(scene, camera, renderer) {
       return voxels.render(style === 'voxel', look * 0.008 * (settings.blocks || 1), () => {
         if (!editing) time += dt;
         updateMotion(editing);
-        water.update(
-          !!asset?.group && !!settings.water && !asset.splat,
-          settings.waterLevel ?? 0.1,
-          dt,
-          editing || settings.stillWater,
-        );
+        if (!editing) tickWater(dt);
         environment.update(
-          settings.water && !asset?.splat
-            ? 'anime'
-            : ['paint', 'voxel'].includes(style)
-              ? 'anime'
-              : style,
+          ['paint', 'voxel'].includes(style) ? 'anime' : style,
           camera,
-          !!asset?.group && (settings.atmosphere || (settings.water && !asset.splat)),
+          !!asset?.group && settings.atmosphere,
           !!asset?.group && !asset.splat,
         );
         scene.background = originalBackground;
@@ -192,7 +181,6 @@ export function createStyles(scene, camera, renderer) {
     dispose() {
       voxels.dispose();
       environment.dispose();
-      water.dispose();
       composer?.passes.forEach((pass) => pass.dispose?.());
       composer?.dispose();
       scene.background = originalBackground;

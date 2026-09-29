@@ -60,12 +60,7 @@ block-size change (on slider release), not on camera movement. Gaussian splats
 and point-motion controls are unavailable for this preset. First conversion of
 large scenes can briefly pause the UI; animation is deferred.
 
-Flooded world is a shared Surroundings toggle (including Original), not another
-colour preset. water.js owns a two-triangle world-horizontal opaque surface;
-height is measured above the loaded bounds' minimum Y in scene-radius units.
-The shader uses animated normals, analytic blue-sky reflection and a sun glint.
-It does not reflect scene objects, simulate waves, or provide shoreline foam.
-Water forces the blue sky while enabled. Settings stay
-across style switches; source positions and exports are unchanged. Motion pauses
-while editing, or with Still water (defaults on for reduced-motion users).
-Spark scenes disable water because transparent splats do not reliably occlude it.
+water.js draws a placed scene's water (water.json, postprocess/water.py): each
+body one flat shape at its own level, with animated normals, analytic blue-sky
+reflection and a sun glint -- no reflection of the scene, no waves or foam. One
+shared material; its motion pauses while editing.

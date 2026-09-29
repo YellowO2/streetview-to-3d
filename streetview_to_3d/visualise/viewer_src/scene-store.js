@@ -7,7 +7,9 @@ import {
   scenePieces,
   gpsPlacement,
   SURROUNDINGS,
+  WATER,
 } from '@viewer/scene-format';
+import { waterSurfaces } from '@viewer/effects/water';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
 export function matrixRows(m) {
@@ -30,6 +32,7 @@ export function dispose(group) {
       o.geometry.dispose();
       o.material.dispose();
     } else if (o.userData.splat) o.dispose();
+    else if (o.isMesh) o.geometry.dispose(); // water: its material is shared
   });
 }
 const loader = new PLYLoader();
@@ -183,6 +186,18 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
         for (const part of spacing ? terrainBands(points, spacing, cameraPlaces(data)) : [points]) {
           part.userData.surroundings = key;
           group.add(part);
+        }
+      }
+      if (placement === 'world' && data[WATER]) {
+        progress('Loading the water…');
+        const buffer = await readBuffer(resolve(relativePath(data[WATER])));
+        if (cancelled()) {
+          dispose(group);
+          return null;
+        }
+        for (const mesh of waterSurfaces(JSON.parse(new TextDecoder().decode(buffer)))) {
+          mesh.userData.surroundings = WATER;
+          group.add(mesh);
         }
       }
     }

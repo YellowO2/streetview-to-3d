@@ -5,12 +5,6 @@ export function createStyleControls(actions) {
   const reducedMotion = !!document.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)')
     .matches;
   if (reducedMotion) Object.values(saved).forEach((preset) => (preset.floating = false));
-  $('water-still').checked = reducedMotion;
-  const waterOptions = () => ({
-    water: $('water-enabled').checked,
-    waterLevel: Number($('water-level').value),
-    stillWater: $('water-still').checked,
-  });
   let current = 'original',
     splat = false,
     blocked = false,
@@ -29,12 +23,6 @@ export function createStyleControls(actions) {
     };
   }
   function render() {
-    $('water-enabled').disabled = blocked || !loaded || splat;
-    $('water-splat-note').hidden = !splat;
-    $('water-level-label').hidden = $('water-still-label').hidden =
-      !$('water-enabled').checked || splat;
-    $('water-level').disabled = $('water-still').disabled = blocked || !loaded || splat;
-    $('water-level-value').textContent = Math.round(Number($('water-level').value) * 100) + '%';
     $('point-density').disabled = blocked || !loaded || splat || current === 'voxel';
     $('point-density-value').textContent = $('point-density').value + '%';
     const original = current === 'original';
@@ -58,7 +46,7 @@ export function createStyleControls(actions) {
   function apply() {
     saved[current] = value();
     render();
-    actions.style?.(current, { ...saved[current], ...waterOptions() });
+    actions.style?.(current, saved[current]);
   }
   function select(next) {
     next = normalizeStyle(next);
@@ -78,9 +66,8 @@ export function createStyleControls(actions) {
     $('style-scan').checked = preset.scan;
     $('style-atmosphere').checked = preset.atmosphere;
     render();
-    actions.style?.(next, { ...preset, ...waterOptions() });
+    actions.style?.(next, preset);
   }
-  for (const input of document.querySelectorAll('#water-controls input')) input.oninput = apply;
   $('point-density').oninput = apply;
   $('visual-style').onchange = () => select($('visual-style').value);
   for (const input of document.querySelectorAll('#style-controls input')) input.oninput = apply;

@@ -25,6 +25,8 @@ export function scenePieces(data, threshold = 0) {
 // What surrounds the scene, each one .ply already in the world
 // (postprocess/terrain.py): loaded with it, not part of it.
 export const SURROUNDINGS = ['terrain', 'buildings'];
+// Its water: flat outlines, each at a level (postprocess/water.py).
+export const WATER = 'water';
 export function relativePath(path) {
   if (
     typeof path !== 'string' ||
@@ -70,7 +72,7 @@ export function validateScene(data) {
         throw new Error(`Node ${i} has an invalid 4×4 transform.`);
     }
   });
-  for (const key of SURROUNDINGS) if (data[key] != null) relativePath(data[key]);
+  for (const key of [...SURROUNDINGS, WATER]) if (data[key] != null) relativePath(data[key]);
   for (const edge of data.edges) {
     if (
       !edge ||
