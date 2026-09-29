@@ -13,10 +13,11 @@ Footprints from osm.py, each raised into a block of points:
   - walls and a flat roof, spaced by how near the scene's cameras they
     are, as the land is (terrain.gap_at), and the walls again further in,
     sparser (INNER_M), so it is not seen through
-  - roof coloured from the satellite straight above it; walls the
+  - roof coloured from the satellite straight above it (never from a pano:
+    from the street they see its edge against the sky); walls the
     building's own colour where the scene's panos see enough of it
-    (pano_colours), else its roof colour darkened -- either shaded by
-    which way the wall faces
+    (pano_colours), else its roof colour -- either made livelier (cheer)
+    and shaded by which way the wall faces
 
 Called by terrain.build, which writes them to buildings.ply.
 """
@@ -36,6 +37,8 @@ ROAD_SLACK = 0.02             # a slide may put this much more of an outline ont
 PULL_MAX_M = 1.0              # a wall's seam pulled onto DA3's plane by at most this
 TRIM_TOL_M, TRIM_FRONT_M = 0.3, 30.0   # cut from this far in front of a DA3 wall, out to this
 TRIM_MIN_M2, TRIM_MAX = 1.0, 0.2
+CHEER_SAT, CHEER_LIFT = 1.3, 1.15
+WALL_SHADE = 0.85             # a wall facing away from the sun, of one facing it (0.6 looked dull)
 ROOF, INNER = -1, -2          # Blocks.edge for a roof's points and an inner wall's
 INNER_M, INNER_GAP = (0.6, 1.5), 2.0   # walls again this far inside, this many times sparser: gaps in the
                                        # outer wall show more building, not through it (a solid box behind
@@ -226,6 +229,15 @@ class Blocks:
             setattr(self, k, getattr(self, k)[keep])
 
 
+def cheer(rgb):
+    """A map's colour (satellite, a pano's median) livelier: from above and
+    in the shade they come out dull -- CHEER_SAT more saturated, CHEER_LIFT
+    brighter."""
+    rgb = np.asarray(rgb, float)
+    grey = rgb.mean(-1, keepdims=True)
+    return np.clip((grey + (rgb - grey) * CHEER_SAT) * CHEER_LIFT, 0, 1)
+
+
 def _inset(xy, d):
     """Outline xy moved d metres in, counter-clockwise, or None if nothing
     of it is left."""
@@ -317,7 +329,7 @@ def points(outlines, spacing, ground, colour, sun):
         mine = rgb[at:at + len(roof)]
         at += len(roof)
         pts += [roof, wall]
-        cols += [mine, mine.mean(0) * 0.85 * (0.7 + 0.3 * light[:, None])]
+        cols += [cheer(mine), cheer(mine.mean(0)) * (WALL_SHADE + (1 - WALL_SHADE) * light[:, None])]
         which.append(np.full(len(roof) + len(wall), i))
         lit += [np.full(len(roof), np.nan), light]
         edge += [np.full(len(roof), ROOF), eo.astype(int)]

@@ -281,6 +281,7 @@ def build(scene_dir, log=print):
     outlines = [o for o in buildings.outlines(elements, to_xy)
                 if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]   # an older, wider osm.json
     bp = bc = np.zeros((0, 3))
+    b_roof = np.zeros(0, bool)
     n_fitted = n_trimmed = n_cut = 0
     if outlines:
         from streetview_to_3d.postprocess.ground import normals_from_neighbours
@@ -296,7 +297,8 @@ def build(scene_dir, log=print):
             panos = panos or _panos(sc, scene_dir)
             own = buildings.pano_colours(blocks.pts, blocks.which, len(outlines), *panos, scene)
             wall = ~np.isnan(blocks.light) & ~np.isnan(own[blocks.which, 0])
-            blocks.cols[wall] = own[blocks.which[wall]] * (0.85 + 0.15 * blocks.light[wall, None])
+            blocks.cols[wall] = buildings.cheer(own[blocks.which[wall]]) * (
+                buildings.WALL_SHADE + (1 - buildings.WALL_SHADE) * blocks.light[wall, None])
             n_seen = int((~np.isnan(own[:, 0])).sum())
         except (OSError, ValueError) as e:  # the satellite's colour stands
             log(f"terrain: no pano colour for buildings ({e!r})")
@@ -304,7 +306,7 @@ def build(scene_dir, log=print):
         roofs_near = cKDTree(scene).query(blocks.pts, distance_upper_bound=1.0)[0] if len(scene) \
             else np.full(len(blocks.pts), np.inf)
         n_cut = buildings.seam(blocks, scene, scene_normals, scene_cols, roofs_near)
-        bp, bc = blocks.pts, blocks.cols
+        bp, bc, b_roof = blocks.pts, blocks.cols, blocks.edge == buildings.ROOF
     lines = roads.lines(elements, to_xy)
     if lines:
         rp, rc = roads.points(lines, gap, ground)
@@ -326,7 +328,7 @@ def build(scene_dir, log=print):
     try:
         panos = panos or _panos(sc, scene_dir)
         cols, n = _paint(panos, pts, cols, scene)
-        bc, m = _paint(panos, bp, bc, scene)
+        bc, m = _paint(panos, bp, bc, scene, skip=b_roof)
         n_painted = n + m
     except (OSError, ValueError) as e:    # the maps' colours stand
         log(f"terrain: no pano paint ({e!r})")
@@ -361,18 +363,20 @@ def _panos(sc, scene_dir):
     return [Camera(nd) for nd in nodes], photos
 
 
-def _paint(panos, pts, cols, scene):
+def _paint(panos, pts, cols, scene, skip=None):
     """cols, those of pts within PAINT_M of a camera re-coloured from the
     panos exactly as the fill colours its ground (fill.paint: the nearest
     camera that sees a point cleanly, patch by patch, the scene's points
-    what stands in front); how many were."""
+    what stands in front), but not those marked skip (roofs: a pano sees
+    their edge against the sky); how many were."""
     from streetview_to_3d.fill.paint import paint
     cams, photos = panos
     if not cams or not len(pts):
         return cols, 0
     centres = np.array([c.centre for c in cams])
     from scipy.spatial import cKDTree
-    near = np.flatnonzero(cKDTree(centres[:, [0, 2]]).query(pts[:, [0, 2]])[0] < PAINT_M)
+    near = cKDTree(centres[:, [0, 2]]).query(pts[:, [0, 2]])[0] < PAINT_M
+    near = np.flatnonzero(near & ~skip if skip is not None else near)
     if not len(near):
         return cols, 0
     painted, who, _ = paint(pts[near], scene, cams, [ph and (ph[0], ph[2]) for ph in photos], max_m=PAINT_M)
