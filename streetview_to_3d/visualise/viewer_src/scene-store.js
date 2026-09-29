@@ -55,13 +55,16 @@ export function parsePoints(buffer, transform) {
 }
 // postprocess/terrain.py spaces its points further apart the further they
 // are -- the land from the centre (terrain.step_at), the buildings from
-// the nearest camera (terrain.B_STEP) -- out to 2 km: drawn at one size
-// they would be dust far out. So split into rings, each drawn its own size
-// in metres (userData.pointSize), just over its spacing.
-const TERRAIN_RINGS = [10, 20, 35, 50, 100, 200, 400, 800, 1600, Infinity];
+// the nearest camera (terrain.building_step) -- out to 2 km: drawn at one
+// size they would be dust far out. So split into rings, each drawn its own
+// size in metres (userData.pointSize), just over its spacing.
+const TERRAIN_RINGS = [3, 6, 10, 15, 20, 30, 50, 100, 200, 400, 800, 1600, Infinity];
 export const SPACING = {
-  terrain: { per: 0.01, min: 0.5 },
-  buildings: { per: 0.01, min: 0.15, fromCameras: true },
+  terrain: { at: (d) => Math.max(0.5, 0.01 * d) },
+  buildings: {
+    at: (d) => Math.min(0.05 * 2 ** (d / 8), Math.max(0.05, 0.02 * d)),
+    fromCameras: true,
+  },
 };
 // Each placed node's camera, seen from above, in the viewer's frame.
 export function cameraPlaces(data) {
@@ -74,7 +77,7 @@ export function cameraPlaces(data) {
       return [v.x, v.z];
     });
 }
-export function terrainBands(points, { per, min } = SPACING.terrain, centres = [[0, 0]]) {
+export function terrainBands(points, { at } = SPACING.terrain, centres = [[0, 0]]) {
   const geometry = points.geometry;
   const p = geometry.getAttribute('position'),
     c = geometry.getAttribute('color');
@@ -100,7 +103,7 @@ export function terrainBands(points, { per, min } = SPACING.terrain, centres = [
     part.computeBoundingSphere();
     const band = new THREE.Points(part, points.material.clone());
     const reach = Number.isFinite(outer) ? outer : 2000;
-    band.userData.pointSize = 1.5 * Math.max(min, per * reach);
+    band.userData.pointSize = 1.5 * at(reach);
     return [band];
   });
   geometry.dispose();

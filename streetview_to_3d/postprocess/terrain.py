@@ -27,7 +27,7 @@ share of the view:
    buildings fitted onto DA3's walls, what DA3 has of them left to it
 
 Written to terrain.ply beside scene.json (its "terrain"), the buildings,
-spaced by distance to the nearest camera (B_STEP), to buildings.ply (its "buildings"), both
+spaced by distance to the nearest camera (building_step), to buildings.ply (its "buildings"), both
 already in the world frame. The viewer draws its points larger with distance, as they
 are spaced (scene-store.js, terrainBands).
 
@@ -57,7 +57,7 @@ HILL_M = 50.0
 BUILDINGS_M, ROADS_M = 1000.0, 700.0         # OSM's reach (roads are drawn only where a point wide, ~600 m)
 FADE_M, TINT_M, MEET_M = 4.0, 8.0, 10.0  # the ground's seam with the scene (seams.py): bands
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
-B_STEP, B_MIN_STEP_M = 0.01, 0.15         # buildings' spacing by distance to the nearest camera: DA3's next to them
+B_NEAR_M, B_DOUBLE_M, B_FAR = 0.05, 8.0, 0.02   # buildings' spacing (building_step)
 STEP, MIN_STEP_M = 0.01, 0.5
 M_PER_LAT = 111320.0
 PLAIN = np.array([0.50, 0.55, 0.45])
@@ -114,6 +114,14 @@ def colour_map():
 def step_at(d):
     """Point spacing d metres from the centre."""
     return max(MIN_STEP_M, STEP * d)
+
+
+def building_step(d):
+    """Building point spacing d metres from the nearest camera: DA3's own
+    next to it (B_NEAR_M; DA3's points are ~4 cm apart there), doubling
+    every B_DOUBLE_M, until B_FAR of the distance takes over (~30 m) --
+    dense only where it is looked at up close."""
+    return np.minimum(B_NEAR_M * 2 ** (np.asarray(d) / B_DOUBLE_M), np.maximum(B_NEAR_M, B_FAR * np.asarray(d)))
 
 
 def reach(ground, ground_here):
@@ -259,7 +267,7 @@ def build(scene_dir, log=print):
                                                     roads.coverage(roads.lines(elements, to_xy)))
         cam_tree = cKDTree(cam_xz)
         blocks = buildings.points(
-            outlines, lambda xy: np.maximum(B_MIN_STEP_M, B_STEP * cam_tree.query(xy)[0]), ground,
+            outlines, lambda xy: building_step(cam_tree.query(xy)[0]), ground,
             lambda xy: colours(*to_ll(xy)) ** LIFT if colours else np.tile(PLAIN, (len(xy), 1)),
             SUN / np.linalg.norm(SUN))
         n_buildings = len(outlines)
