@@ -149,14 +149,6 @@ def long_poles(pole):
     return keep[lab]
 
 
-def drop_movers(paths, model_id=None, classes=None, device=None):
-    """One boolean mask per image path, True on cars, people, poles and the
-    like. model_id: another Cityscapes SegFormer (see get_segmenter);
-    classes: the class names to drop instead of DROP; device: see
-    get_segmenter."""
-    return masks_from_labels(*label_views(paths, model_id, device), classes)
-
-
 def pano_labels(path, model_id=None, device=None, saved=None):
     """A whole pano's class map (ids as in CLASSES), kept in saved (default
     beside it, named by the model) for whatever needs it later -- the scene

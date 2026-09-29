@@ -103,49 +103,6 @@ def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon,
         torch.cuda.empty_cache()
 
 
-def run_solo_gpu(places, catalog, conf_lower_percentile=None, gpu_seconds=None, model=None,
-                 hfov=None, masker=None, mask_classes=None, conf_floor=None):
-    """Solo mode's GPU task (see reconstruct.solo): every place's candidates
-    rated alone, the best one's cloud kept. model: a DA3 repo, None is
-    config.DA3_MODEL_REPO; hfov, masker: as run_walk_gpu."""
-    from streetview_to_3d.reconstruct import solo
-    seconds = float(gpu_seconds) if gpu_seconds else solo.estimate_gpu_seconds(places)
-    return gpu.run(_run_solo_impl, places, catalog, conf_lower_percentile=conf_lower_percentile,
-                   model=model, hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor, total_s=seconds, seconds=seconds)
-
-
-def _run_solo_impl(places, catalog, conf_lower_percentile=None, model=None, hfov=None, masker=None, mask_classes=None, conf_floor=None,
-                   total_s=None):
-    import itertools
-    import tempfile
-    import time
-
-    import torch
-    from streetview_to_3d.reconstruct import solo
-    from streetview_to_3d.services.da3_ops import CONF_LOWER_PERCENTILE, options, rate_pano as da3_rate_pano
-
-    if conf_lower_percentile is None:
-        conf_lower_percentile = CONF_LOWER_PERCENTILE
-    t0 = time.monotonic()
-    total_s = total_s or solo.estimate_gpu_seconds(places)
-    cfg, da3 = gpu.get_da3_config(model), gpu.get_da3(model)
-    print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
-    try:
-        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor):
-            rate_ids = itertools.count()
-
-            def rate_pano(path):
-                return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids),
-                                     conf_lower_percentile=conf_lower_percentile)
-
-            pieces = solo.reconstruct(places, catalog, rate_pano, t0 + total_s - SAVE_BUFFER_S)
-            print(f"timing: solo {time.monotonic() - t0:.1f}s for {len(places)} place(s) "
-                  f"-> {len(pieces)} pano(s)", flush=True)
-            return pieces
-    finally:
-        torch.cuda.empty_cache()
-
-
 def save_pointcloud(points, colors, path):
     """Not GPU-wrapped -- pure disk I/O (numpy/manual PLY write, no
     open3d -- see Saver._voxel_downsample's docstring for why), no CUDA

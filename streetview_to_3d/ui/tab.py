@@ -27,7 +27,7 @@ def _run_dir(prep):
     street_main.open_scene(prep, path)
     return path
 
-def handle_pathfind_prepare(state, link=True):
+def handle_pathfind_prepare(state):
     """Experimental button, step 1 of 3: gathers every Google + Apple pano
     near the clicked graph's real shape -- branches and loops included,
     since the selection graph (state["selected"] + state["selected_edges"])
@@ -54,13 +54,12 @@ def handle_pathfind_prepare(state, link=True):
 
     yield None, "<p>Fetching panoramas… This may take a few minutes.</p>"
     try:
-        prep = street_main.prepare_pathfind(start, goals, corridor_edges,
-                                            (state["lat"], state["lon"]), link=link)
+        prep = street_main.prepare_pathfind(start, goals, corridor_edges, (state["lat"], state["lon"]))
     except Exception as e:
         yield None, "<p>Preparation failed. Try again.</p>"
         raise gr.Error(f"Prepare failed: {e}")
 
-    n = len(prep["node_entries"]) if link else sum(map(len, prep["solo"].values()))
+    n = len(prep["node_entries"])
     yield prep, f"<p>{n} panoramas ready.</p>"
 
 
@@ -155,9 +154,6 @@ def build_main_tab():
     # Same idea: the ZeroGPU window in seconds, 0 = sized from the dot
     # count. Hidden for now; the estimate is shown beside the selection.
     gpu_seconds_input = gr.Number(value=0, precision=0, minimum=0, visible=False)
-    # Linked (the walk) or solo (reconstruct.solo: every Google pano on its
-    # own). Read by Prepare, which gathers different panos for each.
-    link_input = gr.Checkbox(value=True, label="Link panoramas (off: each Google pano on its own)")
     # View width, DA3 model and masker model per run, for comparing
     # settings over the API; 0/blank = the defaults. Hidden.
     view_hfov_input = gr.Number(value=0, precision=0, minimum=0, visible=False)
@@ -181,7 +177,7 @@ def build_main_tab():
 
     pathfind_prepare_btn.click(
         fn=handle_pathfind_prepare,
-        inputs=[state, link_input],
+        inputs=[state],
         outputs=[pathfind_prep_state, pathfind_status],
         show_progress="hidden",
         show_progress_on=[pathfind_status],

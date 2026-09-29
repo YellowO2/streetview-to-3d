@@ -17,8 +17,7 @@ DA3_UNITS_TO_METRES = 1.3
 # Nested 1.1: better than the original Nested on a pano on its own. It
 # links too where a street is open enough (Singapore: 2 of 3 edges); in
 # Stockholm's narrow alleys nothing linked (0 of 34 pair tests), and then
-# every place keeps its own best pano, placed by its GPS and heading --
-# which is the solo result that looked best there.
+# every place keeps its own best pano, placed by its GPS and heading.
 #   DA3NESTED-GIANT-LARGE      the original; linked Stockholm (20 of 89),
 #                              its per-pano clouds are worse.
 #   DA3-GIANT-1.1              links, but relative only: each piece came

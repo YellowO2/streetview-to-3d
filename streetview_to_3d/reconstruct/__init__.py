@@ -3,7 +3,6 @@
     walk_graph.py     search the corridor, testing real DA3 edges between
                       panoramas, growing a piece from the ones that hold
     pieces.py         the walk's pieces in the shape the scene is saved from
-    solo.py           the other mode: every Google pano on its own, no links
     build.py          the orchestrator the UI and the CLI both call
 
 A piece ends where DA3 stopped agreeing, which is why more than one can

@@ -3,7 +3,7 @@
 ZeroGPU attaches a GPU only inside a function decorated with @spaces.GPU.
 There is exactly one, `run`, like DA3's own official Space: a task is a
 plain function handed to it, and the window it asks for is the task's own
-estimate. The street reconstruction and the splat both go through it.
+estimate. The street reconstruction goes through it.
 
 On a Space, DA3 is built at startup and placed on cuda, as HF's ZeroGPU docs
 ask: ZeroGPU then moves it onto the GPU for each call, quickly. Built inside

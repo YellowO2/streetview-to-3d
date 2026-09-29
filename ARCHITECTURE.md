@@ -51,7 +51,6 @@ Turns downloaded panos into an actual 3d point cloud, via real pairwise DA3 test
     Each piece is recorded in the run's `scene.json` as it is saved (see `scene.py`), which is what step 4 reads.
 
 
-    - 3.2 Solo mode (solo.py) -- the "Link panoramas" toggle off. No walk: every Google pano is reconstructed on its own, one piece each. The panos are each route dot's Google candidates (best-ranked date within 5 years of the others) plus Google's official neighbours of them. Apple takes no part. Each placed by its own GPS, elevation and orientation rather than by links.
 
 - 4. Placement (postprocess/place.py, CPU only) -- runs right after reconstruction; the first half of post-processing, step 6 the second
 Input: the run's scene -- its centre and one piece per DA3 frame.

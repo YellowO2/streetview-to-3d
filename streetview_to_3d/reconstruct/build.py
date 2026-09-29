@@ -93,7 +93,7 @@ def _download_date_graphs(date_graphs):
     return ready_graphs, node_entries, catalog
 
 
-def prepare_pathfind(start, goals, corridor_edges, center, link=True) -> dict:
+def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
     """CPU/network only, no GPU -- gathers candidates along the corridor,
     splits them into isolated per-date graphs, and downloads every node
     any of them reference. Split out from the GPU step specifically so
@@ -108,8 +108,6 @@ def prepare_pathfind(start, goals, corridor_edges, center, link=True) -> dict:
     center: (lat, lon) -- the searched coordinate that defined this area.
     Carried through untouched; postprocess measures every position from it.
     goals: [(lat, lon), ...] -- every other selected node.
-    link: False prepares solo mode instead (reconstruct.solo): Google panos
-    only, plus Google's own neighbours of them.
     corridor_edges: [((lat1, lon1), (lat2, lon2)), ...] -- the REAL,
     already-confirmed edges of the clicked selection graph (from Street
     View's own pano.links, see map_selection/candidates.py and
@@ -152,9 +150,6 @@ def prepare_pathfind(start, goals, corridor_edges, center, link=True) -> dict:
         "goals": goals,
         "top_dates": [g["date"] for g in ready_graphs],
     }
-    if not link:
-        from streetview_to_3d.reconstruct import solo
-        solo.prepare(prep)
     print(f"prepare_pathfind: done in {time.monotonic() - t0:.1f}s")
     return prep
 
@@ -164,8 +159,7 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
                           gpu_seconds: float | None = None, model=None, hfov=None, masker=None,
                           mask_classes=None, conf_floor=None):
     """Walk and join in one GPU call, then write the pieces into the scene
-    at output_dir. Returns one "piece i: n node(s)" line per piece. A prep
-    made for solo mode (prepare_pathfind(link=False)) runs that instead.
+    at output_dir. Returns one "piece i: n node(s)" line per piece.
 
     conf_lower_percentile: how much of each view's own weakest pixels DA3
     drops before backprojection -- see services.da3_ops.CONF_LOWER_PERCENTILE.
@@ -179,17 +173,8 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
     this run (services.da3_ops.options); None keeps the defaults.
     conf_floor: the lowest DA3 confidence kept (services.da3_ops.CONF_FLOOR).
     """
-    from streetview_to_3d.services.pipeline_runner import run_solo_gpu, run_walk_gpu
+    from streetview_to_3d.services.pipeline_runner import run_walk_gpu
     t0 = time.monotonic()
-    if "solo" in prep:
-        pieces = run_solo_gpu(prep["solo"], prep["catalog"], conf_lower_percentile=conf_lower_percentile,
-                              gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker,
-                              mask_classes=mask_classes, conf_floor=conf_floor)
-        if not pieces:
-            raise RuntimeError("DA3 reconstructed none of the panos.")
-        results = _save_joined_pieces(pieces, output_dir, prep["catalog"])
-        print(f"run_prepared_pathfind (solo): done in {time.monotonic() - t0:.1f}s")
-        return results
     start_lat, start_lon = prep["start"]
     pieces = run_walk_gpu(
         prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon,
