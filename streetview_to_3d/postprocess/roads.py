@@ -48,6 +48,9 @@ KEPT = ("motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
 STRIP_M = 2.5         # a road's surface: corners this far apart along it, as fine as the land near it
 PROFILE_M, PROFILE_CELL_M = 12.0, 2.0     # roads' heights: the ground smoothed this much, on this grid
 SINK_M, SHOULDER_M = 0.25, 4.0            # the land under a road this far beneath it, easing back over this
+MATCH_M = 6.0         # a pano stands on a road whose side is this near it at most: Google's GPS is metres off
+ON_DECK_M = 2.5       # ... on a bridge over it if no more than this under the deck (a road under a bridge is
+                      # BRIDGE_CLEAR_M 4.5 m down at least)
 
 
 def _width(tags):
@@ -209,7 +212,7 @@ def _layer(tags):
 
 
 def bridges(elements, to_xy):
-    """[(centreline (n, 2), width, colour, layer)]: the bridges a game map
+    """[(centreline (n, 2), width, colour, layer, OSM way ids)]: the bridges a game map
     keeps (KEPT), each whole -- OSM breaks a long one into ways end to end
     (a bridge, a viaduct in pieces), and a piece is not a bridge: drawn as
     one, each came down to the ground at every join. Joined where exactly
@@ -222,7 +225,7 @@ def bridges(elements, to_xy):
             continue
         if tags.get("bridge", "no") == "no" or len(e.get("geometry") or []) < 2:
             continue
-        ways.append((shapely.LineString(to_xy(e["geometry"])), _width(tags), _colour(tags), _layer(tags)))
+        ways.append((shapely.LineString(to_xy(e["geometry"])), _width(tags), _colour(tags), _layer(tags), e["id"]))
     if not ways:
         return []
     merged = shapely.get_parts(shapely.line_merge(shapely.union_all([w[0] for w in ways])))
@@ -234,7 +237,8 @@ def bridges(elements, to_xy):
         if not mine or line.length < 1:
             continue
         widest = max(mine, key=lambda w: w[1])
-        out.append((shapely.get_coordinates(line), widest[1], widest[2], max(w[3] for w in mine)))
+        out.append((shapely.get_coordinates(line), widest[1], widest[2], max(w[3] for w in mine),
+                    {w[4] for w in mine}))
     return out
 
 
@@ -245,11 +249,12 @@ class Deck:
     (the lowest it may be there: clear of a road, the water), LAYER_M more
     a layer up, rising to that and back no steeper than GRADE: one smooth
     deck; where it touches the scene, the scene's own (pull(xy, h) -> h).
-    The land fits under it (under_decks), as under a road."""
+    The land fits under it (under_decks), as under a road. ids: its OSM
+    ways."""
 
     def __init__(self, bridge, ground, under, pull=None):
         from scipy.ndimage import gaussian_filter1d
-        xy, self.width, self.colour, layer = bridge
+        xy, self.width, self.colour, layer, self.ids = bridge
         seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
         cum = np.r_[0, np.cumsum(seg)]
         self.length = cum[-1]
@@ -283,9 +288,93 @@ class Deck:
         return shapely.LineString(self.xy).buffer(self.width / 2, quad_segs=2, cap_style="flat")
 
 
-def decks(bridges, ground, under, pull=None):
-    return [Deck(b, ground, under, pull) for b in bridges
+def decks(bridges, ground, under, pull=None, pulled=None):
+    """Each bridge a Deck, pulled onto the scene (pull) only if one of its
+    OSM ways is in pulled (every one, with pulled None)."""
+    return [Deck(b, ground, under, pull if pulled is None or b[4] & pulled else None) for b in bridges
             if np.linalg.norm(np.diff(b[0], axis=0), axis=1).sum() >= 1]
+
+
+def _kept(elements, to_xy):
+    """[(OSM id, centreline (n, 2), width, node ids, is a bridge)]: the
+    ways a game map keeps (KEPT) on the ground, and its bridges."""
+    out = []
+    for e in elements:
+        tags = e.get("tags", {})
+        if e["type"] != "way" or tags.get("highway") not in KEPT or _area(e) or len(e.get("geometry") or []) < 2:
+            continue
+        bridge = tags.get("bridge", "no") != "no"
+        if bridge or _on_ground(tags):
+            out.append((e["id"], to_xy(e["geometry"]), _width(tags), e.get("nodes") or [], bridge))
+    return out
+
+
+def standing(elements, to_xy, cams, cam_h, decks_):
+    """The OSM ids of the roads the panos stand on (east/north cams, their
+    heights cam_h): each pano's roads, those whose side is within MATCH_M
+    of it -- where a bridge (decks_) passes over one, the bridge if the
+    pano is up on its deck (within ON_DECK_M under it), else the roads
+    below. Only these, and those joining them (joined), meet the scene's
+    road: a road passing near it, over it or under it is another road."""
+    import shapely
+    ways = _kept(elements, to_xy)
+    if not ways or not len(cams):
+        return set()
+    lines = [shapely.LineString(w[1]) for w in ways]
+    tree = shapely.STRtree(lines)
+    deck = {i: d for d in decks_ for i in d.ids}
+    reach = max(w[2] for w in ways) / 2 + MATCH_M
+    out = set()
+    for c, h in zip(cams, cam_h):
+        p = shapely.Point(c)
+        mine = [k for k in tree.query(p, predicate="dwithin", distance=reach)
+                if shapely.distance(lines[k], p) <= ways[k][2] / 2 + MATCH_M]
+        up = []
+        for k in mine:
+            d = deck.get(ways[k][0])
+            if ways[k][4] and d is not None:
+                top = d.h[np.argmin(np.linalg.norm(d.xy - c, axis=1))]
+                if h > top - ON_DECK_M:
+                    up.append((abs(h - top), ways[k][0]))
+        if up:
+            out.add(min(up)[1])
+        else:
+            out.update(ways[k][0] for k in mine if not ways[k][4])
+    return out
+
+
+def joined(elements, to_xy, ids, near):
+    """ids and the roads on the ground joining them, again and again, at
+    a node near the scene (near(east/north (n, 2)) -> bool): a side street
+    meets the scene's road as the road it joins does, not a step lower."""
+    from collections import defaultdict
+    ways = _kept(elements, to_xy)
+    at = defaultdict(list)
+    for w in ways:
+        for n in w[3]:
+            at[n].append(w)
+    out = set(ids)
+    todo = [w for w in ways if w[0] in out]
+    while todo:
+        w = todo.pop()
+        close = near(w[1][:len(w[3])])
+        for n, ok in zip(w[3], close):
+            for v in at[n] if ok else ():
+                if v[0] not in out and not v[4]:
+                    out.add(v[0])
+                    todo.append(v)
+    return out
+
+
+def region(elements, to_xy, ids, pad_m):
+    """The ground roads among ids, each pad_m wider each side, as one
+    prepared shape (empty if none)."""
+    import shapely
+    shapes = [shapely.LineString(w[1]).buffer(w[2] / 2 + pad_m, quad_segs=2)
+              for w in _kept(elements, to_xy) if w[0] in ids and not w[4]]
+    g = shapely.union_all(shapes) if shapes else shapely.Polygon()
+    shapely.prepare(g)
+    return g
 
 
 def deck_edges(decks_, step_m=STRIP_M):

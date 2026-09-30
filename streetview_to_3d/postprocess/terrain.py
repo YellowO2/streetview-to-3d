@@ -334,14 +334,13 @@ def build(scene_dir, log=print):
     # the roads a game map keeps, one surface; they decide their own height
     # (the ground smoothed) and the land fits itself to them (roads.py)
     net = roads.Network(elements, to_xy)
-    # ... and where they touch the scene, its own road's height (DA3's ground
-    # there), easing back to theirs over ROAD_MEET_M: aligned where they meet
+    # ... and the scene's own road, where they touch it, its height (DA3's
+    # ground there), easing back to theirs over ROAD_MEET_M: aligned where they meet
     road_raw = net.heights(ground, (-ROADS_M - 50, -ROADS_M - 50), (ROADS_M + 50, ROADS_M + 50))
 
     def to_scene(xy, h):
         d, g, _ = near(xy)
         return seams.meet(h, g, d, ROAD_MEET_M, ROAD_MEET_MAX_M)
-    road_h = lambda xy: to_scene(xy, road_raw(xy)) if len(xy) else np.zeros(0)
     # OpenStreetMap's buildings, onto the scene's walls first: the land fits itself to them
     outlines = [o for o in buildings.outlines(elements, to_xy)
                 if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]       # an older, wider osm.json
@@ -357,14 +356,30 @@ def build(scene_dir, log=print):
     # bridges whole, their decks clear of the roads and water they cross; the land fits under them
     import shapely
 
-    def crossed(xy):
-        low = np.full(len(xy), -np.inf)
-        road = shapely.contains_xy(net.all, *xy.T) if not net.all.is_empty else np.zeros(len(xy), bool)
-        low = np.where(road, road_h(xy) + BRIDGE_CLEAR_M["road"], low)
-        level = wet._at(wet.level, xy, -np.inf)
-        low = np.where(wet.inside(xy), np.maximum(low, level + BRIDGE_CLEAR_M["water"]), low)
+    def crossed(road_h):
+        def low(xy):
+            out = np.full(len(xy), -np.inf)
+            road = shapely.contains_xy(net.all, *xy.T) if not net.all.is_empty else np.zeros(len(xy), bool)
+            out = np.where(road, road_h(xy) + BRIDGE_CLEAR_M["road"], out)
+            level = wet._at(wet.level, xy, -np.inf)
+            return np.where(wet.inside(xy), np.maximum(out, level + BRIDGE_CLEAR_M["water"]), out)
         return low
-    over = roads.decks(roads.bridges(elements, to_xy), road_h, crossed, to_scene)
+    # the scene's road is the roads its panos stand on (on a bridge over one,
+    # or under it, by their height) and those joining them near it: only
+    # these meet it; a road passing by, over or under keeps its own height
+    found = roads.bridges(elements, to_xy)
+    ids = roads.standing(elements, to_xy, cam_xz, ground(cam_xz),
+                         roads.decks(found, road_raw, crossed(road_raw)))
+    ids = roads.joined(elements, to_xy, ids, lambda xy: near(xy)[0] < ROAD_MEET_M)
+    met = roads.region(elements, to_xy, ids, roads.SHOULDER_M)
+
+    def road_h(xy):
+        h = road_raw(xy)
+        on = shapely.contains_xy(met, *xy.T) if len(xy) else np.zeros(0, bool)
+        if on.any():
+            h[on] = to_scene(xy[on], h[on])
+        return h
+    over = roads.decks(found, road_h, crossed(road_h), to_scene, ids)
     edges = np.concatenate([net.edges(), roads.deck_edges(over)])
     walls, owner = buildings.corners(outlines, lambda xy: LAND_EVERY * gap_at(cam_tree.query(xy)[0]))
     inside = np.linalg.norm(walls, axis=1) < radius

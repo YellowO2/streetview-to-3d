@@ -1,5 +1,9 @@
 """Remove floating bits from a placed scene: small clumps of DA3 points
 touching nothing else (the remains of a half-masked lamp, a speck of sky).
+First every point further than FAR_M from its own pano: DA3 at that
+distance is guesswork, and a sky it did not mask comes out as a far plane
+around the scene (1.9% of Stockholm's points) -- the map's land and
+buildings stand there instead.
 
 Every node's points, in the world, go into VOXEL_M cells; cells within
 LINK_M of each other are joined, and a joined group under MIN_CELLS cells
@@ -24,6 +28,7 @@ from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
 
 VOXEL_M, LINK_M, MIN_CELLS = 0.1, 0.25, 300
+FAR_M = 40.0
 
 
 def loose_bits(points):
@@ -37,7 +42,8 @@ def loose_bits(points):
 
 
 def drop_blobs(scene_dir, log=print):
-    """Remove the floating bits from every placed node's .ply, in place."""
+    """Remove the points too far from their pano (FAR_M), then the
+    floating bits, from every placed node's .ply, in place."""
     sc = scene_mod.Scene.load(scene_dir)
     nodes = [n for n in sc.nodes if n.ply and n.transform]
     if not nodes:
@@ -46,15 +52,21 @@ def drop_blobs(scene_dir, log=print):
     for n in nodes:
         p, c = read_ply(os.path.join(scene_dir, n.ply))
         T = np.asarray(n.transform, float)
-        clouds.append((p, c, p @ T[:3, :3].T + T[:3, 3]))
-    loose = loose_bits(np.concatenate([w for _, _, w in clouds]))
-    start = 0
-    for n, (p, c, _) in zip(nodes, clouds):
-        drop = loose[start:start + len(p)]
-        start += len(p)
-        if drop.any():
-            write_ply(os.path.join(scene_dir, n.ply), p[~drop], None if c is None else c[~drop])
-    log(f"floating bits: {int(loose.sum())} of {len(loose)} points removed")
+        world = p @ T[:3, :3].T + T[:3, 3]
+        near = np.ones(len(p), bool) if n.position is None else \
+            np.linalg.norm(world - (T[:3, :3] @ np.asarray(n.position, float) + T[:3, 3]), axis=1) <= FAR_M
+        clouds.append((p, c, world, near))
+    loose = loose_bits(np.concatenate([w[k] for _, _, w, k in clouds]))
+    start, far = 0, 0
+    for n, (p, c, _, near) in zip(nodes, clouds):
+        keep = near.copy()
+        keep[near] = ~loose[start:start + near.sum()]
+        start += near.sum()
+        far += int((~near).sum())
+        if not keep.all():
+            write_ply(os.path.join(scene_dir, n.ply), p[keep], None if c is None else c[keep])
+    log(f"floating bits: {far} points past {FAR_M:g} m of their pano, then {int(loose.sum())} of "
+        f"{len(loose)} points in floating bits removed")
 
 
 if __name__ == "__main__":
