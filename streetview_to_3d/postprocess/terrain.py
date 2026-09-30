@@ -370,6 +370,17 @@ def build(scene_dir, log=print):
                 cols[np.r_[~under, np.ones(len(cols) - n_ground, bool)]]
         pts, cols = np.concatenate([pts, rp]), np.concatenate([cols, rc[keep]])
         n_roads = len(lines)
+    # bridges, end to end over whatever they cross; DA3's own where it has them
+    over = roads.bridges(elements, to_xy)
+    n_bridges = 0
+    if over:
+        bp_, bc_ = roads.bridge_points(over, gap, ground)
+        d, g, _ = near(bp_[:, [0, 2]])
+        keep = d > 0                                     # the scene's footprint: its own bridge
+        bp_, bc_, d, g = bp_[keep], bc_[keep], d[keep], g[keep]
+        bp_[:, 1] = -seams.meet(-bp_[:, 1], g, d, MEET_M)
+        pts, cols = np.concatenate([pts, bp_]), np.concatenate([cols, bc_])
+        n_bridges = len(over)
 
     # near the cameras, everything coloured from the panos as the fill's ground is
     n_painted = 0
@@ -399,7 +410,7 @@ def build(scene_dir, log=print):
         f"painted from the panos ({len(surfaces)} water surfaces ({wet.source}), {source} colour, "
         f"{n_buildings} buildings ({len(solid)} solid) -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
         f"{n_cut} of their points "
-        f"left to DA3's own, {n_seen} coloured by the panos, {n_sat} roofs by the satellite -- {n_roads} roads), map shifted "
+        f"left to DA3's own, {n_seen} coloured by the panos, {n_sat} roofs by the satellite -- {n_roads} roads, {n_bridges} bridges), map shifted "
         f"{shift:+.1f} m to Google's datum, then bent onto {len(known)} panos' elevation "
         f"(by up to {fix.max() if len(fix) else 0:.1f} m, median {np.median(fix) if len(fix) else 0:.1f})")
 
