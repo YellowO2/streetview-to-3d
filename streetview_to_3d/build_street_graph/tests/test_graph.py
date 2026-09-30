@@ -1,4 +1,4 @@
-from streetview_to_3d.build_street_graph.date_ranking import date_connects
+from streetview_to_3d.build_street_graph.date_ranking import date_connects, rank_dates
 from streetview_to_3d.build_street_graph.fetch_nodes import corridor_points
 
 M = 1 / 111320  # degrees of latitude per metre
@@ -36,3 +36,12 @@ def test_date_covering_only_the_far_graph_still_connects():
     assert date_connects({2: ["p"], 3: ["p"]}, adjacency, points, 0.0, 0.0, goals)
     # but a lone dot reaching no goal still doesn't
     assert not date_connects({2: ["p"]}, adjacency, points, 0.0, 0.0, [_north(10)])
+
+
+def test_a_date_covering_new_dots_ranks_above_repeat_drives():
+    # a road (dots 0-3) driven three times, a park path (4-6) walked once
+    def pano(date):
+        return {"date": date}
+    buckets = {i: [pano("2023-04"), pano("2022-09"), pano("2017-09")] for i in range(4)}
+    buckets.update({i: [pano("2015-12")] for i in range(4, 7)})
+    assert rank_dates(buckets) == ["2023-04", "2015-12", "2022-09", "2017-09"]

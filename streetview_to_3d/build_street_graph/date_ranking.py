@@ -6,7 +6,7 @@ reconstruct/walk_graph.py for the actual algorithm).
 """
 from streetview_to_3d.services.geo import haversine_m
 
-# Dates kept, ranked by dots covered. Single source of truth for how many
+# Dates kept, ranked by new dots covered (see rank_dates). Single source of truth for how many
 # isolated per-date graphs build_corridor_graphs ever builds. 5 now that a
 # date only costs its sampled panos up front (walk_graph._sample_dates)
 # and the walk skips dates that sample badly or aren't needed for
@@ -30,14 +30,20 @@ def date_recency_key(date_str):
 
 
 def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
-    """Every date present in ANY dot's bucket, ranked best-first by how
-    many dots it has a pano at, then recency (newer wins) as the tiebreaker
-    -- without it, ties fall back to insertion order.
+    """Every date present in ANY dot's bucket, ranked best-first: each next
+    date is the one adding the most dots no earlier date covers, then the
+    most dots overall, then recency (newer wins) as the tiebreaker --
+    without it, ties fall back to insertion order.
 
-    Not by span (lowest to highest dot index), as it was: dot indices only
-    run start to end along a single street. An area's dots are numbered in
-    walk order (candidates.expand_area), so a park's walked paths sit in
-    one run of indices and ranked below road dates covering fewer dots.
+    New dots first because an area holds groups captured on different
+    dates: a park's walked paths once, its roads on many drives. Ranked by
+    dots alone, the road dates fill every slot (DATE_TOP_N) and the paths
+    never get a date. Once everything is covered, the rest follow by dots
+    overall -- the alternatives walk_graph patches weak stretches from.
+
+    Not by span (lowest to highest dot index), as it once was: dot indices
+    only run start to end along a single street; an area's are numbered in
+    walk order (candidates.expand_area).
 
     Computed directly from the buckets (no edges needed) -- "which dots
     have a pano of this date" is exactly what a bucket already tells us.
@@ -51,8 +57,13 @@ def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
         for n in bucket:
             covered_by_date.setdefault(n["date"], set()).add(dot_index)
 
-    scored = sorted(covered_by_date.items(), key=lambda t: (len(t[1]), date_recency_key(t[0])), reverse=True)
-    return [date for date, _ in scored]
+    ranked, covered = [], set()
+    left = dict(covered_by_date)
+    while left:
+        date = max(left, key=lambda d: (len(left[d] - covered), len(left[d]), date_recency_key(d)))
+        covered |= left.pop(date)
+        ranked.append(date)
+    return ranked
 
 
 def _components(adjacency, dots):
