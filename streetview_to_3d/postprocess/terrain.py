@@ -255,7 +255,7 @@ def build(scene_dir, log=print):
     # its outline OSM's where OSM has one
     radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
     jrc = water.jrc(to_ll, heights)
-    wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])),
+    wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])), jrc,
                       osm=(water.outline(elements, to_xy, BUILDINGS_M,
                                          lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir), jrc),
                            BUILDINGS_M) if elements else None)

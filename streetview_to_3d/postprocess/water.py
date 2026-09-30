@@ -79,34 +79,31 @@ class Water:
     """The water within radius_m, on a CELL_M grid: to_ll(east/north) ->
     (lat, lon); height(lat, lon), the height map's metres above the sea,
     and shift, what moves it onto Google's; panos, the (east/north (n, 2),
-    ground height (n,)) of the cameras.
+    ground height (n,)) of the cameras; where it is, osm (OSM's water, its
+    box's half-width: outline) within the box, wet (east/north -> whether:
+    jrc) past it.
 
     surfaces are its outlines, grown under the land, each at its level;
     carve and keep shape the land under it; shore how far from dry land
     (see the module)."""
 
-    def __init__(self, radius_m, to_ll, height, shift, panos, osm=None):
+    def __init__(self, radius_m, to_ll, height, shift, panos, wet, osm=None):
         n = int(np.ceil(radius_m / CELL_M))
         self.lo = -n * CELL_M
         c = self.lo + CELL_M * (np.arange(2 * n) + 0.5)
         gx, gy = np.meshgrid(c, c)
         self.centres = np.stack([gx.ravel(), gy.ravel()], 1)
-        lat, lon = to_ll(self.centres)
-        try:
-            often = occurrence_map()(lat, lon)
-            self.source = "JRC"
-        except OSError:                       # the sea still stands
-            often = np.zeros(len(lat))
-            self.source = "sea only"
-        from streetview_to_3d.postprocess.terrain import SEA_M    # terrain imports this module
-        h = height(lat, lon)
-        mask = ((often >= WET) | (h <= SEA_M)).reshape(gx.shape)
-        if osm is not None:                               # (OSM's water, its box half-width)
-            outline, box_m = osm
-            inside = (np.abs(self.centres) < box_m).all(1)
-            mask.ravel()[inside] = shapely.contains_xy(outline, *self.centres[inside].T)
-            self.source = "OSM, JRC past it"
-        mask &= (gx ** 2 + gy ** 2) < radius_m ** 2
+        h = height(*to_ll(self.centres))
+        near = (gx ** 2 + gy ** 2).ravel() < radius_m ** 2
+        mask = np.zeros(len(h), bool)
+        inside = (np.abs(self.centres) < osm[1]).all(1) & near if osm else np.zeros(len(h), bool)
+        if inside.any():
+            mask[inside] = shapely.contains_xy(osm[0], *self.centres[inside].T)
+        past = near & ~inside
+        if past.any():
+            mask[past] = wet(self.centres[past])
+        self.source = ("OSM" + (", JRC past it" if past.any() else "")) if osm else "JRC"
+        mask = mask.reshape(gx.shape)
         from scipy.ndimage import distance_transform_edt
         self.mask = mask
         self.shore = distance_transform_edt(mask) * CELL_M
