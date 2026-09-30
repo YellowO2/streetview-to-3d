@@ -55,6 +55,22 @@ def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
     return [date for date, _, _ in scored]
 
 
+def _components(adjacency, dots):
+    """The connected groups of `dots`, walking adjacency."""
+    left, groups = set(dots), []
+    while left:
+        stack = [left.pop()]
+        group = set(stack)
+        while stack:
+            for j in adjacency.get(stack.pop(), []):
+                if j in left:
+                    left.discard(j)
+                    group.add(j)
+                    stack.append(j)
+        groups.append(group)
+    return groups
+
+
 def date_connects(dot_candidates, adjacency, points, start_lat, start_lon, goals):
     """Whether this date's own dots can structurally reach from near the
     start toward at least one goal, walking dot-to-dot through ONLY
@@ -68,6 +84,11 @@ def date_connects(dot_candidates, adjacency, points, start_lat, start_lon, goals
     worth trying -- the algorithm itself handles a date covering only
     some of them.
 
+    The corridor can be several graphs (see candidates.expand_area), and
+    the walk restarts in each (walk_graph's pick_seed). So each graph is
+    checked on its own, from its own dots nearest the start: a date that
+    only covers a park's paths away from the start still counts.
+
     dot_candidates: {dot_index: [panos]} for non-empty dots of this date
     ONLY (see build_graph.build_corridor_graphs). adjacency: the
     structural dot-to-dot graph (see fetch_nodes.corridor_points).
@@ -77,24 +98,31 @@ def date_connects(dot_candidates, adjacency, points, start_lat, start_lon, goals
     if not non_empty:
         return False
 
-    starts = [i for i in non_empty
-              if haversine_m(points[i][0], points[i][1], start_lat, start_lon) <= START_ZONE_M]
-    if not starts:
-        # Nothing of this date sits exactly in the start zone -- fall back
-        # to whichever non-empty dot is closest, mirroring how the
-        # algorithm itself has to bootstrap from SOMEWHERE nearby.
-        starts = [min(non_empty, key=lambda i: haversine_m(points[i][0], points[i][1], start_lat, start_lon))]
+    def to_start(i):
+        return haversine_m(points[i][0], points[i][1], start_lat, start_lon)
 
-    seen = set(starts)
-    stack = list(starts)
-    while stack:
-        i = stack.pop()
-        lat_i, lon_i = points[i]
-        if any(haversine_m(lat_i, lon_i, g[0], g[1]) <= GOAL_TOLERANCE_M for g in goals):
-            return True
-        for j in adjacency.get(i, []):
-            if j in seen or j not in non_empty:
-                continue
-            seen.add(j)
-            stack.append(j)
+    for group in _components(adjacency, range(len(points))):
+        mine = group & non_empty
+        if not mine:
+            continue
+        starts = [i for i in mine if to_start(i) <= START_ZONE_M]
+        if not starts:
+            # Nothing of this date sits exactly in the start zone -- fall
+            # back to this graph's non-empty dot closest to the start,
+            # mirroring how the algorithm itself has to bootstrap from
+            # SOMEWHERE nearby.
+            starts = [min(mine, key=to_start)]
+
+        seen = set(starts)
+        stack = list(starts)
+        while stack:
+            i = stack.pop()
+            lat_i, lon_i = points[i]
+            if any(haversine_m(lat_i, lon_i, g[0], g[1]) <= GOAL_TOLERANCE_M for g in goals):
+                return True
+            for j in adjacency.get(i, []):
+                if j in seen or j not in non_empty:
+                    continue
+                seen.add(j)
+                stack.append(j)
     return False

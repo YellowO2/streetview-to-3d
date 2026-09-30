@@ -129,19 +129,25 @@ async def _discover_tiles(tiles):
         return await asyncio.gather(*(_discover_tile(session, sem, tx, ty) for tx, ty in tiles))
 
 
-def _tile_neighborhood(lat, lon):
+def _tile_neighborhood(lat, lon, radius_m=None):
+    """The zoom-17 tiles around (lat, lon): 3x3, or as many rings as it
+    takes to hold radius_m on every side."""
     tx, ty = wgs84_to_tile_coord(lat, lon, _TILE_ZOOM)
-    for dx in (-1, 0, 1):
-        for dy in (-1, 0, 1):
+    rings = 1
+    if radius_m is not None:
+        tile_m = 40075016.7 * math.cos(math.radians(lat)) / 2 ** _TILE_ZOOM
+        rings = max(1, math.ceil(radius_m / tile_m))
+    for dx in range(-rings, rings + 1):
+        for dy in range(-rings, rings + 1):
             yield tx + dx, ty + dy
 
 
-def google_tile_panos(lat, lon):
-    """All official Street View panos on the 3x3 tile neighborhood around
-    (lat, lon), keyed by id: the tile listing plus walked (scout) captures.
-    Tiles are cached, so neighbouring lookups (fetch_corridor_nodes runs one
-    per corridor point) only fetch the tiles they haven't seen."""
-    tiles = list(_tile_neighborhood(lat, lon))
+def google_tile_panos(lat, lon, radius_m=None):
+    """All official Street View panos on the tiles around (lat, lon) (see
+    _tile_neighborhood), keyed by id: the tile listing plus walked (scout)
+    captures. Tiles are cached, so neighbouring lookups (fetch_corridor_nodes
+    runs one per corridor point) only fetch the tiles they haven't seen."""
+    tiles = list(_tile_neighborhood(lat, lon, radius_m))
     missing = [t for t in tiles if t not in _tile_cache]
     if missing:
         for t, panos in zip(missing, run_async(_discover_tiles(missing))):
@@ -207,89 +213,111 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
     return nodes, sorted(edges)
 
 
+# A discovered pano this close to one already walked is the same place
+# (another capture of it), not a new group worth walking from.
+_SAME_PLACE_M = 3.0
+_WALK_CONCURRENCY = 16
+
+
+async def _fetch_metas(pano_ids):
+    sem = asyncio.Semaphore(_WALK_CONCURRENCY)
+
+    async def one(pano_id):
+        async with sem:
+            try:
+                return await fetch_pano_by_id(pano_id)
+            except Exception as e:
+                print(f"expand_area: link fetch failed for {pano_id}: {e}")
+                return None
+
+    return await asyncio.gather(*(one(i) for i in pano_ids))
+
+
 def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
-    """Auto-discover the real Street View graph within radius_m of
+    """Auto-discover every real Street View graph within radius_m of
     (center_lat, center_lon) -- the same real-link expansion
     map_selection/tab.py's _augment_real_links does for one clicked node,
-    just driven by a BFS loop instead of a person clicking node by node.
-    Lets a whole area (a campus, a district) be selected without clicking
-    every node by hand -- feed the result straight in as corridor_edges,
-    same shape a manually-built selection already produces.
+    just driven by a BFS instead of a person clicking node by node. Feed
+    the result straight in as corridor_edges, same shape a manually-built
+    selection already produces.
 
-    This is a PURE single-source BFS: nearby_nodes is used only to locate
-    the one real pano nearest to the center point (a geometric tile scan
-    can't tell us that without first knowing a real pano id to start
-    from), and every other node in the result is discovered strictly by
-    walking real per-pano links (fetch_pano_by_id) outward from that one
-    seed. A node only ever gets ADDED because it was found as a real-link
-    neighbor of an already-visited, in-radius node -- never because it
-    happened to be geometrically nearby. That guarantees the whole
-    output is one connected component by construction, exactly like
-    a person standing at the seed and clicking outward one linked node
-    at a time, radius_m capping how far they walk.
+    Edges are only ever real per-pano links (fetch_pano_by_id), never
+    guessed from proximity. But the area can hold several graphs Google
+    never linked -- a park's walked (scout) paths next to the car's roads,
+    streets meeting only across a gap. Each is walked on its own: the first
+    from the discovered pano nearest the center, then, while any discovered
+    pano in radius is still unreached (and not within _SAME_PLACE_M of a
+    walked one), a new walk from the nearest of those. So the result can
+    be several components; they no longer need joining here, since every
+    piece is placed by its own GPS (postprocess/place.py), and
+    fetch_nodes.corridor_points bridges the ones that come close.
 
-    This matters: dumping every geometrically-nearby node in as extra
-    seeds (the earlier version of this function did) can silently return
-    MULTIPLE disconnected components -- e.g. a center point sitting in
-    the middle of a triangular block, equidistant from 3 unconnected
-    streets, would have a tile scan grab panos from all 3 (all within
-    radius) even though they share no real link. A pure BFS from one
-    start node instead correctly returns just the one street the start
-    node actually belongs to.
-
-    Only ever expanding FROM a node that's still within radius_m --
-    anything found just past the boundary is kept as a leaf in the
-    result but never itself expanded further.
+    Each walk goes wave by wave, a whole frontier fetched at once. Only
+    ever expanding FROM a node still within radius_m -- anything found just
+    past the boundary is kept as a leaf but never expanded further.
 
     Returns (nodes, edges) -- same shape nearby_nodes/tab.py's
     state["nodes"]/state["edges"] already use.
     """
-    seed_nodes, _ = nearby_nodes(center_lat, center_lon, radius_m=min(radius_m, DEFAULT_RADIUS_M))
-    google_seeds = [n for n in seed_nodes if n["key"].startswith("google:")]
-    if not google_seeds:
-        # Nothing to walk real links from: nothing nearby at all.
-        return (seed_nodes[:1], []) if seed_nodes else ([], [])
+    try:
+        discovered = google_tile_panos(center_lat, center_lon, radius_m)
+    except Exception as e:
+        print(f"Google coverage lookup failed: {e}")
+        return [], []
 
-    start_node = min(google_seeds, key=lambda n: _haversine_m(center_lat, center_lon, n["lat"], n["lon"]))
+    def dist(n):
+        return _haversine_m(center_lat, center_lon, n["lat"], n["lon"])
 
-    nodes = [start_node]
-    edges = []
-    by_key = {start_node["key"]: start_node}
-    edge_set = set()
+    seeds = [{"key": node_key("google", p.id), "source": "google", "id": p.id,
+              "lat": p.lat, "lon": p.lon, "heading": p.heading}
+             for p in discovered.values()]
+    seeds = sorted((n for n in seeds if dist(n) <= radius_m), key=dist)
+    if not seeds:
+        return [], []
 
-    visited = set()
-    queue = [start_node["key"]]
-    while queue and len(nodes) < max_nodes:
-        key = queue.pop(0)
-        if key in visited:
+    nodes, edges = [], []
+    by_key, edge_set, visited = {}, set(), set()
+    walked_ll = []  # positions of nodes walks have reached, for _SAME_PLACE_M
+
+    def add_node(n):
+        if n["key"] not in by_key:
+            nodes.append(n)
+            by_key[n["key"]] = n
+            walked_ll.append((n["lat"], n["lon"]))
+
+    def reached(seed):
+        if seed["key"] in by_key:
+            return True
+        return any(_haversine_m(seed["lat"], seed["lon"], la, lo) <= _SAME_PLACE_M for la, lo in walked_ll)
+
+    walks = 0
+    for seed in seeds:
+        if len(nodes) >= max_nodes:
+            break
+        if reached(seed):
             continue
-        visited.add(key)
+        walks += 1
+        add_node(seed)
+        frontier = [seed["key"]]
+        while frontier and len(nodes) < max_nodes:
+            visited.update(frontier)
+            metas = run_async(_fetch_metas([k.split(":", 1)[1] for k in frontier]))
+            next_frontier = []
+            for key, meta in zip(frontier, metas):
+                if not meta:
+                    continue
+                for n in meta["neighbors"]:
+                    other_key = node_key("google", n["id"])
+                    add_node({"key": other_key, "source": "google", "id": n["id"],
+                              "lat": n["lat"], "lon": n["lon"], "heading": None})
+                    fe = frozenset((key, other_key))
+                    if fe not in edge_set:
+                        edges.append((key, other_key))
+                        edge_set.add(fe)
+                    if (other_key not in visited and other_key not in next_frontier
+                            and dist(by_key[other_key]) <= radius_m):
+                        next_frontier.append(other_key)
+            frontier = next_frontier
 
-        pano_id = key.split(":", 1)[1]
-        try:
-            meta = run_async(fetch_pano_by_id(pano_id))
-        except Exception as e:
-            print(f"expand_area: link fetch failed for {pano_id}: {e}")
-            continue
-        if not meta:
-            continue
-
-        for n in meta["neighbors"]:
-            other_key = node_key("google", n["id"])
-            if other_key not in by_key:
-                new_node = {"key": other_key, "source": "google", "id": n["id"],
-                            "lat": n["lat"], "lon": n["lon"], "heading": None}
-                nodes.append(new_node)
-                by_key[other_key] = new_node
-            fe = frozenset((key, other_key))
-            if fe not in edge_set:
-                edges.append((key, other_key))
-                edge_set.add(fe)
-            if (other_key not in visited
-                    and _haversine_m(center_lat, center_lon, by_key[other_key]["lat"], by_key[other_key]["lon"]) <= radius_m):
-                queue.append(other_key)
-
+    print(f"expand_area: {len(nodes)} node(s) from {walks} walk(s), {len(discovered)} discovered")
     return nodes, edges
-
-
-

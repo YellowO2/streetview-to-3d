@@ -26,6 +26,11 @@ POINT_MAX_DIST_M = 5.0
 # principle.
 MERGE_DIST_M = 8.0
 
+# Separate graphs closer than this get one bridge edge (see
+# bridge_components) -- about the reach of a real link between neighbouring
+# panos, so DA3 has as good a chance there as along a street.
+BRIDGE_DIST_M = 15.0
+
 
 def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[int]]]:
     """Real (lat, lon) dots + structural adjacency straight from the
@@ -111,7 +116,43 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
     for a, b in raw_edges:
         connect(dot_index_by_raw[a], dot_index_by_raw[b])
 
+    bridge_components(points, adjacency, connect)
     return points, adjacency
+
+
+def bridge_components(points, adjacency, connect, max_gap_m: float = BRIDGE_DIST_M):
+    """Join graphs Google never linked where they come within max_gap_m.
+
+    A walked (scout) path often meets a road a few metres from it without
+    either pano linking the other. A bridge edge here lets the walk try the
+    DA3 pair test there: if it holds they become one piece, if not the walk
+    restarts past it as it does after any failed test. Kruskal over the
+    closest dot pairs, so each two groups get their nearest crossing and no
+    more -- one good join is all a piece needs.
+    """
+    comp = list(range(len(points)))
+
+    def find(i):
+        while comp[i] != i:
+            comp[i] = comp[comp[i]]
+            i = comp[i]
+        return i
+
+    for i, ns in adjacency.items():
+        for j in ns:
+            comp[find(i)] = find(j)
+
+    pairs = []
+    for i in range(len(points)):
+        for j in range(i + 1, len(points)):
+            if find(i) != find(j):
+                d = haversine_m(*points[i], *points[j])
+                if d <= max_gap_m:
+                    pairs.append((d, i, j))
+    for _, i, j in sorted(pairs):
+        if find(i) != find(j):
+            comp[find(i)] = find(j)
+            connect(i, j)
 
 
 def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
