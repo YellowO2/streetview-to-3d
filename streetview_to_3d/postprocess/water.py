@@ -1,12 +1,14 @@
 """The water around the scene: flat surfaces, not points.
 
-Where it is comes from the JRC Global Surface Water map (EC JRC / Google,
-no key, ~30 m Landsat, credit "EC JRC/Google"): how often, 1984-2021, a
-pixel was water; at least WET of the time counts. OpenStreetMap's water
-was tried first and is not usable here: a lake or the sea is one outline
-of thousands of ways, and around Stockholm the request timed out. The sea
-is also where the height tiles are at sea level (terrain.SEA_M), as the
-land has always laid it.
+Where it is comes from OpenStreetMap within its box (osm.py; outlines
+drawn to about a metre, a bridge not part of the water): its water
+outlines, cut to the box, split it into pieces, each water or land as OSM
+itself says (outline). Past the box, or without OSM, the JRC Global
+Surface Water map itself (EC JRC / Google, no key, ~30 m Landsat, credit
+"EC JRC/Google"): how often, 1984-2021, a pixel was water, at least WET of
+the time counting, and the sea where the height tiles are at sea level
+(terrain.SEA_M). At 30 m it is no more than roughly where water is:
+around Stockholm's bridge it had water as land, and the bridge as water.
 
 As a game has it: the land is one ground that goes on under the water,
 the water a flat surface over it, and the shore is wherever the one
@@ -83,7 +85,7 @@ class Water:
     carve and keep shape the land under it; shore how far from dry land
     (see the module)."""
 
-    def __init__(self, radius_m, to_ll, height, shift, panos):
+    def __init__(self, radius_m, to_ll, height, shift, panos, osm=None):
         n = int(np.ceil(radius_m / CELL_M))
         self.lo = -n * CELL_M
         c = self.lo + CELL_M * (np.arange(2 * n) + 0.5)
@@ -99,6 +101,11 @@ class Water:
         from streetview_to_3d.postprocess.terrain import SEA_M    # terrain imports this module
         h = height(lat, lon)
         mask = ((often >= WET) | (h <= SEA_M)).reshape(gx.shape)
+        if osm is not None:                               # (OSM's water, its box half-width)
+            outline, box_m = osm
+            inside = (np.abs(self.centres) < box_m).all(1)
+            mask.ravel()[inside] = shapely.contains_xy(outline, *self.centres[inside].T)
+            self.source = "OSM, JRC past it"
         mask &= (gx ** 2 + gy ** 2) < radius_m ** 2
         from scipy.ndimage import distance_transform_edt
         self.mask = mask
@@ -151,6 +158,66 @@ class Water:
         d = self.shore[k // 2::k, k // 2::k]
         return {"lo": self.lo, "cell": SHORE_CELL_M, "size": len(d),
                 "metres": np.minimum(np.round(d), SHORE_MAX_M).astype(int).ravel().tolist()}
+
+
+def jrc(to_ll, height):
+    """f(east/north (n, 2)) -> whether the JRC map (or the sea, by height)
+    has water there: to_ll(east/north) -> (lat, lon), height the height
+    map; the sea only if JRC cannot be had."""
+    from streetview_to_3d.postprocess.terrain import SEA_M
+    often = occurrence_map()
+
+    def f(xy):
+        lat, lon = to_ll(xy)
+        sea = height(lat, lon) <= SEA_M
+        try:
+            return (often(lat, lon) >= WET) | sea
+        except OSError:
+            return sea
+    return f
+
+
+def outline(elements, to_xy, box_m, water_at, wet):
+    """The water within box_m (a square half-width) of the centre, as one
+    shapely geometry, all from OSM: its water outlines (osm.fetch's; to_xy:
+    an OSM geometry to east/north metres) and the box's edge split the box
+    into pieces, each all water or all land -- a shoreline bounds it. Only
+    the outlines near us are had, never a lake's whole loop, so a line
+    alone does not say which side is water; each piece is:
+
+      - water if a point inside it lies in an OSM water area (water_at:
+        east/north (n, 2) -> whether, osm.water_at, one request)
+      - water if the coastline runs along it with it on its right: OSM
+        draws the sea only as its coastline, the water always on the right
+      - land otherwise; wet (east/north -> whether, the JRC map) decides a
+        piece no shoreline bounds, the whole box one piece."""
+    from streetview_to_3d.postprocess.osm import is_water
+    inner = shapely.box(-box_m, -box_m, box_m, box_m)
+    ways = [(e, to_xy(e["geometry"])) for e in elements if is_water(e) and len(e.get("geometry") or []) >= 2]
+    lines = [inner.intersection(shapely.LineString(xy)) for _, xy in ways]
+    faces = list(shapely.get_parts(shapely.polygonize([shapely.union_all(lines + [inner.exterior])])))
+    if not faces:
+        return shapely.Polygon()
+    inside = np.array([f.representative_point().coords[0] for f in faces])
+    if len(faces) == 1:
+        return faces[0] if wet(inside).all() else shapely.Polygon()
+    water = np.array(water_at(inside), bool)
+    # the sea: a metre to the right of the coastline, all along it
+    right, left = [], []
+    for e, xy in ways:
+        if e.get("tags", {}).get("natural") != "coastline":
+            continue
+        a, b = xy[:-1], xy[1:]
+        d = b - a
+        n = np.stack([d[:, 1], -d[:, 0]], 1) / np.maximum(np.linalg.norm(d, axis=1), 1e-9)[:, None]
+        mid = (a + b) / 2
+        right.append(mid + n)
+        left.append(mid - n)
+    if right:
+        right, left = np.concatenate(right), np.concatenate(left)
+        for k, f in enumerate(faces):
+            water[k] |= shapely.contains_xy(f, *right.T).sum() > shapely.contains_xy(f, *left.T).sum()
+    return shapely.union_all([f for f, w in zip(faces, water) if w]) if water.any() else shapely.Polygon()
 
 
 def _bodies(mask, lo):

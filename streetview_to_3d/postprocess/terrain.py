@@ -27,7 +27,8 @@ share of the view:
    (osm.py); the roads, like the ground, not where the scene is; the
    buildings fitted onto DA3's walls, what DA3 has of them left to it; a
    landmark mapped in parts (a spire, a dome) as its parts, each roof as
-   OSM shapes it (roofs.py)
+   OSM shapes it (roofs.py) and coloured as the satellite sees it; far
+   off (buildings.SOLID_M), solid: triangles, not points
 5. near the cameras (PAINT_M), all of it -- land, roads, walls -- coloured
    from the scene's own panos as the fill colours its ground (_paint), so
    it matches DA3 where they meet; the maps' colours are only for what no
@@ -37,8 +38,8 @@ share of the view:
    shore wherever it crosses the water
 
 Written to terrain.ply beside scene.json (its "terrain"), the buildings,
-spaced the same way, to buildings.ply (its "buildings"), both already in
-the world frame, and the water to water.json (its "water"). The viewer
+spaced the same way, to buildings.ply (its "buildings"), the far ones
+solid to blocks.ply (its "blocks"), all already in the world frame, and the water to water.json (its "water"). The viewer
 draws the points larger with distance, as they are spaced (scene-store.js,
 terrainBands).
 
@@ -56,10 +57,11 @@ from PIL import Image
 
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.postprocess import buildings, osm, roads, seams, water
-from streetview_to_3d.postprocess.ply_io import write_ply
+from streetview_to_3d.postprocess.ply_io import write_mesh, write_ply
 
 FILENAME = "terrain.ply"
 BUILDINGS_FILENAME = "buildings.ply"
+BLOCKS_FILENAME = "blocks.ply"
 HEIGHT_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
 HEIGHT_ZOOM = 13          # ~19 m a pixel at the equator, finer than the data
 COLOUR_URL = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/{z}/{y}/{x}.jpg"
@@ -241,9 +243,22 @@ def build(scene_dir, log=print):
         raw = heights(*to_ll(xy)) if raw is None else raw
         return np.where(raw <= SEA_M, 0.0, raw) + shift + bend(xy)
 
-    # water: a flat surface over the land, which goes on under it (water.py)
+    # OpenStreetMap's buildings, roads and water, in one request
+    try:
+        elements = osm.fetch(lat0, lon0, BUILDINGS_M, ROADS_M, M_PER_LAT, m_per_lon, scene_dir,
+                             water_m=BUILDINGS_M)
+    except (OSError, ValueError) as e:    # the land stands without them
+        log(f"terrain: no OpenStreetMap ({e!r})")
+        elements = []
+
+    # water: a flat surface over the land, which goes on under it (water.py);
+    # its outline OSM's where OSM has one
     radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
-    wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])))
+    jrc = water.jrc(to_ll, heights)
+    wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])),
+                      osm=(water.outline(elements, to_xy, BUILDINGS_M,
+                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir), jrc),
+                           BUILDINGS_M) if elements else None)
 
     # the scene always wins: the map only around it, faded in at its edge
     scene, scene_cols = scene_points(sc, scene_dir)
@@ -294,21 +309,21 @@ def build(scene_dir, log=print):
     # OpenStreetMap's buildings and roads, on this ground
     panos = None
     n_buildings = n_seen = n_roads = 0
-    try:
-        elements = osm.fetch(lat0, lon0, BUILDINGS_M, ROADS_M, M_PER_LAT, m_per_lon, scene_dir)
-    except (OSError, ValueError) as e:    # the land stands without them
-        log(f"terrain: no OpenStreetMap ({e!r})")
-        elements = []
     outlines = [o for o in buildings.outlines(elements, to_xy)
                 if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]       # an older, wider osm.json
     bp = bc = np.zeros((0, 3))
     b_roof = np.zeros(0, bool)
-    n_fitted = n_trimmed = n_cut = 0
+    solid, solid_base = [], np.zeros((0, 3))
+    n_fitted = n_trimmed = n_cut = n_sat = 0
     if outlines:
         from streetview_to_3d.postprocess.ground import normals_from_neighbours
         scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
         outlines, n_fitted, n_trimmed = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
                                                                roads.coverage(roads.lines(elements, to_xy)))
+        try:                                # roofs as the satellite sees them
+            n_sat = buildings.satellite_roofs(outlines, lambda en: colours(*to_ll(en)) ** LIFT) if colours else 0
+        except OSError as e:
+            log(f"terrain: no satellite roofs ({e!r})")
         try:
             panos = panos or _panos(sc, scene_dir)
             pal = buildings.palette(panos[1])
@@ -316,8 +331,8 @@ def build(scene_dir, log=print):
             log(f"terrain: no palette from the panos ({e!r})")
             panos, pal = ([], []), (np.array(buildings.PASTEL), np.full(len(buildings.PASTEL), 1 / 8))
         base = buildings.colours(outlines, pal)
-        blocks = buildings.points(outlines, gap, ground, base, SUN / np.linalg.norm(SUN))
         n_buildings = len(outlines)
+        blocks = buildings.points(outlines, gap, ground, base, SUN / np.linalg.norm(SUN))
         if panos[0]:
             # a building the panos see enough of: their colour, livelier, over the palette's
             own = buildings.pano_colours(blocks.pts, blocks.which, len(outlines), *panos, scene)
@@ -330,6 +345,10 @@ def build(scene_dir, log=print):
                 roof[:, None], np.clip(b * blocks.shade[recolour][:, None], 0, 1),
                 b * (buildings.WALL_SHADE + (1 - buildings.WALL_SHADE) * np.nan_to_num(blocks.light[recolour])[:, None]))
             n_seen = int(seen.sum())
+        # far off, solid, not points -- coloured by the panos all the same
+        far = buildings.far(outlines, cam_xz)
+        solid, solid_base = [o for o, f in zip(outlines, far) if f], base[far]
+        blocks.take(~far[blocks.which])
         # what DA3 already has of a building is left to it; the rest meets it
         roofs_near = cKDTree(scene).query(blocks.pts, distance_upper_bound=1.0)[0] if len(scene) \
             else np.full(len(blocks.pts), np.inf)
@@ -369,13 +388,18 @@ def build(scene_dir, log=print):
     if len(bp):
         write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc)
         sc.buildings = BUILDINGS_FILENAME
+    sc.blocks = None
+    if solid:
+        write_mesh(os.path.join(scene_dir, BLOCKS_FILENAME),
+                   *buildings.solid(solid, ground, solid_base, SUN / np.linalg.norm(SUN)))
+        sc.blocks = BLOCKS_FILENAME
     sc.save(scene_dir)
     fix = np.abs(fixes - shift)
     log(f"terrain: {len(pts)} points to {radius:.0f} m, {len(bp)} building points, {n_painted} of them "
         f"painted from the panos ({len(surfaces)} water surfaces ({wet.source}), {source} colour, "
-        f"{n_buildings} buildings -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
+        f"{n_buildings} buildings ({len(solid)} solid) -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
         f"{n_cut} of their points "
-        f"left to DA3's own, {n_seen} coloured by the panos -- {n_roads} roads), map shifted "
+        f"left to DA3's own, {n_seen} coloured by the panos, {n_sat} roofs by the satellite -- {n_roads} roads), map shifted "
         f"{shift:+.1f} m to Google's datum, then bent onto {len(known)} panos' elevation "
         f"(by up to {fix.max() if len(fix) else 0:.1f} m, median {np.median(fix) if len(fix) else 0:.1f})")
 
