@@ -6,8 +6,8 @@ place. DA3's shape is never moved; only its ground points are replaced.
     one_ground.py  every cloud's ground becomes one smooth surface, its
                    holes and the blind disc under each camera included
     paint.py       colour for it, patch by patch from the nearest
-                   pano that sees it cleanly; what no camera has in view
-                   at all is left out.
+                   pano that sees it cleanly; what none can, the colour
+                   of the nearest point one did.
                    DA3 keeps its own colours
 
 Points belong to nodes (see scene.py), so every added point is written into
@@ -81,12 +81,12 @@ def run(scene_dir, log=print):
     t1 = time.monotonic()
 
     added = ground
-    col, who, in_view = paint(added, da3, cameras,
+    col, who, _ = paint(added, da3, cameras,
                               [ph and (ph[0], pano_mask(ph[1]) | blurred(ph[0])) for ph in photos])
-    # in view but no camera may colour it (the spot under a camera, masked
-    # spots): the colour of the nearest painted point. Out of every
-    # camera's view (who stays -1): left out.
-    painted, fallback = who >= 0, in_view & (who < 0)
+    # no camera may colour it (the spot under a camera, masked spots, or out
+    # of every camera's view): the colour of the nearest painted point --
+    # the ground is laid whole, a dropped point is a hole in the road
+    painted, fallback = who >= 0, who < 0
     if painted.any() and fallback.any():
         _, nb = cKDTree(added[painted]).query(added[fallback])
         src = np.flatnonzero(painted)[nb]
@@ -99,6 +99,6 @@ def run(scene_dir, log=print):
         T = np.asarray(n.transform, float)
         write_ply(os.path.join(scene_dir, n.ply), (x - T[:3, 3]) @ np.linalg.inv(T[:3, :3]).T,
                   np.concatenate([colours[k], col[mine]]))
-    log(f"fill: one ground {int(ok.sum())} of {len(ground)} points (the rest in no camera's view), "
+    log(f"fill: one ground {int(ok.sum())} of {len(ground)} points, "
         f"{int(sum(len(c) for c in clouds))} DA3 points kept  "
         f"[ground {t1 - t0:.1f}s, paint {time.monotonic() - t1:.1f}s]")

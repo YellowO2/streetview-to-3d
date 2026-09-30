@@ -10,9 +10,11 @@ COLOUR it? That is stricter, below. The spot right under a camera is in
 view (it looks straight down at it) but no camera may colour it; such
 points take the colour of the painted points around them.
 
-The added points are coloured patch by patch (PATCH_M cubes): a patch takes the nearest camera
-that can colour at least half of it, so neighbouring points do not flicker
-between photos of different exposure. A camera can colour a point when it:
+Each added point mixes every camera that can colour it, the nearest most,
+one BLEND_M further 1/e as much: deep in one camera's patch it is that
+photo, and where two cameras' patches meet the colour fades from one
+photo's exposure to the other's over a few metres instead of a hard edge.
+A camera can colour a point when it:
   - sees it: no DA3 point in front of it along that line of sight. Only
     DA3's points count -- its ground is gone by now, so they are the real
     things in the way (fences, cars, bushes, walls) -- and each covers a
@@ -26,9 +28,8 @@ between photos of different exposure. A camera can colour a point when it:
     horizon, where every pano has its blurred spot (a capture car's roof
     is masked as a car; 55 cost backpack captures their clean ground)
   - is within MAX_M
-Points of a patch its camera cannot colour take the nearest camera that
-can. The nearest camera is also the pano whose own blind disc a point
-fills, so a filled hole matches the ground around it.
+The nearest camera is also the pano whose own blind disc a point fills,
+so a filled hole matches the ground around it.
 """
 import numpy as np
 from PIL import Image
@@ -37,7 +38,7 @@ from scipy.ndimage import binary_dilation, label, uniform_filter
 NADIR_DEG = 70
 MAX_M = 25.0
 ZB_W = 512
-PATCH_M = 0.5
+BLEND_M, BLEND_MIN = 2.0, 0.01     # a camera BLEND_M further than the nearest counts 1/e as much
 BLUR_DETAIL, BLUR_WIN = 0.5, 15     # under this grey-level change per pixel, over BLUR_WIN px: blur
 BLUR_GROW_DEG, SEAM_DEG = 6, 2
 
@@ -121,29 +122,19 @@ def paint(points, occluders, cameras, photos, max_m=MAX_M):
         dist[k] = r
         looks[k] = (u, v)
 
-    # per point: the nearest camera that can colour it
-    who = np.where(sees.any(0), np.argmin(np.where(sees, dist, np.inf), 0), -1)
-    # per patch: the nearest camera that can colour at least half of it
-    key = np.floor(points / PATCH_M).astype(np.int64) + 2 ** 20
-    _, patch, count = np.unique((key[:, 0] << 42) | (key[:, 1] << 21) | key[:, 2],
-                                return_inverse=True, return_counts=True)
-    patch = patch.reshape(-1)
-    best, pick = np.full(len(count), np.inf), np.full(len(count), -1)
-    for k in range(K):
-        frac = np.bincount(patch, weights=sees[k], minlength=len(count)) / count
-        d = np.bincount(patch, weights=np.where(np.isfinite(dist[k]), dist[k], 0), minlength=len(count)) / count
-        better = (frac >= 0.5) & (d < best)
-        best[better], pick[better] = d[better], k
-    chosen = pick[patch]
-    ok = chosen >= 0
-    ok[ok] = sees[chosen[ok], np.flatnonzero(ok)]
-    who[ok] = chosen[ok]
-
-    colours = np.zeros((n, 3))
+    # per point: the nearest camera that can colour it (whose node it joins),
+    # and every camera that can, mixed by how much further it is than that
+    near = np.where(sees, dist, np.inf)
+    best = near.min(0)
+    who = np.where(np.isfinite(best), near.argmin(0), -1)
+    colours, total = np.zeros((n, 3)), np.zeros(n)
     for k, ph in enumerate(photos):
-        idx = np.flatnonzero(who == k)
+        w = np.exp(-(near[k] - np.where(np.isfinite(best), best, 0)) / BLEND_M)
+        idx = np.flatnonzero(w > BLEND_MIN)
         if len(idx):
             img = np.asarray(Image.open(ph[0]).convert("RGB"))
             u, v = looks[k]
-            colours[idx] = _at(img, u[idx], v[idx]) / 255.0
+            colours[idx] += w[idx, None] * _at(img, u[idx], v[idx]) / 255.0
+            total[idx] += w[idx]
+    colours /= np.maximum(total, 1e-9)[:, None]
     return colours, who, in_view
