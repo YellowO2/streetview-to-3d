@@ -1,14 +1,132 @@
 """Low-level fetch of real Street View panoramas near a
 location. Used by the map picker and by build_street_graph/.
 """
+import asyncio
+import io
+import math
+
+import aiohttp
+import numpy as np
+from PIL import Image
+from scipy.spatial import cKDTree
 from streetlevel import streetview
 from streetlevel.geo import wgs84_to_tile_coord
 
 from streetview_to_3d.services.geo import haversine_m as _haversine_m
+from streetview_to_3d.services.http_headers import BROWSER_HEADERS
 from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id, run_async
 
 # Street View publishes coverage on zoom-17 Slippy Map tiles.
 _TILE_ZOOM = 17
+
+# The coverage tile listing only holds car ("launch") panos. Google's own
+# walked captures (Trekker/backpack, source "scout": parks, plazas, paths)
+# are left out, though Maps draws them as blue lines. So each tile's
+# official-coverage raster (the one Maps draws, image type 2 = Google's
+# own, no user photospheres) is read, and only where a line runs farther
+# than _GAP_M from every pano already known is a pano searched for.
+_GAP_M = 12.0
+_PROBE_CONCURRENCY = 16
+_MAX_PROBE_WAVES = 6
+_MAX_CACHED_TILES = 512
+_tile_cache = {}  # (tx, ty) -> [panorama]; coverage barely changes within a run
+
+
+def _official_lines_url(tx, ty):
+    return (f"https://www.google.com/maps/vt?pb=!1m5!1m4!1i{_TILE_ZOOM}!2i{tx}!3i{ty}!4i256"
+            "!2m8!1e2!2ssvv!4m2!1scc!2s*211m3*211e2*212b1*213e2*212b1*214b1"
+            "!4m2!1ssvl!2s*211b0*212b1!3m8!2sen!3sus!5e1105!12m4!1e68!2m2!1sset!2sRoadmap"
+            "!4e0!5m4!1e0!8m2!1e1!1e1!6m6!1e12!2i2!11e0!39b0!44e0!50e0")
+
+
+def _tile_pixel_to_latlon(tx, ty, px, py, size):
+    n = 2 ** _TILE_ZOOM
+    x, y = (tx + px / size) / n, (ty + py / size) / n
+    return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y)))), x * 360 - 180
+
+
+def _to_metres(lat0, latlons):
+    a = np.asarray(latlons, float).reshape(-1, 2)
+    return np.c_[(a[:, 0] - lat0) * 111320.0, a[:, 1] * 111320.0 * math.cos(math.radians(lat0))]
+
+
+def _is_official(p):
+    return p is not None and not (p.source or "").startswith("photos:")
+
+
+def _with_link_positions(panos):
+    out = [(p.lat, p.lon) for p in panos]
+    out += [(l.pano.lat, l.pano.lon) for p in panos for l in (p.links or []) if l.pano.lat is not None]
+    return out
+
+
+async def _probe_line_gaps(session, sem, tx, ty, known_panos):
+    """Official panos on this tile's blue lines that the tile listing missed.
+
+    Line pixels (every 4th px, ~4 m) farther than _GAP_M from any known pano
+    or link are gaps; each wave probes gap points spaced 2*_GAP_M apart, all
+    at once. A hit's own links mark their stretch known too, so a walked
+    path is filled from few probes; a miss retires its surroundings. Waves
+    repeat until no gap is left.
+    """
+    async with session.get(_official_lines_url(tx, ty)) as r:
+        r.raise_for_status()
+        rgba = np.asarray(Image.open(io.BytesIO(await r.read())).convert("RGBA"))
+    size = rgba.shape[0]
+    ys, xs = np.nonzero(rgba[..., 3] > 128)
+    step = max(1, size // 64)
+    on_grid = (ys % step == 0) & (xs % step == 0)
+    ys, xs = ys[on_grid], xs[on_grid]
+    if not len(xs):
+        return []
+
+    lat0 = _tile_pixel_to_latlon(tx, ty, size / 2, size / 2, size)[0]
+    line_ll = [_tile_pixel_to_latlon(tx, ty, x + 0.5, y + 0.5, size) for x, y in zip(xs, ys)]
+    line = _to_metres(lat0, line_ll)
+    known = _with_link_positions(known_panos)
+    retired = np.zeros(len(line), bool)
+    found = {}
+
+    async def probe(i):
+        async with sem:
+            return await streetview.find_panorama_async(*line_ll[i], session, radius=_GAP_M)
+
+    for _ in range(_MAX_PROBE_WAVES):
+        if known:
+            dist = cKDTree(_to_metres(lat0, known)).query(line)[0]
+        else:
+            dist = np.full(len(line), np.inf)
+        gaps = np.nonzero((dist > _GAP_M) & ~retired)[0]
+        if not len(gaps):
+            break
+        picks = []
+        for i in gaps:
+            if all(np.hypot(*(line[i] - line[j])) > 2 * _GAP_M for j in picks):
+                picks.append(i)
+        results = await asyncio.gather(*(probe(i) for i in picks), return_exceptions=True)
+        for i, p in zip(picks, results):
+            retired[i] = True
+            if isinstance(p, Exception) or not _is_official(p):
+                retired |= np.hypot(*(line - line[i]).T) < _GAP_M
+                continue
+            found[p.id] = p
+            known += _with_link_positions([p])
+    return list(found.values())
+
+
+async def _discover_tile(session, sem, tx, ty):
+    panos = await streetview.get_coverage_tile_async(tx, ty, session)
+    try:
+        panos += await _probe_line_gaps(session, sem, tx, ty, panos)
+    except Exception as e:  # the listing alone is still a usable answer
+        print(f"Coverage line probe failed on tile {tx},{ty}: {e}")
+    return panos
+
+
+async def _discover_tiles(tiles):
+    sem = asyncio.Semaphore(_PROBE_CONCURRENCY)
+    async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
+        return await asyncio.gather(*(_discover_tile(session, sem, tx, ty) for tx, ty in tiles))
 
 
 def _tile_neighborhood(lat, lon):
@@ -19,10 +137,20 @@ def _tile_neighborhood(lat, lon):
 
 
 def google_tile_panos(lat, lon):
-    """All Street View panos on the 3x3 tile neighborhood around (lat, lon), keyed by id."""
+    """All official Street View panos on the 3x3 tile neighborhood around
+    (lat, lon), keyed by id: the tile listing plus walked (scout) captures.
+    Tiles are cached, so neighbouring lookups (fetch_corridor_nodes runs one
+    per corridor point) only fetch the tiles they haven't seen."""
+    tiles = list(_tile_neighborhood(lat, lon))
+    missing = [t for t in tiles if t not in _tile_cache]
+    if missing:
+        for t, panos in zip(missing, run_async(_discover_tiles(missing))):
+            if len(_tile_cache) >= _MAX_CACHED_TILES:
+                _tile_cache.pop(next(iter(_tile_cache)))
+            _tile_cache[t] = panos
     seen = {}
-    for tx, ty in _tile_neighborhood(lat, lon):
-        for p in streetview.get_coverage_tile(tx, ty):
+    for t in tiles:
+        for p in _tile_cache[t]:
             seen[p.id] = p
     return seen
 
