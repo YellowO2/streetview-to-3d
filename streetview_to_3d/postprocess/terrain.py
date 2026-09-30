@@ -342,6 +342,15 @@ def build(scene_dir, log=print):
         d, g, _ = near(xy)
         return seams.meet(h, g, d, ROAD_MEET_M, ROAD_MEET_MAX_M)
     road_h = lambda xy: to_scene(xy, road_raw(xy)) if len(xy) else np.zeros(0)
+    # OpenStreetMap's buildings, onto the scene's walls first: the land fits itself to them
+    outlines = [o for o in buildings.outlines(elements, to_xy)
+                if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]       # an older, wider osm.json
+    n_fitted = n_trimmed = 0
+    if outlines:
+        from streetview_to_3d.postprocess.ground import normals_from_neighbours
+        scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
+        outlines, n_fitted, n_trimmed = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
+                                                               roads.coverage(roads.lines(elements, to_xy)))
     # the land: a surface, triangles between points LAND_EVERY times the gap apart,
     # and corners along the roads' edges, so a triangle never spans one
     en = sample_points(radius, cam_xz, LAND_EVERY)
@@ -357,7 +366,11 @@ def build(scene_dir, log=print):
         return low
     over = roads.decks(roads.bridges(elements, to_xy), road_h, crossed, to_scene)
     edges = np.concatenate([net.edges(), roads.deck_edges(over)])
-    en = np.concatenate([en, edges[np.linalg.norm(edges, axis=1) < radius]])
+    walls, owner = buildings.corners(outlines, lambda xy: LAND_EVERY * gap_at(cam_tree.query(xy)[0]))
+    inside = np.linalg.norm(walls, axis=1) < radius
+    edges = edges[np.linalg.norm(edges, axis=1) < radius]
+    owner = np.r_[np.full(len(en) + len(edges), -1), owner[inside]]
+    en = np.concatenate([en, edges, walls[inside]])
     # the scene's ground-level points: the land fills exactly where they are not
     low = scene[-scene[:, 1] < ground(scene[:, [0, 2]]) + LOW_M] if len(scene) else scene
     low_tree = cKDTree(low[:, [0, 2]]) if len(low) else None
@@ -372,6 +385,8 @@ def build(scene_dir, log=print):
     # under the scene's own ground too, just beneath it: one shared ground,
     # so the scene's is not seen through, the land never over it
     h = np.where(under & np.isfinite(edge_h), np.minimum(h, np.nan_to_num(edge_h) - UNDER_M), h)
+    # every building stood where the land meets it, the land cut down round it (buildings.settle)
+    h = buildings.settle(outlines, en, h, owner)
     # the shore shaped as a game's (water.py): the land eases into the water,
     # a quay by a road stands; under it the land goes on, too deep to see left out
     lines = roads.lines(elements, to_xy)
@@ -408,17 +423,11 @@ def build(scene_dir, log=print):
     # OpenStreetMap's buildings and roads, on this ground
     panos = None
     n_buildings = n_seen = n_roads = 0
-    outlines = [o for o in buildings.outlines(elements, to_xy)
-                if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]       # an older, wider osm.json
     bp = bc = np.zeros((0, 3))
     b_roof = np.zeros(0, bool)
     solid, solid_base = [], np.zeros((0, 3))
-    n_fitted = n_trimmed = n_cut = n_sat = 0
+    n_cut = n_sat = 0
     if outlines:
-        from streetview_to_3d.postprocess.ground import normals_from_neighbours
-        scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
-        outlines, n_fitted, n_trimmed = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
-                                                               roads.coverage(roads.lines(elements, to_xy)))
         try:                                # roofs as the satellite sees them
             n_sat = buildings.satellite_roofs(outlines, lambda en: colours(*to_ll(en)) ** LIFT) if colours else 0
         except OSError as e:
@@ -433,10 +442,11 @@ def build(scene_dir, log=print):
         n_buildings = len(outlines)
         blocks = buildings.points(outlines, gap, ground, base, SUN / np.linalg.norm(SUN))
         if panos[0]:
-            # a building the panos see enough of: their colour, livelier, over the palette's
+            # a building the panos see enough of: their colour, softened as the palette's is (in
+            # shade or far off they see it dark), over the palette's
             own = buildings.pano_colours(blocks.pts, blocks.which, len(outlines), *panos, scene)
             seen = ~np.isnan(own[:, 0])
-            base[seen] = buildings.cheer(own[seen])
+            base[seen] = [buildings.soften(c) for c in own[seen]]
             recolour = seen[blocks.which] & ~blocks.own               # a roof:colour stands
             b = base[blocks.which[recolour]]
             roof = np.isnan(blocks.light[recolour])

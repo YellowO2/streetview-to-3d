@@ -15,7 +15,12 @@ Footprints from osm.py, each raised into a block of points:
     front of that wall cut away as from a solid block, a guessed height
     made DA3's (fit_to_scene); what DA3 already has of it is left to DA3 and the rest
     faded in next to it, judged on the wall itself (seam)
-  - standing on the lowest ground under its outline (terrain.py's map)
+  - standing where the land meets it, the land fitted to it as a game's
+    terrain is (settle): its foot the lowest land along its outline, the
+    land cut down to that round it -- level within PAD_M, then rising at
+    most CUT_SLOPE -- so no wall is ever buried (the map's own ground, a
+    30 m blur with the buildings in it, buried a third of them by over a
+    metre); else, past the land, the lowest ground under its outline
   - walls and a flat roof, spaced by how near the scene's cameras they
     are, as the land is (terrain.gap_at), and the walls again further in,
     sparser (INNER_M), so it is not seen through
@@ -95,8 +100,11 @@ TRIM_EDGE_M = 5.0             # only a straight wall this long trims: a curve's 
                               # its own curved, overhung walls and ate NTU's Hive
 TOP_PERCENTILE = 97
 SOLID_STEP_M = 2.0            # a hipped roof's triangles about this long, at least
-NO_FACADE = -1.0              # a roof's place on a wall: none
+NO_FACADE = -1e4              # a roof's place on a wall: none (a skirt's is below 0 too)
+WALL_SHIFTS = 64              # walls' windows counted from one of this many bays before their start
 MIN_HEIGHT_M = 2.5
+PAD_M, CUT_SLOPE = 1.0, 0.5   # the land level with a building's foot this far round it, then rising at most this
+CUT_REACH_M = 20.0            # ... looked at this far out: the map's bumps are a few metres
 CHUNK_M = 4.0                 # a wall is spaced in pieces this long, each as at its middle
 ROOF_MIN_STEP_M = 0.5         # roofs are seen from above only
 COVER = 0.75                  # an OSM point DA3 has a point within this much of its gap of is DA3's
@@ -133,6 +141,8 @@ class Form:
     part: bool = False
     colour: object = None
     roof_colour: object = None
+    foot_m: object = None         # the height it stands at, once settle has fitted the land to it
+    skirt_m: float = 0.0          # ... its walls on down this much further, to the land a neighbour cut lower
 
 
 def _form(tags, xy, h):
@@ -150,6 +160,61 @@ def _form(tags, xy, h):
         (np.array(MATERIAL[tags[material]]) if tags.get(material) in MATERIAL else None)
     return Form(roof, base, "building:part" in tags, colour("building:colour", "building:material"),
                 colour("roof:colour", "roof:material"))
+
+
+def foot_of(xy, form, ground):
+    """The height an outline stands at: its settled foot (settle), else
+    the lowest ground under it (ground(xy))."""
+    return form.foot_m if form.foot_m is not None else float(ground(xy).min())
+
+
+def corners(outlines, spacing):
+    """(points (n, 2), owner (n,)): along every outline, spacing(xy) of
+    its middle apart -- the land's corners, so no triangle spans a wall --
+    and which outline each is on."""
+    import shapely
+    pts, owner = [np.zeros((0, 2))], [np.zeros(0, int)]
+    for i, (xy, *_) in enumerate(outlines):
+        step = float(np.atleast_1d(spacing(xy[:-1].mean(0, keepdims=True)))[0])
+        p = shapely.get_coordinates(shapely.segmentize(shapely.linearrings(xy), step))[:-1]
+        pts.append(p)
+        owner.append(np.full(len(p), i))
+    return np.concatenate(pts), np.concatenate(owner)
+
+
+def settle(outlines, xy, h, owner):
+    """Every outline stood on the land, the land fitted to it: its foot
+    (Form.foot_m) the lowest of the land's heights h at its own corners
+    (xy[owner == i], corners), and the land within PAD_M of it no higher,
+    rising at most CUT_SLOPE beyond -- only ever cut down, so what lies on
+    the land (roads) stays over it. Feet from the land as it was: a
+    terrace's houses step down a slope each on its own. Where a lower
+    one's cut reaches a higher one, the higher one's walls go on down to
+    it (Form.skirt_m), as a game's foundations do: never floating, its
+    floors counted from its own foot all the same. Returns the land's h."""
+    import shapely
+    if not len(owner):
+        return h
+    tree, out = cKDTree(xy), h.copy()
+    for i, (ring, _, _, form, *_) in enumerate(outlines):
+        mine = owner == i
+        if mine.any():
+            form.foot_m = float(h[mine].min())
+    for ring, _, _, form, *_ in outlines:
+        if form.foot_m is None:
+            continue
+        c = ring[:-1].mean(0)
+        reach = np.linalg.norm(ring - c, axis=1).max() + PAD_M + CUT_REACH_M
+        idx = np.asarray(tree.query_ball_point(c, reach), int)
+        if not len(idx):
+            continue
+        d = shapely.distance(shapely.polygons(ring), shapely.points(xy[idx]))
+        out[idx] = np.minimum(out[idx], form.foot_m + np.maximum(d - PAD_M, 0) * CUT_SLOPE)
+    for i, (_, _, _, form, *_) in enumerate(outlines):
+        mine = owner == i
+        if mine.any():
+            form.skirt_m = max(0.0, form.foot_m - float(out[mine].min()))
+    return out
 
 
 def _rings(elements):
@@ -409,7 +474,7 @@ def fit_to_scene(outlines, da3, da3_normals, ground, on_road=None):
         if form.part or not ((xy.max(0) >= lo) & (xy.min(0) <= hi)).all():
             out.append((xy, h, guessed, form, {}))
             continue
-        base = ground(xy).min()
+        base = foot_of(xy, form, ground)
         walls = _walls(xy, base, h, da3, da3_normals)
         if not walls:
             out.append((xy, h, guessed, form, {}))
@@ -467,7 +532,7 @@ class Blocks:
 
 
 def cheer(rgb):
-    """A map's colour (satellite, a pano's median) livelier: from above and
+    """The satellite's colour of a roof livelier: from above and
     in the shade they come out dull -- CHEER_SAT more saturated, CHEER_LIFT
     brighter."""
     rgb = np.asarray(rgb, float)
@@ -509,8 +574,9 @@ def points(outlines, spacing, ground, colour, sun):
     gable's end); a part that starts in the air has a flat underside."""
     roofs, roof_shades, walls, lights, edge_of, us, vs, gaps, roof_gaps, edges = [], [], [], [], [], [], [], [], [], []
     for xy, h, _, form, planes in outlines:
-        foot = ground(xy).min()
+        foot = foot_of(xy, form, ground)
         base, top = foot + form.base_m, foot + h
+        low = base - (0.0 if form.base_m else form.skirt_m)      # its walls' bottom
         roof = form.roof
         eaves = max(base, top - roof.height)
         # roof, spaced as at its middle; an underside if it starts in the air
@@ -540,7 +606,7 @@ def points(outlines, spacing, ground, colour, sun):
                 s = float(spacing((a + t * (c0 + c1) / 2)[None])[0])
                 along = np.arange(c0, c1, s)
                 rise = roof.rise(a + t * along[:, None])
-                levels = np.arange(base, eaves + (rise.max() if len(rise) else 0), s)
+                levels = np.arange(low, eaves + (rise.max() if len(rise) else 0), s)
                 U, V = np.repeat(along, len(levels)), np.tile(levels, len(along))
                 ok = V <= eaves + np.repeat(rise, len(levels)) + 1e-6
                 U, V = U[ok], V[ok]
@@ -561,7 +627,7 @@ def points(outlines, spacing, ground, colour, sun):
                 for c0 in np.arange(0, length, CHUNK_M):
                     c1 = min(length, c0 + CHUNK_M)
                     s = INNER_GAP * float(spacing((a + t * (c0 + c1) / 2)[None])[0])
-                    along, levels = np.arange(c0, c1, s), np.arange(base, eaves, s)
+                    along, levels = np.arange(c0, c1, s), np.arange(low, eaves, s)
                     U, V = np.repeat(along, len(levels)), np.tile(levels, len(along))
                     w.append(np.column_stack([a[0] + t[0] * U, -V, a[1] + t[1] * U]))
                     light.append(np.zeros(len(U)))
@@ -626,7 +692,7 @@ def windows(blocks, outlines, ground):
     wall = blocks.edge >= 0
     if not wall.any():
         return
-    foot = np.array([ground(xy).min() for xy, *_ in outlines])
+    foot = np.array([foot_of(xy, form, ground) for xy, _, _, form, *_ in outlines])
     i = np.flatnonzero(wall)
     up = blocks.v[i] - foot[blocks.which[i]]
     g = blocks.gap[i]
@@ -651,7 +717,9 @@ def solid(outlines, ground, colour, sun):
     to where the roof meets them, lit by which way they face; its roof
     (roofs.Roof.triangles), lit by which way each triangle faces; a flat
     underside if it starts in the air. facade: a wall vertex's metres
-    along its wall and up from the ground, NO_FACADE on a roof."""
+    along its wall -- from a whole number of bays (BAY_M) before its
+    start, a different one each wall, so each wall's panes vary their own
+    way -- and up from the ground, NO_FACADE on a roof."""
     V, C, F, U = [], [], [], []
     count = 0
 
@@ -665,27 +733,29 @@ def solid(outlines, ground, colour, sun):
 
     world = lambda en, up: np.c_[en[:, 0], -up, en[:, 1]]
     for i, (xy, h, _, form, *_) in enumerate(outlines):
-        foot = ground(xy).min()
+        foot = foot_of(xy, form, ground)
         base, top = foot + form.base_m, foot + h
+        low = base - (0.0 if form.base_m else form.skirt_m)      # its walls' bottom
         roof = form.roof
         eaves = max(base, top - roof.height)
-        for a, c in zip(xy[:-1], xy[1:]):
+        for j, (a, c) in enumerate(zip(xy[:-1], xy[1:])):
             length = float(np.linalg.norm(c - a))
             if length < 1e-6:
                 continue
             t = (c - a) / length
+            shift = BAY_M * ((i * 31 + j * 17) % WALL_SHIFTS)
             lit = abs(np.array([t[1], 0.0, -t[0]]) @ sun)
             u = length * roof.bends(a, c)
             en = a + t * u[:, None]
             up = eaves + roof.rise(en)
             if (up - base).max() < 1e-3:
                 continue
-            pts = np.concatenate([world(en, np.full(len(u), base)), world(en, up)])
+            pts = np.concatenate([world(en, np.full(len(u), low)), world(en, up)])
             k = np.arange(len(u) - 1)
             n = len(u)
             faces = np.concatenate([np.c_[k, k + 1, n + k + 1], np.c_[k, n + k + 1, n + k]])
             add(pts, colour[i] * (WALL_SHADE + (1 - WALL_SHADE) * lit), faces,
-                np.c_[np.r_[u, u], np.r_[np.full(n, base), up] - foot])
+                np.c_[np.r_[u, u] + shift, np.r_[np.full(n, low), up] - foot])
         tris = roof.triangles(SOLID_STEP_M)
         if form.base_m > 0:
             under = Roof(xy, "flat").triangles(SOLID_STEP_M)
