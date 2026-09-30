@@ -29,7 +29,7 @@ so a filled hole matches the ground around it.
 """
 import numpy as np
 from PIL import Image
-from scipy.ndimage import binary_dilation, label, uniform_filter
+from scipy.ndimage import label, uniform_filter
 
 from streetview_to_3d.postprocess.ground import blend
 
@@ -83,8 +83,9 @@ def blurred(path):
     lab, _ = label(m)
     m = np.isin(lab, np.unique(lab[-1][lab[-1] > 0]))
     top = np.where(m.any(0), m.argmax(0), h)
-    grow = int(BLUR_GROW_DEG / 180 * h)
-    return binary_dilation(np.arange(h)[:, None] >= top[None, :], np.ones((2 * grow + 1, 1), bool))
+    # it reaches the bottom of each column, so growing it is moving its top up
+    top = np.where(top < h, top - int(BLUR_GROW_DEG / 180 * h), h)
+    return np.arange(h)[:, None] >= top[None, :]
 
 
 def _at(grid, u, v):

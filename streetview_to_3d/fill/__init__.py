@@ -29,7 +29,6 @@ from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.fill import level
 from streetview_to_3d.fill.one_ground import grounds, one_ground
 from streetview_to_3d.fill.paint import Camera, blurred, paint
-from streetview_to_3d.postprocess.ground import normals_from_neighbours
 from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
 from streetview_to_3d.services.segment import pano_mask
 
@@ -75,9 +74,8 @@ def run(scene_dir, log=print):
         colours.append(c if c is not None else np.full((len(p), 3), 0.5))
     cameras = [Camera(n) for n in nodes]
     cams = np.array([c.centre for c in cameras])
-    normals = [normals_from_neighbours(x) for x in clouds]
     photos = [_photo(n.pano, scene_dir) for n in nodes]
-    G = grounds(clouds, cams, normals, [_walkable(x, cam, ph) for x, cam, ph in zip(clouds, cameras, photos)])
+    G = grounds(clouds, cams, [_walkable(x, cam, ph) for x, cam, ph in zip(clouds, cameras, photos)])
 
     log(level.level(sc, nodes, clouds, G))
     sc.save(scene_dir)

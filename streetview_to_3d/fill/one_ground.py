@@ -24,13 +24,14 @@ them become one smooth surface:
 import numpy as np
 from scipy.ndimage import binary_closing, binary_fill_holes
 
-from streetview_to_3d.postprocess.ground import GroundMap, ground
+from streetview_to_3d.postprocess.ground import CELL_M as GROUND_CELL_M, GroundMap, ground, normals_from_neighbours
 from streetview_to_3d.services.da3_ops import VIEW_HFOV
 
 CELL_M, SMOOTH_M, STEP_M = 0.5, 0.5, 0.05
 DA3_SEED_M = 7.0        # the ground detector may start this far out (DA3's blind disc reaches ~4.5 m)
 CLOSE_M = 1.5           # gaps in the ground area this wide are closed
 ON_GROUND_M = 0.12      # a cloud's points this close to the surface are the surface
+LOW_M = 1.0             # only points this near the lowest in their square can be ground
 BLIND_MARGIN_M = 1.0    # the blind disc under a camera, plus this
 WALL_ABOVE_M = 0.3      # points this far above the ground stop a blind disc
 CAM_H = 2.45            # camera height, where a camera has no ground under it
@@ -39,14 +40,29 @@ WALKABLE = ("road", "sidewalk", "terrain")      # the masker's classes (services
 VIEW_BOTTOM_DEG = np.degrees(np.arctan(np.tan(np.radians(VIEW_HFOV / 2)) * 9 / 16))
 
 
-def grounds(clouds, cams, normals, walkable=None):
+def grounds(clouds, cams, walkable=None):
     """Which of each cloud's points are its walkable ground (step 1).
 
     clouds[k]: cloud k's points in world metres (y down), cams[k] its
-    camera, normals[k] its points' normals, walkable[k] which of them its
-    pano calls WALKABLE (None: all)."""
-    G = [ground(x, c, normals=n, seed_m=DA3_SEED_M) for x, c, n in zip(clouds, cams, normals)]
+    camera, walkable[k] which of them its pano calls WALKABLE (None: all)."""
+    G = [ground(x, c, normals=_low_normals(x), seed_m=DA3_SEED_M) for x, c in zip(clouds, cams)]
     return G if walkable is None else [g & w for g, w in zip(G, walkable)]
+
+
+def _low_normals(x):
+    """The normals of the points within LOW_M of the lowest in their square
+    (the ground detector's, postprocess.ground.CELL_M); zero -- facing no
+    way, never ground -- for the rest, which stand too high to be ground.
+    That is most of a cloud, and every point's normal was a third of the
+    fill's time."""
+    sq = np.floor(x[:, [0, 2]] / GROUND_CELL_M).astype(np.int64) + 2 ** 20
+    _, inv = np.unique((sq[:, 0] << 21) | sq[:, 1], return_inverse=True)
+    low = np.full(inv.max() + 1, -np.inf)
+    np.maximum.at(low, inv, x[:, 1])                  # y is down: the largest y is the lowest
+    near = x[:, 1] > low[inv] - LOW_M
+    n = np.zeros_like(x)
+    n[near] = normals_from_neighbours(x[near])
+    return n
 
 
 def one_ground(clouds, cams, G):

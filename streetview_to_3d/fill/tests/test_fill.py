@@ -1,7 +1,6 @@
 import numpy as np
 
 from streetview_to_3d.fill.one_ground import grounds, one_ground
-from streetview_to_3d.postprocess.ground import normals_from_neighbours
 
 
 def _grid(a, b, step=0.05):
@@ -18,7 +17,7 @@ def test_blind_disc_filled_up_to_the_walls():
     walls = np.concatenate([np.stack([np.full(y.size, s * 3.0), y, z], 1) for s in (-1, 1)])
     cloud = np.concatenate([floor, walls])
     cam = np.array([0.0, -2.45, 0.0])
-    keep, surface = one_ground([cloud], cam[None], grounds([cloud], cam[None], [normals_from_neighbours(cloud)]))
+    keep, surface = one_ground([cloud], cam[None], grounds([cloud], cam[None]))
     assert (np.hypot(surface[:, 0], surface[:, 2]) < 1).any()     # under the camera
     assert np.abs(surface[:, 0]).max() < 3.3                        # never past the walls
     assert keep[0][:len(floor)].mean() < 0.03          # DA3's floor replaced by the one ground
