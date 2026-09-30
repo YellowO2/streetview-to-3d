@@ -2,9 +2,15 @@
 
 Footprints from osm.py, each raised into a block of points:
 
-  - height: its own "height" tag, else building:levels x LEVEL_M, else a
-    guess by kind (DEFAULT_M; most buildings carry neither -- NTU: 1864 of
-    2628)
+  - height: its own "height" tag, else building:levels (and roof:levels)
+    x LEVEL_M, else a guess by kind (DEFAULT_M; most buildings carry
+    neither -- NTU: 1864 of 2628)
+  - a building mapped in parts (OSM's "building:part": a church's nave,
+    tower and spire, the Eiffel Tower's floors) is drawn as its parts and
+    not its outline, each from its own min_height (or building:min_level)
+    up, so they stack; parts are left where OSM has them (not fitted)
+  - its roof as "roof:shape" has it (roofs.py), the walls up to where it
+    starts (height less roof:height); flat if it has none
   - one DA3 built a wall of is slid onto it, whatever still stands in
     front of that wall cut away as from a solid block, a guessed height
     made DA3's (fit_to_scene); what DA3 already has of it is left to DA3 and the rest
@@ -14,16 +20,22 @@ Footprints from osm.py, each raised into a block of points:
     are, as the land is (terrain.gap_at), and the walls again further in,
     sparser (INNER_M), so it is not seen through
   - one colour per building: what the scene's panos see of it where they
-    see enough (pano_colours), else its own "building:colour" tag, else one
+    see enough (pano_colours), else its own "building:colour" tag (or
+    building:material's, MATERIAL), else one
     of the place's own building colours, softened (palette) -- the
     satellite's, from 10 m up, came out grey-brown; walls shaded by which
-    way they face, the roof a little lighter (never a pano's own pixel:
-    from the street they see its edge against the sky)
+    way they face, the roof a little lighter and shaded the same way,
+    "roof:colour" (or roof:material's) if it has one (never a pano's own
+    pixel: from the street they see its edge against the sky)
 
 Called by terrain.build, which writes them to buildings.ply.
 """
+from dataclasses import dataclass
+
 import numpy as np
 from scipy.spatial import cKDTree
+
+from streetview_to_3d.postprocess.roofs import Roof
 
 LEVEL_M = 3.2
 DEFAULT_M = {"house": 7, "detached": 7, "semidetached_house": 7, "terrace": 7, "bungalow": 5,
@@ -51,6 +63,12 @@ NAMED = {"white": (0.95, 0.95, 0.93), "grey": (0.6, 0.6, 0.6), "gray": (0.6, 0.6
          "beige": (0.88, 0.8, 0.65), "yellow": (0.93, 0.83, 0.45), "orange": (0.9, 0.6, 0.3),
          "blue": (0.45, 0.6, 0.8), "green": (0.5, 0.7, 0.5), "pink": (0.93, 0.72, 0.75),
          "cream": (0.95, 0.9, 0.78), "tan": (0.82, 0.7, 0.55)}
+MATERIAL = {"brick": (0.72, 0.4, 0.32), "stone": (0.8, 0.76, 0.68), "sandstone": (0.86, 0.77, 0.6),
+            "limestone": (0.88, 0.85, 0.76), "concrete": (0.76, 0.76, 0.73), "glass": (0.62, 0.74, 0.82),
+            "metal": (0.66, 0.68, 0.7), "steel": (0.55, 0.52, 0.48), "copper": (0.45, 0.7, 0.62),
+            "plaster": (0.9, 0.86, 0.78), "wood": (0.62, 0.46, 0.32), "timber_framing": (0.9, 0.85, 0.75),
+            "roof_tiles": (0.72, 0.36, 0.26), "tile": (0.72, 0.36, 0.26), "slate": (0.36, 0.39, 0.43),
+            "tar_paper": (0.3, 0.3, 0.3), "eternit": (0.55, 0.55, 0.55), "zinc": (0.62, 0.65, 0.68)}
 WALL_SHADE = 0.85             # a wall facing away from the sun, of one facing it (0.6 looked dull)
 ROOF, INNER = -1, -2          # Blocks.edge for a roof's points and an inner wall's
 # DA3's own copy of a wall (da3_copy, on_plane, stretches): its points within SAME_M of the wall's
@@ -74,23 +92,60 @@ SEAM_FADE_M = 3.0             # the seam's width
 SEAM_TINT, SEAM_MIN = 0.8, 20
 
 
+def _number(tags, key):
+    try:
+        v = float(str(tags[key]).split()[0].replace(",", "."))
+        return v if v >= 0 else None
+    except (KeyError, ValueError, IndexError):
+        return None
+
+
 def _height(tags):
     """(height m, whether it is only a guess)."""
-    for key, per in (("height", 1.0), ("building:levels", LEVEL_M)):
-        try:
-            v = float(str(tags[key]).split()[0].replace(",", "."))
-            if v > 0:
-                return v * per, False
-        except (KeyError, ValueError):
-            pass
-    return DEFAULT_M.get(tags.get("building"), DEFAULT_OTHER_M), True
+    h = _number(tags, "height")
+    if h:
+        return h, False
+    levels = _number(tags, "building:levels")
+    if levels:
+        return (levels + (_number(tags, "roof:levels") or 0)) * LEVEL_M, False
+    return DEFAULT_M.get(tags.get("building", tags.get("building:part")), DEFAULT_OTHER_M), True
+
+
+@dataclass
+class Form:
+    """What an outline stands as besides its height: its roof (roofs.Roof),
+    where it starts above its ground (min_height), whether it is a part,
+    and its own colours from its tags (None: none)."""
+    roof: Roof
+    base_m: float = 0.0
+    part: bool = False
+    colour: object = None
+    roof_colour: object = None
+
+
+def _form(tags, xy, h):
+    base = _number(tags, "min_height")
+    if base is None:
+        base = (_number(tags, "building:min_level") or 0) * LEVEL_M
+    base = min(base, max(h - MIN_HEIGHT_M, 0.0))
+    roof_m = _number(tags, "roof:height")
+    if roof_m is None and _number(tags, "roof:levels"):
+        roof_m = _number(tags, "roof:levels") * LEVEL_M
+    roof = Roof(xy, str(tags.get("roof:shape", "flat")).strip().lower(), roof_m,
+                tags.get("roof:direction"), tags.get("roof:orientation") == "across")
+    roof.height = min(roof.height, h - base)
+    colour = lambda key, material: _parse_colour(tags[key]) if key in tags else \
+        (np.array(MATERIAL[tags[material]]) if tags.get(material) in MATERIAL else None)
+    return Form(roof, base, "building:part" in tags, colour("building:colour", "building:material"),
+                colour("roof:colour", "roof:material"))
 
 
 def _rings(elements):
-    """(element, ring) for each building outline among osm.fetch's
-    elements."""
+    """(element, ring) for each building or building part outline among
+    osm.fetch's elements."""
     for e in elements:
-        if "building" not in e.get("tags", {}):
+        tags = e.get("tags", {})
+        if "building" not in tags and "building:part" not in tags:
             continue
         rings = [e.get("geometry")] if e["type"] == "way" else \
             [m.get("geometry") for m in e.get("members", []) if m.get("role") == "outer"]
@@ -100,16 +155,25 @@ def _rings(elements):
 
 
 def outlines(elements, to_xy):
-    """[(outline (n, 2) east/north metres, closed, height m, guessed)] of
-    the buildings among osm.fetch's elements; to_xy(lat, lon) -> east,
+    """[(outline (n, 2) east/north metres, closed, height m, guessed, Form)]
+    of the buildings and building parts among osm.fetch's elements, a
+    building with parts left out for them; to_xy(lat, lon) -> east,
     north."""
+    import shapely
+    from shapely.geometry import Polygon
     out = []
     for e, ring in _rings(elements):
         xy = to_xy(ring)
         if (xy[:-1, 0] * xy[1:, 1] - xy[1:, 0] * xy[:-1, 1]).sum() < 0:   # counter-clockwise: normals face out
             xy = xy[::-1]
-        out.append((xy, *_height(e["tags"])))
-    return out
+        h, guessed = _height(e["tags"])
+        form = _form(e["tags"], xy, h)
+        out.append((xy, max(h, form.base_m + MIN_HEIGHT_M), guessed, form))
+    parts = [Polygon(o[0]).buffer(0).representative_point() for o in out if o[3].part]
+    if not parts:
+        return out
+    tree = shapely.STRtree(parts)
+    return [o for o in out if o[3].part or not len(tree.query(Polygon(o[0]).buffer(0), "contains"))]
 
 
 def _parse_colour(text):
@@ -123,13 +187,6 @@ def _parse_colour(text):
         except ValueError:
             return None
     return np.array(NAMED[t]) if t in NAMED else None
-
-
-def tagged(elements):
-    """[RGB or None] per outline (in outlines' order): its own
-    "building:colour" tag, if it has one."""
-    return [_parse_colour(e["tags"]["building:colour"]) if "building:colour" in e["tags"] else None
-            for e, _ in _rings(elements)]
 
 
 def soften(rgb):
@@ -169,14 +226,15 @@ def palette(photos):
     return np.array([soften(c) for c in centres]), share
 
 
-def colours(outlines, tags, palette_):
-    """(n, 3) each building's colour: its own tag, else one of the
-    palette's, picked by where it stands (the same every run) as often as
-    that colour is among the place's buildings."""
+def colours(outlines, palette_):
+    """(n, 3) each building's colour: its own tags' (Form.colour), else one
+    of the palette's, picked by where it stands (the same every run) as
+    often as that colour is among the place's buildings."""
     cols, share = palette_
     cum = np.cumsum(share) / share.sum()
     out = np.empty((len(outlines), 3))
-    for i, ((xy, *_), tag) in enumerate(zip(outlines, tags)):
+    for i, (xy, _, _, form, *_) in enumerate(outlines):
+        tag = form.colour
         if tag is not None:
             out[i] = tag
             continue
@@ -313,14 +371,14 @@ def fit_to_scene(outlines, da3, da3_normals, ground, on_road=None):
         return [o + ({},) for o in outlines], 0, 0
     lo, hi = da3[:, [0, 2]].min(0) - FIT_M, da3[:, [0, 2]].max(0) + FIT_M
     out, moved, trimmed = [], 0, 0
-    for xy, h, guessed in outlines:
-        if not ((xy.max(0) >= lo) & (xy.min(0) <= hi)).all():
-            out.append((xy, h, guessed, {}))
+    for xy, h, guessed, form in outlines:
+        if form.part or not ((xy.max(0) >= lo) & (xy.min(0) <= hi)).all():
+            out.append((xy, h, guessed, form, {}))
             continue
         base = ground(xy).min()
         walls = _walls(xy, base, h, da3, da3_normals)
         if not walls:
-            out.append((xy, h, guessed, {}))
+            out.append((xy, h, guessed, form, {}))
             continue
         a = xy[:-1]
         rows = np.array([n2[[0, 2]] for n2, _, _ in walls.values()])
@@ -335,11 +393,14 @@ def fit_to_scene(outlines, da3, da3_normals, ground, on_road=None):
         if cut is not None:
             xy, trimmed = cut, trimmed + 1
             walls = _walls(xy, base, h, da3, da3_normals)
+        if shift.any() or cut is not None:
+            form.roof = form.roof.on(xy)
         if guessed and walls:
             tops = np.concatenate([-da3[on, 1] for _, _, on in walls.values()])
             if len(tops):
                 h = max(MIN_HEIGHT_M, np.percentile(tops, TOP_PERCENTILE) - base)
-        out.append((xy, h, guessed, {j: (n2, d2) for j, (n2, d2, _) in walls.items()}))
+                form.roof.height = min(form.roof.height, h)
+        out.append((xy, h, guessed, form, {j: (n2, d2) for j, (n2, d2, _) in walls.items()}))
     return out, moved, trimmed
 
 
@@ -356,15 +417,18 @@ class Blocks:
     """Every building's points, and for each where on its building it is:
     which building, how lit (NaN on a roof), which wall edge (ROOF on a
     roof, INNER on an inner wall) and its place on that wall, u metres along and v metres up
-    (height above sea level), and how far it is from its neighbours (gap). edges[e]: (start, along, outward, length,
+    (height above sea level), and how far it is from its neighbours (gap); on a roof, what its
+    building's colour is multiplied by there (shade: lighter, lit by which way it faces) and
+    whether it keeps its own (own: roof:colour). edges[e]: (start, along, outward, length,
     DA3's plane for it (n2, d2) or None)."""
 
-    def __init__(self, pts, cols, which, light, edge, u, v, gap, edges):
+    def __init__(self, pts, cols, which, light, edge, u, v, gap, edges, shade, own):
         self.pts, self.cols, self.which, self.light = pts, cols, which, light
         self.edge, self.u, self.v, self.gap, self.edges = edge, u, v, gap, edges
+        self.shade, self.own = shade, own
 
     def take(self, keep):
-        for k in ("pts", "cols", "which", "light", "edge", "u", "v", "gap"):
+        for k in ("pts", "cols", "which", "light", "edge", "u", "v", "gap", "shade", "own"):
             setattr(self, k, getattr(self, k)[keep])
 
 
@@ -390,6 +454,14 @@ def _inset(xy, d):
     return np.asarray(orient(p, 1.0).exterior.coords)
 
 
+def _lit(normals, sun):
+    """How a roof facing normals (m, 3: east, north, up) is shaded, of a
+    flat one: shaded as the walls are, and a little lighter (ROOF_LIFT)."""
+    up = lambda n: WALL_SHADE + (1 - WALL_SHADE) * np.clip(n @ sun, 0, 1)
+    world = normals[:, [0, 2, 1]] * [1, -1, 1]                  # -> x east, y down, z north
+    return ROOF_LIFT * up(world) / up(np.array([0.0, -1.0, 0.0]))
+
+
 def points(outlines, spacing, ground, colour, sun):
     """Blocks for every outline.
 
@@ -397,20 +469,28 @@ def points(outlines, spacing, ground, colour, sun):
     pieces up to CHUNK_M long, each spaced as at its middle, so only what
     is near gets dense; ground(xy): the ground's height there; colour:
     (n, 3) each building's (colours) -- a roof a little lighter
-    (ROOF_LIFT), walls shaded by which way they face."""
-    roofs, walls, lights, edge_of, us, vs, gaps, roof_gaps, edges = [], [], [], [], [], [], [], [], []
-    for xy, h, _, planes in outlines:
-        base = ground(xy).min()
-        top = base + h
-        # roof: a grid over the outline, plus its corners, spaced as at its middle
+    (ROOF_LIFT), roofs and walls shaded by which way they face. Each
+    stands from its Form's base_m over its ground up to the roof, the roof
+    (roofs.py) up to its height, the walls reaching up to meet it (a
+    gable's end); a part that starts in the air has a flat underside."""
+    roofs, roof_shades, walls, lights, edge_of, us, vs, gaps, roof_gaps, edges = [], [], [], [], [], [], [], [], [], []
+    for xy, h, _, form, planes in outlines:
+        foot = ground(xy).min()
+        base, top = foot + form.base_m, foot + h
+        roof = form.roof
+        eaves = max(base, top - roof.height)
+        # roof, spaced as at its middle; an underside if it starts in the air
         s = float(max(spacing(xy.mean(0)[None])[0], ROOF_MIN_STEP_M))
-        lo, hi = xy.min(0), xy.max(0)
-        gx, gy = np.meshgrid(np.arange(lo[0], hi[0], s) + s / 2, np.arange(lo[1], hi[1], s) + s / 2)
-        grid = np.stack([gx.ravel(), gy.ravel()], 1)
-        roof = np.concatenate([grid[_inside(grid, xy)], xy[:-1]])
-        roofs.append(np.column_stack([roof[:, 0], np.full(len(roof), -top), roof[:, 1]]))
-        roof_gaps.append(np.full(len(roof), s))
-        # walls: along each edge and up it; lit by how squarely it faces the sun
+        rp, rn = roof.surface(s)
+        rp[:, 2] += eaves
+        if form.base_m > 0:
+            under = Roof(xy, "flat").surface(s)[0]
+            rp = np.concatenate([rp, np.c_[under[:, :2], np.full(len(under), base)]])
+            rn = np.concatenate([rn, np.tile([0.0, 0.0, -1.0], (len(under), 1))])
+        roofs.append(rp[:, [0, 2, 1]] * [1, -1, 1])
+        roof_shades.append(_lit(rn, sun))
+        roof_gaps.append(np.full(len(rp), s))
+        # walls: along each edge and up it, to where the roof meets it; lit by how squarely it faces the sun
         w, light, eo, uu, vv, gg = [], [], [], [], [], []
         for j, (a, c) in enumerate(zip(xy[:-1], xy[1:])):
             length = float(np.linalg.norm(c - a))
@@ -425,8 +505,11 @@ def points(outlines, spacing, ground, colour, sun):
                 c1 = min(length, c0 + CHUNK_M)
                 s = float(spacing((a + t * (c0 + c1) / 2)[None])[0])
                 along = np.arange(c0, c1, s)
-                levels = np.arange(base, top, s)
+                rise = roof.rise(a + t * along[:, None])
+                levels = np.arange(base, eaves + (rise.max() if len(rise) else 0), s)
                 U, V = np.repeat(along, len(levels)), np.tile(levels, len(along))
+                ok = V <= eaves + np.repeat(rise, len(levels)) + 1e-6
+                U, V = U[ok], V[ok]
                 w.append(np.column_stack([a[0] + t[0] * U, -V, a[1] + t[1] * U]))
                 light.append(np.full(len(U), lit))
                 eo.append(np.full(len(U), e))
@@ -444,7 +527,7 @@ def points(outlines, spacing, ground, colour, sun):
                 for c0 in np.arange(0, length, CHUNK_M):
                     c1 = min(length, c0 + CHUNK_M)
                     s = INNER_GAP * float(spacing((a + t * (c0 + c1) / 2)[None])[0])
-                    along, levels = np.arange(c0, c1, s), np.arange(base, top, s)
+                    along, levels = np.arange(c0, c1, s), np.arange(base, eaves, s)
                     U, V = np.repeat(along, len(levels)), np.tile(levels, len(along))
                     w.append(np.column_stack([a[0] + t[0] * U, -V, a[1] + t[1] * U]))
                     light.append(np.zeros(len(U)))
@@ -461,12 +544,13 @@ def points(outlines, spacing, ground, colour, sun):
     if not roofs:
         z = np.zeros((0, 3))
         return Blocks(z, z, np.zeros(0, int), np.zeros(0), np.zeros(0, int), np.zeros(0), np.zeros(0),
-                      np.zeros(0), [])
-    pts, cols, which, lit, edge, u, v, gap = [], [], [], [], [], [], [], []
-    for i, (roof, wall, light, eo, uu, vv, rg, gg) in enumerate(zip(roofs, walls, lights, edge_of, us, vs,
-                                                                     roof_gaps, gaps)):
+                      np.zeros(0), [], np.zeros(0), np.zeros(0, bool))
+    pts, cols, which, lit, edge, u, v, gap, shade, own = [], [], [], [], [], [], [], [], [], []
+    for i, (roof, rs, wall, light, eo, uu, vv, rg, gg) in enumerate(zip(roofs, roof_shades, walls, lights, edge_of,
+                                                                         us, vs, roof_gaps, gaps)):
+        mine = outlines[i][3].roof_colour
         pts += [roof, wall]
-        cols += [np.tile(np.clip(colour[i] * ROOF_LIFT, 0, 1), (len(roof), 1)),
+        cols += [np.clip((colour[i] if mine is None else mine) * rs[:, None], 0, 1),
                  colour[i] * (WALL_SHADE + (1 - WALL_SHADE) * light[:, None])]
         which.append(np.full(len(roof) + len(wall), i))
         lit += [np.full(len(roof), np.nan), light]
@@ -474,8 +558,11 @@ def points(outlines, spacing, ground, colour, sun):
         u += [np.zeros(len(roof)), uu]
         v += [-roof[:, 1], vv]
         gap += [rg, gg]
+        shade += [rs, np.ones(len(wall))]
+        own += [np.full(len(roof), mine is not None), np.zeros(len(wall), bool)]
     return Blocks(np.concatenate(pts), np.concatenate(cols), np.concatenate(which), np.concatenate(lit),
-                  np.concatenate(edge), np.concatenate(u), np.concatenate(v), np.concatenate(gap), edges)
+                  np.concatenate(edge), np.concatenate(u), np.concatenate(v), np.concatenate(gap), edges,
+                  np.concatenate(shade), np.concatenate(own))
 
 
 def seam(blocks, da3, da3_normals, da3_cols, roofs_near):

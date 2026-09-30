@@ -25,7 +25,9 @@ share of the view:
    cannot be had
 4. OpenStreetMap's buildings (buildings.py) and roads (roads.py) on it
    (osm.py); the roads, like the ground, not where the scene is; the
-   buildings fitted onto DA3's walls, what DA3 has of them left to it
+   buildings fitted onto DA3's walls, what DA3 has of them left to it; a
+   landmark mapped in parts (a spire, a dome) as its parts, each roof as
+   OSM shapes it (roofs.py)
 5. near the cameras (PAINT_M), all of it -- land, roads, walls -- coloured
    from the scene's own panos as the fill colours its ground (_paint), so
    it matches DA3 where they meet; the maps' colours are only for what no
@@ -297,9 +299,8 @@ def build(scene_dir, log=print):
     except (OSError, ValueError) as e:    # the land stands without them
         log(f"terrain: no OpenStreetMap ({e!r})")
         elements = []
-    kept = [(o, t) for o, t in zip(buildings.outlines(elements, to_xy), buildings.tagged(elements))
-            if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]       # an older, wider osm.json
-    outlines, tags = [o for o, _ in kept], [t for _, t in kept]
+    outlines = [o for o in buildings.outlines(elements, to_xy)
+                if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]       # an older, wider osm.json
     bp = bc = np.zeros((0, 3))
     b_roof = np.zeros(0, bool)
     n_fitted = n_trimmed = n_cut = 0
@@ -314,7 +315,7 @@ def build(scene_dir, log=print):
         except (OSError, ValueError) as e:  # a pastel palette stands
             log(f"terrain: no palette from the panos ({e!r})")
             panos, pal = ([], []), (np.array(buildings.PASTEL), np.full(len(buildings.PASTEL), 1 / 8))
-        base = buildings.colours(outlines, tags, pal)
+        base = buildings.colours(outlines, pal)
         blocks = buildings.points(outlines, gap, ground, base, SUN / np.linalg.norm(SUN))
         n_buildings = len(outlines)
         if panos[0]:
@@ -322,11 +323,11 @@ def build(scene_dir, log=print):
             own = buildings.pano_colours(blocks.pts, blocks.which, len(outlines), *panos, scene)
             seen = ~np.isnan(own[:, 0])
             base[seen] = buildings.cheer(own[seen])
-            recolour = seen[blocks.which]
+            recolour = seen[blocks.which] & ~blocks.own               # a roof:colour stands
             b = base[blocks.which[recolour]]
             roof = np.isnan(blocks.light[recolour])
             blocks.cols[recolour] = np.where(
-                roof[:, None], np.clip(b * buildings.ROOF_LIFT, 0, 1),
+                roof[:, None], np.clip(b * blocks.shade[recolour][:, None], 0, 1),
                 b * (buildings.WALL_SHADE + (1 - buildings.WALL_SHADE) * np.nan_to_num(blocks.light[recolour])[:, None]))
             n_seen = int(seen.sum())
         # what DA3 already has of a building is left to it; the rest meets it

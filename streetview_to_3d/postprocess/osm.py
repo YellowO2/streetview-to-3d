@@ -1,4 +1,5 @@
-"""OpenStreetMap around the scene: its buildings and roads, in one request.
+"""OpenStreetMap around the scene: its buildings (and building parts, how
+landmarks are mapped in 3D) and roads, in one request.
 
 The Overpass API needs no key (credit "© OpenStreetMap contributors") but
 is a free public service and is sometimes too busy (a 504 on NTU): each
@@ -22,7 +23,7 @@ CACHE = "osm.json"        # beside scene.json: a rebuild never asks again
 
 
 def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None):
-    """Every building way and relation within buildings_m and road way
+    """Every building and building part way and relation within buildings_m and road way
     within roads_m, geometry included, as Overpass returns them; kept in
     scene_dir's CACHE once had."""
     cache = scene_dir and os.path.join(scene_dir, CACHE)
@@ -32,7 +33,8 @@ def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None
     box = lambda r: (f"{lat0 - r / m_per_lat},{lon0 - r / m_per_lon},"
                      f"{lat0 + r / m_per_lat},{lon0 + r / m_per_lon}")
     query = (f'[out:json][timeout:180];(way["building"]({box(buildings_m)});'
-             f'relation["building"]({box(buildings_m)});way["highway"]({box(roads_m)}););out geom;')
+             f'relation["building"]({box(buildings_m)});way["building:part"]({box(buildings_m)});'
+             f'relation["building:part"]({box(buildings_m)});way["highway"]({box(roads_m)}););out geom;')
     data = urllib.parse.urlencode({"data": query}).encode()
     error = None
     for url in OVERPASS_URLS:
