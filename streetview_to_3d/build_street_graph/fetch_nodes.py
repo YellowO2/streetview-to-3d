@@ -1,6 +1,8 @@
 """Gather every Google panorama along a street corridor (no GPU)."""
 import asyncio
 
+from streetlevel import streetview
+
 from streetview_to_3d.services.geo import haversine_m
 from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id
 from streetview_to_3d.ui.map_selection.candidates import MAX_NODES, nearby_nodes, node_key
@@ -30,6 +32,9 @@ MERGE_DIST_M = 8.0
 # bridge_components) -- about the reach of a real link between neighbouring
 # panos, so DA3 has as good a chance there as along a street.
 BRIDGE_DIST_M = 15.0
+
+# See _search_at.
+SEARCH_RADIUS_M = 15.0
 
 
 def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[int]]]:
@@ -155,6 +160,26 @@ def bridge_components(points, adjacency, connect, max_gap_m: float = BRIDGE_DIST
             connect(i, j)
 
 
+def _search_at(lat, lon, max_dist_m):
+    """The official pano at a dot the tile discovery left empty.
+
+    Discovery keeps a walked (scout) path's panos only every 12-24 m
+    (candidates._probe_line_gaps), so a dot on one often has none within
+    max_dist_m, though the dot itself came from a real pano there. One
+    direct search finds it. Searched wider than max_dist_m (the endpoint
+    misses panos it should return at a few metres) and then held to it.
+    """
+    try:
+        p = streetview.find_panorama(lat, lon, radius=SEARCH_RADIUS_M)
+    except Exception as e:
+        print(f"Google search failed at ({lat}, {lon}): {e}")
+        return []
+    if p is None or (p.source or "").startswith("photos:") or haversine_m(lat, lon, p.lat, p.lon) > max_dist_m:
+        return []
+    return [{"key": node_key("google", p.id), "source": "google", "id": p.id,
+             "lat": p.lat, "lon": p.lon, "heading": p.heading}]
+
+
 def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
     """Every Google pano within max_dist_m of any real corridor node (see
     corridor_points). (Apple Look Around was here too: its GPS sits 1-1.6 m
@@ -192,6 +217,8 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
         except Exception as e:
             print(f"Google lookup failed near ({lat}, {lon}): {e}")
             google_candidates = []
+        if not google_candidates:
+            google_candidates = _search_at(lat, lon, max_dist_m)
         for gc in google_candidates:
             if gc["id"] in seen_google_ids:
                 continue

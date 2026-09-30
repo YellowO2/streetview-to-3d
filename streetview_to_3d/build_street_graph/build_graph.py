@@ -38,7 +38,7 @@ def build_corridor_graphs(corridor_edges, start_lat, start_lon, goals,
     branches), no distance-based fallback needed since each dot is
     already a real, individually-searched location.
 
-    Ranked best-first by coverage span (see date_ranking.rank_dates), and
+    Ranked best-first by dots covered (see date_ranking.rank_dates), and
     a candidate date only counts toward top_n_dates if its own dots can
     structurally reach from the start toward at least one goal (see
     date_ranking.date_connects) -- checked AFTER capping, since

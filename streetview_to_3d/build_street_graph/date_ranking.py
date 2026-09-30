@@ -6,7 +6,7 @@ reconstruct/walk_graph.py for the actual algorithm).
 """
 from streetview_to_3d.services.geo import haversine_m
 
-# Dates kept, ranked by coverage span. Single source of truth for how many
+# Dates kept, ranked by dots covered. Single source of truth for how many
 # isolated per-date graphs build_corridor_graphs ever builds. 5 now that a
 # date only costs its sampled panos up front (walk_graph._sample_dates)
 # and the walk skips dates that sample badly or aren't needed for
@@ -30,10 +30,14 @@ def date_recency_key(date_str):
 
 
 def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
-    """Every date present in ANY dot's bucket, ranked best-first by span
-    (earliest to latest dot it has a pano in -- does coverage reach start
-    to end), then total dot count, then recency (newer wins) as the final
-    tiebreaker -- without it, ties fall back to insertion order.
+    """Every date present in ANY dot's bucket, ranked best-first by how
+    many dots it has a pano at, then recency (newer wins) as the tiebreaker
+    -- without it, ties fall back to insertion order.
+
+    Not by span (lowest to highest dot index), as it was: dot indices only
+    run start to end along a single street. An area's dots are numbered in
+    walk order (candidates.expand_area), so a park's walked paths sit in
+    one run of indices and ranked below road dates covering fewer dots.
 
     Computed directly from the buckets (no edges needed) -- "which dots
     have a pano of this date" is exactly what a bucket already tells us.
@@ -47,12 +51,8 @@ def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
         for n in bucket:
             covered_by_date.setdefault(n["date"], set()).add(dot_index)
 
-    scored = []
-    for date, covered in covered_by_date.items():
-        span = max(covered) - min(covered)
-        scored.append((date, span, len(covered)))
-    scored.sort(key=lambda t: (t[1], t[2], date_recency_key(t[0])), reverse=True)
-    return [date for date, _, _ in scored]
+    scored = sorted(covered_by_date.items(), key=lambda t: (len(t[1]), date_recency_key(t[0])), reverse=True)
+    return [date for date, _ in scored]
 
 
 def _components(adjacency, dots):
