@@ -5,7 +5,9 @@ export function createViewport(host) {
   scene.background = new THREE.Color('#11171e');
   const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 10000);
   const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  // drawn at most 1.5 pixels a screen point: the paint style's softness hides it, and a
+  // Retina screen's 2 shades 1.8 times the pixels
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const canvas = renderer.domElement;
   canvas.tabIndex = 0;

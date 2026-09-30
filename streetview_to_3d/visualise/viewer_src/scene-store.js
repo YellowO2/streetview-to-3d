@@ -13,7 +13,7 @@ import {
   BLOCKS,
 } from '@viewer/scene-format';
 import { waterSurfaces, disposeWater } from '@viewer/effects/water';
-import { parseBlocks, blocksMesh } from '@viewer/effects/blocks';
+import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
 export function matrixRows(m) {
@@ -45,15 +45,15 @@ export function dispose(group) {
 }
 const loader = new PLYLoader();
 loader.setCustomPropertyNameMapping({ gap: ['gap'] });
-// land.ply or roads.ply as one solid surface, as games draw ground. The
-// land pushed back a little in depth (polygonOffset), so what lies on it --
-// roads 15 cm up, the scene's ground 10 cm up -- wins even a kilometre off,
-// where 15 cm is under the depth buffer's step.
-export function landMesh(buffer, key = LAND) {
+// land.ply as one solid surface, as games draw ground: the canvas the
+// points stand on. Pushed back a little in depth (polygonOffset), so what
+// lies on it -- roads 15 cm up, the scene's ground 10 cm up -- wins even a
+// kilometre off, where 15 cm is under the depth buffer's step.
+export function landMesh(buffer) {
   const geometry = loader.parse(buffer);
   if (!geometry.getAttribute('position')?.count || !geometry.index) {
     geometry.dispose();
-    throw Error(`${key}.ply has no triangles.`);
+    throw Error(`${LAND}.ply has no triangles.`);
   }
   geometry.applyMatrix4(flip);
   const mesh = new THREE.Mesh(
@@ -61,13 +61,30 @@ export function landMesh(buffer, key = LAND) {
     new THREE.MeshBasicMaterial({
       vertexColors: true,
       side: THREE.DoubleSide,
-      polygonOffset: key === LAND,
+      polygonOffset: true,
       polygonOffsetFactor: 1,
       polygonOffsetUnits: 4,
     }),
   );
-  mesh.userData.surroundings = key;
+  mesh.userData.surroundings = LAND;
   return mesh;
+}
+// A surface stored as triangles (roads.ply, blocks.ply) drawn as the rest of
+// the world is: points (effects/scatter.js), in bands by their spacing
+// (terrainBands).
+export function surfacePoints(buffer, key) {
+  const triangles = parseSurface(buffer, flip, `${key}.ply`);
+  const geometry = scatter(triangles);
+  triangles.dispose();
+  if (!geometry.getAttribute('position').count) {
+    geometry.dispose();
+    return [];
+  }
+  const bands = terrainBands(
+    new THREE.Points(geometry, new THREE.PointsMaterial({ vertexColors: true })),
+  );
+  for (const band of bands) band.userData.surroundings = key;
+  return bands;
 }
 export function parsePoints(buffer, transform) {
   const geometry = loader.parse(buffer);
@@ -96,7 +113,8 @@ export function parsePoints(buffer, transform) {
 // (userData.pointSize), just over that spacing -- one number, the spacing.
 // Points with none (an older scene) are spaced by SPACING, the same rule
 // from the nearest camera.
-const GAPS = [0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 8, 12, 20, Infinity];
+const TILE_M = 200,
+  TILE = 40;
 const nearest = (x, z, places) => Math.min(...places.map(([a, b]) => Math.hypot(x - a, z - b)));
 const POINT_M = 0.1,
   RATE0 = 0.005,
@@ -127,29 +145,31 @@ export function terrainBands(points, spacing = SPACING.terrain, cams = [[0, 0]])
     gaps = geometry.getAttribute('gap'),
     // PLYLoader adds it, empty or all 0, when a ply has none
     own = gaps?.count === p.count && gaps.array.some((v) => v > 0) ? gaps : null;
-  const group = new Uint8Array(p.count);
+  // a band in tiles, TILE of its spacing across (TILE_M at least), so what is
+  // out of view is skipped (three.js leaves out what its bounding sphere shows is)
+  const members = new Map();
   for (let i = 0; i < p.count; i++) {
-    const gap = (own ? own.getX(i) : spacing(p.getX(i), p.getZ(i), cams)) * 0.999;
-    while (gap > GAPS[group[i]]) group[i]++;
+    const g = level(own ? own.getX(i) : spacing(p.getX(i), p.getZ(i), cams));
+    const tile = Math.max(TILE_M, TILE * GAPS[g]);
+    const key = `${g},${Math.floor(p.getX(i) / tile)},${Math.floor(p.getZ(i) / tile)}`;
+    if (!members.has(key)) members.set(key, []);
+    members.get(key).push(i);
   }
-  const bands = GAPS.flatMap((gap, g) => {
-    const members = [];
-    for (let i = 0; i < p.count; i++) if (group[i] === g) members.push(i);
-    if (!members.length) return [];
+  const bands = [...members].map(([key, of]) => {
+    const gap = GAPS[Number(key.split(',')[0])];
     const part = new THREE.BufferGeometry();
-    const pick = (attr) =>
-      new THREE.Float32BufferAttribute(
-        members.flatMap((i) => [attr.getX(i), attr.getY(i), attr.getZ(i)]),
-        3,
-      );
+    const pick = (attr) => {
+      const out = new Float32Array(3 * of.length);
+      of.forEach((i, j) => out.set([attr.getX(i), attr.getY(i), attr.getZ(i)], 3 * j));
+      return new THREE.Float32BufferAttribute(out, 3);
+    };
     part.setAttribute('position', pick(p));
     if (c) part.setAttribute('color', pick(c));
     part.computeBoundingBox();
     part.computeBoundingSphere();
     const band = new THREE.Points(part, points.material.clone());
-    const spaced = Number.isFinite(gap) ? gap : 30;
-    band.userData.pointSize = spaced + OVER_M;
-    return [band];
+    band.userData.pointSize = gap + OVER_M;
+    return band;
   });
   geometry.dispose();
   points.material.dispose();
@@ -229,26 +249,25 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           group.add(part);
         }
       }
-      for (const key of placement === 'world' ? [LAND, ROADS] : []) {
+      if (placement === 'world' && data[LAND]) {
+        progress('Loading the land…');
+        const buffer = await readBuffer(resolve(relativePath(data[LAND])));
+        if (cancelled()) {
+          dispose(group);
+          return null;
+        }
+        group.add(landMesh(buffer));
+      }
+      for (const key of placement === 'world' ? [ROADS, BLOCKS] : []) {
         if (!data[key]) continue;
-        progress(`Loading the ${key}…`);
+        progress(`Loading the ${key === BLOCKS ? 'far buildings' : key}…`);
         const buffer = await readBuffer(resolve(relativePath(data[key])));
         if (cancelled()) {
           dispose(group);
           return null;
         }
-        group.add(landMesh(buffer, key));
-      }
-      if (placement === 'world' && data[BLOCKS]) {
-        progress('Loading the far buildings…');
-        const buffer = await readBuffer(resolve(relativePath(data[BLOCKS])));
-        if (cancelled()) {
-          dispose(group);
-          return null;
-        }
-        const mesh = blocksMesh(parseBlocks(buffer, flip));
-        mesh.userData.surroundings = BLOCKS;
-        group.add(mesh);
+        for (const band of surfacePoints(buffer, key)) group.add(band);
+        await new Promise((r) => setTimeout(r, 0));
       }
       if (placement === 'world' && data[WATER]) {
         progress('Loading the water…');

@@ -29,9 +29,8 @@ roads and buildings on it are points, spaced the same way:
    buildings fitted onto DA3's walls, what DA3 has of them left to it; a
    landmark mapped in parts (a spire, a dome) as its parts, each roof as
    OSM shapes it (roofs.py) and coloured as the satellite sees it.
-   Roads, bridges and buildings are points near the cameras and solid
-   (triangles) further off, the points thinning out over FADE_M above the
-   solid, so one dissolves into the other
+   Roads, bridges and buildings are points within NEAR_M of a camera,
+   and stored as triangles further off (drawn as points all the same)
 5. near the cameras (PAINT_M), all of it -- land, roads, walls -- coloured
    from the scene's own panos as the fill colours its ground (_paint), so
    it matches DA3 where they meet; the maps' colours are only for what no
@@ -44,9 +43,12 @@ Written to land.ply beside scene.json (its "land", triangles), the roads
 near the scene and bridges to terrain.ply (its "terrain"), the roads
 further out to roads.ply (its "roads", triangles), the buildings,
 spaced the same way, to buildings.ply (its "buildings"), the far ones
-solid to blocks.ply (its "blocks"), all already in the world frame, and the water to water.json (its "water"). The viewer
-draws each point as big as it is spaced (the ply's "gap": point_gap;
-scene-store.js, terrainBands).
+solid to blocks.ply (its "blocks"), all already in the world frame, and the water to water.json (its "water").
+The land is drawn as a surface, the ground everything stands on; all else
+as points: the viewer scatters points over the roads' and far buildings'
+triangles as it loads them (effects/scatter.js), each triangle's corners
+saying how far apart; it draws every point as big as it is spaced (the
+ply's "gap": point_gap; scene-store.js, terrainBands).
 
     python -m streetview_to_3d.postprocess.terrain SCENE_DIR
 """
@@ -77,8 +79,7 @@ COLOUR_ZOOM = 14          # ~10 m a pixel, the imagery's own
 NEAR_RADIUS_M, FAR_RADIUS_M = 1000.0, 2000.0  # the land's reach: far only where hills rise HILL_M over the scene
 HILL_M = 50.0
 BUILDINGS_M, ROADS_M = 1000.0, 700.0         # OSM's reach (roads are drawn only where a point wide, ~600 m)
-FADE_M = (40.0, 60.0)                      # roads, bridges, buildings: points to FADE_M[1] from a camera, fewer
-                                           # and fewer past FADE_M[0]; a surface past FADE_M[0], under them
+NEAR_M = 50.0                              # roads, bridges, buildings: points this near a camera, triangles past
 PAINT_M = 30.0                            # map points this near a camera are coloured from the panos
 TINT_M, MEET_M = 8.0, 10.0                # the ground's seam with the scene (seams.py): bands
 BRIDGE_CLEAR_M = {"road": 4.5, "water": 2.5}     # a bridge's deck at least this over each (the land fits under it)
@@ -327,10 +328,6 @@ def build(scene_dir, log=print):
     cell, n = np.unique(np.floor(scene[:, [0, 2]]), axis=0, return_counts=True) if len(scene) else (cam_xz, None)
     edge_tree = cKDTree(cell[n >= 3] + 0.5 if n is not None and (n >= 3).any() else cam_xz)
     gap = lambda xy: point_gap(edge_tree.query(xy)[0])
-    rng = np.random.default_rng(0)
-    # past FADE_M[0] ever fewer points, gone by FADE_M[1]: the surface under them shows through
-    fading = lambda xy: rng.random(len(xy)) >= np.clip(
-        (cam_tree.query(xy)[0] - FADE_M[0]) / (FADE_M[1] - FADE_M[0]), 0, 1)
     # the roads a game map keeps, one surface; they decide their own height
     # (the ground smoothed) and the land fits itself to them (roads.py)
     net = roads.Network(elements, to_xy)
@@ -470,10 +467,9 @@ def build(scene_dir, log=print):
                 b * (buildings.WALL_SHADE + (1 - buildings.WALL_SHADE) * np.nan_to_num(blocks.light[recolour])[:, None]))
             n_seen = int(seen.sum())
         # far off, solid, not points -- coloured by the panos all the same
-        far = buildings.far(outlines, cam_xz, FADE_M[0])
+        far = buildings.far(outlines, cam_xz, NEAR_M)
         solid, solid_base = [o for o, f in zip(outlines, far) if f], base[far]
-        blocks.take(~buildings.far(outlines, cam_xz, FADE_M[1])[blocks.which])
-        blocks.take(fading(blocks.pts[:, [0, 2]]))
+        blocks.take(~far[blocks.which])
         # what DA3 already has of a building is left to it; the rest meets it
         roofs_near = cKDTree(scene).query(blocks.pts, distance_upper_bound=1.0)[0] if len(scene) \
             else np.full(len(blocks.pts), np.inf)
@@ -482,12 +478,11 @@ def build(scene_dir, log=print):
         bp, bc, b_roof, b_gap = blocks.pts, blocks.cols, blocks.edge == buildings.ROOF, blocks.gap
     road_mesh = None
     if net.shapes:
-        near_cams = shapely.union_all(shapely.buffer(shapely.points(cam_xz), FADE_M[0], quad_segs=16))
+        near_cams = shapely.union_all(shapely.buffer(shapely.points(cam_xz), NEAR_M, quad_segs=16))
         road_mesh = roads.surface(net, road_h,
                                   shapely.difference(shapely.box(-radius, -radius, radius, radius), near_cams))
-        rp, rc = roads.points(net, gap, road_h, lambda xy: cam_tree.query(xy)[0] < FADE_M[1])
-        keep = fading(rp[:, [0, 2]])
-        keep &= uncovered(rp[:, [0, 2]], gap(rp[:, [0, 2]]))
+        rp, rc = roads.points(net, gap, road_h, lambda xy: cam_tree.query(xy)[0] < NEAR_M)
+        keep = uncovered(rp[:, [0, 2]], gap(rp[:, [0, 2]]))
         keep &= ~wet.inside(rp[:, [0, 2]])                              # no road in the water
         rp = rp[keep]
         pts, cols = np.concatenate([pts, rp]), np.concatenate([cols, rc[keep]])
@@ -497,9 +492,8 @@ def build(scene_dir, log=print):
     n_bridges = len(over)
     if over:
         # near the cameras points, as the roads; further, a surface with the far roads
-        d = [cam_tree.query(b.xy)[0] for b in over]
-        close = np.array([x.min() < FADE_M[1] for x in d], bool)
-        far_b = roads.bridge_surface([b for b, x in zip(over, d) if x.max() > FADE_M[0]])
+        close = np.array([cam_tree.query(b.xy)[0].min() < NEAR_M for b in over], bool)
+        far_b = roads.bridge_surface([b for b, c in zip(over, close) if not c])
         if len(far_b[2]):
             road_mesh = far_b if road_mesh is None or not len(road_mesh[2]) else (
                 np.concatenate([road_mesh[0], far_b[0]]), np.concatenate([road_mesh[1], far_b[1]]),
@@ -508,7 +502,7 @@ def build(scene_dir, log=print):
     if over:
         bp_, bc_ = roads.bridge_points(over, gap)
         d, g, _ = near(bp_[:, [0, 2]])
-        keep = (d > 0) & fading(bp_[:, [0, 2]])          # the scene's footprint: its own bridge
+        keep = d > 0                                     # the scene's footprint: its own bridge
         bp_, bc_ = bp_[keep], bc_[keep]
         pts, cols = np.concatenate([pts, bp_]), np.concatenate([cols, bc_])
 
@@ -525,7 +519,7 @@ def build(scene_dir, log=print):
     write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces)
     sc.roads = None
     if road_mesh is not None and len(road_mesh[2]):
-        write_mesh(os.path.join(scene_dir, ROADS_FILENAME), *road_mesh)
+        write_mesh(os.path.join(scene_dir, ROADS_FILENAME), *road_mesh, gap=gap(road_mesh[0][:, [0, 2]]))
         sc.roads = ROADS_FILENAME
     sc.land = LAND_FILENAME
     sc.terrain = None
@@ -540,8 +534,10 @@ def build(scene_dir, log=print):
         sc.buildings = BUILDINGS_FILENAME
     sc.blocks = None
     if solid:
-        write_mesh(os.path.join(scene_dir, BLOCKS_FILENAME),
-                   *buildings.solid(solid, ground, solid_base, SUN / np.linalg.norm(SUN)))
+        # a building's points all alike: spaced as its nearest point is
+        one = np.array([gap(xy).min() for xy, *_ in solid])
+        v, c, f, facade, g = buildings.solid(solid, ground, solid_base, SUN / np.linalg.norm(SUN), one)
+        write_mesh(os.path.join(scene_dir, BLOCKS_FILENAME), v, c, f, facade, g)
         sc.blocks = BLOCKS_FILENAME
     sc.save(scene_dir)
     fix = np.abs(fixes - shift)

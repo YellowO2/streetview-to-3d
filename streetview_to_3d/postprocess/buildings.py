@@ -35,9 +35,10 @@ Footprints from osm.py, each raised into a block of points:
     from the street they see its edge against the sky
 
 Away from the cameras a building is written solid instead (solid; far,
-terrain.FADE_M): a few dozen triangles, not thousands of points -- walls
+terrain.NEAR_M): a few dozen triangles, not thousands of points -- walls
 and roof shaded as the points are, each vertex carrying its place on its
-wall, from which the viewer draws its floors of windows (effects/blocks.js).
+wall. The viewer draws them as points all the same, scattered over the
+triangles, with floors of windows from that place (effects/scatter.js).
 Near the points, windows the same way (windows).
 
 Called by terrain.build, which writes them to buildings.ply and the solid
@@ -711,7 +712,12 @@ def far(outlines, cams, m):
     return np.array([tree.query(xy)[0].min() > m for xy, *_ in outlines], bool)
 
 
-def solid(outlines, ground, colour, sun):
+def _turning(xy):
+    """Twice the signed area of closed outline xy: over 0 counter-clockwise."""
+    return float(np.sum(xy[:-1, 0] * xy[1:, 1] - xy[1:, 0] * xy[:-1, 1]))
+
+
+def solid(outlines, ground, colour, sun, spacing=None):
     """Every outline as triangles: (vertices (n, 3) world frame, colours
     (n, 3), faces (m, 3), facade (n, 2)): walls from its base (Form.base_m)
     to where the roof meets them, lit by which way they face; its roof
@@ -719,8 +725,9 @@ def solid(outlines, ground, colour, sun):
     underside if it starts in the air. facade: a wall vertex's metres
     along its wall -- from a whole number of bays (BAY_M) before its
     start, a different one each wall, so each wall's panes vary their own
-    way -- and up from the ground, NO_FACADE on a roof."""
-    V, C, F, U = [], [], [], []
+    way -- and up from the ground, NO_FACADE on a roof. With spacing (one
+    per outline), also each vertex's: one building's points all alike."""
+    V, C, F, U, G = [], [], [], [], []
     count = 0
 
     def add(pts, col, faces, facade):
@@ -729,6 +736,7 @@ def solid(outlines, ground, colour, sun):
         C.append(np.broadcast_to(col, pts.shape))
         F.append(faces + count)
         U.append(facade)
+        G.append(np.full(len(pts), spacing[i] if spacing is not None else 0.0))
         count += len(pts)
 
     world = lambda en, up: np.c_[en[:, 0], -up, en[:, 1]]
@@ -738,7 +746,8 @@ def solid(outlines, ground, colour, sun):
         low = base - (0.0 if form.base_m else form.skirt_m)      # its walls' bottom
         roof = form.roof
         eaves = max(base, top - roof.height)
-        for j, (a, c) in enumerate(zip(xy[:-1], xy[1:])):
+        ring = xy if _turning(xy) > 0 else xy[::-1]      # counter-clockwise: each wall's inside to its left
+        for j, (a, c) in enumerate(zip(ring[:-1], ring[1:])):
             length = float(np.linalg.norm(c - a))
             if length < 1e-6:
                 continue
@@ -771,11 +780,14 @@ def solid(outlines, ground, colour, sun):
         add(world(pts[:, :2], eaves + pts[:, 2]), np.repeat(np.clip(roof_colour * _lit(normal, sun)[:, None], 0, 1), 3, 0),
             np.arange(len(pts)).reshape(-1, 3), np.full((len(pts), 2), NO_FACADE))
     if not V:
-        return np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3), int), np.zeros((0, 2))
-    # corners alike in place, colour and facade are one (a flat roof's, a wall's strip)
-    rows = np.c_[np.concatenate(V), np.round(np.concatenate(C) * 255), np.concatenate(U)].astype(np.float32)
+        empty = np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3), int), np.zeros((0, 2))
+        return empty if spacing is None else (*empty, np.zeros(0))
+    # corners alike in place, colour, facade and spacing are one (a flat roof's, a wall's strip)
+    rows = np.c_[np.concatenate(V), np.round(np.concatenate(C) * 255), np.concatenate(U),
+                 np.concatenate(G)].astype(np.float32)
     rows, index = np.unique(rows, axis=0, return_inverse=True)
-    return rows[:, :3], rows[:, 3:6] / 255, index.ravel()[np.concatenate(F)], rows[:, 6:]
+    out = rows[:, :3], rows[:, 3:6] / 255, index.ravel()[np.concatenate(F)], rows[:, 6:8]
+    return out if spacing is None else (*out, rows[:, 8])
 
 
 def seam(blocks, da3, da3_normals, da3_cols, roofs_near):

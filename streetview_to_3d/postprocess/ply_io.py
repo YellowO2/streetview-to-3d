@@ -44,29 +44,35 @@ def write_ply(path, pts, cols, gap=None):
         f.write(verts.tobytes())
 
 
-def write_mesh(path, pts, cols, faces, facade=None):
+def write_mesh(path, pts, cols, faces, facade=None, gap=None):
     """A triangle mesh: pts (n, 3), cols (n, 3) 0-1, faces (m, 3) indices
     into them, facade (n, 2) each vertex's place on its wall, metres along
-    and up (postprocess/buildings.solid), or None (the land)."""
+    and up (postprocess/buildings.solid), or None (the land); gap (n,) how
+    far apart the viewer spaces the points it draws the surface as, there,
+    or None."""
     n, m = len(pts), len(faces)
     header = (
         "ply\nformat binary_little_endian 1.0\n"
         f"element vertex {n}\n"
         "property float x\nproperty float y\nproperty float z\n"
         "property uchar red\nproperty uchar green\nproperty uchar blue\n"
-        + ("property float facade_u\nproperty float facade_v\n" if facade is not None else "") +
+        + ("property float facade_u\nproperty float facade_v\n" if facade is not None else "")
+        + ("property float gap\n" if gap is not None else "") +
         f"element face {m}\n"
         "property list uchar int vertex_indices\n"
         "end_header\n"
     ).encode("ascii")
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")]
     fields += [("facade_u", "<f4"), ("facade_v", "<f4")] if facade is not None else []
+    fields += [("gap", "<f4")] if gap is not None else []
     verts = np.zeros(n, dtype=np.dtype(fields))
     verts["x"], verts["y"], verts["z"] = pts[:, 0], pts[:, 1], pts[:, 2]
     rgb = (np.clip(cols, 0, 1) * 255).astype("u1")
     verts["red"], verts["green"], verts["blue"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
     if facade is not None:
         verts["facade_u"], verts["facade_v"] = facade[:, 0], facade[:, 1]
+    if gap is not None:
+        verts["gap"] = gap
     tris = np.zeros(m, dtype=np.dtype([("n", "u1"), ("i", "<i4", 3)]))
     tris["n"], tris["i"] = 3, faces
     with open(path, "wb") as f:
