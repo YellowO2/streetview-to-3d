@@ -142,6 +142,26 @@ def coverage(roads, step_m=0.5):
     return f
 
 
+def near(roads, margin_m, step_m=1.0):
+    """f(east/north (n, 2)) -> whether within margin_m of a road's side."""
+    from scipy.spatial import cKDTree
+    pts, half = [], []
+    for xy, width, _ in roads:
+        for a, b in zip(xy[:-1], xy[1:]):
+            n = max(2, int(np.linalg.norm(b - a) / step_m))
+            pts.append(a + (b - a) * np.linspace(0, 1, n)[:, None])
+            half.append(np.full(n, width / 2 + margin_m))
+    if not pts:
+        return lambda xy: np.zeros(len(xy), bool)
+    tree, half = cKDTree(np.concatenate(pts)), np.concatenate(half)
+    reach = float(half.max())
+
+    def f(xy):
+        d, k = tree.query(xy, distance_upper_bound=reach)
+        return d < half[np.minimum(k, len(half) - 1)]
+    return f
+
+
 def points(roads, step, ground):
     """(points (n, 3) world, colours (n, 3)) for every road.
 

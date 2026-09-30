@@ -107,8 +107,9 @@ class Scene:
     nodes: list[Node] = field(default_factory=list)
     adjacency: dict[str, list[int]] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
-    # the land, buildings and roads around the scene: a .ply beside
-    # scene.json, already in the world (postprocess/terrain.py)
+    # the land around the scene, a triangle .ply beside scene.json already
+    # in the world, and its roads and bridges, points (postprocess/terrain.py)
+    land: str | None = None
     terrain: str | None = None
     # the OSM buildings around it, spaced finer than the land (same module)
     buildings: str | None = None
@@ -173,5 +174,5 @@ class Scene:
                    nodes=[Node(pano=Pano(**n.pop("pano")), **n) for n in d["nodes"]],
                    adjacency={str(k): v for k, v in d["adjacency"].items()},
                    edges=[Edge(**e) for e in d["edges"]],
-                   terrain=d.get("terrain"), buildings=d.get("buildings"), water=d.get("water"),
+                   land=d.get("land"), terrain=d.get("terrain"), buildings=d.get("buildings"), water=d.get("water"),
                    blocks=d.get("blocks"))

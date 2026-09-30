@@ -7,6 +7,7 @@ import {
   scenePieces,
   gpsPlacement,
   SURROUNDINGS,
+  LAND,
   WATER,
   BLOCKS,
 } from '@viewer/scene-format';
@@ -35,12 +36,37 @@ export function dispose(group) {
       o.material.dispose();
     } else if (o.userData.splat) o.dispose();
     else if (o.isMesh) {
-      o.geometry.dispose(); // water: its surfaces share one material
-      disposeWater(o.material);
+      o.geometry.dispose();
+      if (o.userData.surroundings === WATER) disposeWater(o.material); // its surfaces share one
+      else o.material.dispose();
     }
   });
 }
 const loader = new PLYLoader();
+// land.ply as one solid surface, as games draw ground. Pushed back a little
+// in depth (polygonOffset), so what lies on it -- roads 15 cm up, the
+// scene's ground 10 cm up -- wins even a kilometre off, where 15 cm is
+// under the depth buffer's step.
+export function landMesh(buffer) {
+  const geometry = loader.parse(buffer);
+  if (!geometry.getAttribute('position')?.count || !geometry.index) {
+    geometry.dispose();
+    throw Error('land.ply has no triangles.');
+  }
+  geometry.applyMatrix4(flip);
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 4,
+    }),
+  );
+  mesh.userData.surroundings = LAND;
+  return mesh;
+}
 export function parsePoints(buffer, transform) {
   const geometry = loader.parse(buffer);
   try {
@@ -192,6 +218,15 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           part.userData.surroundings = key;
           group.add(part);
         }
+      }
+      if (placement === 'world' && data[LAND]) {
+        progress('Loading the land…');
+        const buffer = await readBuffer(resolve(relativePath(data[LAND])));
+        if (cancelled()) {
+          dispose(group);
+          return null;
+        }
+        group.add(landMesh(buffer));
       }
       if (placement === 'world' && data[BLOCKS]) {
         progress('Loading the far buildings…');

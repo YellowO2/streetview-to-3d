@@ -25,6 +25,8 @@ export function scenePieces(data, threshold = 0) {
 // What surrounds the scene, each one .ply already in the world
 // (postprocess/terrain.py): loaded with it, not part of it.
 export const SURROUNDINGS = ['terrain', 'buildings'];
+// The land under them: a triangle .ply, drawn solid (postprocess/terrain.py).
+export const LAND = 'land';
 // Its water: flat outlines, each at a level (postprocess/water.py).
 export const WATER = 'water';
 // Its far buildings, solid: a triangle .ply (postprocess/buildings.py's solid).
@@ -74,7 +76,7 @@ export function validateScene(data) {
         throw new Error(`Node ${i} has an invalid 4×4 transform.`);
     }
   });
-  for (const key of [...SURROUNDINGS, WATER, BLOCKS])
+  for (const key of [...SURROUNDINGS, LAND, WATER, BLOCKS])
     if (data[key] != null) relativePath(data[key]);
   for (const edge of data.edges) {
     if (

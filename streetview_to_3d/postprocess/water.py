@@ -14,9 +14,10 @@ As a game has it: the land is one ground that goes on under the water,
 the water a flat surface over it, and the shore is wherever the one
 crosses the other -- nothing is cut. Laid on a grid of CELL_M, the wet
 cells become outlines (shapely), each grown UNDER_LAND_M under its shore,
-so its edge is under the land; and the land is carved under the water
-(carve): SLOPE deeper a metre from the shore, down to DEPTH_M, whatever
-the height map says there (by a bridge it blurs the bridge and the island
+so its edge is under the land; and the shore is shaped as a game shapes
+one (carve), measured on OSM's own line near it: the bed eases down to
+DEPTH_M, the land eases down to the water over a bank (a quay by a road
+stands), with sand along it (sand) -- whatever the height map says there (by a bridge it blurs the bridge and the island
 into the harbour: 9-13 m over Stockholm's water). Land deeper than SEE_M
 is left out (keep): the water hides it; shallower, it shows through the
 water near the shore. Water whose grown outlines touch is one body --
@@ -56,7 +57,12 @@ WET = 0.5                 # water at least this share of the time
 CELL_M = 5.0
 MIN_M2 = 400.0            # smaller bodies are left to the land
 UNDER_LAND_M = 20.0
-SLOPE, DEPTH_M = 0.2, 3.0
+DEPTH_M, SHELF_M = 3.0, 12.0      # the bed eases down to DEPTH_M over SHELF_M from the shore
+BANK_M, BANK_VARY = 6.0, 0.5      # the land eases down to the water over about BANK_M, +- BANK_VARY of it
+BANK_ABOVE_M = 0.15               # ... to this far above it at the shore
+QUAY_M = 2.0                      # no bank this near a road: a quay stands
+SAND_M, SAND_UP_M = 2.5, 1.0      # sand: this near the shore, at most this far above the water
+EXACT_M, TRACE_M = 30.0, 0.25     # nearer the shore than this, how far measured on OSM's own line
 SEE_M = 1.5
 SHORE_CELL_M, SHORE_MAX_M = 10.0, 60
 LOW_PCT = 5
@@ -107,6 +113,16 @@ class Water:
         from scipy.ndimage import distance_transform_edt
         self.mask = mask
         self.shore = distance_transform_edt(mask) * CELL_M
+        self.inland = distance_transform_edt(~mask) * CELL_M
+        # OSM's own shoreline, as points TRACE_M apart: the box's edge is no shore
+        self.osm, self.coast = None, None
+        if osm and not osm[0].is_empty:
+            box = shapely.box(-osm[1], -osm[1], osm[1], osm[1])
+            line = shapely.difference(osm[0].boundary, box.exterior.buffer(0.5))
+            xy = shapely.get_coordinates(shapely.segmentize(line, TRACE_M))
+            if len(xy):
+                from scipy.spatial import cKDTree
+                self.osm, self.coast = osm, cKDTree(xy)
         wet = mask.ravel()
         self.surfaces, self.level = [], np.full(gx.shape, -np.inf)
         bodies = _bodies(mask, self.lo)
@@ -135,13 +151,50 @@ class Water:
         out[inside] = grid[i[inside, 1], i[inside, 0]]
         return out
 
-    def carve(self, xy, height):
-        """height of the land at east/north points, under the water where
-        the map has water: SLOPE deeper a metre from its shore, to DEPTH_M."""
+    def signed(self, xy):
+        """Metres from the shore at east/north points: + in the water, - on
+        land. On OSM's own line near it, else on the grid (half a cell off)."""
+        wet = self._at(self.mask, xy, False)
+        d = np.where(wet, self._at(self.shore, xy, np.inf), -self._at(self.inland, xy, np.inf)) \
+            - np.sign(np.where(wet, 1, -1)) * CELL_M / 2
+        if self.coast is not None:
+            near = np.flatnonzero((np.abs(d) < EXACT_M) & (np.abs(xy) < self.osm[1]).all(1))
+            if len(near):
+                dist = self.coast.query(xy[near])[0]
+                d[near] = np.where(shapely.contains_xy(self.osm[0], *xy[near].T), dist, -dist)
+        return d
+
+    def carve(self, xy, height, quay=None):
+        """height of the land at east/north points, shaped as a game shapes
+        a shore: under the water the bed eases down to DEPTH_M over SHELF_M;
+        on land a bank eases it down to BANK_ABOVE_M over the water at the
+        shore, about BANK_M wide, wider and narrower as it goes -- but none
+        where quay(xy) (by a road: a quay stands). Water with no level (a
+        pond too small to be a body) is land."""
         level = self._at(self.level, xy, -np.inf)
-        wet = self._at(self.mask, xy, False) & np.isfinite(level)   # a pond too small to be a body: land
-        bed = np.where(wet, level, 0.0) - np.minimum(DEPTH_M, SLOPE * self._at(self.shore, xy, 0.0))
-        return np.where(wet, np.minimum(height, bed), height)
+        d = self.signed(xy)
+        body = np.isfinite(level)
+        lv = np.where(body, level, 0.0)
+        bed = lv - DEPTH_M * _ease(d / SHELF_M)
+        h = np.where(body & (d > 0), np.minimum(height, bed), height)
+        width = BANK_M * (1 + BANK_VARY * _wiggle(xy))
+        top = lv + BANK_ABOVE_M
+        bank = body & (d <= 0) & (height > top)
+        if quay is not None and bank.any():
+            bank[bank] &= ~quay(xy[bank])
+        return np.where(bank, top + (height - top) * _ease(-d / width), h)
+
+    def sand(self, xy, height):
+        """How much of the shore's sand, 0-1, at east/north points that high:
+        within SAND_M of the water, not over SAND_UP_M above it."""
+        level = self._at(self.level, xy, -np.inf)
+        d = self.signed(xy)
+        return np.where(np.isfinite(level) & (d <= 0),
+                        (1 - _ease(-d / SAND_M)) * (1 - _ease((height - level) / SAND_UP_M)), 0.0)
+
+    def inside(self, xy):
+        """Whether east/north points are in the water (of a body)."""
+        return np.isfinite(self._at(self.level, xy, -np.inf)) & (self.signed(xy) > 0)
 
     def keep(self, xy, height):
         """Whether land at east/north points, that high, is seen: not
@@ -155,6 +208,18 @@ class Water:
         d = self.shore[k // 2::k, k // 2::k]
         return {"lo": self.lo, "cell": SHORE_CELL_M, "size": len(d),
                 "metres": np.minimum(np.round(d), SHORE_MAX_M).astype(int).ravel().tolist()}
+
+
+def _ease(t):
+    t = np.clip(t, 0, 1)
+    return t * t * (3 - 2 * t)
+
+
+def _wiggle(xy):
+    """Smooth noise, -1..1, over tens of metres: so a bank is not ruled."""
+    x, y = xy[:, 0], xy[:, 1]
+    return (np.sin(x / 23 + 1.3) * np.cos(y / 19 - 0.7) + 0.6 * np.sin((x + y) / 11.0)
+            + 0.4 * np.cos((x - y) / 7.0 + 2.1)) / 2.0
 
 
 def jrc(to_ll, height):
