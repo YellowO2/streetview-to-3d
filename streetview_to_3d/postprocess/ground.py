@@ -18,8 +18,8 @@ going uphill the ground rises toward camera height, and a fixed rule would
 stop counting it as ground a few metres out.
 
 GroundMap turns several clouds' ground into ONE ground: each square takes
-the ground of the cloud whose camera is nearest (it sees that spot best),
-lightly smoothed, and can be laid out as an even grid -- no stacked floors
+the ground of the clouds there, the one whose camera is nearest (it sees
+that spot best) most, blended across where cameras meet, lightly smoothed, and can be laid out as an even grid -- no stacked floors
 where clouds disagree by a few cm.
 """
 from collections import deque
@@ -34,6 +34,7 @@ LOWEST_M = 0.3
 STEP_M = 0.35
 SEED_M = 2.0              # squares this close (sideways) to a camera start the spread
 SEED_BELOW = (1.0, 4.0)   # ...if their ground is this far below that camera
+BLEND_M = 2.0             # blend: a camera this much further than the nearest counts 1/e as much
 
 
 def normals_from_neighbours(x, k=12):
@@ -87,12 +88,26 @@ def ground(x, cams, normals=None, seed_m=SEED_M):
     return out
 
 
+def blend(dist, nearest):
+    """How much a source dist from its camera counts where the nearest
+    camera is `nearest` away: 1 for the nearest, 1/e one BLEND_M further,
+    0 for one that cannot see it (inf). The one smoothing across panos --
+    the ground's height (GroundMap) and its colour (fill.paint) alike: deep
+    in one camera's patch it is that pano's, where two meet it fades from
+    one to the other over a few metres."""
+    near = np.where(np.isfinite(nearest), nearest, 0.0)
+    return np.where(np.isfinite(dist), np.exp(-(np.where(np.isfinite(dist), dist, 0.0) - near) / BLEND_M), 0.0)
+
+
 class GroundMap:
     """One ground height per cell x cell square (world metres, y down).
 
     xs[k] are cloud k's ground points and cams[k] its camera; each square
-    takes the median height of the cloud whose camera is nearest to it, and
-    `height` is that, lightly smoothed (smooth_m), ignoring empty squares.
+    takes each cloud's median height in it, mixed by blend (the nearest
+    camera, which sees that spot best, most) -- so where two cameras'
+    squares meet, and their clouds differ by a few cm, the ground ramps
+    from one to the other over a few metres rather than stepping. `height` is that, lightly smoothed (smooth_m),
+    ignoring empty squares; `owner` the nearest camera's cloud.
     """
 
     def __init__(self, xs, cams, cell, smooth_m):
@@ -103,19 +118,23 @@ class GroundMap:
         self.lo = span.min(0) - 2 * cell
         self.dims = np.floor((span - self.lo) / cell).astype(int).max(0) + 3
         ij = self.squares(X[:, [0, 2]])
-        centre = (ij + .5) * cell + self.lo
-        dcam = np.hypot(centre[:, 0] - cams[who, 0], centre[:, 1] - cams[who, 2])
-        flat = ij[:, 0] * self.dims[1] + ij[:, 1]
-        order = np.lexsort((dcam, flat))
-        fs = flat[order]
-        first = np.r_[True, fs[1:] != fs[:-1]]
-        win = np.full(self.dims.prod(), -1)
-        win[fs[first]] = who[order][first]
-        mine = win[flat] == who
-        self.raw = np.full(self.dims.prod(), np.nan)
-        self.raw[np.unique(flat[mine])] = _medians(flat[mine], X[mine, 1])
-        self.raw = self.raw.reshape(self.dims)
-        self.owner = win.reshape(self.dims)
+        n, K = self.dims.prod(), len(xs)
+        # one median per (square, cloud)
+        key = (ij[:, 0] * self.dims[1] + ij[:, 1]) * K + who
+        pair = np.unique(key)
+        med = np.array(_medians(key, X[:, 1]))
+        sq, k = pair // K, pair % K
+        centre = (np.stack([sq // self.dims[1], sq % self.dims[1]], 1) + .5) * cell + self.lo
+        dcam = np.hypot(centre[:, 0] - cams[k, 0], centre[:, 1] - cams[k, 2])
+        best = np.full(n, np.inf)
+        np.minimum.at(best, sq, dcam)
+        w = blend(dcam, best[sq])
+        den = np.bincount(sq, w, n)
+        self.raw = np.where(den > 0, np.bincount(sq, w * med, n) / np.maximum(den, 1e-12), np.nan).reshape(self.dims)
+        owner = np.full(n, -1)
+        nearest = dcam == best[sq]
+        owner[sq[nearest]] = k[nearest]
+        self.owner = owner.reshape(self.dims)
         self.height = self.smoothed()
 
     def squares(self, xz):

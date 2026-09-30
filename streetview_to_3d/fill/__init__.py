@@ -1,7 +1,10 @@
 """Finish a placed scene: one ground, and its colour.
 
 Runs once, right after placement (postprocess.pipeline), on the scene in
-place. DA3's shape is never moved; only its ground points are replaced.
+place. DA3's shape is never changed; each piece is at most lifted or
+lowered, whole, to meet the others' road, and its ground points replaced.
+
+    level.py       each piece's up/down shift, so their roads meet
 
     one_ground.py  every cloud's ground becomes one smooth surface, its
                    holes and the blind disc under each camera included
@@ -23,7 +26,8 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from streetview_to_3d import scene as scene_mod
-from streetview_to_3d.fill.one_ground import one_ground
+from streetview_to_3d.fill import level
+from streetview_to_3d.fill.one_ground import grounds, one_ground
 from streetview_to_3d.fill.paint import Camera, blurred, paint
 from streetview_to_3d.postprocess.ground import normals_from_neighbours
 from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
@@ -73,8 +77,13 @@ def run(scene_dir, log=print):
     cams = np.array([c.centre for c in cameras])
     normals = [normals_from_neighbours(x) for x in clouds]
     photos = [_photo(n.pano, scene_dir) for n in nodes]
-    keep, ground = one_ground(clouds, cams, normals, [_walkable(x, cam, ph) for x, cam, ph
-                                                      in zip(clouds, cameras, photos)])
+    G = grounds(clouds, cams, normals, [_walkable(x, cam, ph) for x, cam, ph in zip(clouds, cameras, photos)])
+
+    log(level.level(sc, nodes, clouds, G))
+    sc.save(scene_dir)
+    cameras = [Camera(n) for n in nodes]
+    cams = np.array([c.centre for c in cameras])
+    keep, ground = one_ground(clouds, cams, G)
     clouds = [x[k] for x, k in zip(clouds, keep)]
     colours = [c[k] for c, k in zip(colours, keep)]
     da3 = np.concatenate(clouds)
@@ -82,7 +91,7 @@ def run(scene_dir, log=print):
 
     added = ground
     col, who = paint(added, da3, cameras,
-                              [ph and (ph[0], pano_mask(ph[1]) | blurred(ph[0])) for ph in photos])
+                     [ph and (ph[0], pano_mask(ph[1]) | blurred(ph[0])) for ph in photos])
     # no camera may colour it (the spot under a camera, masked spots, or out
     # of every camera's view): the colour of the nearest painted point --
     # the ground is laid whole, a dropped point is a hole in the road

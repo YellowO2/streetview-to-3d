@@ -37,10 +37,10 @@ MIN_KEEP_RATE = 1.0 / 3
 # 857,247 (+28%), 90% gave 868,398 (+30%) -- CONF_ABS_FLOOR catches most of
 # what 90 would additionally let through, so 80 gets nearly all the gain
 # for less storage. 80 was chosen before the terrain filled what lies
-# beyond the scene; with it, the least sure tenth is more noise (a bumpy
-# road) than use. The UI's "Keep %" slider overrides this per run without
+# beyond the scene; with it, the least sure twentieth is more noise (a
+# bumpy road) than use. The UI's "Keep %" slider overrides this per run without
 # a redeploy; this is only the fallback when a caller doesn't pass one.
-CONF_LOWER_PERCENTILE = 30.0   # keep top 70%
+CONF_LOWER_PERCENTILE = 25.0   # keep top 75%
 
 # Width of each view in degrees, same 12 views (panoramic_da3's
 # extract_views_for_da3): 90 reaches ~29 deg above/below the horizon, 100

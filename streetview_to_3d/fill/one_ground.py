@@ -10,10 +10,10 @@ them become one smooth surface:
    map calls WALKABLE: flat at street height is not enough -- DA3 laid the
    water it saw through a bridge's railing there too, and the fill paved
    the harbour with it
-2. one height map (postprocess.ground.GroundMap): each square takes the
-   ground of the cloud whose camera is nearest; where DA3 has no ground,
-   Google's own ground fills in, shifted by the typical height difference
-   between the two where both have it, so they meet without a step
+2. one height map (postprocess.ground.GroundMap): each square the clouds'
+   ground there, the nearest camera's most, blended across where two
+   cameras' squares meet -- the pieces already lifted or lowered to meet
+   (level.py), so what is left to blend is a few cm
 3. the ground area: every square with ground, gaps up to CLOSE_M closed,
    enclosed holes filled, plus each camera's blind disc -- out to where its
    views stop, but never past the nearest wall in that direction
@@ -39,15 +39,20 @@ WALKABLE = ("road", "sidewalk", "terrain")      # the masker's classes (services
 VIEW_BOTTOM_DEG = np.degrees(np.arctan(np.tan(np.radians(VIEW_HFOV / 2)) * 9 / 16))
 
 
-def one_ground(clouds, cams, normals, walkable=None):
-    """(clouds without their ground points, the one ground's points).
+def grounds(clouds, cams, normals, walkable=None):
+    """Which of each cloud's points are its walkable ground (step 1).
 
     clouds[k]: cloud k's points in world metres (y down), cams[k] its
     camera, normals[k] its points' normals, walkable[k] which of them its
     pano calls WALKABLE (None: all)."""
     G = [ground(x, c, normals=n, seed_m=DA3_SEED_M) for x, c, n in zip(clouds, cams, normals)]
-    if walkable is not None:
-        G = [g & w for g, w in zip(G, walkable)]
+    return G if walkable is None else [g & w for g, w in zip(G, walkable)]
+
+
+def one_ground(clouds, cams, G):
+    """(clouds without their ground points, the one ground's points).
+
+    clouds, cams as grounds'; G its answer."""
     m = GroundMap([x[g] for x, g in zip(clouds, G)], cams, CELL_M, SMOOTH_M)
 
     area = np.zeros(m.dims, bool)

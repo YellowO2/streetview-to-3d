@@ -150,7 +150,7 @@ def build_main_tab():
     # decision -- kept as a component only so it is callable over the API
     # with a different value; hidden so it isn't something every user has
     # to understand. See handle_reconstruct.
-    keep_pct_slider = gr.Slider(50, 100, value=70, step=5, visible=False)
+    keep_pct_slider = gr.Slider(50, 100, value=75, step=5, visible=False)
     # Same idea: the ZeroGPU window in seconds, 0 = sized from the dot
     # count. Hidden for now; the estimate is shown beside the selection.
     gpu_seconds_input = gr.Number(value=0, precision=0, minimum=0, visible=False)

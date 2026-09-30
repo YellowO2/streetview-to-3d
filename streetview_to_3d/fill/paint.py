@@ -6,10 +6,10 @@ A point no camera may colour (the spot right under a camera, masked
 spots, floor behind a fence) is left to the caller: the fill gives it the
 colour of the nearest painted point.
 
-Each added point mixes every camera that can colour it, the nearest most,
-one BLEND_M further 1/e as much: deep in one camera's patch it is that
-photo, and where two cameras' patches meet the colour fades from one
-photo's exposure to the other's over a few metres instead of a hard edge.
+Each added point mixes every camera that can colour it, as the ground's
+height is mixed (postprocess.ground.blend): where two cameras' patches
+meet the colour fades from one photo's exposure to the other's over a few
+metres instead of a hard edge.
 A camera can colour a point when it:
   - sees it: no DA3 point in front of it along that line of sight. Only
     DA3's points count -- its ground is gone by now, so they are the real
@@ -31,10 +31,12 @@ import numpy as np
 from PIL import Image
 from scipy.ndimage import binary_dilation, label, uniform_filter
 
+from streetview_to_3d.postprocess.ground import blend
+
 NADIR_DEG = 70
 MAX_M = 25.0
 ZB_W = 512
-BLEND_M, BLEND_MIN = 2.0, 0.01     # a camera BLEND_M further than the nearest counts 1/e as much
+BLEND_MIN = 0.01    # a camera counting less than this is not sampled at all
 BLUR_DETAIL, BLUR_WIN = 0.5, 15     # under this grey-level change per pixel, over BLUR_WIN px: blur
 BLUR_GROW_DEG, SEAM_DEG = 6, 2
 
@@ -123,7 +125,7 @@ def paint(points, occluders, cameras, photos, max_m=MAX_M):
     who = np.where(np.isfinite(best), near.argmin(0), -1)
     colours, total = np.zeros((n, 3)), np.zeros(n)
     for k, ph in enumerate(photos):
-        w = np.exp(-(near[k] - np.where(np.isfinite(best), best, 0)) / BLEND_M)
+        w = blend(near[k], best)
         idx = np.flatnonzero(w > BLEND_MIN)
         if len(idx):
             img = np.asarray(Image.open(ph[0]).convert("RGB"))
