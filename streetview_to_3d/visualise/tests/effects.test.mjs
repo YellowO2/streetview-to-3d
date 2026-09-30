@@ -44,19 +44,17 @@ test('style controls retain per-preset settings and expose only supported splat 
   dom.window.close();
 });
 
-test('environment supplies only sky and mist, leaving scene terrain untouched', () => {
+test('environment supplies only the sky, leaving scene terrain untouched', () => {
   const scene = new THREE.Scene(),
     camera = new THREE.PerspectiveCamera();
   const terrain = new THREE.Group();
   scene.add(terrain);
   const environment = createEnvironment(scene);
-  environment.configure(15);
   environment.update('dither', camera);
-  assert(scene.fog);
+  assert.equal(scene.fog, null);
   assert.equal(scene.children.length, 2);
   assert(terrain.visible);
   environment.update('original', camera);
-  assert.equal(scene.fog, null);
   environment.dispose();
   assert.deepEqual(scene.children, [terrain]);
 });

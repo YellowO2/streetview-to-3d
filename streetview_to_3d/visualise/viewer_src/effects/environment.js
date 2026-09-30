@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-// A camera-centred sky dome and optional mist; terrain belongs to the scene.
+// A camera-centred sky dome; terrain belongs to the scene.
 export function createEnvironment(scene) {
   const skyMaterial = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -35,17 +35,11 @@ export function createEnvironment(scene) {
   sky.renderOrder = -100;
   scene.add(sky);
   sky.visible = false;
-  const fog = new THREE.Fog('#c7d3d4', 5, 30);
   return {
-    configure(radius) {
-      fog.near = radius * 2.5;
-      fog.far = radius * 22;
-    },
     // plainSky: a placed scene is open, so the plain view gets the blue sky;
     update(style, camera, enabled = true, plainSky = false) {
       sky.visible = style === 'original' ? plainSky : enabled;
       skyMaterial.uniforms.blue.value = style === 'original' ? 1 : 0;
-      scene.fog = enabled && style === 'dither' ? fog : null;
       skyMaterial.uniforms.anime.value = style === 'anime' ? 1 : 0;
       sky.position.copy(camera.position);
       sky.scale.setScalar(camera.far * 0.5);
@@ -53,7 +47,6 @@ export function createEnvironment(scene) {
     dispose() {
       scene.remove(sky);
       [skyGeometry, skyMaterial].forEach((resource) => resource.dispose());
-      scene.fog = null;
     },
   };
 }

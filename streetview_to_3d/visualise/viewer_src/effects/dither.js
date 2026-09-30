@@ -13,10 +13,8 @@ export function createDitherPass() {
       tDiffuse: { value: null },
       tDepth: { value: null },
       useDepth: { value: 1 },
-      fogAmount: { value: 1 },
       near: { value: 0.01 },
       far: { value: 1000 },
-      fogDistance: { value: 50 },
       resolution: { value: new Vector2(1, 1) },
       pixelSize: { value: 2 },
       strength: { value: 1 },
@@ -31,7 +29,7 @@ export function createDitherPass() {
     fragmentShader: `
       uniform sampler2D tDiffuse, tDepth;
       uniform vec2 resolution;
-      uniform float pixelSize, strength, near, far, fogDistance, useDepth, fogAmount;
+      uniform float pixelSize, strength, near, far, useDepth;
       varying vec2 vUv;
       float bayer2(vec2 p) {
         p = mod(floor(p), 2.0);
@@ -55,11 +53,8 @@ export function createDitherPass() {
           return;
         }
         {
-          float distance = near * far / max(far - depth * (far - near), .00001);
-          float fog = fogAmount * useDepth * smoothstep(fogDistance * 2.0, fogDistance * 10.0, distance);
           float luma = dot(colour, vec3(.2126, .7152, .0722));
           colour = mix(vec3(luma), colour, .38) * .95 + .025;
-          colour = mix(colour, vec3(.55, .57, .57), fog * .40);
           float vignette = smoothstep(.3, 1.4, length(vUv * 2.0 - 1.0));
           colour *= 1.0 - vignette * .14;
         }

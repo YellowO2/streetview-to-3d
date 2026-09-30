@@ -18,7 +18,7 @@ export function createStyles(scene, camera, renderer) {
     composer,
     anime,
     dither;
-  // A placed scene is in metres, so the look (float, scan, fog) is one
+  // A placed scene is in metres, so the look (float, scan) is one
   // fixed size, the small Stockholm scene's radius, whatever
   // the scene's extent; the reveal still sweeps the scene's own radius.
   const LOOK_M = 33;
@@ -103,7 +103,6 @@ export function createStyles(scene, camera, renderer) {
         }
       });
       revealStart = null;
-      environment.configure(look);
       updateMotion(false);
     },
     reveal() {
@@ -143,8 +142,6 @@ export function createStyles(scene, camera, renderer) {
       );
       dither.uniforms.near.value = camera.near;
       dither.uniforms.far.value = camera.far;
-      dither.uniforms.fogDistance.value = look;
-      dither.uniforms.fogAmount.value = settings.atmosphere ? 1 : 0;
       // Render editor handles after grading so their axis colours stay legible.
       const overlays = scene.children.filter((o) => o.userData.styleOverlay && o.visible);
       overlays.forEach((o) => (o.visible = false));
@@ -156,19 +153,16 @@ export function createStyles(scene, camera, renderer) {
       if (overlays.length) {
         const visible = scene.children.map((o) => o.visible);
         const background = scene.background,
-          fog = scene.fog,
           autoClear = renderer.autoClear;
         try {
           scene.children.forEach((o) => (o.visible = overlays.includes(o)));
           scene.background = null;
-          scene.fog = null;
           renderer.autoClear = false;
           renderer.clearDepth();
           renderer.render(scene, camera);
         } finally {
           scene.children.forEach((o, i) => (o.visible = visible[i]));
           scene.background = background;
-          scene.fog = fog;
           renderer.autoClear = autoClear;
         }
       }

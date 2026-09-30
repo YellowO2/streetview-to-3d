@@ -8,7 +8,7 @@ is retained as a reference, not imported at runtime.
 - controller.js: lazy postprocessing, resize, point-motion lifecycle and editor overlay rendering.
 - anime.js, dither.js: colour passes; one is active at a time.
 - points.js: patches existing point materials, leaving geometry and scene.json unchanged.
-- environment.js: camera-centred sky dome and optional mist. Terrain is loaded from the scene.
+- environment.js: camera-centred sky dome. Terrain is loaded from the scene.
 
 Soft paint is the default. Photoreal (`original`) uses the direct render path. Builders can set
 config.style to original, paint or dither. Effects are recursively embedded
@@ -26,8 +26,8 @@ Point motion and reveal stop while editing; point positions and saved transforms
 are never changed by an effect.
 
 Spark 0.1.10 splats work through the same colour pipeline. Their transparent
-rendering does not provide reliable surface depth, so the point-depth fog/mask
-is disabled for splats. Terrain still has ordinary distance fog. Point floating,
+rendering does not provide reliable surface depth, so the point-depth mask
+is disabled for splats. Point floating,
 scan and reveal controls are hidden for splats. A future Spark-specific modifier
 can add these without changing the point adapter.
 
