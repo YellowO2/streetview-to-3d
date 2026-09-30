@@ -114,6 +114,8 @@ class Scene:
     buildings: str | None = None
     # its water, flat outlines each at a level (postprocess/water.py)
     water: str | None = None
+    # the far buildings, solid: a triangle .ply (postprocess/buildings.py's solid)
+    blocks: str | None = None
 
     @property
     def origin(self):
@@ -171,4 +173,5 @@ class Scene:
                    nodes=[Node(pano=Pano(**n.pop("pano")), **n) for n in d["nodes"]],
                    adjacency={str(k): v for k, v in d["adjacency"].items()},
                    edges=[Edge(**e) for e in d["edges"]],
-                   terrain=d.get("terrain"), buildings=d.get("buildings"), water=d.get("water"))
+                   terrain=d.get("terrain"), buildings=d.get("buildings"), water=d.get("water"),
+                   blocks=d.get("blocks"))

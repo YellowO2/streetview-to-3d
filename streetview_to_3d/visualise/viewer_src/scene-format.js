@@ -27,6 +27,8 @@ export function scenePieces(data, threshold = 0) {
 export const SURROUNDINGS = ['terrain', 'buildings'];
 // Its water: flat outlines, each at a level (postprocess/water.py).
 export const WATER = 'water';
+// Its far buildings, solid: a triangle .ply (postprocess/buildings.py's solid).
+export const BLOCKS = 'blocks';
 export function relativePath(path) {
   if (
     typeof path !== 'string' ||
@@ -72,7 +74,8 @@ export function validateScene(data) {
         throw new Error(`Node ${i} has an invalid 4×4 transform.`);
     }
   });
-  for (const key of [...SURROUNDINGS, WATER]) if (data[key] != null) relativePath(data[key]);
+  for (const key of [...SURROUNDINGS, WATER, BLOCKS])
+    if (data[key] != null) relativePath(data[key]);
   for (const edge of data.edges) {
     if (
       !edge ||

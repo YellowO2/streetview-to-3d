@@ -25,10 +25,21 @@ Footprints from osm.py, each raised into a block of points:
     of the place's own building colours, softened (palette) -- the
     satellite's, from 10 m up, came out grey-brown; walls shaded by which
     way they face, the roof a little lighter and shaded the same way,
-    "roof:colour" (or roof:material's) if it has one (never a pano's own
-    pixel: from the street they see its edge against the sky)
+    "roof:colour" (or roof:material's) if it has one, else what the
+    satellite sees of it (satellite_roofs) -- never a pano's own pixel:
+    from the street they see its edge against the sky
 
-Called by terrain.build, which writes them to buildings.ply.
+Further than SOLID_M from every camera a building is written solid
+instead (solid): a few dozen triangles, not thousands of points -- the
+file far smaller -- walls and roof shaded as the points are, each vertex
+carrying its place on its wall. The viewer scatters points over them as
+it opens the scene, spaced as the terrain's, floors of windows taken
+from those places where the points are close enough to draw them, and
+sparser, darker layers behind each wall (effects/blocks.js): the same
+paint as the rest.
+
+Called by terrain.build, which writes them to buildings.ply and the solid
+ones to blocks.ply.
 """
 from dataclasses import dataclass
 
@@ -52,6 +63,8 @@ PULL_MAX_M = 1.0              # a wall's seam pulled onto DA3's plane by at most
 TRIM_TOL_M, TRIM_FRONT_M = 0.3, 30.0   # cut from this far in front of a DA3 wall, out to this
 TRIM_MIN_M2, TRIM_MAX = 1.0, 0.2
 CHEER_SAT, CHEER_LIFT = 1.3, 1.15
+SAT_INSET_M, SAT_STEP_M = 3.0, 4.0   # a roof sampled this far in from its edge (a 10 m pixel on it is
+                                     # half street), this far apart
 ROOF_LIFT = 1.08              # a roof faces the sky: a little lighter than its walls
 # the colour of a building no pano sees enough of: the place's own (palette)
 PALETTE_K, PALETTE_MIN, PALETTE_STRIDE = 8, 500, 8
@@ -84,6 +97,9 @@ INNER_M, INNER_GAP = (0.6, 1.5), 2.0   # walls again this far inside, this many 
 TRIM_EDGE_M = 5.0             # only a straight wall this long trims: a curve's short edges found planes in
                               # its own curved, overhung walls and ate NTU's Hive
 TOP_PERCENTILE = 97
+SOLID_M = 50.0                # buildings this far from every camera are solid, not points
+SOLID_STEP_M = 2.0            # a hipped roof's triangles about this long, at least
+NO_FACADE = -1.0              # a roof's place on a wall: none
 MIN_HEIGHT_M = 2.5
 CHUNK_M = 4.0                 # a wall is spaced in pieces this long, each as at its middle
 ROOF_MIN_STEP_M = 0.5         # roofs are seen from above only
@@ -224,6 +240,28 @@ def palette(photos):
     centres, label = kmeans2(samples, PALETTE_K, seed=0, minit="++")
     share = np.bincount(label, minlength=PALETTE_K) / len(label)
     return np.array([soften(c) for c in centres]), share
+
+
+def satellite_roofs(outlines, colour_at):
+    """Each roof without its own colour (Form.roof_colour) given the
+    satellite's: the median over it, SAT_INSET_M in from its edge, made
+    livelier (cheer); colour_at(east/north (n, 2)) -> RGB. A roof too
+    small for that keeps its building's colour. Returns how many."""
+    n = 0
+    for xy, _, _, form, *_ in outlines:
+        if form.roof_colour is not None:
+            continue
+        ring = _inset(xy, SAT_INSET_M)
+        if ring is None:
+            continue
+        lo, hi = ring.min(0), ring.max(0)
+        gx, gy = np.meshgrid(np.arange(lo[0], hi[0], SAT_STEP_M) + SAT_STEP_M / 2,
+                             np.arange(lo[1], hi[1], SAT_STEP_M) + SAT_STEP_M / 2)
+        grid = np.stack([gx.ravel(), gy.ravel()], 1)
+        at = np.concatenate([grid[_inside(grid, ring)], ring[:-1]])
+        form.roof_colour = cheer(np.median(colour_at(at), 0))
+        n += 1
+    return n
 
 
 def colours(outlines, palette_):
@@ -563,6 +601,78 @@ def points(outlines, spacing, ground, colour, sun):
     return Blocks(np.concatenate(pts), np.concatenate(cols), np.concatenate(which), np.concatenate(lit),
                   np.concatenate(edge), np.concatenate(u), np.concatenate(v), np.concatenate(gap), edges,
                   np.concatenate(shade), np.concatenate(own))
+
+
+def far(outlines, cams):
+    """True for each outline further than SOLID_M from every camera
+    (east/north (n, 2))."""
+    if not len(cams):
+        return np.ones(len(outlines), bool)
+    tree = cKDTree(cams)
+    return np.array([tree.query(xy)[0].min() > SOLID_M for xy, *_ in outlines], bool)
+
+
+def solid(outlines, ground, colour, sun):
+    """Every outline as triangles: (vertices (n, 3) world frame, colours
+    (n, 3), faces (m, 3), facade (n, 2)): walls from its base (Form.base_m)
+    to where the roof meets them, lit by which way they face; its roof
+    (roofs.Roof.triangles), lit by which way each triangle faces; a flat
+    underside if it starts in the air. facade: a wall vertex's metres
+    along its wall and up from the ground, NO_FACADE on a roof."""
+    V, C, F, U = [], [], [], []
+    count = 0
+
+    def add(pts, col, faces, facade):
+        nonlocal count
+        V.append(pts)
+        C.append(np.broadcast_to(col, pts.shape))
+        F.append(faces + count)
+        U.append(facade)
+        count += len(pts)
+
+    world = lambda en, up: np.c_[en[:, 0], -up, en[:, 1]]
+    for i, (xy, h, _, form, *_) in enumerate(outlines):
+        foot = ground(xy).min()
+        base, top = foot + form.base_m, foot + h
+        roof = form.roof
+        eaves = max(base, top - roof.height)
+        for a, c in zip(xy[:-1], xy[1:]):
+            length = float(np.linalg.norm(c - a))
+            if length < 1e-6:
+                continue
+            t = (c - a) / length
+            lit = abs(np.array([t[1], 0.0, -t[0]]) @ sun)
+            u = length * roof.bends(a, c)
+            en = a + t * u[:, None]
+            up = eaves + roof.rise(en)
+            if (up - base).max() < 1e-3:
+                continue
+            pts = np.concatenate([world(en, np.full(len(u), base)), world(en, up)])
+            k = np.arange(len(u) - 1)
+            n = len(u)
+            faces = np.concatenate([np.c_[k, k + 1, n + k + 1], np.c_[k, n + k + 1, n + k]])
+            add(pts, colour[i] * (WALL_SHADE + (1 - WALL_SHADE) * lit), faces,
+                np.c_[np.r_[u, u], np.r_[np.full(n, base), up] - foot])
+        tris = roof.triangles(SOLID_STEP_M)
+        if form.base_m > 0:
+            under = Roof(xy, "flat").triangles(SOLID_STEP_M)
+            under[..., 2] = base - eaves
+            tris = np.concatenate([tris, under[:, ::-1]])
+        normal = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+        keep = np.linalg.norm(normal, axis=1) > 1e-9
+        tris, normal = tris[keep], normal[keep] / np.linalg.norm(normal[keep], axis=1, keepdims=True)
+        if not len(tris):
+            continue
+        roof_colour = colour[i] if form.roof_colour is None else form.roof_colour
+        pts = tris.reshape(-1, 3)
+        add(world(pts[:, :2], eaves + pts[:, 2]), np.repeat(np.clip(roof_colour * _lit(normal, sun)[:, None], 0, 1), 3, 0),
+            np.arange(len(pts)).reshape(-1, 3), np.full((len(pts), 2), NO_FACADE))
+    if not V:
+        return np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3), int), np.zeros((0, 2))
+    # corners alike in place, colour and facade are one (a flat roof's, a wall's strip)
+    rows = np.c_[np.concatenate(V), np.round(np.concatenate(C) * 255), np.concatenate(U)].astype(np.float32)
+    rows, index = np.unique(rows, axis=0, return_inverse=True)
+    return rows[:, :3], rows[:, 3:6] / 255, index.ravel()[np.concatenate(F)], rows[:, 6:]
 
 
 def seam(blocks, da3, da3_normals, da3_cols, roofs_near):

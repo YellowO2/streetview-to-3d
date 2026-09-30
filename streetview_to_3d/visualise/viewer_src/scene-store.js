@@ -8,8 +8,10 @@ import {
   gpsPlacement,
   SURROUNDINGS,
   WATER,
+  BLOCKS,
 } from '@viewer/scene-format';
 import { waterSurfaces, disposeWater } from '@viewer/effects/water';
+import { parseBlocks, scatterBlocks } from '@viewer/effects/blocks';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
 export function matrixRows(m) {
@@ -73,7 +75,7 @@ const GAP0 = 0.05,
   GAP_PER = 0.018,
   SIZE_PER = 0.012;
 const gapAt = (x, z, cams) => GAP0 + GAP_PER * nearest(x, z, cams);
-export const SPACING = { terrain: gapAt, buildings: gapAt };
+export const SPACING = { terrain: gapAt, buildings: gapAt, [BLOCKS]: gapAt };
 // Each placed node's camera, seen from above, in the viewer's frame.
 export function cameraPlaces(data) {
   return data.nodes
@@ -188,6 +190,26 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
         const spacing = SPACING[key];
         for (const part of spacing ? terrainBands(points, spacing, cameraPlaces(data)) : [points]) {
           part.userData.surroundings = key;
+          group.add(part);
+        }
+      }
+      if (placement === 'world' && data[BLOCKS]) {
+        progress('Loading the far buildings…');
+        const buffer = await readBuffer(resolve(relativePath(data[BLOCKS])));
+        if (cancelled()) {
+          dispose(group);
+          return null;
+        }
+        const cams = cameraPlaces(data),
+          triangles = parseBlocks(buffer, flip);
+        let points;
+        try {
+          points = scatterBlocks(triangles, (x, z) => SPACING[BLOCKS](x, z, cams));
+        } finally {
+          triangles.dispose();
+        }
+        for (const part of terrainBands(points, SPACING[BLOCKS], cams)) {
+          part.userData.surroundings = BLOCKS;
           group.add(part);
         }
       }

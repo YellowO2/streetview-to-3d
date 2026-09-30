@@ -1,5 +1,5 @@
 """A building's roof as OpenStreetMap shapes it ("roof:shape"), over its
-outline, as points.
+outline, as points (surface) or triangles (triangles).
 
 Two kinds, from any outline:
 
@@ -32,6 +32,7 @@ ALIAS = {"cross_gabled": "hipped", "side_hipped": "hipped", "half_hipped": "half
 COMPASS = {k: 22.5 * i for i, k in enumerate(
     "N NNE NE ENE E ESE SE SSE S SSW SW WSW W WNW NW NNW".split())}
 EPS_M = 0.05
+RINGS = 8                 # a dome's or onion's rings, as triangles
 
 
 def _profile(shape, u):
@@ -54,6 +55,12 @@ def _direction(text):
         return float(t) % 360
     except ValueError:
         return None
+
+
+def _cut(poly):
+    """(m, 3, 2) a polygon's triangles."""
+    tris = shapely.get_parts(shapely.constrained_delaunay_triangles(poly))
+    return np.array([np.asarray(t.exterior.coords)[:3] for t in tris]).reshape(-1, 3, 2)
 
 
 def along(ring, step):
@@ -130,6 +137,38 @@ class Roof:
             return np.interp(a, [0, .6, 1], [1, .75, 0])
         return 1 - a
 
+    def knots(self):
+        """Where an ACROSS roof bends, as offsets from its middle line
+        across the ridge (metres): flat in between."""
+        a = {"gambrel": [0, .6], "round": np.linspace(0, 1, 7)[:-1]}.get(self.shape, [0])
+        return np.unique(np.r_[a, -np.asarray(a)]) * self.half
+
+    def _across(self, en):
+        return (en - self.centre) @ np.array([-self.axis[1], self.axis[0]])
+
+    def _strips(self):
+        """The outline cut along the ridge's knots, each piece flat."""
+        from shapely.affinity import rotate
+        from shapely.geometry import LineString
+        from shapely.ops import split
+        pieces = [self.poly]
+        far = 10 * (self.half + self.radius + 1)
+        for k in self.knots():
+            mid = self.centre + k * np.array([-self.axis[1], self.axis[0]])
+            line = LineString([mid - self.axis * far, mid + self.axis * far])
+            pieces = [q for p in pieces for q in shapely.get_parts(split(p, line)) if q.area > 1e-6]
+        return pieces
+
+    def bends(self, a, c):
+        """Where along the wall from a to c (0-1) the roof bends over it."""
+        if self.shape not in ACROSS or self.height <= 0:
+            return np.array([0.0, 1.0])
+        v0, v1 = self._across(np.array([a, c]))
+        if abs(v1 - v0) < 1e-9:
+            return np.array([0.0, 1.0])
+        t = (self.knots() - v0) / (v1 - v0)
+        return np.unique(np.r_[0.0, t[(t > 0) & (t < 1)], 1.0])
+
     def rise(self, en):
         """How far over the walls' top the roof stands at east/north points
         on its outline: what a wall there reaches up to."""
@@ -156,6 +195,38 @@ class Roof:
         gy = (self.height * self._field(en + [0, EPS_M]) - z) / EPS_M
         n = np.c_[-gx, -gy, np.ones(len(en))]
         return np.c_[en, z], n / np.linalg.norm(n, axis=1, keepdims=True)
+
+    def triangles(self, step):
+        """(m, 3, 3) the roof's triangles, corners east, north, up over the
+        walls' top, none longer than about step on a sloping roof: the
+        outline cut into triangles (flat), cut finer and raised (FIELD), or
+        its rings joined (RADIAL)."""
+        if self.shape in RADIAL and self.height > 0:
+            zn, size = _profile(self.shape, np.linspace(0, 1, 2 if self.shape in ("pyramidal", "cone") else RINGS + 1))
+            rings = [np.c_[self.middle + (self.xy - self.middle) * sz, np.full(len(self.xy), z * self.height)]
+                     for z, sz in zip(zn, size)]
+            quads = [(a[i], a[i + 1], b[i + 1], b[i]) for a, b in zip(rings[:-1], rings[1:])
+                     for i in range(len(self.xy) - 1)]
+            return np.array([t for a, b, c, d in quads for t in ((a, b, c), (a, c, d))])
+        across = self.shape in ACROSS and self.height > 0
+        tris = np.concatenate([_cut(piece) for piece in (self._strips() if across else [self.poly])])
+        d1, d2 = tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0]
+        down = d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0] < 0
+        tris[down] = tris[down][:, ::-1]                        # all facing up
+        if self.shape == "flat" or self.height <= 0:
+            return np.concatenate([tris, np.zeros((*tris.shape[:2], 1))], 2)
+        step = max(step, self.half / 2)
+        for _ in range(30 if self.shape in FROM_EDGES else 0):   # the rest are flat between their knots                     # the longest side halved, until none is over step
+            side = np.linalg.norm(tris - np.roll(tris, -1, 1), axis=2)
+            k, big = side.argmax(1), side.max(1) > step
+            if not big.any():
+                break
+            T, k, i = tris[big], k[big], np.arange(big.sum())
+            a, b, c = T[i, k], T[i, (k + 1) % 3], T[i, (k + 2) % 3]
+            mid = (a + b) / 2
+            tris = np.concatenate([tris[~big], np.stack([a, mid, c], 1), np.stack([mid, b, c], 1)])
+        z = self.height * self._field(tris.reshape(-1, 2)).reshape(-1, 3, 1)
+        return np.concatenate([tris, z], 2)
 
     def _rings(self, step):
         u = np.linspace(0, 1, 400)
