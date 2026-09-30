@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { parseBlocks, scatterBlocks } from '@viewer/effects/blocks';
+import { parseBlocks, blocksMesh } from '@viewer/effects/blocks';
 
 // One triangle as postprocess/ply_io.write_mesh writes it.
 function ply(points, facade) {
@@ -32,9 +32,9 @@ function ply(points, facade) {
   return out.buffer;
 }
 
-test('far buildings come as triangles and are drawn as points over them, a layer behind each wall', () => {
+test('far buildings come as triangles and are drawn solid, their windows from each wall place', () => {
   const flip = new THREE.Matrix4().makeScale(1, -1, -1);
-  // a wall 10 m long, 6 m high, running east (so its inside is north: -z in the viewer)
+  // a wall 10 m long, 6 m high, running east
   const triangles = parseBlocks(
     ply(
       [
@@ -52,20 +52,17 @@ test('far buildings come as triangles and are drawn as points over them, a layer
   );
   assert.equal(triangles.index.count, 3);
   assert.deepEqual(Array.from(triangles.getAttribute('facade').array), [0, 0, 10, 0, 10, 6]);
-  const points = scatterBlocks(triangles, () => 0.5);
-  const p = points.geometry.getAttribute('position');
-  const front = [],
-    behind = [];
-  for (let i = 0; i < p.count; i++) (p.getZ(i) === 0 ? front : behind).push(i);
-  assert(Math.abs(front.length - 30 / 0.25) < 15); // 30 m2, a point per 0.25 m2
-  assert(behind.length > 0 && behind.length < front.length);
-  for (const i of behind) assert(p.getZ(i) < 0); // inside, not in front
-  assert(p.getY(front[0]) >= 0 && p.getY(front[0]) <= 6); // y up in the viewer
-  assert.deepEqual(
-    scatterBlocks(triangles, () => 0.5).geometry.getAttribute('position').array,
-    p.array,
-  );
-  triangles.dispose();
-  points.geometry.dispose();
-  points.material.dispose();
+  assert.equal(triangles.getAttribute('position').getY(2), 6); // y up in the viewer
+  const mesh = blocksMesh(triangles);
+  assert(mesh.isMesh);
+  assert.equal(mesh.geometry, triangles);
+  const shader = {
+    vertexShader: THREE.ShaderLib.basic.vertexShader,
+    fragmentShader: THREE.ShaderLib.basic.fragmentShader,
+  };
+  mesh.material.onBeforeCompile(shader);
+  assert.match(shader.vertexShader, /vFacade = facade/);
+  assert.match(shader.fragmentShader, /fwidth/);
+  mesh.geometry.dispose();
+  mesh.material.dispose();
 });

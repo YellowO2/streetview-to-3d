@@ -10,26 +10,32 @@ def read_ply(ply_path):
     header = data[:header_end].decode("ascii")
     n = int(next(l for l in header.splitlines() if l.startswith("element vertex")).split()[-1])
     has_color = "red" in header
-    fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4")]
-    if has_color:
-        fields += [("red", "u1"), ("green", "u1"), ("blue", "u1")]
+    kinds = {"float": "<f4", "uchar": "u1", "int": "<i4"}
+    vertex = header.split("element vertex")[1].split("element")[0]
+    fields = [(l.split()[2], kinds[l.split()[1]]) for l in vertex.splitlines() if l.startswith("property")]
     verts = np.frombuffer(data[header_end:], dtype=np.dtype(fields), count=n)
     pts = np.stack([verts["x"], verts["y"], verts["z"]], axis=1).astype(np.float64)
     cols = (np.stack([verts["red"], verts["green"], verts["blue"]], axis=1).astype(np.float64) / 255.0) if has_color else None
     return pts, cols
 
 
-def write_ply(path, pts, cols):
+def write_ply(path, pts, cols, gap=None):
+    """Points, and with gap (n,) how far each is from its neighbours, metres:
+    the viewer draws it that big (scene-store.js, terrainBands)."""
     n = len(pts)
     header = (
         "ply\nformat binary_little_endian 1.0\n"
         f"element vertex {n}\n"
         "property float x\nproperty float y\nproperty float z\n"
         "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+        + ("property float gap\n" if gap is not None else "") +
         "end_header\n"
     ).encode("ascii")
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")]
+    fields += [("gap", "<f4")] if gap is not None else []
     verts = np.zeros(n, dtype=np.dtype(fields))
+    if gap is not None:
+        verts["gap"] = gap
     verts["x"], verts["y"], verts["z"] = pts[:, 0], pts[:, 1], pts[:, 2]
     rgb = (np.clip(cols, 0, 1) * 255).astype("u1") if cols is not None else np.full((n, 3), 200, dtype="u1")
     verts["red"], verts["green"], verts["blue"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]

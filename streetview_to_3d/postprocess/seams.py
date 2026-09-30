@@ -39,11 +39,11 @@ def tint(cols, near, dist, cut_m, band_m, strength):
     return cols * (1 - w) + np.nan_to_num(near) * w
 
 
-def meet(h, ground, dist, band_m):
+def meet(h, ground, dist, band_m, max_m=MEET_MAX_M):
     """Heights h pulled onto the scene's ground at the nearest edge, fully
-    at it, not at all band_m out."""
+    at it, not at all band_m out -- unless they differ by more than max_m."""
     w = 1 - ramp(dist / band_m)
-    w = np.where(np.isnan(ground) | (np.abs(np.nan_to_num(ground) - h) > MEET_MAX_M), 0.0, w)
+    w = np.where(np.isnan(ground) | (np.abs(np.nan_to_num(ground) - h) > max_m), 0.0, w)
     return h + (np.nan_to_num(ground) - h) * w
 
 

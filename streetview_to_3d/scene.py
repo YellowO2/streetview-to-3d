@@ -111,6 +111,8 @@ class Scene:
     # in the world, and its roads and bridges, points (postprocess/terrain.py)
     land: str | None = None
     terrain: str | None = None
+    # its roads further out, a triangle .ply (the near ones are points in terrain)
+    roads: str | None = None
     # the OSM buildings around it, spaced finer than the land (same module)
     buildings: str | None = None
     # its water, flat outlines each at a level (postprocess/water.py)
@@ -174,5 +176,5 @@ class Scene:
                    nodes=[Node(pano=Pano(**n.pop("pano")), **n) for n in d["nodes"]],
                    adjacency={str(k): v for k, v in d["adjacency"].items()},
                    edges=[Edge(**e) for e in d["edges"]],
-                   land=d.get("land"), terrain=d.get("terrain"), buildings=d.get("buildings"), water=d.get("water"),
+                   land=d.get("land"), terrain=d.get("terrain"), roads=d.get("roads"), buildings=d.get("buildings"), water=d.get("water"),
                    blocks=d.get("blocks"))

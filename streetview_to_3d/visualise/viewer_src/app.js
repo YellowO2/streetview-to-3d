@@ -126,10 +126,15 @@ function configure() {
   camera.near = Math.min(0.2, Math.max(radius * 0.002, 0.00001));
   camera.far = radius * 1000;
   camera.updateProjectionMatrix();
+  // haze, as games have it: the far land and buildings fade into the sky's
+  // colour, so their plainness never shows and distance reads
+  scene.fog = store.placement === 'world' ? new THREE.Fog(HAZE, HAZE_M[0], HAZE_M[1]) : null;
   view.styles.configure(store, radius);
   setPointSize();
 }
 const PLACED_POINT_M = 0.1;
+const HAZE = 0xc9dbe6,
+  HAZE_M = [250, 1800]; // clear to, gone by
 function setPointSize() {
   // the scene's own points at one size; the map's (terrain, buildings) at
   // their spacing's, but never smaller than the scene's, so where they meet

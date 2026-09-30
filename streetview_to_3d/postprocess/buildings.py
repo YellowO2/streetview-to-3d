@@ -29,14 +29,11 @@ Footprints from osm.py, each raised into a block of points:
     satellite sees of it (satellite_roofs) -- never a pano's own pixel:
     from the street they see its edge against the sky
 
-Further than SOLID_M from every camera a building is written solid
-instead (solid): a few dozen triangles, not thousands of points -- the
-file far smaller -- walls and roof shaded as the points are, each vertex
-carrying its place on its wall. The viewer scatters points over them as
-it opens the scene, spaced as the terrain's, floors of windows taken
-from those places where the points are close enough to draw them, and
-sparser, darker layers behind each wall (effects/blocks.js): the same
-paint as the rest.
+Away from the cameras a building is written solid instead (solid; far,
+terrain.FADE_M): a few dozen triangles, not thousands of points -- walls
+and roof shaded as the points are, each vertex carrying its place on its
+wall, from which the viewer draws its floors of windows (effects/blocks.js).
+Near the points, windows the same way (windows).
 
 Called by terrain.build, which writes them to buildings.ply and the solid
 ones to blocks.ply.
@@ -97,7 +94,6 @@ INNER_M, INNER_GAP = (0.6, 1.5), 2.0   # walls again this far inside, this many 
 TRIM_EDGE_M = 5.0             # only a straight wall this long trims: a curve's short edges found planes in
                               # its own curved, overhung walls and ate NTU's Hive
 TOP_PERCENTILE = 97
-SOLID_M = 50.0                # buildings this far from every camera are solid, not points
 SOLID_STEP_M = 2.0            # a hipped roof's triangles about this long, at least
 NO_FACADE = -1.0              # a roof's place on a wall: none
 MIN_HEIGHT_M = 2.5
@@ -603,13 +599,50 @@ def points(outlines, spacing, ground, colour, sun):
                   np.concatenate(shade), np.concatenate(own))
 
 
-def far(outlines, cams):
-    """True for each outline further than SOLID_M from every camera
+FLOOR_M, BAY_M = LEVEL_M, 3.0       # windows: one row a floor, one a bay (as effects/blocks.js)
+WINDOW_U, WINDOW_V = (0.3, 0.7), (0.3, 0.8)     # of a bay, of a floor
+WINDOW_DARK, WINDOW_TINT = 0.45, (0.03, 0.05, 0.08)   # a window: the wall this dark, plus a little blue
+
+
+def _across(x, span, size, gap):
+    """How much of a window a point at x (metres) shows, one way: 1 or 0
+    where points are close enough to draw it (a quarter of size), else the
+    share of the wall that is window."""
+    if np.isscalar(gap):
+        gap = np.full(len(x), gap)
+    f = x / size - np.floor(x / size)
+    inside = ((f >= span[0]) & (f <= span[1])).astype(float)
+    return np.where(gap > size / 4, span[1] - span[0], inside)
+
+
+def windows(blocks, outlines, ground):
+    """Floors of windows on every outer wall's points, in place: a row a
+    floor (FLOOR_M, which is also how OSM's building:levels becomes a
+    height), a window a bay (BAY_M), counted from the building's foot. Only
+    where the points are close enough to draw one; further off each floor
+    is a darker band, then the wall a little darker all over, as the far
+    solid ones (effects/blocks.js). Not on a DA3 wall (seam leaves those to
+    DA3) nor a pano's (terrain._paint repaints those)."""
+    wall = blocks.edge >= 0
+    if not wall.any():
+        return
+    foot = np.array([ground(xy).min() for xy, *_ in outlines])
+    i = np.flatnonzero(wall)
+    up = blocks.v[i] - foot[blocks.which[i]]
+    g = blocks.gap[i]
+    w = _across(blocks.u[i], WINDOW_U, BAY_M, g) * _across(up, WINDOW_V, FLOOR_M, g)
+    w = np.where(up < 0.5, 0.0, w)                              # not in the ground
+    c = blocks.cols[i]
+    blocks.cols[i] = c * (1 - w[:, None]) + (c * WINDOW_DARK + WINDOW_TINT) * w[:, None]
+
+
+def far(outlines, cams, m):
+    """True for each outline further than m from every camera
     (east/north (n, 2))."""
     if not len(cams):
         return np.ones(len(outlines), bool)
     tree = cKDTree(cams)
-    return np.array([tree.query(xy)[0].min() > SOLID_M for xy, *_ in outlines], bool)
+    return np.array([tree.query(xy)[0].min() > m for xy, *_ in outlines], bool)
 
 
 def solid(outlines, ground, colour, sun):
