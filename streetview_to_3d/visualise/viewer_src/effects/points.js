@@ -53,7 +53,6 @@ export function pointMotion(object) {
     shader.fragmentShader =
       `
       varying vec3 stylePosition;
-      ${stableSeed ? 'attribute float styleSeed;' : ''}
       uniform float styleTime, styleRadius, styleLook, styleScan, styleReveal, styleRound;
     ` + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace(
@@ -73,7 +72,7 @@ export function pointMotion(object) {
     `,
     );
   };
-  material.customProgramCacheKey = () => originalKey + ':viewer-point-motion-v3:' + stableSeed;
+  material.customProgramCacheKey = () => originalKey + ':viewer-point-motion-v5:' + stableSeed;
   material.needsUpdate = true;
   patched.set(material, uniforms);
   return uniforms;

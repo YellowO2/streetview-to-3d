@@ -13,6 +13,7 @@ export const STYLE_DEFAULTS = {
   original: { ...BASE },
   paint: { ...BASE, strength: 0.61, density: 100, pointSize: 1, amount: 0.3, floating: true },
   dither: { ...BASE },
+  matrix: { ...BASE, density: 100, atmosphere: false },
 };
 
 export function normalizeStyle(name) {

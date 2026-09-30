@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { createMatrixPass, MATRIX_CELL_SIZE } from '@viewer/effects/matrix';
 import { createAnimePass } from '@viewer/effects/anime';
 import { createDitherPass, ditherCellSize } from '@viewer/effects/dither';
 import { createEnvironment } from '@viewer/effects/environment';
@@ -17,7 +18,9 @@ export function createStyles(scene, camera, renderer) {
     settings = { ...STYLE_DEFAULTS.original },
     composer,
     anime,
-    dither;
+    dither,
+    matrix;
+  const matrixBackground = new THREE.Color(0x15191d);
   // A placed scene is in metres, so the look (float, scan) is one
   // fixed size, the small Stockholm scene's radius, whatever
   // the scene's extent; the reveal still sweeps the scene's own radius.
@@ -36,9 +39,11 @@ export function createStyles(scene, camera, renderer) {
       target.depthTexture = new THREE.DepthTexture(target.width, target.height);
     anime = createAnimePass();
     dither = createDitherPass();
+    matrix = createMatrixPass();
     composer.addPass(new RenderPass(scene, camera));
     composer.addPass(anime);
     composer.addPass(dither);
+    composer.addPass(matrix);
     composer.addPass(new OutputPass());
   }
   function resize() {
@@ -49,6 +54,8 @@ export function createStyles(scene, camera, renderer) {
     composer.setSize(size.x, size.y);
     anime.uniforms.texel.value.set(1 / (size.x * ratio), 1 / (size.y * ratio));
     dither.uniforms.resolution.value.set(size.x * ratio, size.y * ratio);
+    matrix.uniforms.resolution.value.set(size.x * ratio, size.y * ratio);
+    matrix.uniforms.cellSize.value = MATRIX_CELL_SIZE * ratio;
   }
   function updateMotion(editing) {
     for (const { uniforms, animated } of entries) {
@@ -116,16 +123,19 @@ export function createStyles(scene, camera, renderer) {
       environment.update(
         style === 'paint' ? 'anime' : style,
         camera,
-        !!asset?.group && settings.atmosphere,
+        !!asset?.group && settings.atmosphere && style !== 'matrix',
         !!asset?.group && !asset.splat,
       );
-      scene.background = originalBackground;
+      scene.background = style === 'matrix' ? matrixBackground : originalBackground;
       if (style === 'original' || !asset?.group) {
         renderer.render(scene, camera);
         return;
       }
       anime.enabled = style === 'paint';
       dither.enabled = style === 'dither';
+      matrix.enabled = style === 'matrix';
+      matrix.uniforms.time.value = time;
+      matrix.uniforms.strength.value = settings.strength;
       const depth = composer.readBuffer.depthTexture;
       // Spark blends transparent Gaussians without reliable surface depth.
       // Grade its colour normally; do not interpret the background's depth as a splat surface.

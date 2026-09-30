@@ -32,7 +32,11 @@ test('style controls retain per-preset settings and expose only supported splat 
   ui.select('paint');
   assert.equal($('style-strength').value, '0.37');
   assert.equal($('point-density').value, '60');
+  ui.select('matrix');
+  assert.equal($('point-density').value, '100');
+  assert.equal(calls.at(-1)[0], 'matrix');
   ui.render({ group: {}, splat: {} }, false);
+  assert.equal(calls.at(-1)[0], 'matrix');
   assert($('style-point-controls').hidden);
   assert(!$('style-splat-note').hidden);
   ui.render({ group: {}, splat: {} }, true);
