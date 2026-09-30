@@ -2,13 +2,9 @@
 
 DA3's own points keep the colours DA3 gave them.
 
-Two questions, answered separately. Is an added point IN VIEW of some
-camera -- nothing of DA3's in front of it along the line of sight, over
-the camera's whole sphere, within MAX_M? If not, no camera has ever seen
-it (floor behind a fence) and fill leaves it out. And which camera may
-COLOUR it? That is stricter, below. The spot right under a camera is in
-view (it looks straight down at it) but no camera may colour it; such
-points take the colour of the painted points around them.
+A point no camera may colour (the spot right under a camera, masked
+spots, floor behind a fence) is left to the caller: the fill gives it the
+colour of the nearest painted point.
 
 Each added point mixes every camera that can colour it, the nearest most,
 one BLEND_M further 1/e as much: deep in one camera's patch it is that
@@ -95,11 +91,10 @@ def _at(grid, u, v):
 
 
 def paint(points, occluders, cameras, photos, max_m=MAX_M):
-    """(colours, which camera painted each point or -1, which are in view).
+    """(colours, which camera painted each point -- the nearest -- or -1).
     points: the added points; occluders: DA3's points, what can hide them;
     photos[k]: (image path, drop mask) of cameras[k]'s pano, or None."""
     n, K = len(points), len(cameras)
-    in_view = np.zeros(n, bool)
     sees = np.zeros((K, n), bool)
     dist = np.full((K, n), np.inf)
     looks = [None] * K
@@ -117,7 +112,6 @@ def paint(points, occluders, cameras, photos, max_m=MAX_M):
         u, v, r, below = cam.look(points)
         px = np.clip((v * h).astype(int), 0, h - 1) * w + (u * w).astype(int) % w
         visible = (r <= near[px] + 0.1) & (r < max_m)
-        in_view |= visible
         sees[k] = visible & (below < NADIR_DEG) & ~_at(ph[1], u, v)
         dist[k] = r
         looks[k] = (u, v)
@@ -137,4 +131,4 @@ def paint(points, occluders, cameras, photos, max_m=MAX_M):
             colours[idx] += w[idx, None] * _at(img, u[idx], v[idx]) / 255.0
             total[idx] += w[idx]
     colours /= np.maximum(total, 1e-9)[:, None]
-    return colours, who, in_view
+    return colours, who

@@ -445,7 +445,7 @@ def _paint(panos, pts, cols, scene, skip=None):
     near = np.flatnonzero(near & ~skip if skip is not None else near)
     if not len(near):
         return cols, 0
-    painted, who, _ = paint(pts[near], scene, cams, [ph and (ph[0], ph[2]) for ph in photos], max_m=PAINT_M)
+    painted, who = paint(pts[near], scene, cams, [ph and (ph[0], ph[2]) for ph in photos], max_m=PAINT_M)
     cols = cols.copy()
     cols[near[who >= 0]] = painted[who >= 0]
     return cols, int((who >= 0).sum())

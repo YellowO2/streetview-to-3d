@@ -81,7 +81,7 @@ def run(scene_dir, log=print):
     t1 = time.monotonic()
 
     added = ground
-    col, who, _ = paint(added, da3, cameras,
+    col, who = paint(added, da3, cameras,
                               [ph and (ph[0], pano_mask(ph[1]) | blurred(ph[0])) for ph in photos])
     # no camera may colour it (the spot under a camera, masked spots, or out
     # of every camera's view): the colour of the nearest painted point --
