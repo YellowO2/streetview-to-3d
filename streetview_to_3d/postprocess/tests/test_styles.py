@@ -94,7 +94,7 @@ def test_a_shed_has_no_windows_a_church_and_a_castles_tiers_few():
     shed, house = _outlines(36.24, 137.97, (6, {"building": "shed"}), (8, {"building": "house"}))
     church = _outlines(48.85, 2.35, (20, {"building": "church"}))[0]
     assert buildings.facade_layout(shed[3], shed[1]) is None
-    v, c, f, facade = buildings.solid([shed], lambda xy: np.zeros(len(xy)), np.full((1, 3), .8), np.array([0, -1, 0]))
+    v, c, f, facade = buildings.solid([shed], lambda xy: np.zeros(len(xy)), np.full((1, 3), .8))
     assert (facade[:, 1] == buildings.NO_FACADE).all()
     bay, floor = buildings.facade_layout(church[3], church[1])
     rows = (church[1] - church[3].roof.height) / floor

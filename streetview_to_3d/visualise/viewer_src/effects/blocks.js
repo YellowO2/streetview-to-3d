@@ -6,9 +6,10 @@ import { FLAT, JITTER } from '@viewer/effects/scatter';
 import { tunable } from '@viewer/effects/tune-panel';
 
 // The buildings (blocks.ply, postprocess/buildings.solid: triangles, each
-// building one colour, lit by which way each face looks) built of brush
-// strokes and nothing else, as a painter builds them: no surface under them,
-// where the strokes end the building ends.
+// building its colour as it is) built of brush strokes and nothing else, as
+// a painter builds them: no surface under them, where the strokes end the
+// building ends. Their colours are the buildings' own, never made up here:
+// this only draws them -- strokes, light, haze.
 //
 // - Its walls and roofs: strokes on a grid fixed on each (jittered as the
 //   world's points are, JITTER; a wall's on its facade, metres along it and
@@ -16,15 +17,16 @@ import { tunable } from '@viewer/effects/tune-panel';
 //   SPACE of the building's points' spacing apart (its gap); each a flat
 //   brush mark lying on its face, across a wall, down a roof's slope.
 // - Its structure: strokes along every edge where faces meet at a crease or a
-//   face ends (corners, eaves, ridges, gables; not its foot), darker.
+//   face ends (corners, eaves, ridges, gables; not its foot), its colour.
 // - Its windows: nothing of their own -- part of the wall, they are the
-//   wall's strokes that fall on them, dark (a few windows lit warm), where
-//   strokes are close enough to tell them (two to a bay and a floor).
+//   wall's strokes that fall on them, in the windows' colour its facade
+//   gives (blocks.ply's glass), where strokes are close enough to tell them
+//   (two to a bay and a floor).
 //
 // Painted by light and shade: a face toward the sun warm and lighter, away
-// from it cool and darker (light), bolder than seen (BOLD); each stroke a
-// little lighter or darker (vary), warmer or cooler (HUE), bristled along its
-// length, its edge uneven -- or, round, more a point than a stroke: a round
+// from it cool and darker (light); each stroke a little lighter or darker
+// (vary), bristled along its length, its edge uneven -- or, round, more a
+// point than a stroke: a round
 // dab ROUND across, as the scene's points are. Which lies over which is
 // each stroke's own, fixed in the world (lifted off its face by its own
 // share of LAYER), never how it is seen, so nothing flickers. Scattered as a
@@ -40,16 +42,12 @@ export const KNOBS = {
   scatter: [0.5, 0, 1], // each stroke off its place, tipped, bigger or smaller: still, as a point floats
   light: [0.5, 0, 1], // how far apart in the sun and in the shade
   vary: [0.11, 0, 0.4], // each stroke, how much lighter or darker
-  edges: [0.31, 0, 1], // the structure's strokes, how much darker
-  windows: [1, 0, 1], // the strokes on a window, how dark
 };
 const SPACE = 1.2, // strokes this much of the points' spacing apart
   LONG = 2.2, // a stroke this long, of that
   WIDE = 1.2, // and this wide
   EDGE_WIDE = 0.45, // a structure's stroke this wide
   ROUND = 1.6, // a round dab this across, of the strokes' spacing
-  BOLD = 0.25, // how much more saturated than seen
-  HUE = 0.1, // each stroke at most this much warmer or cooler, greener or redder
   LAYER = 0.04, // a stroke lifted off its face up to this much of its spacing
   SCATTER = [0.35, 0.25], // a stroke off its place at most this much of its spacing: off its face, along it
   SCATTER_M = 0.4, // its spacing counted as no more than this: far off, sparse strokes scatter as near ones
@@ -63,12 +61,9 @@ export const FLOOR_M = 3.2,
   WINDOW_U = [0.3, 0.7], // a window, of a bay
   WINDOW_V = [0.3, 0.8]; // and of a floor
 const SUNLIT = [1.12, 1.02, 0.86], // the sun's warmth on a face
-  SHADED = [0.5, 0.56, 0.78], // the shade's cool, the sky's blue in it
-  INK = [0.1, 0.08, 0.1], // a window's dark
-  LAMP = [1, 0.76, 0.4]; // a lit window
+  SHADED = [0.5, 0.56, 0.78]; // the shade's cool, the sky's blue in it
 const SURFACE = 0,
-  EDGE = 1,
-  WINDOW = 2;
+  EDGE = 1; // as postprocess/buildings.Blocks.kind
 
 const knobs = tunable('Buildings', KNOBS);
 const f = (x) => x.toFixed(4);
@@ -83,7 +78,6 @@ const vertexShader = `
   varying vec2 mark;
   varying float seed, shapeOf;
   float h1(float x) { return fract(sin(x * 12.9898) * 43758.5453); }
-  vec3 saturate3(vec3 c, float by) { return max(mix(vec3(dot(c, vec3(.3, .59, .11))), c, 1. + by), 0.); }
   void main() {
     float kind = shape.z;
     seed = shape.w;
@@ -108,15 +102,10 @@ const vertexShader = `
     world = centre + off + (way * position.x * dims.x + side * position.y * dims.y) * .5
       + (kind == ${f(EDGE)} ? normalize(eye) : n) * lift;
     shapeOf = round;
-    // its colour: its face lit or in shade, bolder, its own shade and hue
+    // its colour, its face lit or in shade, a little lighter or darker its own way
     float sunlit = smoothstep(-.05, .25, dot(n, ${v3(sun)}));
-    vec3 c = saturate3(tint * mix(vec3(1.), mix(${v3(SHADED)}, ${v3(SUNLIT)}, sunlit), light), ${f(BOLD)});
-    c *= 1. + (h1(seed * 3.3) - .5) * 2. * vary;
-    vec3 h = vec3(h1(seed * 1.3), h1(seed * 2.7), h1(seed * 4.1)) - .5;
-    c *= 1. + (h - dot(h, vec3(1. / 3.))) * 2. * ${f(HUE)};
-    if (kind == ${f(EDGE)}) c *= 1. - edges;
-    if (kind == ${f(WINDOW)}) c = h1(seed * 9.7) < .12 ? ${v3(LAMP)} : mix(c, mix(${v3(INK)}, c * .3, .25), windows);
-    colour = c;
+    colour = tint * mix(vec3(1.), mix(${v3(SHADED)}, ${v3(SUNLIT)}, sunlit), light)
+      * (1. + (h1(seed * 3.3) - .5) * 2. * vary);
     gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.);
   }`;
 
@@ -157,6 +146,7 @@ export function strokes(geometry) {
     gapOf = geometry.getAttribute('gap'),
     facade = geometry.getAttribute('facade'),
     layout = geometry.getAttribute('facadeLayout'),
+    glassOf = geometry.getAttribute('glass')?.count ? geometry.getAttribute('glass') : null,
     index = geometry.index.array;
   const out = { centre: [], facing: [], along: [], tint: [], shape: [] };
   const add = (c, n, a, t, len, wide, kind) => {
@@ -215,7 +205,8 @@ export function strokes(geometry) {
           : new THREE.Vector3(1, 0, 0);
     }
     const k = Math.round(s * 1000) + (wall ? 3 : Math.abs(n.y) >= FLAT ? 1 : 2) * 97;
-    const tint = [C(a), C(b), C(c)];
+    const tint = [C(a), C(b), C(c)],
+      glass = glassOf && [a, b, c].map((i) => [glassOf.getX(i), glassOf.getY(i), glassOf.getZ(i)]);
     const lo0 = Math.floor(Math.min(ua[0], ub[0], uc[0]) / s - 1),
       hi0 = Math.ceil(Math.max(ua[0], ub[0], uc[0]) / s + 1),
       lo1 = Math.floor(Math.min(ua[1], ub[1], uc[1]) / s - 1),
@@ -224,7 +215,7 @@ export function strokes(geometry) {
     // a wall's stroke falling on a window, where strokes are close enough to tell them
     const bay = layout && layout.getX(a) > 0 ? layout.getX(a) : BAY_M,
       floor = layout && layout.getY(a) > 0 ? layout.getY(a) : FLOOR_M;
-    const windows = wall && s * 2 <= Math.min(bay, floor);
+    const windows = wall && glass && s * 2 <= Math.min(bay, floor);
     const onWindow = (x, y) => {
       const qx = x / bay - Math.floor(x / bay),
         qy = y / floor - Math.floor(y / floor);
@@ -242,10 +233,10 @@ export function strokes(geometry) {
           at(A.toArray(), B.toArray(), Cv.toArray(), ...w),
           n.toArray(),
           along.toArray(),
-          at(...tint, ...w),
+          at(...(windows && onWindow(x, y) ? glass : tint), ...w),
           s * LONG,
           s * WIDE,
-          windows && onWindow(x, y) ? WINDOW : SURFACE,
+          SURFACE,
         );
       }
     // its edges, for the structure's strokes
@@ -284,10 +275,49 @@ export function strokes(geometry) {
   return out;
 }
 
+// The buildings DA3 reaches (buildings.ply, postprocess/buildings.points:
+// their points already met to DA3's -- moved onto its walls, left out where
+// it has them, pulled toward it and its colour beside it): a stroke on each
+// point, as the triangles' are laid, its facing, way, kind (SURFACE, EDGE)
+// and colour (its windows' too) the point's own, as long and wide as its
+// spacing (gap) says.
+export function pointStrokes(geometry) {
+  const p = geometry.getAttribute('position'),
+    n = geometry.getAttribute('normal'),
+    a = geometry.getAttribute('along'),
+    col = geometry.getAttribute('color'),
+    gapOf = geometry.getAttribute('gap'),
+    kindOf = geometry.getAttribute('kind');
+  const count = p.count;
+  const made = {
+    centre: p.array.slice(0, 3 * count),
+    facing: n.array.slice(0, 3 * count),
+    along: a.array.slice(0, 3 * count),
+    tint: col ? col.array.slice(0, 3 * count) : new Float32Array(3 * count).fill(0.6),
+    shape: new Float32Array(4 * count),
+  };
+  for (let i = 0; i < count; i++) {
+    const s = gapOf && gapOf.getX(i) > 0 ? gapOf.getX(i) : 1,
+      kind = kindOf ? Math.round(kindOf.getX(i)) : SURFACE;
+    made.shape.set(
+      kind === EDGE ? [s * 1.6, s * EDGE_WIDE, EDGE, 0] : [s * LONG, s * WIDE, SURFACE, 0],
+      4 * i,
+    );
+    made.shape[4 * i + 3] = hash(p.getX(i), p.getY(i), p.getZ(i)) * 100;
+  }
+  geometry.dispose();
+  return strokeMesh(made);
+}
+
 // The buildings' triangles (parseSurface: the viewer's frame) as their strokes, drawn.
 export function blocksStrokes(geometry) {
   const made = strokes(geometry);
   geometry.dispose();
+  return strokeMesh(made);
+}
+
+// strokes ({ centre, facing, along, tint, shape }) as one instanced mesh
+function strokeMesh(made) {
   const g = new THREE.InstancedBufferGeometry();
   g.setAttribute(
     'position',

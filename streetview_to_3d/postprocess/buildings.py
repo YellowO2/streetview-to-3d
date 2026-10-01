@@ -75,7 +75,6 @@ TRIM_MIN_M2, TRIM_MAX = 1.0, 0.2
 CHEER_SAT, CHEER_LIFT = 1.3, 1.15
 SAT_INSET_M, SAT_STEP_M = 3.0, 4.0   # (Sentinel-2's) a roof sampled this far in from its edge (a 10 m pixel on it is
                                      # half street), this far apart
-ROOF_LIFT = 1.08              # a roof faces the sky: a little lighter than its walls
 # the colour of a building no pano sees enough of: the place's own (palette)
 PALETTE_K, PALETTE_MIN, PALETTE_STRIDE = 8, 500, 8
 SOFT_LIGHT, SOFT_SAT = (0.62, 0.88), (0.15, 0.45)   # softened: the satellite's grey-brown looked dull
@@ -92,8 +91,9 @@ MATERIAL = {"brick": (0.72, 0.4, 0.32), "stone": (0.8, 0.76, 0.68), "sandstone":
             "plaster": (0.9, 0.86, 0.78), "wood": (0.62, 0.46, 0.32), "timber_framing": (0.9, 0.85, 0.75),
             "roof_tiles": (0.72, 0.36, 0.26), "tile": (0.72, 0.36, 0.26), "slate": (0.36, 0.39, 0.43),
             "tar_paper": (0.3, 0.3, 0.3), "eternit": (0.55, 0.55, 0.55), "zinc": (0.62, 0.65, 0.68)}
-WALL_SHADE = 0.85             # a wall facing away from the sun, of one facing it (0.6 looked dull)
 ROOF, INNER = -1, -2          # Blocks.edge for a roof's points and an inner wall's
+SURFACE, EDGE = 0, 1          # Blocks.kind: as effects/blocks.js draws them
+GLASS, GLASS_OWN = (0.22, 0.43, 0.64), 0.12   # a window's colour: blue glass, a little of its wall's
 # DA3's own copy of a wall (da3_copy, on_plane, stretches): its points within SAME_M of the wall's
 # plane, facing within SAME_DEG of its way, within SAME_NEAR_M of it, SAME_MIN at least; agreeing when
 # its fitted plane faces within AGREE_DEG; on it within ON_WALL_M; along it in SPAN_M steps of
@@ -582,20 +582,23 @@ def _inside(pts, ring):
 
 class Blocks:
     """Every building's points, and for each where on its building it is:
-    which building, how lit (NaN on a roof), which wall edge (ROOF on a
-    roof, INNER on an inner wall) and its place on that wall, u metres along and v metres up
-    (height above sea level), and how far it is from its neighbours (gap); on a roof, what its
-    building's colour is multiplied by there (shade: lighter, lit by which way it faces) and
-    whether it keeps its own (own: roof:colour). edges[e]: (start, along, outward, length,
-    DA3's plane for it (n2, d2) or None)."""
+    which building, which wall edge (ROOF on a roof, INNER on an inner wall)
+    and its place on that wall, u metres along and v metres up (height
+    above sea level), how far it is from its neighbours (gap) and whether
+    it keeps its own colour (own: roof:colour). Its colour is its own,
+    unlit: the viewer lights it. edges[e]: (start, along, outward, length,
+    DA3's plane for it (n2, d2) or None). For the viewer, which draws each as a brush
+    stroke (effects/blocks.js): which way it faces (normal), which way its stroke goes
+    (along: a wall's way, down a roof's slope, up a corner) and what it is (kind:
+    SURFACE, or EDGE: a corner's or the eaves')."""
 
-    def __init__(self, pts, cols, which, light, edge, u, v, gap, edges, shade, own):
-        self.pts, self.cols, self.which, self.light = pts, cols, which, light
+    def __init__(self, pts, cols, which, edge, u, v, gap, edges, own, normal, along, kind):
+        self.pts, self.cols, self.which = pts, cols, which
         self.edge, self.u, self.v, self.gap, self.edges = edge, u, v, gap, edges
-        self.shade, self.own = shade, own
+        self.own, self.normal, self.along, self.kind = own, normal, along, kind
 
     def take(self, keep):
-        for k in ("pts", "cols", "which", "light", "edge", "u", "v", "gap", "shade", "own"):
+        for k in ("pts", "cols", "which", "edge", "u", "v", "gap", "own", "normal", "along", "kind"):
             setattr(self, k, getattr(self, k)[keep])
 
 
@@ -621,26 +624,18 @@ def _inset(xy, d):
     return np.asarray(orient(p, 1.0).exterior.coords)
 
 
-def _lit(normals, sun):
-    """How a roof facing normals (m, 3: east, north, up) is shaded, of a
-    flat one: shaded as the walls are, and a little lighter (ROOF_LIFT)."""
-    up = lambda n: WALL_SHADE + (1 - WALL_SHADE) * np.clip(n @ sun, 0, 1)
-    world = normals[:, [0, 2, 1]] * [1, -1, 1]                  # -> x east, y down, z north
-    return ROOF_LIFT * up(world) / up(np.array([0.0, -1.0, 0.0]))
-
-
-def points(outlines, spacing, ground, colour, sun):
+def points(outlines, spacing, ground, colour):
     """Blocks for every outline.
 
     spacing(xy): point spacing at east/north points -- a wall is laid in
     pieces up to CHUNK_M long, each spaced as at its middle, so only what
     is near gets dense; ground(xy): the ground's height there; colour:
-    (n, 3) each building's (colours) -- a roof a little lighter
-    (ROOF_LIFT), roofs and walls shaded by which way they face. Each
+    (n, 3) each building's (colours), as it is: the viewer lights it. Each
     stands from its Form's base_m over its ground up to the roof, the roof
     (roofs.py) up to its height, the walls reaching up to meet it (a
     gable's end); a part that starts in the air has a flat underside."""
-    roofs, roof_shades, walls, lights, edge_of, us, vs, gaps, roof_gaps, edges = [], [], [], [], [], [], [], [], [], []
+    roofs, walls, edge_of, us, vs, gaps, roof_gaps, edges = [], [], [], [], [], [], [], []
+    roof_ways, wall_ways, kinds = [], [], []      # (normal, along) a point each; a wall's points' kinds
     for xy, h, _, form, planes in outlines:
         foot = foot_of(xy, form, ground)
         base, top = foot + form.base_m, foot + h
@@ -656,10 +651,10 @@ def points(outlines, spacing, ground, colour, sun):
             rp = np.concatenate([rp, np.c_[under[:, :2], np.full(len(under), base)]])
             rn = np.concatenate([rn, np.tile([0.0, 0.0, -1.0], (len(under), 1))])
         roofs.append(rp[:, [0, 2, 1]] * [1, -1, 1])
-        roof_shades.append(_lit(rn, sun))
+        roof_ways.append(_roof_ways(rn))
         roof_gaps.append(np.full(len(rp), s))
-        # walls: along each edge and up it, to where the roof meets it; lit by how squarely it faces the sun
-        w, light, eo, uu, vv, gg = [], [], [], [], [], []
+        # walls: along each edge and up it, to where the roof meets it
+        w, eo, uu, vv, gg, nn, aa, kk = [], [], [], [], [], [], [], []
         for j, (a, c) in enumerate(zip(xy[:-1], xy[1:])):
             length = float(np.linalg.norm(c - a))
             if length < 1e-6:
@@ -668,7 +663,6 @@ def points(outlines, spacing, ground, colour, sun):
             out = np.array([t[1], -t[0]])                    # outward for a counter-clockwise ring
             e = len(edges)
             edges.append((a, t, out, length, planes.get(j)))
-            lit = abs(np.array([out[0], 0.0, out[1]]) @ sun)
             for c0 in np.arange(0, length, CHUNK_M):
                 c1 = min(length, c0 + CHUNK_M)
                 s = float(spacing((a + t * (c0 + c1) / 2)[None])[0])
@@ -678,13 +672,24 @@ def points(outlines, spacing, ground, colour, sun):
                 U, V = np.repeat(along, len(levels)), np.tile(levels, len(along))
                 ok = V <= eaves + np.repeat(rise, len(levels)) + 1e-6
                 U, V = U[ok], V[ok]
+                kind = np.full(len(U), SURFACE)
+                # its edges, as strokes of their own: its corner (where it starts) and the eaves
+                corner = np.arange(low, eaves + (rise[0] if len(rise) else 0), s) if c0 == 0 else np.zeros(0)
+                top = eaves + rise
+                U = np.r_[U, np.zeros(len(corner)), along]
+                V = np.r_[V, corner, top]
+                kind = np.r_[kind, np.full(len(corner) + len(along), EDGE)]
+                way = np.tile([t[0], 0.0, t[1]], (len(U), 1))
+                way[len(U) - len(corner) - len(along):len(U) - len(along)] = [0.0, -1.0, 0.0]   # up the corner
                 w.append(np.column_stack([a[0] + t[0] * U, -V, a[1] + t[1] * U]))
-                light.append(np.full(len(U), lit))
                 eo.append(np.full(len(U), e))
                 uu.append(U)
                 vv.append(V)
                 gg.append(np.full(len(U), s))
-        # inner walls: the same, further in, sparser, unlit (so darker); not the building's own edges
+                nn.append(np.tile([out[0], 0.0, out[1]], (len(U), 1)))
+                aa.append(way)
+                kk.append(kind)
+        # inner walls: the same, further in, sparser; not the building's own edges
         for inset in INNER_M:
             ring = _inset(xy, inset)
             for a, c in zip(ring[:-1], ring[1:]) if ring is not None else ():
@@ -698,35 +703,39 @@ def points(outlines, spacing, ground, colour, sun):
                     along, levels = np.arange(c0, c1, s), np.arange(low, eaves, s)
                     U, V = np.repeat(along, len(levels)), np.tile(levels, len(along))
                     w.append(np.column_stack([a[0] + t[0] * U, -V, a[1] + t[1] * U]))
-                    light.append(np.zeros(len(U)))
                     eo.append(np.full(len(U), INNER))
                     uu.append(np.zeros(len(U)))
                     vv.append(V)
                     gg.append(np.full(len(U), s))
+                    nn.append(np.tile([t[1], 0.0, -t[0]], (len(U), 1)))
+                    aa.append(np.tile([t[0], 0.0, t[1]], (len(U), 1)))
+                    kk.append(np.full(len(U), SURFACE))
         walls.append(np.concatenate(w) if w else np.zeros((0, 3)))
-        lights.append(np.concatenate(light) if light else np.zeros(0))
         edge_of.append(np.concatenate(eo) if eo else np.zeros(0, int))
         us.append(np.concatenate(uu) if uu else np.zeros(0))
         vs.append(np.concatenate(vv) if vv else np.zeros(0))
         gaps.append(np.concatenate(gg) if gg else np.zeros(0))
+        wall_ways.append((np.concatenate(nn), np.concatenate(aa)) if nn else (np.zeros((0, 3)), np.zeros((0, 3))))
+        kinds.append(np.concatenate(kk) if kk else np.zeros(0, int))
     if not roofs:
         z = np.zeros((0, 3))
-        return Blocks(z, z, np.zeros(0, int), np.zeros(0), np.zeros(0, int), np.zeros(0), np.zeros(0),
-                      np.zeros(0), [], np.zeros(0), np.zeros(0, bool))
-    pts, cols, which, lit, edge, u, v, gap, shade, own = [], [], [], [], [], [], [], [], [], []
-    for i, (roof, rs, wall, light, eo, uu, vv, rg, gg) in enumerate(zip(roofs, roof_shades, walls, lights, edge_of,
-                                                                         us, vs, roof_gaps, gaps)):
+        return Blocks(z, z, np.zeros(0, int), np.zeros(0, int), np.zeros(0), np.zeros(0), np.zeros(0), [],
+                      np.zeros(0, bool), z, z, np.zeros(0, int))
+    pts, cols, which, edge, u, v, gap, own = [], [], [], [], [], [], [], []
+    normal, way, kind = [], [], []
+    for i, (roof, wall, eo, uu, vv, rg, gg) in enumerate(zip(roofs, walls, edge_of, us, vs, roof_gaps, gaps)):
+        normal += [roof_ways[i][0], wall_ways[i][0]]
+        way += [roof_ways[i][1], wall_ways[i][1]]
+        kind += [np.full(len(roof), SURFACE), kinds[i]]
         mine = outlines[i][3].roof_colour
         pts += [roof, wall]
-        cols += [np.clip((colour[i] if mine is None else mine) * rs[:, None], 0, 1),
-                 colour[i] * (WALL_SHADE + (1 - WALL_SHADE) * light[:, None])]
+        cols += [np.tile(np.clip(colour[i] if mine is None else mine, 0, 1), (len(roof), 1)),
+                 np.tile(colour[i], (len(wall), 1))]
         which.append(np.full(len(roof) + len(wall), i))
-        lit += [np.full(len(roof), np.nan), light]
         edge += [np.full(len(roof), ROOF), eo.astype(int)]
         u += [np.zeros(len(roof)), uu]
         v += [-roof[:, 1], vv]
         gap += [rg, gg]
-        shade += [rs, np.ones(len(wall))]
         own += [np.full(len(roof), mine is not None), np.zeros(len(wall), bool)]
     for i, (xy, h, _, form, planes) in enumerate(outlines):
         step = float(max(spacing(xy).min(), .12))
@@ -734,35 +743,37 @@ def points(outlines, spacing, ground, colour, sun):
         form.physical_facade = enabled(form, h, step)
         for quad, col in detail_quads(xy, h, form, ground, colour[i], planes, gap=step):
             q = sample_quad(quad, step)
+            facing = np.cross(quad[1] - quad[0], quad[-1] - quad[0])
+            side = quad[1] - quad[0]
+            normal.append(np.tile(facing / max(np.linalg.norm(facing), 1e-9), (len(q), 1)))
+            way.append(np.tile(side / max(np.linalg.norm(side), 1e-9), (len(q), 1)))
+            kind.append(np.full(len(q), SURFACE))
             pts.append(q)
             cols.append(np.tile(col, (len(q), 1)))
             which.append(np.full(len(q), i))
-            lit.append(np.full(len(q), np.nan))
             edge.append(np.full(len(q), ROOF))
             u.append(np.zeros(len(q)))
             v.append(-q[:, 1])
             gap.append(np.full(len(q), step))
-            shade.append(np.ones(len(q)))
             own.append(np.ones(len(q), bool))
-    return Blocks(np.concatenate(pts), np.concatenate(cols), np.concatenate(which), np.concatenate(lit),
-                  np.concatenate(edge), np.concatenate(u), np.concatenate(v), np.concatenate(gap), edges,
-                  np.concatenate(shade), np.concatenate(own))
+    return Blocks(np.concatenate(pts), np.concatenate(cols), np.concatenate(which), np.concatenate(edge),
+                  np.concatenate(u), np.concatenate(v), np.concatenate(gap), edges, np.concatenate(own),
+                  np.concatenate(normal), np.concatenate(way), np.concatenate(kind))
+
+
+def _roof_ways(n):
+    """A roof's points' (normals, along) in Blocks' frame (east, down, north),
+    from its normals (east, north, up): along down its slope, a flat one's east."""
+    normal = n[:, [0, 2, 1]] * [1, -1, 1]
+    down = np.c_[n[:, 0], np.zeros(len(n)), n[:, 1]]                  # downhill on the map
+    flat = np.linalg.norm(down, axis=1) < 0.05
+    down[flat] = [1.0, 0.0, 0.0]
+    down -= normal * (down * normal).sum(1, keepdims=True)             # on the roof
+    return normal, down / np.maximum(np.linalg.norm(down, axis=1, keepdims=True), 1e-9)
 
 
 FLOOR_M, BAY_M = LEVEL_M, 3.0       # windows: one row a floor, one a bay (as effects/blocks.js)
 WINDOW_U, WINDOW_V = (0.3, 0.7), (0.3, 0.8)     # of a bay, of a floor
-WINDOW_DARK, WINDOW_TINT = 0.45, (0.03, 0.05, 0.08)   # a window: the wall this dark, plus a little blue
-
-
-def _across(x, span, size, gap):
-    """How much of a window a point at x (metres) shows, one way: 1 or 0
-    where points are close enough to draw it (a quarter of size), else the
-    share of the wall that is window."""
-    if np.isscalar(gap):
-        gap = np.full(len(x), gap)
-    f = x / size - np.floor(x / size)
-    inside = ((f >= span[0]) & (f <= span[1])).astype(float)
-    return np.where(gap > size / 4, span[1] - span[0], inside)
 
 
 def facade_layout(form, h):
@@ -790,39 +801,30 @@ def facade_layout(form, h):
     return bay, float(floor)
 
 
-def facade_colour(c, u, v, gap, bay=BAY_M, floor=FLOOR_M):
-    """Facade treatment mirrored by viewer scatter.facadeColour; coarse points use averages."""
-    cu, cv = u / bay, v / floor
-    qu, qv = cu - np.floor(cu), cv - np.floor(cv)
-    exact = (np.floor(bay / gap + .5) > 1) & (np.floor(floor / gap + .5) > 1)
-    inside = ((qu >= .3) & (qu <= .7) & (qv >= .3) & (qv <= .8))
-    sill = exact & (qu >= .27) & (qu <= .73) & (qv >= .24) & (qv <= .3)
-    frame = exact & inside & ((qu < .34) | (qu > .66) | (qv < .34) | (qv > .76))
-    pane = np.sin(np.floor(cu) * 12.9898 + np.floor(cv) * 78.233) * 43758.5453
-    pane -= np.floor(pane)
-    pane = np.where(exact, pane, .5)
-    w = np.where(exact, inside, .2) * (v >= .5) * .6
-    glass = (c * .12 + [.22, .43, .64]) * (1 + (pane[:, None] - .5) * .5)
-    glass = np.where(frame[:, None], c * .78, glass)
-    wall = c * (1 + .12 * (sill * (v >= .5))[:, None])
-    t = np.clip(v / 3, 0, 1)
-    foot = .8 + .2 * t * t * (3 - 2 * t)
-    return np.clip((wall + (glass - wall) * w[:, None]) * foot[:, None], 0, 1)
+def glass(wall):
+    """A window's colour in a wall of colour wall (..., 3)."""
+    return np.clip(np.asarray(wall) * GLASS_OWN + GLASS, 0, 1)
 
 
 def windows(blocks, outlines, ground):
-    """Apply the same facade grammar as the distant triangle scatterer."""
+    """A wall's points on its windows its glass's colour (glass): a window a
+    bay and a floor, over the ground's first half metre, where points are
+    close enough to tell them (two to a bay and a floor) -- as the viewer
+    lays the far buildings' (effects/blocks.js, from blocks.ply's facade).
+    Nothing of their own: the wall's points that fall on them."""
     for owner, (xy, h, _, form, *_) in enumerate(outlines):
-        i = np.flatnonzero((blocks.edge >= 0) & (blocks.which == owner))
-        if not len(i):
-            continue
-        if form.physical_facade:
+        i = np.flatnonzero((blocks.edge >= 0) & (blocks.which == owner) & (blocks.kind == SURFACE))
+        if not len(i) or form.physical_facade:
             continue  # real window modules, without a second painted window grid
         layout = facade_layout(form, h)
         if layout is None:
             continue
+        bay, floor = layout
         up = blocks.v[i] - foot_of(xy, form, ground)
-        blocks.cols[i] = facade_colour(blocks.cols[i], blocks.u[i], up, blocks.gap[i], *layout)
+        qu, qv = blocks.u[i] / bay % 1, up / floor % 1
+        on = ((qu >= WINDOW_U[0]) & (qu <= WINDOW_U[1]) & (qv >= WINDOW_V[0]) & (qv <= WINDOW_V[1])
+              & (up >= 0.5) & (blocks.gap[i] * 2 <= min(bay, floor)))
+        blocks.cols[i[on]] = glass(blocks.cols[i[on]])
 
 
 def detail_quads(xy, h, form, ground, colour, planes=None, gap=2.5):
@@ -889,22 +891,22 @@ def _turning(xy):
     return float(np.sum(xy[:-1, 0] * xy[1:, 1] - xy[1:, 0] * xy[:-1, 1]))
 
 
-def _wall_facade(form, h, u, v):
-    """A wall's facade (n, 4): its points' metres along and up, its bay and
-    floor; NO_FACADE if it has no windows (facade_layout)."""
+def _wall_facade(form, h, u, v, glass_colour):
+    """A wall's facade (n, 7): its points' metres along and up, its bay and
+    floor, its windows' colour; NO_FACADE if it has no windows (facade_layout)."""
     layout = facade_layout(form, h)
     if layout is None:
-        return np.full((len(u), 4), NO_FACADE)
-    return np.c_[u, v, np.full(len(u), layout[0]), np.full(len(u), layout[1])]
+        return np.full((len(u), 7), NO_FACADE)
+    return np.c_[u, v, np.full(len(u), layout[0]), np.full(len(u), layout[1]), np.tile(glass_colour, (len(u), 1))]
 
 
-def solid(outlines, ground, colour, sun, spacing=None):
+def solid(outlines, ground, colour, spacing=None):
     """Every outline as triangles: (vertices (n, 3) world frame, colours
-    (n, 3), faces (m, 3), facade (n, 4)): walls from its base (Form.base_m)
-    to where the roof meets them, lit by which way they face; its roof
-    (roofs.Roof.triangles), lit by which way each triangle faces; a flat
-    underside if it starts in the air. facade: a wall vertex's metres
-    along its wall and up from the ground, plus bay/floor sizes;
+    (n, 3), as they are -- the viewer lights them --, faces (m, 3), facade
+    (n, 7)): walls from its base (Form.base_m) to where the roof meets
+    them; its roof (roofs.Roof.triangles); a flat underside if it starts
+    in the air. facade: a wall vertex's metres along its wall and up from
+    the ground, its bay/floor sizes and its windows' colour (glass);
     NO_FACADE on roofs and on walls with no windows. No details
     (balconies, trims, doors): drawn far off as paint (effects/blocks.js),
     its windows are paint too, never geometry. With spacing (one per
@@ -934,7 +936,6 @@ def solid(outlines, ground, colour, sun, spacing=None):
             if length < 1e-6:
                 continue
             t = (c - a) / length
-            lit = abs(np.array([t[1], 0.0, -t[0]]) @ sun)
             u = length * roof.bends(a, c)
             en = a + t * u[:, None]
             up = eaves + roof.rise(en)
@@ -944,8 +945,8 @@ def solid(outlines, ground, colour, sun, spacing=None):
             k = np.arange(len(u) - 1)
             n = len(u)
             faces = np.concatenate([np.c_[k, k + 1, n + k + 1], np.c_[k, n + k + 1, n + k]])
-            add(pts, colour[i] * (WALL_SHADE + (1 - WALL_SHADE) * lit), faces,
-                _wall_facade(form, h, np.r_[u, u], np.r_[np.full(n, low), up] - foot))
+            add(pts, colour[i], faces, _wall_facade(form, h, np.r_[u, u], np.r_[np.full(n, low), up] - foot,
+                                                   glass(colour[i])))
         tris = roof.triangles(SOLID_STEP_M)
         if form.base_m > 0:
             under = Roof(xy, "flat").triangles(SOLID_STEP_M)
@@ -958,17 +959,17 @@ def solid(outlines, ground, colour, sun, spacing=None):
             continue
         roof_colour = colour[i] if form.roof_colour is None else form.roof_colour
         pts = tris.reshape(-1, 3)
-        add(world(pts[:, :2], eaves + pts[:, 2]), np.repeat(np.clip(roof_colour * _lit(normal, sun)[:, None], 0, 1), 3, 0),
-            np.arange(len(pts)).reshape(-1, 3), np.full((len(pts), 4), NO_FACADE))
+        add(world(pts[:, :2], eaves + pts[:, 2]), np.clip(roof_colour, 0, 1),
+            np.arange(len(pts)).reshape(-1, 3), np.full((len(pts), 7), NO_FACADE))
     if not V:
-        empty = np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3), int), np.zeros((0, 4))
+        empty = np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3), int), np.zeros((0, 7))
         return empty if spacing is None else (*empty, np.zeros(0))
     # corners alike in place, colour, facade and spacing are one (a flat roof's, a wall's strip)
     rows = np.c_[np.concatenate(V), np.round(np.concatenate(C) * 255), np.concatenate(U),
                  np.concatenate(G)].astype(np.float32)
     rows, index = np.unique(rows, axis=0, return_inverse=True)
-    out = rows[:, :3], rows[:, 3:6] / 255, index.ravel()[np.concatenate(F)], rows[:, 6:10]
-    return out if spacing is None else (*out, rows[:, 10])
+    out = rows[:, :3], rows[:, 3:6] / 255, index.ravel()[np.concatenate(F)], rows[:, 6:13]
+    return out if spacing is None else (*out, rows[:, 13])
 
 
 def seam(blocks, da3, da3_normals, da3_cols, roofs_near):

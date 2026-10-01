@@ -118,7 +118,6 @@ M_PER_LAT = 111320.0
 PLAIN = np.array([0.50, 0.55, 0.45])
 LIFT = 0.75               # colour ** LIFT: brighter shadows, same hues
 SEA_M = 0.5               # map height at or under this is sea
-SUN = np.array([-0.5, -0.7, 0.5])        # world frame: x east, y down, z north
 BEND_K, BEND_SOFT_M = 8, 10.0             # panos each bend is spread from; softening near one
 BEND_FROM_M, BEND_TO_M = 30.0, 150.0      # the bend fades out between these from the nearest pano
 
@@ -460,16 +459,10 @@ def build(scene_dir, log=print):
     seen = np.zeros(len(en), bool)
     seen[faces] = True
     faces = (np.cumsum(seen) - 1)[faces]
-    en, h, dist, edge_c, lat, lon, raw = (a[seen] for a in (en, h, dist, edge_c, lat, lon, raw))
+    en, h, dist, edge_c, lat, lon = (a[seen] for a in (en, h, dist, edge_c, lat, lon))
     land = np.stack([en[:, 0], -h, en[:, 1]], 1)
 
-    # slope shading from the map's height a metre east and north
-    d = 1.0
-    he = heights(lat, lon0 + (en[:, 0] + d) / m_per_lon)
-    hn = heights(lat0 + (en[:, 1] + d) / M_PER_LAT, lon)
-    normal = np.stack([-(he - raw) / d, -np.ones(len(h)), -(hn - raw) / d], 1)
-    normal /= np.linalg.norm(normal, axis=1, keepdims=True)
-    shade = np.clip(normal @ (SUN / np.linalg.norm(SUN)), 0, 1)
+    # its colour as it is (unlit: the viewer lights it, effects/land.js)
     colours = colour_map()
     try:
         cols = google_colours(lat, lon, LAND_EVERY * gap_at(cam_tree.query(en)[0]))
@@ -478,11 +471,10 @@ def build(scene_dir, log=print):
         if gone.any():                    # where Google has none, Sentinel-2's, lifted (it is dark from above)
             cols[gone] = colours(lat[gone], lon[gone]) ** LIFT
             source += f", Sentinel-2's for {gone.mean():.0%}"
-        cols = cols * (0.8 + 0.2 * shade[:, None])
     except OSError as e:                  # the land still stands without its colour
         log(f"terrain: no satellite colour ({e!r}), plain")
         colours = None
-        cols = PLAIN * (0.55 + 0.45 * shade[:, None])
+        cols = np.tile(PLAIN, (len(en), 1))
         source = "plain"
     cols = cols + (np.array(SAND) - cols) * (SAND_MIX * wet.sand(en, h))[:, None]
     cols = cols + (np.array(water.BED) - cols) * wet.bed(en, h)[:, None]     # under the water, the sky's pale blue
@@ -492,7 +484,8 @@ def build(scene_dir, log=print):
     # OpenStreetMap's buildings and roads, on this ground
     panos = None
     n_buildings = n_seen = n_roads = 0
-    bp = bc = np.zeros((0, 3))
+    bp = bc = b_normal = b_along = np.zeros((0, 3))
+    b_kind = np.zeros(0, int)
     b_roof = b_alone = np.zeros(0, bool)
     solid, solid_base = [], np.zeros((0, 3))
     n_cut = n_sat = 0
@@ -516,7 +509,7 @@ def build(scene_dir, log=print):
             panos, pal = ([], []), (np.array(buildings.PASTEL), np.full(len(buildings.PASTEL), 1 / 8))
         base = buildings.colours(outlines, pal)
         n_buildings = len(outlines)
-        blocks = buildings.points(outlines, gap, ground, base, SUN / np.linalg.norm(SUN))
+        blocks = buildings.points(outlines, gap, ground, base)
         scene_tree = cKDTree(scene) if len(scene) else None
         reached = buildings.reached(blocks, scene_tree, len(outlines))
         if panos[0]:
@@ -526,11 +519,7 @@ def build(scene_dir, log=print):
             seen = ~np.isnan(own[:, 0]) & reached
             base[seen] = np.array([buildings.soften(c) for c in own[seen]]).reshape(-1, 3)
             recolour = seen[blocks.which] & ~blocks.own               # a roof:colour stands
-            b = base[blocks.which[recolour]]
-            roof = np.isnan(blocks.light[recolour])
-            blocks.cols[recolour] = np.where(
-                roof[:, None], np.clip(b * blocks.shade[recolour][:, None], 0, 1),
-                b * (buildings.WALL_SHADE + (1 - buildings.WALL_SHADE) * np.nan_to_num(blocks.light[recolour])[:, None]))
+            blocks.cols[recolour] = base[blocks.which[recolour]]
             n_seen = int(seen.sum())
         # one DA3 never reaches solid, not points -- coloured by the panos all the same
         solid, solid_base = [o for o, r in zip(outlines, reached) if not r], base[~reached]
@@ -541,6 +530,7 @@ def build(scene_dir, log=print):
         n_cut = buildings.seam(blocks, scene, scene_normals, scene_cols, roofs_near)
         buildings.windows(blocks, outlines, ground)
         bp, bc, b_roof, b_gap = blocks.pts, blocks.cols, blocks.edge == buildings.ROOF, blocks.gap
+        b_normal, b_along, b_kind = blocks.normal, blocks.along, blocks.kind
         b_alone = ~reached[blocks.which]                                # no DA3 near: no pano paint
     road_mesh = None
     if net.shapes:
@@ -596,7 +586,7 @@ def build(scene_dir, log=print):
     sc.water = water.save(scene_dir, wet) if surfaces else None
     sc.buildings = None
     if len(bp):
-        write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc, b_gap)
+        write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc, b_gap, b_normal, b_along, b_kind)
         sc.buildings = BUILDINGS_FILENAME
     sc.blocks = None
     if solid:
@@ -606,7 +596,7 @@ def build(scene_dir, log=print):
             d = edge_tree.query(xy)[0]
             return np.minimum(point_gap(d), POINT_M + BLOCK_RATE * d).min()
         one = np.array([block_gap(xy) for xy, *_ in solid])
-        v, c, f, facade, g = buildings.solid(solid, ground, solid_base, SUN / np.linalg.norm(SUN), one)
+        v, c, f, facade, g = buildings.solid(solid, ground, solid_base, one)
         write_mesh(os.path.join(scene_dir, BLOCKS_FILENAME), v, c, f, facade, g)
         sc.blocks = BLOCKS_FILENAME
     sc.save(scene_dir)

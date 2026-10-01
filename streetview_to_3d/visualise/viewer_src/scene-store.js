@@ -14,7 +14,7 @@ import {
 } from '@viewer/scene-format';
 import { waterSurfaces } from '@viewer/effects/water';
 import { landSurface } from '@viewer/effects/land';
-import { blocksStrokes } from '@viewer/effects/blocks';
+import { blocksStrokes, pointStrokes } from '@viewer/effects/blocks';
 import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
@@ -46,7 +46,7 @@ export function dispose(group) {
   });
 }
 const loader = new PLYLoader();
-loader.setCustomPropertyNameMapping({ gap: ['gap'] });
+loader.setCustomPropertyNameMapping({ gap: ['gap'], along: ['ax', 'ay', 'az'], kind: ['kind'] });
 // land.ply as one surface, as games draw ground, painted in patches as the
 // points are spaced (effects/land.js); gapOf(x, z): their spacing there.
 export function parseLand(buffer, gapOf) {
@@ -90,6 +90,9 @@ export function parsePoints(buffer, transform) {
     if (!p?.count || !p.array.every(Number.isFinite)) throw Error('PLY has no valid points.');
     if (transform) geometry.applyMatrix4(new THREE.Matrix4().set(...transform.flat()));
     geometry.applyMatrix4(flip);
+    // a building's: its strokes' way (PLYLoader leaves it empty when the ply has none)
+    if (geometry.getAttribute('along')?.count)
+      geometry.getAttribute('along').transformDirection(flip);
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
     if (!Number.isFinite(geometry.boundingSphere.radius)) throw Error('Invalid point bounds.');
@@ -240,6 +243,15 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           return null;
         }
         const points = parsePoints(buffer);
+        // the buildings DA3 reaches built of brush strokes as the rest are, where
+        // their ply says which way each faces (an older one's: points)
+        const { along, normal } = points.geometry.attributes;
+        if (along?.count && normal?.count) {
+          const strokes = pointStrokes(points.geometry);
+          strokes.userData.surroundings = key;
+          group.add(strokes);
+          continue;
+        }
         const spacing = SPACING[key];
         for (const part of spacing ? terrainBands(points, spacing, cameraPlaces(data)) : [points]) {
           part.userData.surroundings = key;

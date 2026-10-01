@@ -7,7 +7,7 @@
 // slope's along it and up -- each jittered a little (JITTER, as the
 // postprocess's own points are), so triangles side by side join without a
 // seam. A point takes its colour from its triangle's corners. (blocks.ply's
-// facade, read here too, is for effects/blocks.js.)
+// facade and glass, read here too, are for effects/blocks.js.)
 
 import * as THREE from 'three';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
@@ -28,6 +28,7 @@ const loader = new PLYLoader();
 loader.setCustomPropertyNameMapping({
   facade: ['facade_u', 'facade_v'],
   facadeLayout: ['facade_bay', 'facade_floor'],
+  glass: ['glass_r', 'glass_g', 'glass_b'],
   gap: ['gap'],
 });
 

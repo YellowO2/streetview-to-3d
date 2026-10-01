@@ -19,23 +19,31 @@ def read_ply(ply_path):
     return pts, cols
 
 
-def write_ply(path, pts, cols, gap=None):
+def write_ply(path, pts, cols, gap=None, normal=None, along=None, kind=None):
     """Points, and with gap (n,) how far each is from its neighbours, metres:
-    the viewer draws it that big (scene-store.js, terrainBands)."""
+    the viewer draws it that big (scene-store.js, terrainBands). A building's
+    also which way each faces (normal (n, 3)), which way its stroke goes
+    (along (n, 3)) and what it is (kind (n,): buildings.Blocks)."""
     n = len(pts)
-    header = (
-        "ply\nformat binary_little_endian 1.0\n"
-        f"element vertex {n}\n"
-        "property float x\nproperty float y\nproperty float z\n"
-        "property uchar red\nproperty uchar green\nproperty uchar blue\n"
-        + ("property float gap\n" if gap is not None else "") +
-        "end_header\n"
-    ).encode("ascii")
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")]
     fields += [("gap", "<f4")] if gap is not None else []
+    fields += [("nx", "<f4"), ("ny", "<f4"), ("nz", "<f4")] if normal is not None else []
+    fields += [("ax", "<f4"), ("ay", "<f4"), ("az", "<f4")] if along is not None else []
+    fields += [("kind", "u1")] if kind is not None else []
+    types = {"<f4": "float", "u1": "uchar"}
+    header = ("ply\nformat binary_little_endian 1.0\n"
+              f"element vertex {n}\n"
+              + "".join(f"property {types[t]} {name}\n" for name, t in fields)
+              + "end_header\n").encode("ascii")
     verts = np.zeros(n, dtype=np.dtype(fields))
     if gap is not None:
         verts["gap"] = gap
+    for names, values in ((("nx", "ny", "nz"), normal), (("ax", "ay", "az"), along)):
+        if values is not None:
+            for d, name in enumerate(names):
+                verts[name] = values[:, d]
+    if kind is not None:
+        verts["kind"] = kind
     verts["x"], verts["y"], verts["z"] = pts[:, 0], pts[:, 1], pts[:, 2]
     rgb = (np.clip(cols, 0, 1) * 255).astype("u1") if cols is not None else np.full((n, 3), 200, dtype="u1")
     verts["red"], verts["green"], verts["blue"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
@@ -47,11 +55,13 @@ def write_ply(path, pts, cols, gap=None):
 def write_mesh(path, pts, cols, faces, facade=None, gap=None):
     """A triangle mesh: pts (n, 3), cols (n, 3) 0-1, faces (m, 3) indices
     into them, facade (n, 2) each vertex's place on its wall, metres along
-    and up, or (n, 4) with bay/floor sizes (buildings.solid), or None (land); gap (n,) how
+    and up, or (n, 4) with bay/floor sizes, or (n, 7) with its windows' colour too
+    (buildings.solid), or None (land); gap (n,) how
     far apart the viewer spaces the points it draws the surface as, there,
     or None."""
     n, m = len(pts), len(faces)
     layout = facade is not None and facade.shape[1] >= 4
+    glass = facade is not None and facade.shape[1] >= 7
     header = (
         "ply\nformat binary_little_endian 1.0\n"
         f"element vertex {n}\n"
@@ -59,6 +69,7 @@ def write_mesh(path, pts, cols, faces, facade=None, gap=None):
         "property uchar red\nproperty uchar green\nproperty uchar blue\n"
         + ("property float facade_u\nproperty float facade_v\n" if facade is not None else "")
         + ("property float facade_bay\nproperty float facade_floor\n" if layout else "")
+        + ("property float glass_r\nproperty float glass_g\nproperty float glass_b\n" if glass else "")
         + ("property float gap\n" if gap is not None else "") +
         f"element face {m}\n"
         "property list uchar int vertex_indices\n"
@@ -67,6 +78,7 @@ def write_mesh(path, pts, cols, faces, facade=None, gap=None):
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")]
     fields += [("facade_u", "<f4"), ("facade_v", "<f4")] if facade is not None else []
     fields += [("facade_bay", "<f4"), ("facade_floor", "<f4")] if layout else []
+    fields += [("glass_r", "<f4"), ("glass_g", "<f4"), ("glass_b", "<f4")] if glass else []
     fields += [("gap", "<f4")] if gap is not None else []
     verts = np.zeros(n, dtype=np.dtype(fields))
     verts["x"], verts["y"], verts["z"] = pts[:, 0], pts[:, 1], pts[:, 2]
@@ -76,6 +88,8 @@ def write_mesh(path, pts, cols, faces, facade=None, gap=None):
         verts["facade_u"], verts["facade_v"] = facade[:, 0], facade[:, 1]
     if layout:
         verts["facade_bay"], verts["facade_floor"] = facade[:, 2], facade[:, 3]
+    if glass:
+        verts["glass_r"], verts["glass_g"], verts["glass_b"] = facade[:, 4], facade[:, 5], facade[:, 6]
     if gap is not None:
         verts["gap"] = gap
     tris = np.zeros(m, dtype=np.dtype([("n", "u1"), ("i", "<i4", 3)]))
