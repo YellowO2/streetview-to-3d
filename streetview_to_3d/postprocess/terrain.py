@@ -35,9 +35,10 @@ roads and buildings on it are points, spaced the same way:
    from the scene's own panos as the fill colours its ground (_paint), so
    it matches DA3 where they meet; the maps' colours are only for what no
    pano sees
-6. water as flat surfaces over the land (water.py), each body at its
-   level; the land goes on under it, carved down from the shore, the
-   shore wherever it crosses the water
+6. water (water.py), each body at its level, drawn by the viewer as
+   points mirroring the world over the land; the land goes on under it as its bed,
+   carved down from the shore and ever more the sky's pale blue the deeper, the shore
+   wherever it crosses the water
 
 Written to land.ply beside scene.json (its "land", triangles), the roads
 near the scene and bridges to terrain.ply (its "terrain"), the roads
@@ -309,7 +310,7 @@ def build(scene_dir, log=print):
         log(f"terrain: no OpenStreetMap ({e!r})")
         elements = []
 
-    # water: a flat surface over the land, which goes on under it (water.py);
+    # water: each body at its level over the land, which goes on under it (water.py);
     # its outline OSM's where OSM has one
     radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
     jrc = water.jrc(to_ll, heights)
@@ -400,12 +401,11 @@ def build(scene_dir, log=print):
     # every building stood where the land meets it, the land cut down round it (buildings.settle)
     h = buildings.settle(outlines, en, h, owner)
     # the shore shaped as a game's (water.py): the land eases into the water,
-    # a quay by a road stands; under it the land goes on, too deep to see left out
+    # a quay by a road stands; under it the land goes on as the water's bed
     lines = roads.lines(elements, to_xy)
     h = wet.carve(en, h, roads.near(lines, water.QUAY_M))
     from scipy.spatial import Delaunay
     faces = Delaunay(en).simplices
-    faces = faces[wet.keep(en, h)[faces].any(1)]
     seen = np.zeros(len(en), bool)
     seen[faces] = True
     faces = (np.cumsum(seen) - 1)[faces]
@@ -429,6 +429,7 @@ def build(scene_dir, log=print):
         cols = PLAIN * (0.55 + 0.45 * shade[:, None])
         source = "plain"
     cols = cols + (np.array(SAND) - cols) * (SAND_MIX * wet.sand(en, h))[:, None]
+    cols = cols + (np.array(water.BED) - cols) * wet.bed(en, h)[:, None]     # under the water, the sky's pale blue
     land_cols = seams.tint(cols, edge_c, dist, 0.0, TINT_M, TINT)
     pts, cols = np.zeros((0, 3)), np.zeros((0, 3))
 

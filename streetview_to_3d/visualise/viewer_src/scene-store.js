@@ -12,7 +12,7 @@ import {
   WATER,
   BLOCKS,
 } from '@viewer/scene-format';
-import { waterSurfaces, disposeWater } from '@viewer/effects/water';
+import { waterSurfaces } from '@viewer/effects/water';
 import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
@@ -38,8 +38,8 @@ export function dispose(group) {
     } else if (o.userData.splat) o.dispose();
     else if (o.isMesh) {
       o.geometry.dispose();
-      if (o.userData.surroundings === WATER) disposeWater(o.material); // its surfaces share one
-      else o.material.dispose();
+      o.material.dispose();
+      if (o.isReflector) o.dispose(); // its picture
     }
   });
 }
@@ -276,9 +276,13 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           dispose(group);
           return null;
         }
-        for (const mesh of waterSurfaces(JSON.parse(new TextDecoder().decode(buffer)))) {
-          mesh.userData.surroundings = WATER;
-          group.add(mesh);
+        const cams = cameraPlaces(data);
+        // points spaced as the world's are where they are, mirroring it
+        for (const water of waterSurfaces(JSON.parse(new TextDecoder().decode(buffer)), (e, n) =>
+          gapAt(e, -n, cams),
+        )) {
+          water.userData.surroundings = WATER;
+          group.add(water);
         }
       }
     }

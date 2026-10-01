@@ -18,9 +18,9 @@ so its edge is under the land; and the shore is shaped as a game shapes
 one (carve), measured on OSM's own line near it: the bed eases down to
 DEPTH_M, the land eases down to the water over a bank (a quay by a road
 stands), with sand along it (sand) -- whatever the height map says there (by a bridge it blurs the bridge and the island
-into the harbour: 9-13 m over Stockholm's water). Land deeper than SEE_M
-is left out (keep): the water hides it; shallower, it shows through the
-water near the shore. Water whose grown outlines touch is one body --
+into the harbour: 9-13 m over Stockholm's water). Under the water the land
+goes on as its bed, ever more the pale blue of the sky the water mirrors the deeper it lies
+(bed): what shows wherever the water's points leave it. Water whose grown outlines touch is one body --
 the map breaks a harbour at every bridge -- flat at one level, in metres
 above the sea as Google's elevation is (it matched the scene's own ground
 to 0.1 m, Stockholm):
@@ -37,9 +37,9 @@ Written to water.json beside scene.json (its "water"), east/north metres:
     {"surfaces": [{"level": m, "outer": [[e, n], ...], "holes": [[[e, n], ...], ...]}],
      "shore": {"lo": m, "cell": m, "size": n, "metres": [n x n, row by row north-wards]}}
 shore being how far each cell is from dry land, 0 on it, to SHORE_MAX_M: the
-viewer draws each surface as one flat shape (effects/water.js), light and
-clear near the shore, deep further out. DA3's own water -- at about
-street height, grainy -- never becomes points: the masker marks it
+viewer draws the water as points (effects/water.js) mirroring the world as
+water does, turquoise near the shore, blue further out. DA3's own water --
+at about street height, grainy -- never becomes points: the masker marks it
 (services.segment, "water"); what it sees through a bridge's railing
 (ADE20K calls that strip railing) the fill does not take for ground
 (fill.one_ground, WALKABLE).
@@ -63,7 +63,7 @@ BANK_ABOVE_M = 0.15               # ... to this far above it at the shore
 QUAY_M = 2.0                      # no bank this near a road: a quay stands
 SAND_M, SAND_UP_M = 2.5, 1.0      # sand: this near the shore, at most this far above the water
 EXACT_M, TRACE_M = 30.0, 0.25     # nearer the shore than this, how far measured on OSM's own line
-SEE_M = 1.5
+BED, BED_M = (0.72, 0.84, 0.90), 2.5  # the bed: the low sky the water mirrors, a little darker; all of it this deep
 SHORE_CELL_M, SHORE_MAX_M = 10.0, 60
 LOW_PCT = 5
 CAP_M, CLEAR_M = 200.0, 0.5
@@ -196,10 +196,11 @@ class Water:
         """Whether east/north points are in the water (of a body)."""
         return np.isfinite(self._at(self.level, xy, -np.inf)) & (self.signed(xy) > 0)
 
-    def keep(self, xy, height):
-        """Whether land at east/north points, that high, is seen: not
-        deeper than SEE_M under the water."""
-        return height >= self._at(self.level, xy, -np.inf) - SEE_M
+    def bed(self, xy, height):
+        """How much of the bed's colour (BED), 0-1, land at east/north points
+        that high takes: none at the water's level, all BED_M under it."""
+        level = self._at(self.level, xy, -np.inf)
+        return np.where(np.isfinite(level), _ease((level - height) / BED_M), 0.0)
 
     def shore_grid(self):
         """water.json's "shore": the distance from dry land, SHORE_CELL_M a

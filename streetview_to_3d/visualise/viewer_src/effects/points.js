@@ -18,6 +18,12 @@ export function pointMotion(object) {
     styleCenter: { value: new Vector3() },
     styleReveal: { value: 1 },
   };
+  // points with their own motion (userData.ownMotion: the water's) are left as they
+  // are -- no floating, no swelling: the style's settings for them touch nothing
+  if (object.userData.ownMotion) {
+    patched.set(material, uniforms);
+    return uniforms;
+  }
   const before = material.onBeforeCompile,
     key = material.customProgramCacheKey.bind(material);
   const originalKey = key();
