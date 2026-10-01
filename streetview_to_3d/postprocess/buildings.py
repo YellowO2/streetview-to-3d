@@ -64,6 +64,7 @@ DEFAULT_OTHER_M = 12.0
 SEE_M = 150.0                 # panos colour the buildings this close to them
 BEHIND_M, BEHIND = 3.0, 0.05  # how far behind what is in front a wall may stand and still be seen
 SEEN_MIN = 20                 # pixels of a building the panos must see to colour it
+REACH_M = 3.0                 # only buildings DA3 has points this near are coloured by the panos
 FIT_M = 5.0                   # buildings this far past the scene's points are not looked at
 WALL_SAMPLE_M = 1.0
 SNAP_MAX_M = 2.0              # OSM's real offsets were 0.2-1.3 m (Stockholm, NTU)
@@ -765,7 +766,19 @@ def _across(x, span, size, gap):
 
 
 def facade_layout(form, h):
-    """Actual metres per bay/floor, constrained by tagged storeys and building kind."""
+    """Actual metres per bay/floor, constrained by tagged storeys and building
+    kind; None for a building with no windows (styles.windows). One with few
+    has tall rows (each styles.FEW_ROW_M at most), styles.FEW_BAY_M apart,
+    the last ending at its eaves -- a part up in the air: rows on its walls."""
+    from streetview_to_3d.postprocess import styles
+    many = styles.windows(form.tags)
+    if many == "none":
+        return None
+    if many == "few":
+        eaves = max(h - form.roof.height, 1.0)
+        wall = max(eaves - form.base_m, 1.0)
+        row = wall / np.ceil(wall / styles.FEW_ROW_M)
+        return styles.FEW_BAY_M, float(eaves / max(1, round(eaves / row)))
     kind = form.tags.get("building", form.tags.get("building:part", "yes"))
     if kind == "yes":
         kind = "office" if h >= 20 else "house" if h <= 10 and form.roof.poly.area < 180 else "yes"
@@ -805,9 +818,11 @@ def windows(blocks, outlines, ground):
             continue
         if form.physical_facade:
             continue  # real window modules, without a second painted window grid
-        bay, floor = facade_layout(form, h)
+        layout = facade_layout(form, h)
+        if layout is None:
+            continue
         up = blocks.v[i] - foot_of(xy, form, ground)
-        blocks.cols[i] = facade_colour(blocks.cols[i], blocks.u[i], up, blocks.gap[i], bay, floor)
+        blocks.cols[i] = facade_colour(blocks.cols[i], blocks.u[i], up, blocks.gap[i], *layout)
 
 
 def detail_quads(xy, h, form, ground, colour, planes=None, gap=2.5):
@@ -857,18 +872,30 @@ def detail_quads(xy, h, form, ground, colour, planes=None, gap=2.5):
             yield np.r_[world(ends, top + .12), world(canopy[::-1], top + .12)], np.clip(colour * 1.15, 0, 1)
 
 
-def far(outlines, cams, m):
-    """True for each outline further than m from every camera
-    (east/north (n, 2))."""
-    if not len(cams):
-        return np.ones(len(outlines), bool)
-    tree = cKDTree(cams)
-    return np.array([tree.query(xy)[0].min() > m for xy, *_ in outlines], bool)
+def reached(blocks, tree, n):
+    """True for each of n buildings DA3 has a point within REACH_M of
+    (tree: a cKDTree of DA3's points, or None). Only these take the panos'
+    colour -- it is there to meet DA3's; one it never reaches keeps its
+    palette's."""
+    out = np.zeros(n, bool)
+    if tree is not None and len(blocks.pts):
+        d = tree.query(blocks.pts, distance_upper_bound=REACH_M)[0]
+        out[np.unique(blocks.which[d < REACH_M])] = True
+    return out
 
 
 def _turning(xy):
     """Twice the signed area of closed outline xy: over 0 counter-clockwise."""
     return float(np.sum(xy[:-1, 0] * xy[1:, 1] - xy[1:, 0] * xy[:-1, 1]))
+
+
+def _wall_facade(form, h, u, v):
+    """A wall's facade (n, 4): its points' metres along and up, its bay and
+    floor; NO_FACADE if it has no windows (facade_layout)."""
+    layout = facade_layout(form, h)
+    if layout is None:
+        return np.full((len(u), 4), NO_FACADE)
+    return np.c_[u, v, np.full(len(u), layout[0]), np.full(len(u), layout[1])]
 
 
 def solid(outlines, ground, colour, sun, spacing=None):
@@ -878,8 +905,10 @@ def solid(outlines, ground, colour, sun, spacing=None):
     (roofs.Roof.triangles), lit by which way each triangle faces; a flat
     underside if it starts in the air. facade: a wall vertex's metres
     along its wall and up from the ground, plus bay/floor sizes;
-    NO_FACADE on roofs and decorative geometry. With spacing (one
-    per outline), also each vertex's: one building's points all alike."""
+    NO_FACADE on roofs and on walls with no windows. No details
+    (balconies, trims, doors): drawn far off as paint (effects/blocks.js),
+    its windows are paint too, never geometry. With spacing (one per
+    outline), also each vertex's: one building's points all alike."""
     V, C, F, U, G = [], [], [], [], []
     count = 0
 
@@ -894,9 +923,6 @@ def solid(outlines, ground, colour, sun, spacing=None):
 
     world = lambda en, up: np.c_[en[:, 0], -up, en[:, 1]]
     for i, (xy, h, _, form, *_) in enumerate(outlines):
-        from streetview_to_3d.postprocess.facade_geometry import enabled
-        detail_gap = float(spacing[i]) if spacing is not None else 2.5
-        physical = enabled(form, h, detail_gap)
         foot = foot_of(xy, form, ground)
         base, top = foot + form.base_m, foot + h
         low = base - (0.0 if form.base_m else form.skirt_m)      # its walls' bottom
@@ -919,11 +945,7 @@ def solid(outlines, ground, colour, sun, spacing=None):
             n = len(u)
             faces = np.concatenate([np.c_[k, k + 1, n + k + 1], np.c_[k, n + k + 1, n + k]])
             add(pts, colour[i] * (WALL_SHADE + (1 - WALL_SHADE) * lit), faces,
-                np.full((2 * n, 4), NO_FACADE) if physical else np.c_[np.r_[u, u], np.r_[np.full(n, low), up] - foot,
-                      np.full(2 * n, facade_layout(form, h)[0]),
-                      np.full(2 * n, facade_layout(form, h)[1])])
-        for quad, detail_colour in detail_quads(xy, h, form, ground, colour[i], gap=detail_gap):
-            add(quad, detail_colour, np.array([[0, 1, 2], [0, 2, 3]]), np.full((4, 4), NO_FACADE))
+                _wall_facade(form, h, np.r_[u, u], np.r_[np.full(n, low), up] - foot))
         tris = roof.triangles(SOLID_STEP_M)
         if form.base_m > 0:
             under = Roof(xy, "flat").triangles(SOLID_STEP_M)

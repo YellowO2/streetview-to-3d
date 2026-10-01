@@ -14,6 +14,7 @@ import {
 } from '@viewer/scene-format';
 import { waterSurfaces } from '@viewer/effects/water';
 import { landSurface } from '@viewer/effects/land';
+import { blocksStrokes } from '@viewer/effects/blocks';
 import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
@@ -59,7 +60,13 @@ export function parseLand(buffer, gapOf) {
   land.userData.surroundings = LAND;
   return land;
 }
-// A surface stored as triangles (roads.ply, blocks.ply) drawn as the rest of
+// blocks.ply, the buildings DA3 never reaches, built of brush strokes (effects/blocks.js).
+export function parseBlocks(buffer) {
+  const blocks = blocksStrokes(parseSurface(buffer, flip, `${BLOCKS}.ply`));
+  blocks.userData.surroundings = BLOCKS;
+  return blocks;
+}
+// A surface stored as triangles (roads.ply) drawn as the rest of
 // the world is: points (effects/scatter.js), in bands by their spacing
 // (terrainBands).
 export function surfacePoints(buffer, key) {
@@ -257,7 +264,8 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           dispose(group);
           return null;
         }
-        for (const band of surfacePoints(buffer, key)) group.add(band);
+        if (key === BLOCKS) group.add(parseBlocks(buffer));
+        else for (const band of surfacePoints(buffer, key)) group.add(band);
         await new Promise((r) => setTimeout(r, 0));
       }
       if (placement === 'world' && data[WATER]) {

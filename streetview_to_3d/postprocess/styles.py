@@ -68,11 +68,21 @@ CASTLE_BASE, CASTLE_TIER_M, CASTLE_SHRINK = 0.22, 4.5, 0.12  # its base, of its 
 PAGODA_TIER_M, PAGODA_SHRINK = 3.2, 0.11
 TIER_WALL = 0.55              # of a tier, its walls; its roof runs on into the next one's
 TIER_PITCH, TOP_PITCH = 28, 35
+SPIRE_MIN_M = 0.7             # a pagoda's spire's radius at least (a roof needs a square metre)
 TEMPLE_ROOF = 0.45            # of its height, a temple's roof
-CHURCH_PITCH = 45
+CHURCH_PITCH, CHURCH_WALL_M = 45, 10.0   # a guessed nave's walls this tall
 TOWER_SIDE, TOWER_MIN_M, TOWER_MAX_M = 0.35, 4.0, 10.0  # of the nave's width
 SPIRE = {"north": ("pyramidal", 2.5), "south": ("pyramidal", 0.6), "orthodox": ("onion", 1.2)}  # of the side
 DOME, MINARET_M, MINARET_TOP = 0.32, 1.6, 3.0  # of its width, a dome across; a minaret's radius; its cone
+# windows by kind (building, else building:part): none on what has none, few on a hall -- one
+# tall row a storey (FEW_ROW_M at most), FEW_BAY_M apart -- the rest a window a bay, a row a floor
+NO_WINDOWS = {"shed", "garage", "garages", "carport", "roof", "hut", "greenhouse", "storage_tank", "silo",
+              "bunker", "ruins", "container", "transformer_tower", "water_tower", "service", "construction",
+              "bridge", "base", "spire", "dome", "minaret"}
+FEW_WINDOWS = {"church", "cathedral", "chapel", "mosque", "temple", "shrine", "industrial", "warehouse",
+               "manufacture", "barn", "stable", "cowshed", "farm_auxiliary", "sports_hall", "hangar", "tier",
+               "tower"}
+FEW_BAY_M, FEW_ROW_M = 5.0, 6.0   # a hall's windows this far apart; a row at most this tall
 
 
 def region(lat, lon):
@@ -87,6 +97,16 @@ def facade(tags, kind):
     or None: the building code's own."""
     r = tags.get("style:region")
     return FACADES.get(("east_asia" if r in EAST_ASIA else r, kind))
+
+
+def windows(tags):
+    """"none", "few" or "many": how many windows a building of these tags has."""
+    kind = tags.get("building", tags.get("building:part", "yes"))
+    if kind in NO_WINDOWS:
+        return "none"
+    if kind in FEW_WINDOWS or tags.get("amenity") == "place_of_worship":
+        return "few"
+    return "many"
 
 
 def landmark(tags, place):
@@ -110,7 +130,7 @@ def landmark(tags, place):
 
 def _box(xy):
     """(centre, long axis, short axis (unit), long, short) of xy's smallest box."""
-    with np.errstate(invalid="ignore"):
+    with np.errstate(invalid="ignore", divide="ignore"):    # a square's: shapely divides by 0
         box = np.asarray(Polygon(xy).buffer(0).minimum_rotated_rectangle.exterior.coords)[:4]
     a, b = box[1] - box[0], box[2] - box[1]
     if np.linalg.norm(a) < np.linalg.norm(b):
@@ -174,9 +194,9 @@ def _tiers(xy, h, form, n, tier_m, shrink, base_frac, spire, form_cls):
                          out[0][3] if out else None, form.seed))
         z += tier_m
     if spire:
-        top, r = out[-1][1], max(short * s * 0.08, 0.4)
+        top, r = out[-1][1], max(short * s * 0.08, SPIRE_MIN_M)
         ring = _circle(centre, r, 8)
-        out.append(_part(form_cls, ring, top + short * s * 0.9, top - 0.5, Roof(ring, "cone"), (0.35, 0.33, 0.3),
+        out.append(_part(form_cls, ring, top + short * s * 0.9, top - 0.5, Roof(ring, "cone", 3 * r), (0.35, 0.33, 0.3),
                          {"building:part": "spire"}, out[0][3], form.seed))
     return out
 
@@ -184,7 +204,10 @@ def _tiers(xy, h, form, n, tier_m, shrink, base_frac, spire, form_cls):
 def _church(xy, h, guessed, form, place, form_cls):
     centre, u, v, long_, short = _box(xy)
     if not form.tags.get("roof:shape"):
-        form.roof = _pitched(xy, "gabled", CHURCH_PITCH, h - form.base_m)
+        form.roof = _pitched(xy, "gabled", CHURCH_PITCH, 1e9)
+        if guessed:                                  # its nave's walls, not a barn's
+            h = max(h, form.base_m + form.roof.height + CHURCH_WALL_M)
+        form.roof.height = min(form.roof.height, h - form.base_m)
     side = float(np.clip(TOWER_SIDE * short * 2, TOWER_MIN_M, min(TOWER_MAX_M, short)))
     if short > 0.9 * long_ and abs(u[0]) < abs(v[0]):  # near square: along east-west
         u, v, long_, short = v, u, short, long_

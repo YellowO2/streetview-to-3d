@@ -90,9 +90,9 @@ def test_physical_apartments_change_silhouette_and_have_no_painted_window_grid()
     ground = lambda xy: np.zeros(len(xy))
     colour = np.full((1, 3), .8)
     v, c, f, facade, gap = buildings.solid([house], ground, colour, np.array([0, -1, 0]), [.3])
-    # Real balcony slabs/guards project a metre beyond the footprint.
-    assert v[:, 0].min() <= -1 and v[:, 2].min() <= -1
-    assert (facade[:, 1] == buildings.NO_FACADE).all()
+    # far off, solid: its outline's walls and roof only, its windows paint on its facade
+    assert v[:, 0].min() >= 0 and v[:, 2].min() >= 0
+    assert (facade[:, 1] > buildings.NO_FACADE).any()
     assert f.max() < len(v) and np.isfinite(v).all() and np.isfinite(c).all()
     assert profile_for({"building": "apartments", "start_date": "1890"}, 15, 200).name == "historic_urban"
     assert not profile_for({"building": "office"}, 15, 200).balcony
@@ -135,3 +135,14 @@ def test_parts_inherit_landmark_type_and_adjacent_walls_are_detected():
     right = element(4, 10, 10, {"building": "apartments"})
     result = buildings.outlines([left, right], to_xy)
     assert 1 in result[0][3].shared_edges and 3 in result[1][3].shared_edges
+
+
+def test_only_buildings_da3_reaches_take_the_panos_colour():
+    near, away = _box(0, 0), _box(100, 0)
+    ground = lambda xy: np.zeros(len(xy))
+    blocks = buildings.points([(*near, {}), (*away, {})], lambda xy: np.full(len(xy), 1.0), ground,
+                              np.full((2, 3), .8), np.array([0, -1, 0]))
+    from scipy.spatial import cKDTree
+    da3 = np.array([[5.0, -4.0, -1.0]])  # a metre off the first's wall, 4 m up
+    assert list(buildings.reached(blocks, cKDTree(da3), 2)) == [True, False]
+    assert not buildings.reached(blocks, None, 2).any()

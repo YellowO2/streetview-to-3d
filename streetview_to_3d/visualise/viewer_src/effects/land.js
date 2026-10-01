@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GAPS } from '@viewer/effects/scatter';
+import { PATCHES } from '@viewer/effects/patches';
 import { tunable } from '@viewer/effects/tune-panel';
 import { SUN } from '@viewer/effects/water';
 
@@ -20,12 +21,12 @@ import { SUN } from '@viewer/effects/water';
 // Its colour the land's at its middle -- the land's own colour there and
 // its light -- found from the land's change across the triangle the pixel
 // is in. Painted by light: lighter where it faces the sun, darker where it
-// turns away (light, in steps if steps), seen through the air -- the further
-// off, the more of the low sky's colour (haze, half of it by HAZE_M); broad
+// turns away (light, in steps if steps), seen through the air (haze); broad
 // patches (PATCH_M across) a little lighter or darker, half as much warmer
 // or cooler (patches); each patch its own a little lighter or darker (vary).
-// Pushed back a little in depth (polygonOffset), so what lies on it -- roads
-// 15 cm up, the scene's ground 10 cm up -- wins even a kilometre off.
+// Its patches and haze the buildings' too (patches.js). Pushed back a little
+// in depth (polygonOffset), so what lies on it -- roads 15 cm up, the
+// scene's ground 10 cm up -- wins even a kilometre off.
 export const MIN_GAP = 0.3;
 // the look's knobs: [value, lowest, highest] (a page opened with ?tune shows them: tune-panel.js)
 export const KNOBS = {
@@ -39,14 +40,12 @@ export const KNOBS = {
 };
 // the rest, set
 const FIXED = {
-  HAZE_M: 800,
   PATCH_M: 60,
   FINE: 0.4, // a slope's grid finer as it faces up, down to this (as steep as 66 degrees)
   ROUGH: 0.15, // a patch's edge wanders this much of its width
 };
-const HAZE = new THREE.Color('#c8dcea'); // the low sky
-
 const knobs = tunable('Land', KNOBS);
+export const haze = knobs.haze; // the buildings' too
 const vec = (v) => v.map((x) => x.toFixed(4)).join(',');
 const sun = new THREE.Vector3(...SUN).normalize();
 const g0 = GAPS[0].toFixed(4);
@@ -75,14 +74,7 @@ const fragmentShader = `
     .join('\n')}
   varying vec3 colour, world, n;
   varying float spacing;
-  float hash2(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-  vec2 hash22(vec2 p) { return vec2(hash2(p), hash2(p + 19.19)); }
-  float vnoise(vec2 p) {
-    vec2 i = floor(p), f = fract(p);
-    f = f * f * (3. - 2. * f);
-    return mix(mix(hash2(i), hash2(i + vec2(1., 0.)), f.x),
-               mix(hash2(i + vec2(0., 1.)), hash2(i + vec2(1., 1.)), f.x), f.y);
-  }
+  ${PATCHES}
   void main() {
     vec3 up = normalize(n);
     // the grid's step, one of GAPS: finer on a slope, as it faces up
@@ -91,23 +83,12 @@ const fragmentShader = `
     float grid = ${g0} * pow(1.25, k);
     // on the map, round the slope and up it
     float steep = length(up.xz);
-    vec2 around = steep > 1e-3 ? vec2(-up.z, up.x) / steep : vec2(1., 0.),
-      rise = vec2(-around.y, around.x);
+    vec2 around = steep > 1e-3 ? vec2(-up.z, up.x) / steep : vec2(1., 0.);
     float longer = 1. + stroke * steep;
     // its patch: the nearest middle (round the slope counted shorter, so
     // patches are longer that way), the edge a little rough
-    vec2 p = world.xz / grid;
-    p += (vec2(vnoise(p * 2.3), vnoise(p * 2.3 + 7.1)) - .5) * 2. * ROUGH;
-    vec2 cell = floor(p), best = cell;
-    float nearest = 1e9;
-    for (int i = -2; i <= 2; i++)
-      for (int j = -2; j <= 2; j++) {
-        vec2 c = cell + vec2(float(i), float(j));
-        vec2 d = c + hash22(c + k * 7.31) - p;
-        float a = dot(d, around) / longer, b = dot(d, rise);
-        if (a * a + b * b < nearest) { nearest = a * a + b * b; best = c; }
-      }
-    vec2 middle = (best + hash22(best + k * 7.31)) * grid;
+    vec2 best = patchAt(world.xz / grid, around, longer, k, .5, ROUGH);
+    vec2 middle = middleOf(best, k, .5) * grid;
     // the land there, its colour and its facing: from how they change over
     // this triangle (on the map, a pixel's step east, north)
     vec2 ex = dFdx(world.xz), ey = dFdy(world.xz);
@@ -126,7 +107,7 @@ const fragmentShader = `
     c *= vec3(1. + t, 1., 1. - t);
     c *= 1. + (hash2(best + k * 3.17) - .5) * 2. * vary;
     float away = length(vec3(middle.x, world.y, middle.y) - cameraPosition);
-    gl_FragColor = vec4(mix(c, vec3(${vec(HAZE.toArray())}), haze * (1. - exp2(-away / HAZE_M))), 1.);
+    gl_FragColor = vec4(hazed(c, away, haze), 1.);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>

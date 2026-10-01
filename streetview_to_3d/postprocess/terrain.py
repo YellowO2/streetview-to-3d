@@ -35,12 +35,16 @@ roads and buildings on it are points, spaced the same way:
    buildings fitted onto DA3's walls, what DA3 has of them left to it; a
    landmark mapped in parts (a spire, a dome) as its parts, each roof as
    OSM shapes it (roofs.py) and coloured as the satellite sees it.
-   Roads, bridges and buildings are points within NEAR_M of a camera,
-   and stored as triangles further off (drawn as points all the same)
+   Roads and bridges are points within NEAR_M of a camera, and stored
+   as triangles further off (drawn as points all the same); a building
+   DA3 reaches (buildings.reached) points, to meet DA3's own, every
+   other stored solid, as triangles (the viewer builds it of brush
+   strokes: effects/blocks.js)
 5. near the cameras (PAINT_M), all of it -- land, roads, walls -- coloured
    from the scene's own panos as the fill colours its ground (_paint), so
    it matches DA3 where they meet; the maps' colours are only for what no
-   pano sees
+   pano sees -- and for buildings DA3 never reaches (buildings.reached):
+   nothing of DA3's for them to meet
 6. water (water.py), each body at its level, drawn by the viewer as
    points mirroring the world over the land; the land goes on under it as its bed,
    carved down from the shore and ever more the sky's pale blue the deeper, the shore
@@ -48,14 +52,14 @@ roads and buildings on it are points, spaced the same way:
 
 Written to land.ply beside scene.json (its "land", triangles), the roads
 near the scene and bridges to terrain.ply (its "terrain"), the roads
-further out to roads.ply (its "roads", triangles), the buildings,
-spaced the same way, to buildings.ply (its "buildings"), the far ones
-solid to blocks.ply (its "blocks"), all already in the world frame, and the water to water.json (its "water").
+further out to roads.ply (its "roads", triangles), the buildings DA3
+reaches, spaced the same way, to buildings.ply (its "buildings"), the
+rest solid to blocks.ply (its "blocks"), all already in the world frame, and the water to water.json (its "water").
 The land is drawn as a surface, the ground everything stands on, painted
-in patches as dabs of paint (effects/land.js); all else as points: the
-viewer scatters points over the roads' and far buildings' triangles as it
-loads them (effects/scatter.js), each triangle's corners saying how far
-apart; it draws every point as big as it is spaced (the ply's "gap":
+in patches as dabs of paint (effects/land.js); the solid buildings built
+of brush strokes (effects/blocks.js); all else as points: the viewer
+scatters points over the far roads' triangles as it loads them
+(effects/scatter.js), each triangle's corners saying how far apart; it draws every point as big as it is spaced (the ply's "gap":
 point_gap; scene-store.js, terrainBands).
 
     python -m streetview_to_3d.postprocess.terrain SCENE_DIR
@@ -92,7 +96,7 @@ ROOF_INSET_M, ROOF_STEP_M = 1.0, 1.0   # a roof sampled this far in from its edg
 TILE_THREADS = 8          # tiles fetched at once, ahead of reading them (TileMap.fetch)
 RADIUS_M = 1000.0                          # the land's reach: the viewer's haze is whole by then
 BUILDINGS_M, ROADS_M = 1000.0, 700.0         # OSM's reach (roads are drawn only where a point wide, ~600 m)
-NEAR_M = 50.0                              # roads, bridges, buildings: points this near a camera, triangles past
+NEAR_M = 50.0                              # roads, bridges: points this near a camera, triangles past
 PAINT_M = 30.0                            # map points this near a camera are coloured from the panos
 TINT_M, MEET_M = 8.0, 10.0                # the ground's seam with the scene (seams.py): bands
 BRIDGE_CLEAR_M = {"road": 4.5, "water": 2.5}     # a bridge's deck at least this over each (the land fits under it)
@@ -485,7 +489,7 @@ def build(scene_dir, log=print):
     panos = None
     n_buildings = n_seen = n_roads = 0
     bp = bc = np.zeros((0, 3))
-    b_roof = np.zeros(0, bool)
+    b_roof = b_alone = np.zeros(0, bool)
     solid, solid_base = [], np.zeros((0, 3))
     n_cut = n_sat = 0
     if outlines:
@@ -509,11 +513,13 @@ def build(scene_dir, log=print):
         base = buildings.colours(outlines, pal)
         n_buildings = len(outlines)
         blocks = buildings.points(outlines, gap, ground, base, SUN / np.linalg.norm(SUN))
+        scene_tree = cKDTree(scene) if len(scene) else None
+        reached = buildings.reached(blocks, scene_tree, len(outlines))
         if panos[0]:
             # a building the panos see enough of: their colour, softened as the palette's is (in
             # shade or far off they see it dark), over the palette's
             own = buildings.pano_colours(blocks.pts, blocks.which, len(outlines), *panos, scene)
-            seen = ~np.isnan(own[:, 0])
+            seen = ~np.isnan(own[:, 0]) & reached
             base[seen] = [buildings.soften(c) for c in own[seen]]
             recolour = seen[blocks.which] & ~blocks.own               # a roof:colour stands
             b = base[blocks.which[recolour]]
@@ -522,16 +528,16 @@ def build(scene_dir, log=print):
                 roof[:, None], np.clip(b * blocks.shade[recolour][:, None], 0, 1),
                 b * (buildings.WALL_SHADE + (1 - buildings.WALL_SHADE) * np.nan_to_num(blocks.light[recolour])[:, None]))
             n_seen = int(seen.sum())
-        # far off, solid, not points -- coloured by the panos all the same
-        far = buildings.far(outlines, cam_xz, NEAR_M)
-        solid, solid_base = [o for o, f in zip(outlines, far) if f], base[far]
-        blocks.take(~far[blocks.which])
+        # one DA3 never reaches solid, not points -- coloured by the panos all the same
+        solid, solid_base = [o for o, r in zip(outlines, reached) if not r], base[~reached]
+        blocks.take(reached[blocks.which])
         # what DA3 already has of a building is left to it; the rest meets it
-        roofs_near = cKDTree(scene).query(blocks.pts, distance_upper_bound=1.0)[0] if len(scene) \
+        roofs_near = scene_tree.query(blocks.pts, distance_upper_bound=1.0)[0] if scene_tree \
             else np.full(len(blocks.pts), np.inf)
         n_cut = buildings.seam(blocks, scene, scene_normals, scene_cols, roofs_near)
         buildings.windows(blocks, outlines, ground)
         bp, bc, b_roof, b_gap = blocks.pts, blocks.cols, blocks.edge == buildings.ROOF, blocks.gap
+        b_alone = ~reached[blocks.which]                                # no DA3 near: no pano paint
     road_mesh = None
     if net.shapes:
         near_cams = shapely.union_all(shapely.buffer(shapely.points(cam_xz), NEAR_M, quad_segs=16))
@@ -568,7 +574,7 @@ def build(scene_dir, log=print):
         panos = panos or _panos(sc, scene_dir)
         cols, n = _paint(panos, pts, cols, scene)
         land_cols, k = _paint(panos, land, land_cols, scene)
-        bc, m = _paint(panos, bp, bc, scene, skip=b_roof)
+        bc, m = _paint(panos, bp, bc, scene, skip=b_roof | b_alone)
         n_painted = n + k + m
     except (OSError, ValueError) as e:    # the maps' colours stand
         log(f"terrain: no pano paint ({e!r})")
