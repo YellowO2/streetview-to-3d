@@ -23,83 +23,43 @@ BRIDGE_DIST_M = 15.0
 
 
 def corridor_points(edges):
-    """Real (lat, lon) dots + structural adjacency straight from the
-    corridor's own already-confirmed edges -- edges: list of ((lat1,
-    lon1, pano_id1), (lat2, lon2, pano_id2)) pairs, each a real,
-    already-connected pair of selected panos (not a single ordered
-    polyline: the corridor can branch or loop, so edges aren't assumed
-    to trace one path in list order).
+    """Dots + structural adjacency straight from the corridor's own
+    already-confirmed edges -- edges: list of ((lat1, lon1, pano_id1),
+    (lat2, lon2, pano_id2)) pairs, each a real, already-connected pair of
+    selected panos (not a single ordered polyline: the corridor can branch
+    or loop).
 
-    No synthetic in-between sampling -- a dot starts as exactly one real
-    selection-graph node, not an interpolated point along a straight
-    line between two of them. Real selection-graph nodes within
-    MERGE_DIST_M of each other then collapse into the SAME dot (see
-    MERGE_DIST_M's own docstring). NOT transitive: merging is a single
-    greedy pass over yet-unclaimed raw nodes -- each still-unclaimed node
-    becomes a new dot's seed and claims every other still-unclaimed node
-    within MERGE_DIST_M of ITSELF, but an already-claimed node never goes
-    on to claim its own further-out neighbors. A real transitive union-
-    find (A-B close, B-C close => A,B,C all one dot even if A-C alone
-    is 70m+ apart) was tried and confirmed BROKEN on real NTU data: a
-    single, ordinary, densely-sampled 72m stretch chain-collapsed into
-    ONE dot, since consecutive real nodes along it were each individually
-    under threshold. The greedy version caps that: a claimed node can
-    still anchor a real connection out to whatever's left over, but can't
-    silently drag its own whole neighborhood in behind it. A merged dot's
-    own position is the centroid of everything folded into it.
+    Selected panos within MERGE_DIST_M of each other collapse into ONE dot
+    (see MERGE_DIST_M). Greedy, NOT transitive: each still-unclaimed pano
+    seeds a dot and claims every unclaimed pano within MERGE_DIST_M of
+    ITSELF. A transitive union-find (A-B close, B-C close => one dot) was
+    tried and confirmed BROKEN on real NTU data: an ordinary, densely
+    sampled 72 m stretch chain-collapsed into ONE dot. A dot sits at its
+    seed pano -- a real photo location, the one every member is within
+    MERGE_DIST_M of.
 
     Returns (points, adjacency, members). adjacency: {dot_index:
     [neighbor_dot_index, ...]} -- the corridor's own real dot-to-dot
-    structure, independent of which real panos end up at either dot. This
-    is what the pathfind algorithm walks dot-by-dot over (see
+    structure, which the pathfind walks dot by dot (see
     reconstruct/walk_graph.py). members: per dot, the ids of the selected
-    panos folded into it -- its candidates, with their older dates (see
-    fetch_corridor_nodes).
+    panos folded into it, seed first -- its candidates, with their older
+    dates (see fetch_corridor_nodes). O(n^2) distance checks -- fine at
+    real selection sizes (a few thousand panos at most).
     """
-    raw_points: list[tuple[float, float]] = []
-    raw_ids: list[str] = []
-    raw_index_by_id: dict[str, int] = {}
+    nodes = {}  # pano id -> (lat, lon), in first-seen order
+    for a, b in edges:
+        for lat, lon, pano_id in (a, b):
+            nodes.setdefault(pano_id, (lat, lon))
 
-    def raw_index_for(node):
-        lat, lon, pano_id = node
-        idx = raw_index_by_id.get(pano_id)
-        if idx is None:
-            idx = len(raw_points)
-            raw_points.append((lat, lon))
-            raw_ids.append(pano_id)
-            raw_index_by_id[pano_id] = idx
-        return idx
-
-    raw_edges = [(raw_index_for(a), raw_index_for(b)) for a, b in edges]
-
-    # Greedy, non-transitive merge -- see this function's own docstring
-    # for why NOT union-find. O(n^2) distance checks -- fine at real-
-    # world selection-graph sizes (a few thousand nodes at most).
-    dot_index_by_raw: dict[int, int] = {}
-    points: list[tuple[float, float]] = []
-    members: list[list[str]] = []
-    claimed = [False] * len(raw_points)
-
-    for i in range(len(raw_points)):
-        if claimed[i]:
+    points, members, dot_of = [], [], {}
+    for seed, pos in nodes.items():
+        if seed in dot_of:
             continue
-        lat_i, lon_i = raw_points[i]
-        cluster = [i]
-        claimed[i] = True
-        for j in range(len(raw_points)):
-            if claimed[j]:
-                continue
-            if haversine_m(lat_i, lon_i, *raw_points[j]) <= MERGE_DIST_M:
-                cluster.append(j)
-                claimed[j] = True
-
-        lat = sum(raw_points[m][0] for m in cluster) / len(cluster)
-        lon = sum(raw_points[m][1] for m in cluster) / len(cluster)
-        dot_idx = len(points)
-        points.append((lat, lon))
-        members.append([raw_ids[m] for m in cluster])
+        cluster = [m for m, p in nodes.items() if m not in dot_of and haversine_m(*pos, *p) <= MERGE_DIST_M]
         for m in cluster:
-            dot_index_by_raw[m] = dot_idx
+            dot_of[m] = len(points)
+        points.append(pos)
+        members.append(cluster)
 
     adjacency: dict[int, list[int]] = {i: [] for i in range(len(points))}
 
@@ -111,8 +71,8 @@ def corridor_points(edges):
         if i not in adjacency[j]:
             adjacency[j].append(i)
 
-    for a, b in raw_edges:
-        connect(dot_index_by_raw[a], dot_index_by_raw[b])
+    for (_, _, a), (_, _, b) in edges:
+        connect(dot_of[a], dot_of[b])
 
     bridge_components(points, adjacency, connect)
     return points, adjacency, members

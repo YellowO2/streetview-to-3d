@@ -93,10 +93,11 @@ def _map_html(state, zoom=19):
         if preview:
             return map_ui.build_picker_map(preview[0], preview[1], [], [], [], [], zoom=zoom, radius_m=radius_m)
         return map_ui.build_picker_map(0, 0, [], [], [], [], zoom=2)
+    points, adjacency, _ = corridor_points(corridor_edges(state))
     return map_ui.build_picker_map(
         state["lat"], state["lon"], state["nodes"], state["edges"],
         state["selected"], state.get("selected_edges", []),
-        zoom=zoom, view=state.get("view"), radius_m=radius_m,
+        zoom=zoom, view=state.get("view"), radius_m=radius_m, spots=(points, adjacency),
     )
 
 

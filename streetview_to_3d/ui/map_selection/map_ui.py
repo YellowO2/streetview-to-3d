@@ -20,11 +20,13 @@ _SUGGESTED_COLOR = "#ff9800"
 _SELECTED_COLOR = "#00c853"
 _EDGE_COLOR = "#9aa0a6"
 _RADIUS_COLOR = "#2979ff"
+_SPOT_COLOR = "#212121"
 
 _MESSAGE_TYPE = "map_node_click"
 
 
-def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom=17, view=None, radius_m=None):
+def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom=17, view=None, radius_m=None,
+                     spots=None):
     """nodes: list of {key, source, id, lat, lon, heading} for the whole loaded
     area (only the relevant subset -- see module docstring -- actually gets
     rendered). edges: list of (key_a, key_b) pairs from Street View's coverage
@@ -40,6 +42,9 @@ def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom
     radius_m: optional -- draws a blue circle of this radius (meters) around
     (lat, lon), so the auto-expand radius can be sanity-checked visually
     before/after running it, same center expand_area itself uses.
+    spots: optional (points, adjacency) from fetch_nodes.corridor_points --
+    the selection as the walk will use it, one ring per spot. Drawn over
+    the panos but never catching a click, so the panos stay clickable.
     """
     view_lat, view_lon, view_zoom = view if view else (lat, lon, zoom)
 
@@ -64,6 +69,9 @@ def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom
     selected_json = json.dumps(selected_keys)
     selected_edges_json = json.dumps(selected_edges)
     radius_json = json.dumps(radius_m)
+    spot_points, spot_adjacency = spots or ([], {})
+    spots_json = json.dumps(spot_points)
+    spot_links_json = json.dumps(sorted({tuple(sorted((i, j))) for i, ns in spot_adjacency.items() for j in ns}))
 
     doc = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -87,6 +95,9 @@ var SELECTED_COLOR = {json.dumps(_SELECTED_COLOR)};
 var EDGE_COLOR = {json.dumps(_EDGE_COLOR)};
 var RADIUS_COLOR = {json.dumps(_RADIUS_COLOR)};
 var RADIUS_M = {radius_json};
+var SPOTS = {spots_json};
+var SPOT_LINKS = {spot_links_json};
+var SPOT_COLOR = {json.dumps(_SPOT_COLOR)};
 
 var m = L.map('map').setView([{view_lat},{view_lon}], {view_zoom});
 L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
@@ -120,7 +131,7 @@ NODES.forEach(function(n) {{
   var isSelected = order !== -1;
   var color = isSelected ? SELECTED_COLOR : SUGGESTED_COLOR;
   var marker = L.circleMarker([n.lat, n.lon], {{
-    radius: isSelected ? 10 : 8,
+    radius: isSelected ? (SPOTS.length ? 5 : 10) : 8,
     color: color,
     fillColor: color,
     fillOpacity: 0.85,
@@ -129,7 +140,10 @@ NODES.forEach(function(n) {{
   var label = n.id;
   if (isSelected) {{
     label = '#' + (order + 1) + ' · ' + label;
-    marker.bindTooltip(String(order + 1), {{permanent: true, direction: 'top', className: 'sb-order'}});
+    // with spots shown, only the start keeps its number -- hundreds of
+    // selected panos would bury the map in labels
+    if (!SPOTS.length || order === 0)
+      marker.bindTooltip(String(order + 1), {{permanent: true, direction: 'top', className: 'sb-order'}});
   }} else {{
     label = 'next · ' + label;
   }}
@@ -153,6 +167,16 @@ SELECTED_EDGES.forEach(function(e) {{
   var a = byKey[e[0]], b = byKey[e[1]];
   if (!a || !b) return;
   L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {{color: SELECTED_COLOR, weight: 4}}).addTo(m);
+}});
+
+// The spots the walk will use (fetch_nodes.corridor_points): nearby
+// selected panos merged, one ring each at its seed pano, with the spot
+// links -- including bridges between graphs Google never linked.
+SPOT_LINKS.forEach(function(l) {{
+  L.polyline([SPOTS[l[0]], SPOTS[l[1]]], {{color: SPOT_COLOR, weight: 2, interactive: false}}).addTo(m);
+}});
+SPOTS.forEach(function(p) {{
+  L.circleMarker(p, {{radius: 9, color: SPOT_COLOR, weight: 2, fill: false, interactive: false}}).addTo(m);
 }});
 </script>
 </body></html>"""
