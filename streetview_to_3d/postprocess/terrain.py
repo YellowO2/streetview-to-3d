@@ -194,6 +194,8 @@ class TileMap:
         return len(tiles)
 
     def __call__(self, lat, lon):
+        if not np.size(lat):                # nothing asked (no roads near, say): nothing, shaped as the map's values
+            return self.decode(np.zeros((0, 3) if self.mode == "RGB" else (0,), float))
         px, py = self._xy(lat, lon)
         px, py = px - 0.5, py - 0.5
         x0, y0 = np.floor(px).astype(int), np.floor(py).astype(int)
@@ -522,7 +524,7 @@ def build(scene_dir, log=print):
             # shade or far off they see it dark), over the palette's
             own = buildings.pano_colours(blocks.pts, blocks.which, len(outlines), *panos, scene)
             seen = ~np.isnan(own[:, 0]) & reached
-            base[seen] = [buildings.soften(c) for c in own[seen]]
+            base[seen] = np.array([buildings.soften(c) for c in own[seen]]).reshape(-1, 3)
             recolour = seen[blocks.which] & ~blocks.own               # a roof:colour stands
             b = base[blocks.which[recolour]]
             roof = np.isnan(blocks.light[recolour])
