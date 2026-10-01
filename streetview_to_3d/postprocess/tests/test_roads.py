@@ -39,3 +39,61 @@ def test_a_bridge_passing_by_is_not_the_scenes_road():
     assert far == {1}                       # joining it only further out: its own height
     met = roads.region(ELEMENTS, to_xy, ids, 1.0)
     assert shapely.contains_xy(met, 30, 20) and not shapely.contains_xy(met, 0, 20)   # a bridge is not in it
+
+
+def test_tagged_pavements_are_on_correct_side_raised_and_do_not_cover_roads():
+    street = _way(1, [(0, 0), (60, 0)], [1, 2], sidewalk="left", lanes="2")
+    net = roads.Network([street], to_xy)
+    assert shapely.contains_xy(net.shapes[roads.PAVEMENT], 20, 4)
+    assert not shapely.contains_xy(net.all, 20, -4)
+    assert shapely.intersection(net.shapes[roads.PAVEMENT], net.shapes[tuple(roads._colour(street["tags"]))]).area == 0
+    ground = lambda xy: np.zeros(len(xy))
+    pts, cols = roads.points(net, lambda xy: np.full(len(xy), .3), ground, lambda xy: np.ones(len(xy), bool))
+    assert len(pts) and np.isfinite(pts).all()
+    assert np.isclose(-pts[:, 1].max(), roads.LIFT_M)
+    assert np.isclose(-pts[:, 1].min(), roads.LIFT_M + roads.KERB_M)
+    # Paint is narrow but should still receive points, instead of sampling only its boundary.
+    assert (cols[:, 0] > .79).any()
+    v, c, f = roads.surface(net, ground, shapely.box(-10, -10, 70, 10))
+    assert f.max() < len(v) and np.isfinite(v).all()
+    assert np.isclose(-v[:, 1].min(), roads.LIFT_M + roads.KERB_M - roads.BELOW_M, atol=.051)
+
+
+def test_separate_sidewalk_overrides_and_lane_markings_opt_out():
+    street = _way(1, [(0, 0), (60, 0)], [1, 2], sidewalk="both",
+                  **{"sidewalk:left": "separate", "sidewalk:right": "no", "lanes": "2", "lane_markings": "no"})
+    sidewalk = _way(2, [(0, 5), (60, 5)], [3, 4], highway="footway", footway="sidewalk")
+    net = roads.Network([street, sidewalk], to_xy)
+    assert shapely.contains_xy(net.all, 20, 5)
+    assert not shapely.contains_xy(net.all, 20, 3.5)
+    assert roads.PAINT not in net.shapes
+
+
+def test_lane_dividers_stop_at_mapped_junctions_and_pavements_avoid_buildings():
+    street = _way(1, [(0, 0), (30, 0), (60, 0)], [1, 2, 3], sidewalk="left", lanes="2")
+    side = _way(2, [(30, 0), (30, 30)], [2, 4])
+    building = {"type": "way", "id": 3, "tags": {"building": "yes"},
+                "geometry": [{"lon": x, "lat": y} for x, y in [(10, 3), (20, 3), (20, 6), (10, 6), (10, 3)]]}
+    net = roads.Network([street, side, building], to_xy)
+    assert not shapely.intersects(net.shapes[roads.PAINT], shapely.Point(30, 0).buffer(7.9))
+    assert not shapely.contains_xy(net.all, 15, 4)
+
+
+def test_crossing_seams_and_furniture_survive_both_exports():
+    street = _way(1, [(0, 0), (60, 0)], [1, 2], sidewalk='both', lanes='2', lit='yes')
+    crossing = {'type':'node', 'id':3, 'lon':25, 'lat':0,
+                'tags':{'highway':'crossing', 'crossing':'marked'}}
+    bench = {'type':'node', 'id':4, 'lon':30, 'lat':4.2, 'tags':{'amenity':'bench'}}
+    net = roads.Network([street,crossing,bench],to_xy)
+    assert net.shapes[roads.PAVING_JOINT].area > 0
+    assert shapely.contains_xy(net.shapes[roads.PAINT],25,-2.5)
+    ground = lambda xy: np.zeros(len(xy))
+    pts, cols = roads.points(net,lambda xy: np.full(len(xy),.2),ground,lambda xy: np.ones(len(xy),bool))
+    v,c,f = roads.surface(net,ground,shapely.box(-10,-10,70,10))
+    assert -pts[:,1].min() > 5 and -v[:,1].min() > 5
+    assert np.isfinite(pts).all() and np.isfinite(v).all()
+    assert f.max() < len(v)
+    # Pavement joint triangles are still at pavement height, not sunk into the road.
+    joints = np.all(np.isclose(c,np.array(roads.PAVING_JOINT),atol=.015),axis=1)
+    assert joints.any()
+    assert np.allclose(-v[joints,1],roads.LIFT_M+roads.KERB_M-roads.BELOW_M)

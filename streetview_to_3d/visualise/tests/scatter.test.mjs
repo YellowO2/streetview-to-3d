@@ -109,3 +109,49 @@ test('a window, its sill and the wall at its foot', () => {
   assert(at(BAY_M * 0.1, 0.1) < plain); // darker at its foot
   assert(at(BAY_M * 0.5, FLOOR_M * 0.5) === at(BAY_M * 0.5, FLOOR_M * 0.5)); // the same every time
 });
+
+test('old and new building PLY files scatter with optional facade layout', async () => {
+  const { parseSurface } = await import('@viewer/effects/scatter');
+  const ply = (layout) =>
+    new TextEncoder().encode(
+      [
+        'ply',
+        'format ascii 1.0',
+        'element vertex 4',
+        'property float x',
+        'property float y',
+        'property float z',
+        'property uchar red',
+        'property uchar green',
+        'property uchar blue',
+        'property float facade_u',
+        'property float facade_v',
+        ...(layout ? ['property float facade_bay', 'property float facade_floor'] : []),
+        'property float gap',
+        'element face 2',
+        'property list uchar int vertex_indices',
+        'end_header',
+        ...[
+          [0, 0],
+          [12, 0],
+          [12, 9],
+          [0, 9],
+        ].map(([u, v]) => `${u} ${v} 0 204 179 153 ${u} ${v} ${layout ? '2.4 4.5 ' : ''}0.4`),
+        '3 0 1 2',
+        '3 0 2 3',
+        '',
+      ].join('\n'),
+    ).buffer;
+  for (const layout of [false, true]) {
+    const mesh = parseSurface(ply(layout), new THREE.Matrix4(), 'building');
+    assert.equal(mesh.getAttribute('facade').itemSize, 2);
+    assert.equal(Boolean(mesh.getAttribute('facadeLayout')), layout);
+    const points = scatter(mesh);
+    assert(points.getAttribute('position').count > 100);
+    assert(points.getAttribute('color').array.every(Number.isFinite));
+    mesh.dispose();
+    points.dispose();
+  }
+  const office = (v) => facadeColour([0.8, 0.8, 0.8], 1.2, v, true, 2.4, 4.5)[0];
+  assert(office(6.75) < office(4.95));
+});

@@ -32,3 +32,5 @@ namespaces = false
 
 [tool.setuptools.package-data]
 "streetview_to_3d.visualise" = ["viewer.html", "viewer_src/*"]
+
+"streetview_to_3d.postprocess._vendor.osm_building_grammar" = ["LICENSE", "PROVENANCE.md"]

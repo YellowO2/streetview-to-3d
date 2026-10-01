@@ -92,7 +92,8 @@ LOW_M, COVER = 1.0, 0.75                  # the scene's ground: points this near
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
 GAP0_M, GAP_PER = 0.05, 0.018              # the land's corners: LAND_EVERY x gap_at apart
 POINT_M = 0.10                             # roads' and buildings' points: as DA3's are drawn at the scene's edge,
-RATE0, RATE, RAMP_M = 0.005, 0.018, 100.0  # then further apart, by RATE0 of the distance rising to RATE by RAMP_M
+RATE0, RATE, RAMP_M = 0.005, 0.018, 100.0  # coarse spacing beyond the detailed neighbourhood
+DETAIL_RATE, DETAIL_END_M, DETAIL_BLEND_M = .007, 250.0, 150.0
 SAND, SAND_MIX = (0.76, 0.70, 0.55), 0.7     # the shore's sand (water.sand), how far it covers the satellite's
 LAND_EVERY = 2            # the land's triangles this many times the points' spacing: a surface has no gaps
 M_PER_LAT = 111320.0
@@ -203,14 +204,17 @@ def reach(ground, ground_here):
 
 
 def point_gap(edge_d):
-    """How far apart roads' and buildings' points are edge_d metres from
-    the scene's edge: POINT_M there, like DA3's own, then growing slowly
-    near it -- by RATE0 of the distance at first, rising to RATE by RAMP_M
-    out -- and by RATE beyond. The viewer draws each that big."""
-    e = np.asarray(edge_d, float)
+    """Saved spacing from the reconstructed edge: 0.8 m at 100 m, 1.5 m
+    at 200 m, easing into the coarser outer map between 250 and 400 m.
+    The viewer draws each point as big as this spacing.
+    """
+    e = np.maximum(np.asarray(edge_d, float), 0)
     near = POINT_M + RATE0 * e + (RATE - RATE0) * e ** 2 / (2 * RAMP_M)
     far = POINT_M + RATE0 * RAMP_M + (RATE - RATE0) * RAMP_M / 2 + RATE * (e - RAMP_M)
-    return np.where(e < RAMP_M, near, far)
+    coarse = np.where(e < RAMP_M, near, far)
+    t = np.clip((e - DETAIL_END_M) / DETAIL_BLEND_M, 0, 1)
+    blend = t * t * (3 - 2 * t)
+    return (POINT_M + DETAIL_RATE * e) * (1 - blend) + coarse * blend
 
 
 def sample_points(radius_m, cams, every=1):

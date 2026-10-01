@@ -34,7 +34,7 @@ WATER_RELATIONS = ('["natural"="water"]', '["waterway"="riverbank"]')
 
 def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None, water_m=0):
     """Every building and building part way and relation within buildings_m,
-    road way within roads_m and water outline (see the module) within
+    road ways and tagged street-object nodes within roads_m, and water outlines within
     water_m, geometry included, as Overpass returns them; kept in
     scene_dir's CACHE once had."""
     box = lambda r: (f"{lat0 - r / m_per_lat},{lon0 - r / m_per_lon},"
@@ -47,6 +47,8 @@ def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None
     query = (f'[out:json][timeout:180];(way["building"]({box(buildings_m)});'
              f'relation["building"]({box(buildings_m)});way["building:part"]({box(buildings_m)});'
              f'relation["building:part"]({box(buildings_m)});way["highway"]({box(roads_m)});'
+             f'node["highway"~"^(crossing|traffic_signals|street_lamp)$"]({box(roads_m)});'
+             f'node["amenity"~"^(bench|waste_basket)$"]({box(roads_m)});'
              f'{water_ways});out geom;{water_members}')
     cache = scene_dir and os.path.join(scene_dir, CACHE)
     if cache and os.path.exists(cache):

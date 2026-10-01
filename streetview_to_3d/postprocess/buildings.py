@@ -44,9 +44,11 @@ Near the points, windows the same way (windows).
 Called by terrain.build, which writes them to buildings.ply and the solid
 ones to blocks.ply.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
+
+from .geometry import sample_quad
 from scipy.spatial import cKDTree
 
 from streetview_to_3d.postprocess.roofs import Roof
@@ -102,7 +104,6 @@ TRIM_EDGE_M = 5.0             # only a straight wall this long trims: a curve's 
 TOP_PERCENTILE = 97
 SOLID_STEP_M = 2.0            # a hipped roof's triangles about this long, at least
 NO_FACADE = -1e4              # a roof's place on a wall: none (a skirt's is below 0 too)
-WALL_SHIFTS = 64              # walls' windows counted from one of this many bays before their start
 MIN_HEIGHT_M = 2.5
 PAD_M, CUT_SLOPE = 1.0, 0.5   # the land level with a building's foot this far round it, then rising at most this
 CUT_REACH_M = 20.0            # ... looked at this far out: the map's bumps are a few metres
@@ -143,6 +144,12 @@ class Form:
     colour: object = None
     roof_colour: object = None
     foot_m: object = None         # the height it stands at, once settle has fitted the land to it
+    tags: dict = field(default_factory=dict)
+    front: int = 0
+    seed: int = 0
+    shared_edges: frozenset = frozenset()
+    geometry_cache: dict = field(default_factory=dict, repr=False)
+    physical_facade: bool = False
     skirt_m: float = 0.0          # ... its walls on down this much further, to the land a neighbour cut lower
 
 
@@ -160,7 +167,7 @@ def _form(tags, xy, h):
     colour = lambda key, material: _parse_colour(tags[key]) if key in tags else \
         (np.array(MATERIAL[tags[material]]) if tags.get(material) in MATERIAL else None)
     return Form(roof, base, "building:part" in tags, colour("building:colour", "building:material"),
-                colour("roof:colour", "roof:material"))
+                colour("roof:colour", "roof:material"), tags=dict(tags))
 
 
 def foot_of(xy, form, ground):
@@ -239,6 +246,9 @@ def outlines(elements, to_xy):
     north."""
     import shapely
     from shapely.geometry import Polygon
+    road_xy = [to_xy(e["geometry"]) for e in elements if e.get("tags", {}).get("highway")
+               and len(e.get("geometry", [])) >= 2]
+    road_tree = cKDTree(np.concatenate(road_xy)) if road_xy else None
     out = []
     for e, ring in _rings(elements):
         xy = to_xy(ring)
@@ -246,12 +256,50 @@ def outlines(elements, to_xy):
             xy = xy[::-1]
         h, guessed = _height(e["tags"])
         form = _form(e["tags"], xy, h)
+        form.seed = int(e.get("id", 0))
+        mid = (xy[:-1] + xy[1:]) / 2
+        lengths = np.linalg.norm(np.diff(xy, axis=0), axis=1)
+        candidates = np.flatnonzero(lengths >= 3)
+        if len(candidates):
+            form.front = int(candidates[np.argmin(road_tree.query(mid[candidates])[0])] if road_tree
+                             else candidates[np.argmax(lengths[candidates])])
         out.append((xy, max(h, form.base_m + MIN_HEIGHT_M), guessed, form))
+    # Parts inherit semantic hints from their containing outline, without replacing
+    # their own heights/roofs/materials. A church's untyped nave must not become apartments.
+    parents = [o for o in out if not o[3].part]
+    if parents:
+        parent_polys = [Polygon(o[0]).buffer(0) for o in parents]
+        parent_tree = shapely.STRtree(parent_polys)
+        for xy, _, _, form in out:
+            if not form.part:
+                continue
+            candidates = parent_tree.query(Polygon(xy).buffer(0).representative_point(), predicate="within")
+            if len(candidates):
+                parent = parents[min(candidates, key=lambda k: parent_polys[k].area)][3]
+                for key in ("building", "building:architecture", "start_date", "building:material", "building:use"):
+                    if key in parent.tags:
+                        form.tags.setdefault(key, parent.tags[key])
     parts = [Polygon(o[0]).buffer(0).representative_point() for o in out if o[3].part]
-    if not parts:
-        return out
-    tree = shapely.STRtree(parts)
-    return [o for o in out if o[3].part or not len(tree.query(Polygon(o[0]).buffer(0), "contains"))]
+    if parts:
+        tree = shapely.STRtree(parts)
+        out = [o for o in out if o[3].part or not len(tree.query(Polygon(o[0]).buffer(0), "contains"))]
+    # Shared walls should not sprout balconies inside adjacent buildings.
+    polygons = [Polygon(o[0]).buffer(0) for o in out]
+    tree = shapely.STRtree(polygons)
+    for owner, (xy, _, _, form) in enumerate(out):
+        blocked = set()
+        for side, (a, b) in enumerate(zip(xy[:-1], xy[1:])):
+            length = np.linalg.norm(b - a)
+            if length < 1e-6:
+                continue
+            t = (b - a) / length
+            normal = np.array([t[1], -t[0]])
+            probes = a + np.array([.2, .5, .8])[:, None] * (b - a) + normal * .75
+            hits = tree.query(shapely.points(probes), predicate="within")
+            if len(np.unique(hits[0, hits[1] != owner])) >= 2:
+                blocked.add(side)
+        form.shared_edges = frozenset(blocked)
+    return out
 
 
 def _parse_colour(text):
@@ -661,6 +709,22 @@ def points(outlines, spacing, ground, colour, sun):
         gap += [rg, gg]
         shade += [rs, np.ones(len(wall))]
         own += [np.full(len(roof), mine is not None), np.zeros(len(wall), bool)]
+    for i, (xy, h, _, form, planes) in enumerate(outlines):
+        step = float(max(spacing(xy).min(), .12))
+        from streetview_to_3d.postprocess.facade_geometry import enabled
+        form.physical_facade = enabled(form, h, step)
+        for quad, col in detail_quads(xy, h, form, ground, colour[i], planes, gap=step):
+            q = sample_quad(quad, step)
+            pts.append(q)
+            cols.append(np.tile(col, (len(q), 1)))
+            which.append(np.full(len(q), i))
+            lit.append(np.full(len(q), np.nan))
+            edge.append(np.full(len(q), ROOF))
+            u.append(np.zeros(len(q)))
+            v.append(-q[:, 1])
+            gap.append(np.full(len(q), step))
+            shade.append(np.ones(len(q)))
+            own.append(np.ones(len(q), bool))
     return Blocks(np.concatenate(pts), np.concatenate(cols), np.concatenate(which), np.concatenate(lit),
                   np.concatenate(edge), np.concatenate(u), np.concatenate(v), np.concatenate(gap), edges,
                   np.concatenate(shade), np.concatenate(own))
@@ -682,25 +746,97 @@ def _across(x, span, size, gap):
     return np.where(gap > size / 4, span[1] - span[0], inside)
 
 
+def facade_layout(form, h):
+    """Actual metres per bay/floor, constrained by tagged storeys and building kind."""
+    kind = form.tags.get("building", form.tags.get("building:part", "yes"))
+    if kind == "yes":
+        kind = "office" if h >= 20 else "house" if h <= 10 and form.roof.poly.area < 180 else "yes"
+    bay = 2.8 if kind in ("house", "detached", "terrace", "semidetached_house") else \
+          2.4 if kind in ("office", "commercial") else \
+          6.0 if kind in ("industrial", "warehouse", "shed", "garage", "garages") else 3.0
+    levels = _number(form.tags, "building:levels")
+    floor = np.clip((h - form.roof.height) / levels, 2.4, 5.0) if levels else LEVEL_M
+    return bay, float(floor)
+
+
+def facade_colour(c, u, v, gap, bay=BAY_M, floor=FLOOR_M):
+    """Facade treatment mirrored by viewer scatter.facadeColour; coarse points use averages."""
+    cu, cv = u / bay, v / floor
+    qu, qv = cu - np.floor(cu), cv - np.floor(cv)
+    exact = (np.floor(bay / gap + .5) > 1) & (np.floor(floor / gap + .5) > 1)
+    inside = ((qu >= .3) & (qu <= .7) & (qv >= .3) & (qv <= .8))
+    sill = exact & (qu >= .27) & (qu <= .73) & (qv >= .24) & (qv <= .3)
+    frame = exact & inside & ((qu < .34) | (qu > .66) | (qv < .34) | (qv > .76))
+    pane = np.sin(np.floor(cu) * 12.9898 + np.floor(cv) * 78.233) * 43758.5453
+    pane -= np.floor(pane)
+    pane = np.where(exact, pane, .5)
+    w = np.where(exact, inside, .2) * (v >= .5) * .6
+    glass = (c * .12 + [.22, .43, .64]) * (1 + (pane[:, None] - .5) * .5)
+    glass = np.where(frame[:, None], c * .78, glass)
+    wall = c * (1 + .12 * (sill * (v >= .5))[:, None])
+    t = np.clip(v / 3, 0, 1)
+    foot = .8 + .2 * t * t * (3 - 2 * t)
+    return np.clip((wall + (glass - wall) * w[:, None]) * foot[:, None], 0, 1)
+
+
 def windows(blocks, outlines, ground):
-    """Floors of windows on every outer wall's points, in place: a row a
-    floor (FLOOR_M, which is also how OSM's building:levels becomes a
-    height), a window a bay (BAY_M), counted from the building's foot. Only
-    where the points are close enough to draw one; further off each floor
-    is a darker band, then the wall a little darker all over, as the far
-    solid ones (effects/blocks.js). Not on a DA3 wall (seam leaves those to
-    DA3) nor a pano's (terrain._paint repaints those)."""
-    wall = blocks.edge >= 0
-    if not wall.any():
+    """Apply the same facade grammar as the distant triangle scatterer."""
+    for owner, (xy, h, _, form, *_) in enumerate(outlines):
+        i = np.flatnonzero((blocks.edge >= 0) & (blocks.which == owner))
+        if not len(i):
+            continue
+        if form.physical_facade:
+            continue  # real window modules, without a second painted window grid
+        bay, floor = facade_layout(form, h)
+        up = blocks.v[i] - foot_of(xy, form, ground)
+        blocks.cols[i] = facade_colour(blocks.cols[i], blocks.u[i], up, blocks.gap[i], bay, floor)
+
+
+def detail_quads(xy, h, form, ground, colour, planes=None, gap=2.5):
+    """Physical facades, roof trim and a cheap entrance fallback at coarse spacing.
+
+    Returns (quad world positions, colour). Roof trim stays within the footprint,
+    avoiding overhang into neighbours. Airborne parts and utility buildings omit doors.
+    """
+    from streetview_to_3d.postprocess.facade_geometry import enabled, facade_quads
+    foot = foot_of(xy, form, ground)
+    physical = enabled(form, h, gap)
+    if physical:
+        yield from facade_quads(xy, h, form, foot, colour, planes)
+    eaves = foot + h - form.roof.height
+    world = lambda en, up: np.c_[en[:, 0], -np.broadcast_to(up, len(en)), en[:, 1]]
+    kind = form.tags.get("building", form.tags.get("building:part", "yes"))
+    if kind in ("roof", "carport", "hut"):
         return
-    foot = np.array([foot_of(xy, form, ground) for xy, _, _, form, *_ in outlines])
-    i = np.flatnonzero(wall)
-    up = blocks.v[i] - foot[blocks.which[i]]
-    g = blocks.gap[i]
-    w = _across(blocks.u[i], WINDOW_U, BAY_M, g) * _across(up, WINDOW_V, FLOOR_M, g)
-    w = np.where(up < 0.5, 0.0, w)                              # not in the ground
-    c = blocks.cols[i]
-    blocks.cols[i] = c * (1 - w[:, None]) + (c * WINDOW_DARK + WINDOW_TINT) * w[:, None]
+    for j, (a, b) in enumerate(zip(xy[:-1], xy[1:])):
+        length = np.linalg.norm(b - a)
+        if planes and j in planes:
+            continue
+        if length < .5:
+            continue
+        t = (b - a) / length
+        outward = np.array([t[1], -t[0]])
+        if form.roof.shape == "flat":
+            # A visible parapet face and inward top cap, no change to mapped height.
+            z = eaves
+            outer = np.array([a, b])
+            inner = outer - outward * .22
+            yield np.r_[world(outer, z - .4), world(outer[::-1], z)], np.clip(colour * 1.12, 0, 1)
+            yield np.r_[world(outer, z), world(inner[::-1], z)], np.clip(colour * 1.2, 0, 1)
+        else:
+            z = eaves + form.roof.rise(np.array([a, b]))
+            outer = np.array([a, b]) - outward * .02
+            yield np.r_[world(outer, z - .18), world(outer[::-1], z[::-1])], colour * .75
+        if not physical and j == form.front and length >= 3 and not form.base_m and not form.part \
+                and kind not in ("shed", "garage", "garages", "warehouse", "industrial"):
+            mid = (a + b) / 2
+            ends = np.array([mid - t * .65, mid + t * .65]) + outward * .06
+            top = min(foot + 2.35, eaves - .25)
+            if top <= foot + 1.5:
+                continue
+            yield np.r_[world(ends, foot + .05), world(ends[::-1], top)], colour * .38 + [.02, .03, .04]
+            canopy = ends + outward * .4
+            yield np.r_[world(ends, top + .12), world(canopy[::-1], top + .12)], np.clip(colour * 1.15, 0, 1)
 
 
 def far(outlines, cams, m):
@@ -719,13 +855,12 @@ def _turning(xy):
 
 def solid(outlines, ground, colour, sun, spacing=None):
     """Every outline as triangles: (vertices (n, 3) world frame, colours
-    (n, 3), faces (m, 3), facade (n, 2)): walls from its base (Form.base_m)
+    (n, 3), faces (m, 3), facade (n, 4)): walls from its base (Form.base_m)
     to where the roof meets them, lit by which way they face; its roof
     (roofs.Roof.triangles), lit by which way each triangle faces; a flat
     underside if it starts in the air. facade: a wall vertex's metres
-    along its wall -- from a whole number of bays (BAY_M) before its
-    start, a different one each wall, so each wall's panes vary their own
-    way -- and up from the ground, NO_FACADE on a roof. With spacing (one
+    along its wall and up from the ground, plus bay/floor sizes;
+    NO_FACADE on roofs and decorative geometry. With spacing (one
     per outline), also each vertex's: one building's points all alike."""
     V, C, F, U, G = [], [], [], [], []
     count = 0
@@ -741,6 +876,9 @@ def solid(outlines, ground, colour, sun, spacing=None):
 
     world = lambda en, up: np.c_[en[:, 0], -up, en[:, 1]]
     for i, (xy, h, _, form, *_) in enumerate(outlines):
+        from streetview_to_3d.postprocess.facade_geometry import enabled
+        detail_gap = float(spacing[i]) if spacing is not None else 2.5
+        physical = enabled(form, h, detail_gap)
         foot = foot_of(xy, form, ground)
         base, top = foot + form.base_m, foot + h
         low = base - (0.0 if form.base_m else form.skirt_m)      # its walls' bottom
@@ -752,7 +890,6 @@ def solid(outlines, ground, colour, sun, spacing=None):
             if length < 1e-6:
                 continue
             t = (c - a) / length
-            shift = BAY_M * ((i * 31 + j * 17) % WALL_SHIFTS)
             lit = abs(np.array([t[1], 0.0, -t[0]]) @ sun)
             u = length * roof.bends(a, c)
             en = a + t * u[:, None]
@@ -764,7 +901,11 @@ def solid(outlines, ground, colour, sun, spacing=None):
             n = len(u)
             faces = np.concatenate([np.c_[k, k + 1, n + k + 1], np.c_[k, n + k + 1, n + k]])
             add(pts, colour[i] * (WALL_SHADE + (1 - WALL_SHADE) * lit), faces,
-                np.c_[np.r_[u, u] + shift, np.r_[np.full(n, low), up] - foot])
+                np.full((2 * n, 4), NO_FACADE) if physical else np.c_[np.r_[u, u], np.r_[np.full(n, low), up] - foot,
+                      np.full(2 * n, facade_layout(form, h)[0]),
+                      np.full(2 * n, facade_layout(form, h)[1])])
+        for quad, detail_colour in detail_quads(xy, h, form, ground, colour[i], gap=detail_gap):
+            add(quad, detail_colour, np.array([[0, 1, 2], [0, 2, 3]]), np.full((4, 4), NO_FACADE))
         tris = roof.triangles(SOLID_STEP_M)
         if form.base_m > 0:
             under = Roof(xy, "flat").triangles(SOLID_STEP_M)
@@ -778,16 +919,16 @@ def solid(outlines, ground, colour, sun, spacing=None):
         roof_colour = colour[i] if form.roof_colour is None else form.roof_colour
         pts = tris.reshape(-1, 3)
         add(world(pts[:, :2], eaves + pts[:, 2]), np.repeat(np.clip(roof_colour * _lit(normal, sun)[:, None], 0, 1), 3, 0),
-            np.arange(len(pts)).reshape(-1, 3), np.full((len(pts), 2), NO_FACADE))
+            np.arange(len(pts)).reshape(-1, 3), np.full((len(pts), 4), NO_FACADE))
     if not V:
-        empty = np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3), int), np.zeros((0, 2))
+        empty = np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3), int), np.zeros((0, 4))
         return empty if spacing is None else (*empty, np.zeros(0))
     # corners alike in place, colour, facade and spacing are one (a flat roof's, a wall's strip)
     rows = np.c_[np.concatenate(V), np.round(np.concatenate(C) * 255), np.concatenate(U),
                  np.concatenate(G)].astype(np.float32)
     rows, index = np.unique(rows, axis=0, return_inverse=True)
-    out = rows[:, :3], rows[:, 3:6] / 255, index.ravel()[np.concatenate(F)], rows[:, 6:8]
-    return out if spacing is None else (*out, rows[:, 8])
+    out = rows[:, :3], rows[:, 3:6] / 255, index.ravel()[np.concatenate(F)], rows[:, 6:10]
+    return out if spacing is None else (*out, rows[:, 10])
 
 
 def seam(blocks, da3, da3_normals, da3_cols, roofs_near):

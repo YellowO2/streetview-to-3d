@@ -45,3 +45,93 @@ def test_lower_neighbours_cut_is_reached_by_the_higher_ones_walls():
     wall = facade[:, 1] > -1000
     assert np.isclose((-v[wall, 1]).min(), high[3].foot_m - high[3].skirt_m)
     assert np.isclose(facade[wall, 1].min(), -high[3].skirt_m)
+
+
+def test_facades_follow_storeys_and_building_kind_and_export_layout(tmp_path):
+    from streetview_to_3d.postprocess.ply_io import write_mesh, read_ply
+    house = _box(0, 0)
+    house[3].tags = {"building": "house", "building:levels": "3"}
+    office = _box(20, 0)
+    office[3].tags = {"building": "office", "building:levels": "2"}
+    assert buildings.facade_layout(house[3], 9) == (2.8, 3.0)
+    assert buildings.facade_layout(office[3], 9) == (2.4, 4.5)
+    v, c, f, facade, gaps = buildings.solid([house, office], lambda xy: np.zeros(len(xy)),
+                                           np.full((2, 3), .8), np.array([0, -1, 0]), [2.0, 2.5])
+    wall = facade[:, 1] > -1000
+    assert set(facade[wall, 2].round(1)) == {np.float32(2.8), np.float32(2.4)}
+    assert np.isfinite(v).all() and f.max() < len(v)
+    path = tmp_path / "blocks.ply"
+    write_mesh(path, v, c, f, facade, gaps)
+    loaded, colours = read_ply(path)
+    assert np.allclose(v, loaded) and np.allclose(c, colours, atol=1 / 255)
+    assert b"property float facade_bay" in path.read_bytes()
+
+
+def test_details_respect_height_and_skip_reconstructed_walls():
+    house = _box(0, 0)
+    xy, h, _, form = house
+    ground = lambda xy: np.zeros(len(xy))
+    detail = list(buildings.detail_quads(xy, h, form, ground, np.full(3, .8)))
+    assert len(detail) == 10  # two trims per wall and door/canopy on one wall
+    assert max(-quad[:, 1].min() for quad, _ in detail) <= h
+    assert not list(buildings.detail_quads(xy, h, form, ground, np.full(3, .8), dict.fromkeys(range(4), True)))
+    blocks = buildings.points([(*house, {})], lambda xy: np.full(len(xy), .4), ground,
+                               np.full((1, 3), .8), np.array([0, -1, 0]))
+    buildings.windows(blocks, [house], ground)
+    assert all(len(getattr(blocks, k)) == len(blocks.pts) for k in ("cols", "edge", "gap", "own"))
+    assert np.isfinite(blocks.pts).all() and np.isfinite(blocks.cols).all()
+    assert (blocks.cols >= 0).all() and (blocks.cols <= 1).all()
+
+
+def test_physical_apartments_change_silhouette_and_have_no_painted_window_grid():
+    from streetview_to_3d.postprocess.facade_geometry import profile_for
+    house = _box(0, 0)
+    house[3].tags = {"building": "apartments", "building:levels": "3"}
+    ground = lambda xy: np.zeros(len(xy))
+    colour = np.full((1, 3), .8)
+    v, c, f, facade, gap = buildings.solid([house], ground, colour, np.array([0, -1, 0]), [.3])
+    # Real balcony slabs/guards project a metre beyond the footprint.
+    assert v[:, 0].min() <= -1 and v[:, 2].min() <= -1
+    assert (facade[:, 1] == buildings.NO_FACADE).all()
+    assert f.max() < len(v) and np.isfinite(v).all() and np.isfinite(c).all()
+    assert profile_for({"building": "apartments", "start_date": "1890"}, 15, 200).name == "historic_urban"
+    assert not profile_for({"building": "office"}, 15, 200).balcony
+    assert profile_for({"building": "apartments"}, 15, 200).balcony
+    blocks = buildings.points([(*house, {})], lambda xy: np.full(len(xy), .3), ground, colour,
+                               np.array([0, -1, 0]))
+    before = blocks.cols.copy()
+    buildings.windows(blocks, [house], ground)
+    assert np.array_equal(before, blocks.cols)  # never print a second grid beneath physical windows
+    assert blocks.pts[:, 0].min() < -.9
+
+
+def test_shared_walls_and_airborne_parts_do_not_get_ground_entrances():
+    from streetview_to_3d.postprocess.facade_geometry import facade_quads
+    house = _box(0, 0)
+    xy, h, _, form = house
+    form.tags = {"building": "apartments", "building:levels": "3"}
+    form.shared_edges = frozenset({0, 1, 2, 3})
+    # Roof equipment is still allowed; all facade ornaments are blocked.
+    faces = list(facade_quads(xy, h, form, 0, np.full(3, .8)))
+    assert faces and all((-q[:, 1]).min() >= h for q, _ in faces)
+    form.geometry_cache.clear()
+    form.part = True
+    assert not list(facade_quads(xy, h, form, 0, np.full(3, .8)))
+
+
+def test_parts_inherit_landmark_type_and_adjacent_walls_are_detected():
+    from streetview_to_3d.postprocess.facade_geometry import enabled
+    def element(i, x0, size, tags):
+        xy = _box(x0, 0, size)[0]
+        return {"type": "way", "id": i, "tags": tags,
+                "geometry": [{"lon": x, "lat": y} for x, y in xy]}
+    to_xy = lambda g: np.array([[p["lon"], p["lat"]] for p in g])
+    parent = element(1, 0, 20, {"building": "church", "start_date": "1850"})
+    part = element(2, 1, 10, {"building:part": "yes", "height": "9"})
+    result = buildings.outlines([parent, part], to_xy)
+    assert len(result) == 1 and result[0][3].tags["building"] == "church"
+    assert not enabled(result[0][3], 9, .4)
+    left = element(3, 0, 10, {"building": "apartments"})
+    right = element(4, 10, 10, {"building": "apartments"})
+    result = buildings.outlines([left, right], to_xy)
+    assert 1 in result[0][3].shared_edges and 3 in result[1][3].shared_edges

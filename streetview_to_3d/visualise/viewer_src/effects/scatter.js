@@ -28,7 +28,7 @@ export const FLOOR_M = 3.2,
   BAY_M = 3.0,
   WINDOW_U = [0.3, 0.7], // of a bay
   WINDOW_V = [0.3, 0.8], // of a floor
-  WINDOW = [0.45, [0.05, 0.07, 0.1]], // a window: the wall this dark, plus this
+  WINDOW = [0.12, [0.22, 0.43, 0.64]], // blue glass, lightly tinted by the wall
   WINDOW_MIX = 0.6, // a window over its wall this much: suggested, not printed
   PANE = 0.25, // each pane this much lighter or darker, at most
   SILL = [0.06, 0.12], // a sill this high (of a floor) under a window, this much lighter
@@ -44,7 +44,11 @@ export function level(gap) {
 }
 
 const loader = new PLYLoader();
-loader.setCustomPropertyNameMapping({ facade: ['facade_u', 'facade_v'], gap: ['gap'] });
+loader.setCustomPropertyNameMapping({
+  facade: ['facade_u', 'facade_v'],
+  facadeLayout: ['facade_bay', 'facade_floor'],
+  gap: ['gap'],
+});
 
 // A surface's ply (a buffer) as triangles in the viewer's frame (flip: y up, z south).
 export function parseSurface(buffer, flip, name) {
@@ -52,6 +56,10 @@ export function parseSurface(buffer, flip, name) {
   if (!geometry.getAttribute('position')?.count || !geometry.index) {
     geometry.dispose();
     throw Error(`${name} has no triangles.`);
+  }
+  const layout = geometry.getAttribute('facadeLayout');
+  if (layout && !layout.array.some((value) => Number.isFinite(value) && value > 0)) {
+    geometry.deleteAttribute('facadeLayout');
   }
   geometry.applyMatrix4(flip);
   return geometry;
@@ -73,9 +81,9 @@ const onGrid = (size, step) =>
 
 // rgb (3 numbers, changed in place) of a wall at (u, v) on it: its window
 // there if exact, else the wall's average of window and wall
-export function facadeColour(rgb, u, v, exact = true) {
-  const cu = u / BAY_M,
-    cv = v / FLOOR_M;
+export function facadeColour(rgb, u, v, exact = true, bay = BAY_M, floor = FLOOR_M) {
+  const cu = u / bay,
+    cv = v / floor;
   const qu = cu - Math.floor(cu),
     qv = cv - Math.floor(cv);
   const up = v >= 0.5 ? 1 : 0; // no window in the ground floor's first half metre
@@ -84,13 +92,14 @@ export function facadeColour(rgb, u, v, exact = true) {
     ? within(qu, WINDOW_U[0] - 0.03, WINDOW_U[1] + 0.03) *
       within(qv, WINDOW_V[0] - SILL[0], WINDOW_V[0])
     : 0;
+  const frame = exact && inside && (qu < 0.34 || qu > 0.66 || qv < 0.34 || qv > 0.76);
   const pane = exact ? hash(Math.floor(cu), Math.floor(cv), 0) : 0.5;
   const w = (exact ? inside : WINDOW_SHARE) * up * WINDOW_MIX;
   const shade = 1 + (pane - 0.5) * 2 * PANE;
   const foot = FOOT[0] + (1 - FOOT[0]) * smooth(0, FOOT[1], v);
   for (let c = 0; c < 3; c++) {
     const wall = rgb[c] * (1 + SILL[1] * sill * up);
-    const glass = (rgb[c] * WINDOW[0] + WINDOW[1][c]) * shade;
+    const glass = frame ? rgb[c] * 0.78 : (rgb[c] * WINDOW[0] + WINDOW[1][c]) * shade;
     rgb[c] = (wall + (glass - wall) * w) * foot;
   }
   return rgb;
@@ -103,6 +112,7 @@ export function scatter(geometry) {
     col = geometry.getAttribute('color')?.array,
     gapOf = geometry.getAttribute('gap'),
     facade = geometry.getAttribute('facade'),
+    layout = geometry.getAttribute('facadeLayout'),
     index = geometry.index.array;
   const own = gapOf?.count && gapOf.array.some((g) => g > 0) ? gapOf.array : null;
   const wall = facade?.count ? facade.array : null;
@@ -144,15 +154,15 @@ export function scatter(geometry) {
       wall[2 * c + 1] > NO_FACADE;
     // the grid's two ways, how far apart on each, how jittered, where it starts
     let A, B, C, su, sv, jitter, v0, exact, seed;
+    const bay = layout && layout.getX(a) > 0 ? layout.getX(a) : BAY_M;
+    const floor = layout && layout.getY(a) > 0 ? layout.getY(a) : FLOOR_M;
     if (onWall) {
-      const nu = Math.round(BAY_M / step),
-        nv = Math.round(FLOOR_M / step);
       [su, sv, jitter, v0, exact, seed] = [
-        onGrid(BAY_M, step),
-        onGrid(FLOOR_M, step),
+        onGrid(bay, step),
+        onGrid(floor, step),
         WALL_JITTER,
         0.5,
-        nu > 1 && nv > 1,
+        Math.round(bay / step) > 1 && Math.round(floor / step) > 1,
         3,
       ];
       A = [wall[2 * a], wall[2 * a + 1]];
@@ -202,7 +212,7 @@ export function scatter(geometry) {
           pos[3 * n + d] = wa * at[d] + wb * bt[d] + wc * ct[d];
           c3[d] = col ? wa * col[3 * a + d] + wb * col[3 * b + d] + wc * col[3 * c + d] : 0.6;
         }
-        if (onWall) facadeColour(c3, x, y, exact);
+        if (onWall) facadeColour(c3, x, y, exact, bay, floor);
         rgb.set(c3, 3 * n);
         gaps[n] = spacing;
         n++;

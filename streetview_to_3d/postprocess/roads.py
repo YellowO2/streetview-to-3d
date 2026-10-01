@@ -25,6 +25,8 @@ roads.ply.
 """
 import numpy as np
 
+from .geometry import sample_quad
+
 LANE_M = 3.2
 WIDTH_M = {"motorway": 14, "trunk": 12, "primary": 10, "secondary": 9, "tertiary": 8,
            "motorway_link": 6, "trunk_link": 6, "primary_link": 6, "secondary_link": 6,
@@ -107,12 +109,70 @@ def lines(elements, to_xy):
     return [(xy, w, c) for xy, w, c, _ in _ways(elements, to_xy)]
 
 
+PAVEMENT = (0.64, 0.62, 0.57)
+KERB = (0.74, 0.72, 0.67)
+PAINT = (0.82, 0.81, 0.73)
+KERB_M = .14
+PAVING_JOINT = (.43, .42, .39)
+
+
+def _positive(tags, key, default):
+    try:
+        value = float(str(tags[key]).split()[0].replace(",", "."))
+        return value if np.isfinite(value) and value > 0 else default
+    except (KeyError, ValueError, IndexError):
+        return default
+
+
+def _sidewalks(xy, width, tags):
+    """Tagged left/right ribbons; 'separate' is handled by mapped footway ways."""
+    import shapely
+    line = shapely.LineString(xy)
+    for side, sign in (("left", 1), ("right", -1)):
+        value = tags.get("sidewalk:" + side, tags.get("sidewalk:both", tags.get("sidewalk", "no")))
+        if value not in ("yes", "both", side):
+            continue
+        w = min(6.0, _positive(tags, f"sidewalk:{side}:width",
+                            _positive(tags, "sidewalk:both:width", 1.8)))
+        # Difference of one-sided buffers keeps turns joined without overlapping the road.
+        outer = line.buffer(sign * (width / 2 + w), single_sided=True, join_style="mitre")
+        inner = line.buffer(sign * width / 2, single_sided=True, join_style="mitre")
+        yield shapely.difference(outer, inner), line.offset_curve(sign * (width / 2 + w / 2)), w
+
+
+def _lane_dividers(xy, width, tags):
+    """Conservative dashed dividers from explicit lane counts, clear of segment ends."""
+    import shapely
+    if tags.get("lane_markings") == "no" or tags.get("surface", "asphalt") not in ("asphalt", "concrete"):
+        return
+    lanes = _positive(tags, "lanes", 1)
+    if lanes != int(lanes) or not 2 <= lanes <= 8 or width / lanes < 2.4:
+        return
+    line = shapely.LineString(xy)
+    for k in range(1, int(lanes)):
+        offset = width * (k / lanes - .5)
+        stripe = line if abs(offset) < 1e-6 else line.offset_curve(offset)
+        if stripe.geom_type != "LineString":
+            continue
+        for start in np.arange(width, stripe.length - width - 2.5, 6):
+            from shapely.ops import substring
+            yield substring(stripe, start, start + 2.5).buffer(.09, cap_style="flat")
+
+
+def _surface_colours(xy, colour):
+    """Quiet, deterministic variation without high-contrast noise."""
+    colour = np.asarray(colour)
+    cell = np.floor(xy / .8)
+    n = np.sin(cell[:, 0] * 12.9898 + cell[:, 1] * 78.233) * 43758.5453
+    n -= np.floor(n)
+    return np.clip(colour * (1 + (n[:, None] - .5) * .055), 0, 1)
+
+
 class Network:
     """The roads a simple game map keeps, as one surface: car roads and
-    pedestrian streets (KEPT) and the squares (area=yes) -- no driveways,
-    footways, sidewalks, steps or cycleways: the satellite shows those, and
-    drawn they only lay strips over each other. Each spot belongs to one
-    thing only, the first of: a car road, a pedestrian street, a square.
+    pedestrian streets (KEPT), squares (area=yes), and explicitly tagged
+    sidewalks. Each spot belongs to one surface: paint, carriageway,
+    pedestrian street, square, then pavement. Pavements never cover roads.
 
     shapes: {colour: its surface}; strips, fills: what points are laid over
     (points) before they are kept to shapes."""
@@ -122,12 +182,79 @@ class Network:
         from collections import defaultdict
         layers = defaultdict(list)                  # priority -> [(shape, colour)]
         self.strips, self.fills = [], []
+        self.elements, self.to_xy = elements, to_xy
+        self.street_lines = [(xy, w, tags) for xy, w, _, tags in _ways(elements, to_xy)
+                             if tags["highway"] in KEPT and tags["highway"] not in PATHS]
+        # Junctions from shared OSM nodes: paint stops before a crossing or side street.
+        from collections import Counter
+        degree, node_xy = Counter(), {}
+        for e in elements:
+            tags = e.get("tags", {})
+            if tags.get("highway") not in KEPT or not _on_ground(tags) or _area(e):
+                continue
+            nodes = e.get("nodes", [])
+            coordinates = to_xy(e.get("geometry", []))
+            for k, (node, coordinate) in enumerate(zip(nodes, coordinates)):
+                degree[node] += 1 if k in (0, len(nodes) - 1) else 2
+                node_xy[node] = coordinate
+        junctions = shapely.union_all([shapely.Point(node_xy[node]).buffer(8)
+                                      for node, n in degree.items() if n > 2])
+        obstacles = shapely.union_all([shapely.make_valid(shapely.Polygon(to_xy(e["geometry"])))
+                                      for e in elements if "building" in e.get("tags", {})
+                                      and len(e.get("geometry", [])) >= 4])
         for xy, w, c, tags in _ways(elements, to_xy):
+            if tags["highway"] == "footway" and tags.get("footway") == "sidewalk":
+                shape = shapely.LineString(xy).buffer(w / 2, cap_style="flat", join_style="mitre")
+                layers[3].append((shape, np.array(PAVEMENT)))
+                self.strips.append((xy, w, np.array(PAVEMENT)))
+                continue
             if tags["highway"] not in KEPT:
                 continue
+            if tags["highway"] not in PATHS:
+                for shape, centre, pavement_width in _sidewalks(xy, w, tags):
+                    shape = shapely.difference(shape, obstacles)
+                    layers[3].append((shape, np.array(PAVEMENT)))
+                    for part in shapely.get_parts(centre):
+                        if part.geom_type == "LineString":
+                            self.strips.append((shapely.get_coordinates(part), pavement_width, np.array(PAVEMENT)))
+                for mark in _lane_dividers(xy, w, tags):
+                    mark = shapely.difference(mark, junctions)
+                    if mark.is_empty:
+                        continue
+                    layers[-1].append((mark, np.array(PAINT)))
+                    for part in shapely.get_parts(mark):
+                        if part.geom_type == "Polygon":
+                            self.fills.append((shapely.get_coordinates(part.exterior), np.array(PAINT)))
             layers[1 if tags["highway"] in PATHS else 0].append(
                 (shapely.LineString(xy).buffer(w / 2, quad_segs=2, cap_style="flat"), c))
             self.strips.append((xy, w, c))
+        # Explicit crossing nodes become broad zebra bars, aligned to their road.
+        for e in elements:
+            tags = e.get("tags", {})
+            if e.get("type") != "node" or tags.get("highway") != "crossing":
+                continue
+            if tags.get("crossing") in ("no", "unmarked") or tags.get("crossing:markings") == "no":
+                continue
+            if tags.get("crossing:markings") not in ("zebra", "yes") and tags.get("crossing") not in ("zebra", "marked", "traffic_signals"):
+                continue
+            location = to_xy([e])[0]
+            if not self.street_lines:
+                continue
+            xy, width, _ = min(self.street_lines, key=lambda r: shapely.LineString(r[0]).distance(shapely.Point(location)))
+            line = shapely.LineString(xy)
+            if line.distance(shapely.Point(location)) > width / 2 + 2:
+                continue
+            at = line.project(shapely.Point(location))
+            a = np.array(line.interpolate(max(0, at - .5)).coords[0])
+            b = np.array(line.interpolate(min(line.length, at + .5)).coords[0])
+            along = (b - a) / max(np.linalg.norm(b - a), 1e-9)
+            side = np.array([-along[1], along[0]])
+            centre = np.array(line.interpolate(at).coords[0])
+            for offset in np.arange(-width / 2 + .5, width / 2 - .3, 1.1):
+                q = np.array([centre + along * u + side * v for u, v in
+                              ((-1.8, offset), (1.8, offset), (1.8, offset + .55), (-1.8, offset + .55))])
+                layers[-2].append((shapely.Polygon(q), np.array(PAINT)))
+                self.fills.append((q, np.array(PAINT)))
         for e in elements:
             tags = e.get("tags", {})
             if e["type"] == "way" and _area(e) and tags.get("highway") in KEPT and _on_ground(tags):
@@ -143,6 +270,30 @@ class Network:
                 g = shapely.difference(shapely.union_all(gs), taken)
                 self.shapes[c] = shapely.union_all([self.shapes[c], g]) if c in self.shapes else g
             taken = shapely.union_all([taken] + [g for g, _ in layers[p]])
+        pavement = self.shapes.get(PAVEMENT, shapely.Polygon())
+        if not pavement.is_empty:
+            curb = shapely.difference(pavement, pavement.buffer(-.18, join_style="mitre"))
+            self.shapes[PAVEMENT] = shapely.difference(pavement, curb)
+            self.shapes[KERB] = curb
+            # Same fill candidates cover both colours, with each clipped to its own final shape.
+            self.fills += [(xy, np.array(KERB)) for xy, c in list(self.fills) if tuple(c) == PAVEMENT]
+            self.strips += [(xy, w, np.array(KERB)) for xy, w, c in list(self.strips) if tuple(c) == PAVEMENT]
+        # Real polygon seams survive triangle scattering, unlike tiny vertex noise.
+        paving = self.shapes.get(PAVEMENT, shapely.Polygon())
+        if not paving.is_empty:
+            lo_x, lo_y, hi_x, hi_y = paving.bounds
+            seams = []
+            for axis, lo, hi, other_lo, other_hi in ((0, lo_x, hi_x, lo_y, hi_y), (1, lo_y, hi_y, lo_x, hi_x)):
+                for t in np.arange(np.floor(lo / 1.2) * 1.2, hi, 1.2):
+                    coords = [(t, other_lo), (t, other_hi)] if axis == 0 else [(other_lo, t), (other_hi, t)]
+                    seam = shapely.intersection(shapely.LineString(coords), paving)
+                    if not seam.is_empty:
+                        seams.append(seam.buffer(.035, cap_style="flat"))
+            joints = shapely.intersection(shapely.union_all(seams), paving)
+            self.shapes[PAVEMENT] = shapely.difference(paving, joints)
+            self.shapes[PAVING_JOINT] = joints
+            self.strips += [(xy, w, np.array(PAVING_JOINT)) for xy, w, c in list(self.strips) if tuple(c) == PAVEMENT]
+            self.fills += [(xy, np.array(PAVING_JOINT)) for xy, c in list(self.fills) if tuple(c) == PAVEMENT]
         self.all = taken
         for g in self.shapes.values():
             shapely.prepare(g)
@@ -504,6 +655,23 @@ def near(roads, margin_m, step_m=1.0):
 BELOW_M = 0.05        # the surface this far under the points, so where both are, the points show
 
 
+def _curb_faces(net, ground, where):
+    """Visible vertical edge of raised pavements; clipped before segmentizing."""
+    import shapely
+    pavement = shapely.union_all([net.shapes.get(PAVEMENT, shapely.Polygon()),
+                                  net.shapes.get(KERB, shapely.Polygon()), net.shapes.get(PAVING_JOINT, shapely.Polygon())])
+    boundary = shapely.intersection(shapely.boundary(pavement), where)
+    for part in shapely.get_parts(shapely.segmentize(boundary, STRIP_M)):
+        if part.geom_type not in ("LineString", "LinearRing"):
+            continue
+        xy = shapely.get_coordinates(part)
+        for a, b in zip(xy[:-1], xy[1:]):
+            en = np.array([a, b])
+            bottom = ground(en) + LIFT_M
+            yield np.r_[np.c_[en[:, 0], -bottom, en[:, 1]],
+                        np.c_[en[::-1, 0], -(bottom[::-1] + KERB_M), en[::-1, 1]]]
+
+
 def surface(net, ground, away):
     """(points (n, 3) world, colours (n, 3), triangles (m, 3)): the
     Network's surface on the ground (the land's own height: ground), LIFT_M
@@ -517,10 +685,23 @@ def surface(net, ground, away):
             continue
         corners = shapely.get_coordinates(tris).reshape(-1, 4, 2)[:, :3]
         xy, idx = np.unique(np.round(corners.reshape(-1, 2), 3), axis=0, return_inverse=True)
-        pts.append(np.column_stack([xy[:, 0], -(ground(xy) + LIFT_M - BELOW_M), xy[:, 1]]))
-        cols.append(np.tile(colour, (len(xy), 1)))
+        pts.append(np.column_stack([xy[:, 0], -(ground(xy) + LIFT_M - BELOW_M + (KERB_M if colour in (PAVEMENT, KERB, PAVING_JOINT) else 0)), xy[:, 1]]))
+        cols.append(_surface_colours(xy, colour))
         faces.append(idx.reshape(-1, 3) + n)
         n += len(xy)
+    for quad in _curb_faces(net, ground, away):
+        pts.append(quad)
+        cols.append(np.tile(np.array(KERB) * .82, (4, 1)))
+        faces.append(np.array([[0, 1, 2], [0, 2, 3]]) + n)
+        n += 4
+    from .street_details import quads
+    for quad, colour in quads(net, ground):
+        if not shapely.intersects(shapely.Polygon(quad[:, [0, 2]]).convex_hull, away):
+            continue
+        pts.append(quad)
+        cols.append(np.tile(colour, (4, 1)))
+        faces.append(np.array([[0, 1, 2], [0, 2, 3]]) + n)
+        n += 4
     if not pts:
         return np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3), int)
     return np.concatenate(pts), np.concatenate(cols), np.concatenate(faces)
@@ -551,7 +732,9 @@ def points(net, step, ground, where):
     for xy, colour in net.fills:
         s = float(step(xy.mean(0)[None])[0])
         lo, hi = xy.min(0), xy.max(0)
-        gx, gy = np.meshgrid(np.arange(lo[0], hi[0], s), np.arange(lo[1], hi[1], s))
+        counts = np.maximum(1, np.ceil((hi - lo) / s).astype(int))
+        gx, gy = np.meshgrid(lo[0] + (np.arange(counts[0]) + .5) * (hi[0] - lo[0]) / counts[0],
+                             lo[1] + (np.arange(counts[1]) + .5) * (hi[1] - lo[1]) / counts[1])
         xys.append(np.stack([gx.ravel(), gy.ravel()], 1))
         cols.append(np.tile(colour, (len(xys[-1]), 1)))
     if not xys:
@@ -565,4 +748,34 @@ def points(net, step, ground, where):
         if len(of):
             mine[of] = shapely.contains_xy(shape, *xy[of].T)
     xy, col = xy[mine], col[mine]
-    return np.column_stack([xy[:, 0], -(ground(xy) + LIFT_M), xy[:, 1]]), col
+    raised = np.all(col == PAVEMENT, axis=1) | np.all(col == KERB, axis=1) | np.all(col == PAVING_JOINT, axis=1)
+    varied = col.copy()
+    for colour in net.shapes:
+        mine = np.all(col == colour, axis=1)
+        varied[mine] = _surface_colours(xy[mine], colour)
+    pts = np.column_stack([xy[:, 0], -(ground(xy) + LIFT_M + raised * KERB_M), xy[:, 1]])
+    curb_pts = []
+    for quad in _curb_faces(net, ground, net.all.envelope):
+        a, b, _, d = quad
+        s = max(.1, float(step(((a + b)[[0, 2]] / 2)[None])[0]))
+        count = max(1, int(np.ceil(np.linalg.norm(b - a) / s)))
+        q = a + ((np.arange(count) + .5) / count)[:, None] * (b - a) + .5 * (d - a)
+        curb_pts.append(q[where(q[:, [0, 2]])])
+    if curb_pts:
+        curb_pts = np.concatenate(curb_pts)
+        pts = np.r_[pts, curb_pts]
+        varied = np.r_[varied, np.tile(np.array(KERB) * .82, (len(curb_pts), 1))]
+    from .street_details import quads
+    detail_pts, detail_cols = [], []
+    for q, colour in quads(net, ground):
+        centre = q.mean(0)[[0, 2]]
+        if not where(centre[None])[0]:
+            continue
+        s = max(.08, float(step(centre[None])[0]))
+        samples = sample_quad(q, s)
+        detail_pts.append(samples)
+        detail_cols.append(np.tile(colour, (len(samples), 1)))
+    if detail_pts:
+        pts = np.concatenate([pts, *detail_pts])
+        varied = np.concatenate([varied, *detail_cols])
+    return pts, varied

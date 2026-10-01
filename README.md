@@ -33,8 +33,16 @@ python app.py
 cd streetview_to_3d/visualise && python3 -m http.server 8000
 ```
 
+## Procedural surroundings
+
+The usual scene build adds OSM-based facade geometry, blue window glass, raised
+pavements, lane markings, mapped crossings and street furniture. See
+[the detail workflow](streetview_to_3d/postprocess/BUILDING_DETAILS.md) for rebuilding
+existing scenes and the spacing defaults.
+
 ## Acknowledgments
 
+- [osm_building_grammar](https://github.com/p-schulz/osm_building_grammar), vendored facade geometry core (Apache 2.0)
 - [Depth-Anything-3](https://github.com/ByteDance-Seed/Depth-Anything-3) (Apache 2.0)
 - [streetlevel](https://github.com/sk-zk/streetlevel), for Street View coverage and downloads
 
