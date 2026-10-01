@@ -249,6 +249,17 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
     except Exception as e:
         print(f"Google coverage lookup failed: {e}")
         return [], []
+    # The pano nearest the center too, looked up directly: discovery keeps a
+    # walked path's panos only every 12-24 m (_probe_line_gaps), so a small
+    # radius inside a park can hold none of them, though one stands right
+    # at the center.
+    try:
+        at_center = streetview.find_panorama(center_lat, center_lon, radius=min(max(radius_m, 15), 50))
+    except Exception as e:
+        print(f"Google search at the center failed: {e}")
+        at_center = None
+    if _is_official(at_center):
+        discovered.setdefault(at_center.id, at_center)
 
     def dist(n):
         return _haversine_m(center_lat, center_lon, n["lat"], n["lon"])
