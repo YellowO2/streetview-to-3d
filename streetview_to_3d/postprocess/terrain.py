@@ -3,13 +3,19 @@
 DA3 reaches a few tens of metres; hills and mountains
 further out come from AWS Terrain Tiles (terrarium PNGs, no key, ~30 m
 data, mostly SRTM -- the ground, big buildings at most a blur), coloured
-from EOX's Sentinel-2 cloudless mosaic (no key, 10 m, CC BY-NC-SA: credit
-"Sentinel-2 cloudless by EOX", not for sale). The land is a surface, as
+from Google's satellite tiles (GOOGLE_URL, the panos' own source: ~0.5 m
+at its finest), each corner of the land read at the zoom whose pixel is as
+wide as its corners are apart (google_colours: its lower zooms are the
+finer ones averaged, so a far corner is its patch's colour, not a car's),
+roofs at ROOF_ZOOM; where Google has none, EOX's Sentinel-2 cloudless
+mosaic (no key, 10 m, CC BY-NC-SA: credit "Sentinel-2 cloudless by EOX",
+not for sale) -- at 10 m a house is a pixel or two, and Matsumoto
+Castle's roof came out the green of the trees round it. The land is a surface, as
 a game has it: triangles, fine near the scene and coarser with distance;
 roads and buildings on it are points, spaced the same way:
 
-1. the land's corners out to NEAR_RADIUS_M, or FAR_RADIUS_M where hills
-   rise beyond it (reach), further apart the further from the nearest
+1. the land's corners out to RADIUS_M (past it the viewer's haze has
+   hidden everything), further apart the further from the nearest
    camera (LAND_EVERY x gap_at), joined into triangles;
    where the scene has its own ground, just beneath it (UNDER_M) -- one
    shared ground, the scene's no longer seen through, the land never over
@@ -78,8 +84,13 @@ HEIGHT_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y
 HEIGHT_ZOOM = 13          # ~19 m a pixel at the equator, finer than the data
 COLOUR_URL = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/{z}/{y}/{x}.jpg"
 COLOUR_ZOOM = 14          # ~10 m a pixel, the imagery's own
-NEAR_RADIUS_M, FAR_RADIUS_M = 1000.0, 2000.0  # the land's reach: far only where hills rise HILL_M over the scene
-HILL_M = 50.0
+GOOGLE_URL = "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
+GOOGLE_ZOOMS = (11, 18)   # the land read between these: ~75 m a pixel to ~0.6 m (at the equator)
+ROOF_ZOOM = 18
+EQUATOR_M = 156543.03     # a zoom 0 pixel's width at the equator
+ROOF_INSET_M, ROOF_STEP_M = 1.0, 1.0   # a roof sampled this far in from its edge, this far apart
+TILE_THREADS = 8          # tiles fetched at once, ahead of reading them (TileMap.fetch)
+RADIUS_M = 1000.0                          # the land's reach: the viewer's haze is whole by then
 BUILDINGS_M, ROADS_M = 1000.0, 700.0         # OSM's reach (roads are drawn only where a point wide, ~600 m)
 NEAR_M = 50.0                              # roads, bridges, buildings: points this near a camera, triangles past
 PAINT_M = 30.0                            # map points this near a camera are coloured from the panos
@@ -116,9 +127,10 @@ class TileMap:
     a tile's pixels (0-255, in mode) into its values; a map that leaves out
     empty tiles (a 404) gives missing there."""
 
-    def __init__(self, url, zoom, decode, mode="RGB", missing=None):
+    def __init__(self, url, zoom, decode, mode="RGB", missing=None, headers=None):
         self.url, self.zoom, self.decode, self.tiles = url, zoom, decode, {}
         self.mode, self.missing = mode, missing
+        self.headers = headers or {"User-Agent": "streetview-to-3d"}
 
     def _download(self, url):
         """The tile's bytes, or None where the map has none (a 404)."""
@@ -129,7 +141,7 @@ class TileMap:
                 return f.read() or None
         for attempt in range(TILE_TRIES):
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "streetview-to-3d"})
+                req = urllib.request.Request(url, headers=self.headers)
                 with urllib.request.urlopen(req, timeout=30) as r:
                     data = r.read()
                 break
@@ -153,15 +165,31 @@ class TileMap:
             if data is None:
                 if self.missing is None:
                     raise OSError(f"no tile {self.zoom}/{x}/{y}")
-                self.tiles[x, y] = np.full((256, 256), self.missing)
+                self.tiles[x, y] = np.full((256, 256, 3) if self.mode == "RGB" else (256, 256), self.missing)
             else:
                 self.tiles[x, y] = self.decode(np.asarray(Image.open(io.BytesIO(data)).convert(self.mode), float))
         return self.tiles[x, y]
 
-    def __call__(self, lat, lon):
+    def _xy(self, lat, lon):
+        """Pixel (x, y) of (lat, lon) on the whole map."""
         n = 256 * 2 ** self.zoom
-        px = (lon + 180) / 360 * n - 0.5
-        py = (1 - np.log(np.tan(np.radians(lat)) + 1 / np.cos(np.radians(lat))) / math.pi) / 2 * n - 0.5
+        return ((lon + 180) / 360 * n,
+                (1 - np.log(np.tan(np.radians(lat)) + 1 / np.cos(np.radians(lat))) / math.pi) / 2 * n)
+
+    def fetch(self, lat, lon, near=0):
+        """Download (TILE_THREADS at once) every tile within near pixels of
+        any of (lat, lon), so reading them later asks for none."""
+        from concurrent.futures import ThreadPoolExecutor
+        x, y = self._xy(np.asarray(lat), np.asarray(lon))
+        tiles = {(int(a // 256), int(b // 256)) for dx in (-near, near) for dy in (-near, near)
+                 for a, b in zip(x + dx, y + dy)}
+        with ThreadPoolExecutor(TILE_THREADS) as pool:
+            list(pool.map(lambda t: self._download(self.url.format(z=self.zoom, x=t[0], y=t[1])), tiles))
+        return len(tiles)
+
+    def __call__(self, lat, lon):
+        px, py = self._xy(lat, lon)
+        px, py = px - 0.5, py - 0.5
         x0, y0 = np.floor(px).astype(int), np.floor(py).astype(int)
         fx, fy = px - x0, py - y0
         tx0, ty0 = x0.min() // 256, y0.min() // 256
@@ -185,6 +213,26 @@ def colour_map():
     return TileMap(COLOUR_URL, COLOUR_ZOOM, lambda c: c / 255)
 
 
+def google_map(zoom):
+    """RGB, 0-1, NaN where Google has no tile."""
+    from streetview_to_3d.services.http_headers import BROWSER_HEADERS
+    return TileMap(GOOGLE_URL, zoom, lambda c: c / 255, missing=np.nan, headers=BROWSER_HEADERS)
+
+
+def google_colours(lat, lon, spacing):
+    """(n, 3) RGB at each (lat, lon), read at the zoom (GOOGLE_ZOOMS) whose
+    pixel is about spacing (n,) metres wide; NaN where Google has none."""
+    zoom = np.clip(np.floor(np.log2(EQUATOR_M * np.cos(np.radians(lat)) / np.maximum(spacing, 1e-3))),
+                   *GOOGLE_ZOOMS).astype(int)
+    out = np.full((len(lat), 3), np.nan)
+    for z in np.unique(zoom):
+        at = zoom == z
+        tiles = google_map(int(z))
+        tiles.fetch(lat[at], lon[at])
+        out[at] = tiles(lat[at], lon[at])
+    return out
+
+
 def gap_at(cam_d):
     """How far apart map points are cam_d metres from the nearest camera:
     GAP0_M there (DA3's own are ~4 cm apart), GAP_PER of the distance more
@@ -192,16 +240,6 @@ def gap_at(cam_d):
     the centre with a 50 cm floor instead, the land was coarse right at the
     scene's edge."""
     return GAP0_M + GAP_PER * np.asarray(cam_d)
-
-
-def reach(ground, ground_here):
-    """How far the land is laid: FAR_RADIUS_M where it rises HILL_M above
-    the scene's own ground somewhere between NEAR_RADIUS_M and that --
-    hills worth seeing -- else NEAR_RADIUS_M."""
-    r = np.linspace(NEAR_RADIUS_M, FAR_RADIUS_M, 12)[:, None]
-    a = np.linspace(0, 2 * math.pi, 96, endpoint=False)[None]
-    ring = np.stack([(r * np.cos(a)).ravel(), (r * np.sin(a)).ravel()], 1)
-    return FAR_RADIUS_M if ground(ring).max() - ground_here > HILL_M else NEAR_RADIUS_M
 
 
 def point_gap(edge_d):
@@ -317,7 +355,7 @@ def build(scene_dir, log=print):
 
     # water: each body at its level over the land, which goes on under it (water.py);
     # its outline OSM's where OSM has one
-    radius = reach(ground, float(np.median(fixes + under)) if len(known) else 0.0)
+    radius = RADIUS_M
     jrc = water.jrc(to_ll, heights)
     wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])), jrc,
                       osm=(water.outline(elements, to_xy, BUILDINGS_M,
@@ -426,8 +464,13 @@ def build(scene_dir, log=print):
     shade = np.clip(normal @ (SUN / np.linalg.norm(SUN)), 0, 1)
     colours = colour_map()
     try:
-        cols = colours(lat, lon) ** LIFT * (0.8 + 0.2 * shade[:, None])
-        source = "satellite"
+        cols = google_colours(lat, lon, LAND_EVERY * gap_at(cam_tree.query(en)[0]))
+        source = "Google's satellite"
+        gone = np.isnan(cols[:, 0])
+        if gone.any():                    # where Google has none, Sentinel-2's, lifted (it is dark from above)
+            cols[gone] = colours(lat[gone], lon[gone]) ** LIFT
+            source += f", Sentinel-2's for {gone.mean():.0%}"
+        cols = cols * (0.8 + 0.2 * shade[:, None])
     except OSError as e:                  # the land still stands without its colour
         log(f"terrain: no satellite colour ({e!r}), plain")
         colours = None
@@ -446,8 +489,15 @@ def build(scene_dir, log=print):
     solid, solid_base = [], np.zeros((0, 3))
     n_cut = n_sat = 0
     if outlines:
-        try:                                # roofs as the satellite sees them
-            n_sat = buildings.satellite_roofs(outlines, lambda en: colours(*to_ll(en)) ** LIFT) if colours else 0
+        try:                                # roofs as the satellite sees them: Google's, sharp
+            roof_at = google_map(ROOF_ZOOM)
+            roof_at.fetch(*to_ll(np.concatenate([o[0] for o in outlines])))
+            n_sat = buildings.satellite_roofs(outlines, lambda en: roof_at(*to_ll(en)),
+                                              ROOF_INSET_M, ROOF_STEP_M, lively=False)
+        except OSError as e:
+            log(f"terrain: no Google roofs ({e!r}), Sentinel-2's")
+        try:                                # ... else Sentinel-2's, for those still without
+            n_sat += buildings.satellite_roofs(outlines, lambda en: colours(*to_ll(en)) ** LIFT) if colours else 0
         except OSError as e:
             log(f"terrain: no satellite roofs ({e!r})")
         try:

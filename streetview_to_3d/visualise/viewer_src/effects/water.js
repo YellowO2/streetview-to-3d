@@ -172,8 +172,17 @@ function pointsMaterial(mirror, matrix, halfHeight) {
   }).join('\n');
   const steepest = WAVES.reduce((a, w) => a + w[2], 0).toFixed(4);
   return new THREE.ShaderMaterial({
-    uniforms: { mirror: { value: mirror }, matrix: { value: matrix }, halfHeight, time, ...knobs },
+    uniforms: {
+      mirror: { value: mirror },
+      matrix: { value: matrix },
+      halfHeight,
+      time,
+      ...knobs,
+      ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+    },
+    fog: true, // the scene's haze: far water fades into the sky as the land does
     vertexShader: `
+      #include <fog_pars_vertex>
       uniform sampler2D mirror; uniform mat4 matrix; uniform float halfHeight, time;
       uniform float ${Object.keys(KNOBS).join(', ')};
       uniform vec3 ${Object.keys(COLOURS).join(', ')};
@@ -197,12 +206,14 @@ function pointsMaterial(mirror, matrix, halfHeight) {
           + glintColour * pow(max(dot(reflect(-v, n), vec3(${vec(sun)})), 0.), glintSharp) * glint;
         colour *= 1. + (dab - .5) * 2. * vary;
         squash = max(abs(v.y), flatness);
-        vec4 mv = viewMatrix * world;
+        vec4 mv = viewMatrix * world, mvPosition = mv;
         gl_Position = projectionMatrix * mv;
+        #include <fog_vertex>
         gl_PointSize = size * (1. + (fract(dab * 3.71) - .5) * 2. * spread) * water.y
           * projectionMatrix[1][1] * halfHeight / -mv.z;
       }`,
     fragmentShader: `
+      #include <fog_pars_fragment>
       varying vec3 colour;
       varying float squash;
       void main() {
@@ -211,6 +222,7 @@ function pointsMaterial(mirror, matrix, halfHeight) {
         gl_FragColor = vec4(colour, 1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
+        #include <fog_fragment>
       }`,
   });
 }

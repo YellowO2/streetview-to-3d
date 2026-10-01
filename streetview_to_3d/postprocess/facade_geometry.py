@@ -39,6 +39,11 @@ def profile_for(tags, height, area):
     year = re.match(r"\d{4}", str(tags.get("start_date", "")))
     historic = (year and int(year[0]) < 1945) or any(
         term in architecture for term in ("baroque", "renaissance", "classic", "art_nouveau", "jugendstil"))
+    from streetview_to_3d.postprocess.styles import facade
+    regional = facade(tags, "house" if kind in ("house", "detached", "semidetached_house", "terrace") or historic
+                      or (kind == "yes" and height < 10 and area < 180) else "apartments")
+    if regional and kind not in ("industrial", "warehouse", "office", "commercial", "retail"):
+        return Profile("regional", *regional)
     if kind in ("industrial", "warehouse"):
         return Profile("industrial", 5.5, 3.2, .48, .22, False, .3, False)
     if kind in ("office", "commercial") or material == "glass":

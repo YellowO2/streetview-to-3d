@@ -134,7 +134,7 @@ function configure() {
 }
 const PLACED_POINT_M = 0.1;
 const HAZE = 0xc9dbe6,
-  HAZE_M = [250, 1800]; // clear to, gone by
+  HAZE_M = [250, 900]; // clear to, gone by: the land's edge (terrain.RADIUS_M) never shows
 function setPointSize() {
   // the scene's own points at one size; the map's (terrain, buildings) at
   // their spacing's, but never smaller than the scene's, so where they meet

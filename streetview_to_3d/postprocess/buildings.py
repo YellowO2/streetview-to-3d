@@ -10,7 +10,10 @@ Footprints from osm.py, each raised into a block of points:
     not its outline, each from its own min_height (or building:min_level)
     up, so they stack; parts are left where OSM has them (not fitted)
   - its roof as "roof:shape" has it (roofs.py), the walls up to where it
-    starts (height less roof:height); flat if it has none
+    starts (height less roof:height); if it has none, as its region
+    builds (styles.py: a Japanese house's hipped, a Swedish one's gabled,
+    a block's flat), and a landmark its kind says -- a castle, a temple,
+    a church -- drawn as one, out of parts
   - one DA3 built a wall of is slid onto it, whatever still stands in
     front of that wall cut away as from a solid block, a guessed height
     made DA3's (fit_to_scene); what DA3 already has of it is left to DA3 and the rest
@@ -44,6 +47,7 @@ Near the points, windows the same way (windows).
 Called by terrain.build, which writes them to buildings.ply and the solid
 ones to blocks.ply.
 """
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -68,7 +72,7 @@ PULL_MAX_M = 1.0              # a wall's seam pulled onto DA3's plane by at most
 TRIM_TOL_M, TRIM_FRONT_M = 0.3, 30.0   # cut from this far in front of a DA3 wall, out to this
 TRIM_MIN_M2, TRIM_MAX = 1.0, 0.2
 CHEER_SAT, CHEER_LIFT = 1.3, 1.15
-SAT_INSET_M, SAT_STEP_M = 3.0, 4.0   # a roof sampled this far in from its edge (a 10 m pixel on it is
+SAT_INSET_M, SAT_STEP_M = 3.0, 4.0   # (Sentinel-2's) a roof sampled this far in from its edge (a 10 m pixel on it is
                                      # half street), this far apart
 ROOF_LIFT = 1.08              # a roof faces the sky: a little lighter than its walls
 # the colour of a building no pano sees enough of: the place's own (palette)
@@ -151,6 +155,7 @@ class Form:
     geometry_cache: dict = field(default_factory=dict, repr=False)
     physical_facade: bool = False
     skirt_m: float = 0.0          # ... its walls on down this much further, to the land a neighbour cut lower
+    stand_on: object = None       # a part standing on another's foot (styles: a castle's tiers on its base)
 
 
 def _form(tags, xy, h):
@@ -208,6 +213,9 @@ def settle(outlines, xy, h, owner):
         mine = owner == i
         if mine.any():
             form.foot_m = float(h[mine].min())
+    for _, _, _, form, *_ in outlines:
+        if form.stand_on is not None and form.stand_on.foot_m is not None:
+            form.foot_m = form.stand_on.foot_m
     for ring, _, _, form, *_ in outlines:
         if form.foot_m is None:
             continue
@@ -283,6 +291,10 @@ def outlines(elements, to_xy):
     if parts:
         tree = shapely.STRtree(parts)
         out = [o for o in out if o[3].part or not len(tree.query(Polygon(o[0]).buffer(0), "contains"))]
+    # as the place builds: its region's roofs, landmarks as theirs (styles.py)
+    from streetview_to_3d.postprocess import styles
+    ring = next((r for _, r in _rings(elements)), None)
+    out = styles.apply(out, styles.region(ring[0]["lat"], ring[0]["lon"]) if ring else "other", Form)
     # Shared walls should not sprout balconies inside adjacent buildings.
     polygons = [Polygon(o[0]).buffer(0) for o in out]
     tree = shapely.STRtree(polygons)
@@ -352,24 +364,30 @@ def palette(photos):
     return np.array([soften(c) for c in centres]), share
 
 
-def satellite_roofs(outlines, colour_at):
+def satellite_roofs(outlines, colour_at, inset=SAT_INSET_M, step=SAT_STEP_M, lively=True):
     """Each roof without its own colour (Form.roof_colour) given the
-    satellite's: the median over it, SAT_INSET_M in from its edge, made
-    livelier (cheer); colour_at(east/north (n, 2)) -> RGB. A roof too
-    small for that keeps its building's colour. Returns how many."""
+    satellite's: the median over it, inset in from its edge, sampled step
+    apart, made livelier (cheer) if lively -- a 10 m pixel's is dull, a
+    sharp one's is the roof's own; colour_at(east/north (n, 2)) -> RGB. A
+    roof too small for that keeps its building's colour. Returns how many."""
     n = 0
     for xy, _, _, form, *_ in outlines:
         if form.roof_colour is not None:
             continue
-        ring = _inset(xy, SAT_INSET_M)
+        ring = _inset(xy, inset)
         if ring is None:
             continue
         lo, hi = ring.min(0), ring.max(0)
-        gx, gy = np.meshgrid(np.arange(lo[0], hi[0], SAT_STEP_M) + SAT_STEP_M / 2,
-                             np.arange(lo[1], hi[1], SAT_STEP_M) + SAT_STEP_M / 2)
+        gx, gy = np.meshgrid(np.arange(lo[0], hi[0], step) + step / 2,
+                             np.arange(lo[1], hi[1], step) + step / 2)
         grid = np.stack([gx.ravel(), gy.ravel()], 1)
         at = np.concatenate([grid[_inside(grid, ring)], ring[:-1]])
-        form.roof_colour = cheer(np.median(colour_at(at), 0))
+        with warnings.catch_warnings():     # all NaN: warned, then skipped below
+            warnings.simplefilter("ignore", RuntimeWarning)
+            c = np.nanmedian(colour_at(at), 0)
+        if not np.isfinite(c).all():        # the map has none there
+            continue
+        form.roof_colour = cheer(c) if lively else c
         n += 1
     return n
 

@@ -52,6 +52,7 @@ const sun = new THREE.Vector3(...SUN).normalize();
 const g0 = GAPS[0].toFixed(4);
 
 const vertexShader = `
+  #include <fog_pars_vertex>
   attribute float gap;
   varying vec3 colour, world, n;
   varying float spacing;
@@ -61,10 +62,13 @@ const vertexShader = `
     n = normalize(mat3(modelMatrix) * normal);
     vec4 w = modelMatrix * vec4(position, 1.);
     world = w.xyz;
-    gl_Position = projectionMatrix * viewMatrix * w;
+    vec4 mvPosition = viewMatrix * w;
+    gl_Position = projectionMatrix * mvPosition;
+    #include <fog_vertex>
   }`;
 
 const fragmentShader = `
+  #include <fog_pars_fragment>
   uniform float ${Object.keys(KNOBS).join(', ')};
   ${Object.entries(FIXED)
     .map(([k, v]) => `const float ${k} = ${v.toFixed(4)};`)
@@ -125,6 +129,7 @@ const fragmentShader = `
     gl_FragColor = vec4(mix(c, vec3(${vec(HAZE.toArray())}), haze * (1. - exp2(-away / HAZE_M))), 1.);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
+    #include <fog_fragment>
   }`;
 
 // The land's triangles (the viewer's frame) as its painted surface; gapOf(x,
@@ -148,7 +153,8 @@ export function landSurface(geometry, gapOf) {
   return new THREE.Mesh(
     geometry,
     new THREE.ShaderMaterial({
-      uniforms: { ...knobs },
+      uniforms: { ...knobs, ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog) },
+      fog: true, // and over it the scene's haze, gone by its far edge
       vertexColors: true,
       side: THREE.DoubleSide,
       polygonOffset: true,
