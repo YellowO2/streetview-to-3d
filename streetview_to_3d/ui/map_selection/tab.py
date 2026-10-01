@@ -20,6 +20,7 @@ import json
 import gradio as gr
 
 from streetview_to_3d.services.geo import extract_lat_lon
+from streetview_to_3d.build_street_graph.fetch_nodes import corridor_points
 from streetview_to_3d.services.pipeline_runner import estimate_gpu_seconds
 from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id, run_async
 from streetview_to_3d.ui.map_selection import candidates as candidates_mod
@@ -67,9 +68,16 @@ def _summary_markdown(state):
         return "Enter a location and select a street via 'Expand Area' Button or manually clicking. Then press button 1, wait for it to run, then button 2."
     n_nodes = len(state["selected"])
     n_edges = len(state.get("selected_edges", []))
-    return (f"**{n_nodes} panoramas · {n_edges} connections** · "
-            f"about {estimate_gpu_seconds(n_nodes) / 60:.1f} min of GPU "
-            "(daily ZeroGPU quota: 2 min logged out, 5 min free account, 40 min PRO)")
+    # the GPU is spent per spot -- panos within a few metres merge into one
+    # (fetch_nodes.corridor_points) -- not per pano
+    by_key = nodes_by_key(state)
+    n_spots = len(corridor_points([((by_key[a]["lat"], by_key[a]["lon"]), (by_key[b]["lat"], by_key[b]["lon"]))
+                                   for a, b in state.get("selected_edges", []) if a in by_key and b in by_key])[0])
+    quick, thorough = (estimate_gpu_seconds(n_spots, e) / 60 for e in ("Quick", "Thorough"))
+    return (f"**{n_nodes} panoramas · {n_edges} connections · {n_spots} spots** · "
+            f"about {estimate_gpu_seconds(n_spots) / 60:.1f} min of GPU at Normal effort "
+            f"({quick:.1f} Quick, {thorough:.1f} Thorough; daily ZeroGPU quota: "
+            "2 min logged out, 5 min free account, 40 min PRO)")
 
 
 def _map_html(state, zoom=19):

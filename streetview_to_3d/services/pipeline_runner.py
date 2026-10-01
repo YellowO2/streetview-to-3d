@@ -13,17 +13,22 @@ SAVE_BUFFER_S = 10.0
 MODEL_LOAD_S = 5.0
 
 
-# Date sampling, per dot: measured 7 s for 4 dots, 13 s for 7.
-DATE_SAMPLING_PER_DOT_S = 2.0
+# How hard to try, as GPU seconds per spot (a dot: fetch_nodes.corridor_points).
+# The window is the only knob: the walk goes best date first and each later
+# date patches only what is still weak, so more time lets more dates patch.
+# Measured 2026-10-01, Tokyo 70 m (100 dots, trees, joins mostly failing):
+# ~25 s rating dates up front, then ~2 s a dot for each date walking it --
+# 405 s with all 5 dates walking every dot they had, the hardest case.
+EFFORT_SECONDS_PER_SPOT = {"Quick": 4.0, "Normal": 8.0, "Thorough": 14.0}
+DEFAULT_EFFORT = "Normal"
 
 
-def estimate_gpu_seconds(n_dots: int) -> float:
-    """The GPU window a run over n_dots needs: date sampling and the walk's
-    own per-dot estimate (walk_graph.SECONDS_PER_DOT_ESTIMATE), plus model
-    load and the save headroom. Shown to the user as they select, and the
-    window asked for unless they override it."""
-    from streetview_to_3d.reconstruct.walk_graph import SECONDS_PER_DOT_ESTIMATE
-    return MODEL_LOAD_S + n_dots * (DATE_SAMPLING_PER_DOT_S + SECONDS_PER_DOT_ESTIMATE) + SAVE_BUFFER_S
+def estimate_gpu_seconds(n_dots: int, effort: str = DEFAULT_EFFORT) -> float:
+    """The GPU window to ask for a run over n_dots at this effort, model load
+    and the save headroom included. Shown to the user as they select. The
+    window is checked against the user's ZeroGPU quota before a run starts,
+    so it is kept no bigger than the effort calls for."""
+    return MODEL_LOAD_S + n_dots * EFFORT_SECONDS_PER_SPOT[effort] + SAVE_BUFFER_S
 
 
 def _gpu_seconds(points, gpu_seconds=None) -> float:
@@ -73,8 +78,7 @@ def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon,
 
     t0 = time.monotonic()
     total_s = _gpu_seconds(points, gpu_seconds)
-    print(f"GPU window: {total_s:.0f}s for {len(points)} dot(s)"
-          f"{' (override)' if gpu_seconds else ''}", flush=True)
+    print(f"GPU window: {total_s:.0f}s for {len(points)} dot(s)", flush=True)
 
     cfg = gpu.get_da3_config(model)
     da3 = gpu.get_da3(model)

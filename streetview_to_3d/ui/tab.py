@@ -14,6 +14,7 @@ from streetview_to_3d.paths import new_run_dir
 from streetview_to_3d.postprocess import pipeline, water
 from streetview_to_3d.reconstruct import build as street_main
 from streetview_to_3d.services import mask_api
+from streetview_to_3d.services.pipeline_runner import DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, estimate_gpu_seconds
 from streetview_to_3d.ui.map_selection.tab import build_map_section, nodes_by_key
 
 def _run_dir(prep):
@@ -85,7 +86,7 @@ def _zip(run_dir):
 
 
 def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
-                       mask_classes="", fill=True, conf_floor=0):
+                       mask_classes="", fill=True, conf_floor=0, effort=DEFAULT_EFFORT):
     """Reconstruct (GPU), then place and fill (CPU), in one click.
 
     Placement never needs its own GPU call, so it runs immediately after
@@ -98,7 +99,7 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
     rebuilding the Space (see services.da3_ops.CONF_LOWER_PERCENTILE).
 
     gpu_seconds: the GPU window to ask for; 0 sizes it from the dot count
-    (see services.pipeline_runner.estimate_gpu_seconds).
+    and effort, how hard to try (see services.pipeline_runner.estimate_gpu_seconds).
 
     view_hfov, da3_model, masker, mask_classes: the view width (0), DA3 repo,
     masker SegFormer repo and comma-separated Cityscapes classes to drop
@@ -117,7 +118,8 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
         output_dir = _run_dir(prep)
         street_main.run_prepared_pathfind(
             prep, output_dir, conf_lower_percentile=100 - keep_pct,
-            gpu_seconds=gpu_seconds or None, hfov=view_hfov or None,
+            gpu_seconds=gpu_seconds or estimate_gpu_seconds(len(prep["points"]), effort or DEFAULT_EFFORT),
+            hfov=view_hfov or None,
             model=(da3_model or "").strip() or None, masker=(masker or "").strip() or None,
             mask_classes=[c.strip() for c in (mask_classes or "").split(",") if c.strip()] or None,
             conf_floor=conf_floor or None)
@@ -144,6 +146,10 @@ def build_main_tab():
         # download inside one request -- the ZeroGPU proxy token expires
         # on wall-clock time.
         pathfind_prepare_btn = gr.Button("1. Prepare")
+        # How hard to try: the GPU window per spot. More time lets more
+        # capture dates patch what the best one left weak.
+        effort_input = gr.Radio(list(EFFORT_SECONDS_PER_SPOT), value=DEFAULT_EFFORT,
+                                label="Effort", container=False, min_width=220)
         pathfind_run_btn = gr.Button("2. Reconstruct")
 
     # A real parameter (services.da3_ops.CONF_LOWER_PERCENTILE), not a UI
@@ -189,7 +195,7 @@ def build_main_tab():
 
     pathfind_run_btn.click(
         fn=handle_reconstruct,
-        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input, da3_model_input, masker_input, mask_classes_input, fill_input, conf_floor_input],
+        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input, da3_model_input, masker_input, mask_classes_input, fill_input, conf_floor_input, effort_input],
         outputs=[reconstruct_view, download_btn, pathfind_status],
         show_progress="hidden",
         show_progress_on=[reconstruct_view],

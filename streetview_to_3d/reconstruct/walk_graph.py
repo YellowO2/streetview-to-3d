@@ -50,17 +50,6 @@ def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: lis
     return Rotation.from_quat(quats.mean(axis=0)).as_matrix(), np.mean(ts, axis=0)
 
 
-# Walk cost per dot, used to size the GPU window (see
-# services.pipeline_runner.estimate_gpu_seconds) -- the walk itself just
-# runs to whatever budget its caller hands it.
-#
-# First calibrated at 6.0s/dot from ~3.2s/pairwise-test x ~2 tests/dot
-# (the solo-score experiment, README Dev notes). Too low once dots carry many
-# candidates: a 7-dot run (Apple, 6-10 candidates/dot) spent 9.4s just
-# rating dot 0's candidates, ~2s per failed pairwise test, and ran out of
-# its 42s budget before reaching 4 of the 7 dots or any other date.
-SECONDS_PER_DOT_ESTIMATE = 12.0
-
 # A piece at least this many dots long is trusted as it is; every dot
 # outside one is weak, and the next date re-walks it (see _patch_dots).
 GOOD_PIECE_DOTS = 4
@@ -82,7 +71,7 @@ def _sample_dots(dots, k):
     return [dots[round(i * (len(dots) - 1) / (k - 1))] for i in range(k)] if k > 1 else [dots[len(dots) // 2]]
 
 
-def _sample_dates(date_graphs, n_points, rate):
+def _sample_dates(date_graphs, n_points, rate, out_of_time=lambda: False):
     """Date graphs in the order to walk them: each one's median solo
     keep-rate over a few sampled panos, times the share of the corridor it
     covers. None is dropped for rating low: a low date is only walked
@@ -93,7 +82,8 @@ def _sample_dates(date_graphs, n_points, rate):
 
     Samples: half the date's own dots, 1 to DATE_SAMPLES_MAX, spread along
     it, rating each dot's closest pano. rate is the walk's cached rater,
-    so a sampled pano is never rated twice."""
+    so a sampled pano is never rated twice. Past the deadline nothing more
+    is rated; a date left unrated sorts last."""
     scored = []
     for g in date_graphs:
         dots = list(g["dot_candidates"])
@@ -102,9 +92,11 @@ def _sample_dates(date_graphs, n_points, rate):
         k = min(DATE_SAMPLES_MAX, max(1, -(-len(dots) // 2)))
         rates = []
         for d in _sample_dots(dots, k):
+            if out_of_time():
+                break
             n_kept, n_total = rate(g["dot_candidates"][d][0])[4:6]
             rates.append(n_kept / n_total if n_total else 0.0)
-        median = float(np.median(rates))
+        median = float(np.median(rates)) if rates else 0.0
         coverage = len(dots) / n_points
         scored.append((median * coverage, median, coverage, g))
         print(f"pathfind: date {g['date']} sampled {len(rates)} pano(s): median keep "
@@ -198,7 +190,7 @@ def run_pathfind_reconstruction(
       and a bad one once calls stop being uniform cost (e.g. a future
       solo-pano scoring pass alongside the pairwise tests). The deadline
       is max_time_budget_s -- the walk's share of the caller's own GPU
-      window, which is already sized from the dot count (see
+      window, sized from the dot count and how hard to try (see
       pipeline_runner.estimate_gpu_seconds). Early exit below means an
       easy corridor still finishes well before it.
     - Phase 2 (set_cover): greedy set cover over every piece from every
@@ -543,7 +535,7 @@ def run_pathfind_reconstruction(
         return rated_cache[key]
 
     t_sample = time.monotonic()
-    ordered = _sample_dates(date_graphs, len(points), rate_one)
+    ordered = _sample_dates(date_graphs, len(points), rate_one, lambda: time.monotonic() >= deadline)
     print(f"timing: date sampling {time.monotonic() - t_sample:.1f}s, {len(rated_cache)} pano(s) rated")
 
     for date_graph in ordered:
