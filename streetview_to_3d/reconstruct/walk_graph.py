@@ -504,12 +504,22 @@ def run_pathfind_reconstruction(
         """Phase 2: greedy set cover. Repeatedly take whichever piece
         (from any date) covers the most still-uncovered corridor
         points, until covered or nothing left adds anything new.
+        Ties go to the piece whose panos rated best (mean solo score,
+        rated_cache) -- not to whichever date was walked first. That is
+        what decides a spot no link reached: every date that walked it
+        left its own best single there, and the best-ranked date's single
+        can still be the worse photo of that spot.
         Returns (chosen, leftover_uncovered)."""
+        def score(p):
+            s = [rated_cache[k][0] for k in p[4] if k in rated_cache]  # p[4]: frame_poses, keyed by pano
+            return sum(s) / len(s) if s else float("-inf")
+
+        scores = {id(p): score(p) for p in pieces}
         uncovered = set(range(total_points))
         chosen = []
         pool = list(pieces)
         while uncovered and pool:
-            pool.sort(key=lambda p: len(p[3] & uncovered), reverse=True)
+            pool.sort(key=lambda p: (len(p[3] & uncovered), scores[id(p)]), reverse=True)
             top = pool[0]
             if not (top[3] & uncovered):
                 break
