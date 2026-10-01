@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createClouds } from '@viewer/effects/clouds';
 
 // A camera-centred sky dome; terrain belongs to the scene.
 export function createEnvironment(scene) {
@@ -35,16 +36,19 @@ export function createEnvironment(scene) {
   sky.renderOrder = -100;
   scene.add(sky);
   sky.visible = false;
+  const clouds = createClouds(scene); // in the world, not on the dome: they drift past
   return {
     // plainSky: a placed scene is open, so the plain view gets the blue sky;
-    update(style, camera, enabled = true, plainSky = false) {
+    update(style, camera, enabled = true, plainSky = false, time = 0) {
       sky.visible = style === 'original' ? plainSky : enabled;
       skyMaterial.uniforms.blue.value = style === 'original' ? 1 : 0;
       skyMaterial.uniforms.anime.value = style === 'anime' ? 1 : 0;
       sky.position.copy(camera.position);
       sky.scale.setScalar(camera.far * 0.5);
+      clouds.update(sky.visible && style === 'anime', time, camera);
     },
     dispose() {
+      clouds.dispose();
       scene.remove(sky);
       [skyGeometry, skyMaterial].forEach((resource) => resource.dispose());
     },

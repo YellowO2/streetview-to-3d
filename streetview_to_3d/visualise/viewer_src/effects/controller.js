@@ -125,6 +125,7 @@ export function createStyles(scene, camera, renderer) {
         camera,
         !!asset?.group && settings.atmosphere && style !== 'matrix',
         !!asset?.group && !asset.splat,
+        time,
       );
       scene.background = style === 'matrix' ? matrixBackground : originalBackground;
       if (style === 'original' || !asset?.group) {

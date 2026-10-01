@@ -56,7 +56,7 @@ test('environment supplies only the sky, leaving scene terrain untouched', () =>
   const environment = createEnvironment(scene);
   environment.update('dither', camera);
   assert.equal(scene.fog, null);
-  assert.equal(scene.children.length, 2);
+  assert.equal(scene.children.length, 3); // the sky and its clouds
   assert(terrain.visible);
   environment.update('original', camera);
   environment.dispose();

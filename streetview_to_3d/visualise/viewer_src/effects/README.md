@@ -9,6 +9,7 @@ is retained as a reference, not imported at runtime.
 - anime.js, dither.js: colour passes; one is active at a time.
 - points.js: patches existing point materials, leaving geometry and scene.json unchanged.
 - environment.js: camera-centred sky dome. Terrain is loaded from the scene.
+- clouds.js: the paint style's clouds, soft dabs shaped by noise as volumetric clouds are, drifting and changing shape.
 
 Soft paint is the default. Photoreal (`original`) uses the direct render path. Builders can set
 config.style to original, paint or dither. Effects are recursively embedded
@@ -17,7 +18,7 @@ by build_viewer.py, so standalone and Gradio viewers share the implementation.
 The environment has about 3,500 triangles and uses ordinary rasterization. It is
 stationary in world space, so both Inspect and Fly respond naturally. The sky follows
 camera translation but retains its world orientation. Environment can be disabled.
-No volumetric clouds, texture downloads or extra dependencies are added.
+Clouds are points too: no raymarching, texture downloads or extra dependencies.
 
 Postprocessing uses two half-float render targets plus depth textures at the
 viewer's existing pixel ratio cap. Original avoids the extra passes. Editor

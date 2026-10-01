@@ -95,7 +95,8 @@ EQUATOR_M = 156543.03     # a zoom 0 pixel's width at the equator
 ROOF_INSET_M, ROOF_STEP_M = 1.0, 1.0   # a roof sampled this far in from its edge, this far apart
 TILE_THREADS = 8          # tiles fetched at once, ahead of reading them (TileMap.fetch)
 RADIUS_M = 1000.0                          # the land's reach: the viewer's haze is whole by then
-BUILDINGS_M, ROADS_M = 1000.0, 700.0         # OSM's reach (roads are drawn only where a point wide, ~600 m)
+OSM_M, ROADS_M = RADIUS_M, 700.0           # OSM's reach: its water the land's, its roads only where a point wide (~600 m)
+BUILDINGS_M = 800.0                        # buildings this far: past it the haze has all but hidden them
 NEAR_M = 50.0                              # roads, bridges: points this near a camera, triangles past
 PAINT_M = 30.0                            # map points this near a camera are coloured from the panos
 TINT_M, MEET_M = 8.0, 10.0                # the ground's seam with the scene (seams.py): bands
@@ -110,6 +111,7 @@ GAP0_M, GAP_PER = 0.05, 0.018              # the land's corners: LAND_EVERY x ga
 POINT_M = 0.10                             # roads' and buildings' points: as DA3's are drawn at the scene's edge,
 RATE0, RATE, RAMP_M = 0.005, 0.018, 100.0  # coarse spacing beyond the detailed neighbourhood
 DETAIL_RATE, DETAIL_END_M, DETAIL_BLEND_M = .007, 250.0, 150.0
+BLOCK_RATE = 0.005                         # a solid building's strokes at most this of its distance apart: as fine on screen far off
 SAND, SAND_MIX = (0.76, 0.70, 0.55), 0.7     # the shore's sand (water.sand), how far it covers the satellite's
 LAND_EVERY = 2            # the land's triangles this many times the points' spacing: a surface has no gaps
 M_PER_LAT = 111320.0
@@ -351,8 +353,8 @@ def build(scene_dir, log=print):
 
     # OpenStreetMap's buildings, roads and water, in one request
     try:
-        elements = osm.fetch(lat0, lon0, BUILDINGS_M, ROADS_M, M_PER_LAT, m_per_lon, scene_dir,
-                             water_m=BUILDINGS_M)
+        elements = osm.fetch(lat0, lon0, OSM_M, ROADS_M, M_PER_LAT, m_per_lon, scene_dir,
+                             water_m=OSM_M)
     except (OSError, ValueError) as e:    # the land stands without them
         log(f"terrain: no OpenStreetMap ({e!r})")
         elements = []
@@ -362,9 +364,9 @@ def build(scene_dir, log=print):
     radius = RADIUS_M
     jrc = water.jrc(to_ll, heights)
     wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])), jrc,
-                      osm=(water.outline(elements, to_xy, BUILDINGS_M,
+                      osm=(water.outline(elements, to_xy, OSM_M,
                                          lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir), jrc),
-                           BUILDINGS_M) if elements else None)
+                           OSM_M) if elements else None)
 
     # the scene always wins: the map only around it, faded in at its edge
     scene, scene_cols = scene_points(sc, scene_dir)
@@ -388,7 +390,7 @@ def build(scene_dir, log=print):
         return seams.meet(h, g, d, ROAD_MEET_M, ROAD_MEET_MAX_M)
     # OpenStreetMap's buildings, onto the scene's walls first: the land fits itself to them
     outlines = [o for o in buildings.outlines(elements, to_xy)
-                if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]       # an older, wider osm.json
+                if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]
     n_fitted = n_trimmed = 0
     if outlines:
         from streetview_to_3d.postprocess.ground import normals_from_neighbours
@@ -596,8 +598,12 @@ def build(scene_dir, log=print):
         sc.buildings = BUILDINGS_FILENAME
     sc.blocks = None
     if solid:
-        # a building's points all alike: spaced as its nearest point is
-        one = np.array([gap(xy).min() for xy, *_ in solid])
+        # a building's points all alike: spaced as its nearest point is, but no
+        # coarser far off than BLOCK_RATE (the map's points are: a storey apart by 400 m)
+        def block_gap(xy):
+            d = edge_tree.query(xy)[0]
+            return np.minimum(point_gap(d), POINT_M + BLOCK_RATE * d).min()
+        one = np.array([block_gap(xy) for xy, *_ in solid])
         v, c, f, facade, g = buildings.solid(solid, ground, solid_base, SUN / np.linalg.norm(SUN), one)
         write_mesh(os.path.join(scene_dir, BLOCKS_FILENAME), v, c, f, facade, g)
         sc.blocks = BLOCKS_FILENAME
