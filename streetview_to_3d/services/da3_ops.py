@@ -21,13 +21,6 @@ KEEP_RATE_THRESHOLD = 0.6
 # this one value, so a view count means the same thing everywhere.
 VIEW_STEP_DEGREES = 30
 
-# Below this share of a pano's views surviving DA3's consensus filter,
-# DA3 has not made sense of the pano: a date whose sampled panos sit under
-# it is not walked (walk_graph._sample_dates). The solo-score
-# experiment (README, Dev notes) saw links mostly fail
-# around there and mostly succeed above ~2/3.
-MIN_KEEP_RATE = 1.0 / 3
-
 # What fraction of a view's weakest pixels DA3 discards before we ever see
 # them (see panoramic_da3's CONF_LOWER_PERCENTILE). Kept as our own default
 # rather than panoramic_da3's, so raising it here is a one-line change and

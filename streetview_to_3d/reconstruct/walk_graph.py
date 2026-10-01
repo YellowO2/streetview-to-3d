@@ -21,7 +21,6 @@ from collections import deque
 
 import numpy as np
 
-from streetview_to_3d.services.da3_ops import MIN_KEEP_RATE
 from streetview_to_3d.services.geo import haversine_m
 
 
@@ -70,14 +69,6 @@ GOOD_PIECE_DOTS = 4
 # DA3-linked to that piece -- the overlap is shared road for placement's
 # cross-road alignment to line the two up by.
 PATCH_OVERLAP_DOTS = 1
-# Dots in a row that fail to link (none of their candidates linking) after
-# which a date is left for the next one -- so one date that DA3 can't make
-# sense of can't spend the whole budget. Counted in dots, not tests: with
-# up to 3 candidates a dot, a count of tests would give up on a mostly-good
-# date at its first two broken dots. 4, not 3: two broken dots side by side
-# (o-x-x-o) already fail three links in a row -- into each of them, and
-# out of the second.
-MAX_FAILED_DOTS_IN_A_ROW = 4
 # Panos rated per date before any walking, to order dates by how well DA3
 # handles their imagery rather than by coverage alone (see _sample_dates).
 DATE_SAMPLES_MAX = 5
@@ -94,9 +85,11 @@ def _sample_dots(dots, k):
 def _sample_dates(date_graphs, n_points, rate):
     """Date graphs in the order to walk them: each one's median solo
     keep-rate over a few sampled panos, times the share of the corridor it
-    covers. A date below MIN_KEEP_RATE is dropped -- links between its
-    panos would almost all fail -- unless every date is, in which case the
-    best one is still walked, so the run has something to show.
+    covers. None is dropped for rating low: a low date is only walked
+    where the dates before it left the corridor weak (_patch_dots), and
+    is often the only one there at all -- a park walked once, beside
+    roads driven many times. The walk stops on its own once nothing is
+    weak, and the deadline bounds the rest.
 
     Samples: half the date's own dots, 1 to DATE_SAMPLES_MAX, spread along
     it, rating each dot's closest pano. rate is the walk's cached rater,
@@ -117,14 +110,7 @@ def _sample_dates(date_graphs, n_points, rate):
         print(f"pathfind: date {g['date']} sampled {len(rates)} pano(s): median keep "
               f"{median:.2f}, covers {coverage:.0%} of the corridor")
     scored.sort(key=lambda t: t[0], reverse=True)
-    kept = [t for t in scored if t[1] >= MIN_KEEP_RATE]
-    for _, median, _, g in scored:
-        if median < MIN_KEEP_RATE:
-            print(f"pathfind: date {g['date']} dropped -- median keep {median:.2f} < {MIN_KEEP_RATE:.2f}")
-    if not kept and scored:
-        print(f"pathfind: every date is below {MIN_KEEP_RATE:.2f} -- walking the best one anyway")
-        kept = scored[:1]
-    return [g for *_, g in kept]
+    return [g for *_, g in scored]
 
 
 def _ranges(dots):
@@ -193,8 +179,7 @@ def run_pathfind_reconstruction(
       corridor is covered), restart a fresh piece from whichever untried
       non-empty dot is closest to the nearest still-uncovered corridor
       point. Produces N disconnected pieces per date (each already
-      guaranteed non-empty by the per-dot rating above). A date is left
-      early after MAX_FAILED_DOTS_IN_A_ROW dots in a row fail to link.
+      guaranteed non-empty by the per-dot rating above).
 
       Dates are first sampled and reordered (see _sample_dates), then
       walked as patches: the best date walks the whole corridor, and
@@ -288,12 +273,13 @@ def run_pathfind_reconstruction(
         next_piece_id = [0]
         visited = set()  # dot indices already given their one chance (whether or not they ended up `confirmed`)
         tests_used = [0]
-        fails_in_a_row = [0]
 
         def out_of_time():
-            """The shared deadline, or this date given up on (see
-            MAX_FAILED_DOTS_IN_A_ROW) -- either way, stop spending on it."""
-            return time.monotonic() >= deadline or fails_in_a_row[0] >= MAX_FAILED_DOTS_IN_A_ROW
+            """The shared deadline. A date is walked through every dot it
+            was given rather than left after some failures: it only gets
+            the dots earlier dates left weak, often with nothing else
+            there (see _sample_dates)."""
+            return time.monotonic() >= deadline
 
         def rate_sorted(candidates):
             """Best-solo-score-first ordering of a dot's own candidates,
@@ -434,15 +420,9 @@ def run_pathfind_reconstruction(
             if from_dot not in confirmed:
                 return False
             c = confirmed[from_dot]
-            tests_before = tests_used[0]
             for key, path, lat, lon in rate_sorted(to_candidates):
                 if test_and_confirm(from_dot, c["key"], c["path"], to_dot, key, path, lat, lon):
-                    fails_in_a_row[0] = 0
                     return True
-            if tests_used[0] > tests_before:  # really tried, not just out of time
-                fails_in_a_row[0] += 1
-                if fails_in_a_row[0] == MAX_FAILED_DOTS_IN_A_ROW:
-                    print(f"[{date}] {MAX_FAILED_DOTS_IN_A_ROW} dots in a row failed to link -- leaving this date")
             return False
 
         queue = deque()
