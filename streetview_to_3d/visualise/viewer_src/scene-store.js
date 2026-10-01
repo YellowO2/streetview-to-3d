@@ -13,6 +13,7 @@ import {
   BLOCKS,
 } from '@viewer/scene-format';
 import { waterSurfaces } from '@viewer/effects/water';
+import { landSurface } from '@viewer/effects/land';
 import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
@@ -45,29 +46,18 @@ export function dispose(group) {
 }
 const loader = new PLYLoader();
 loader.setCustomPropertyNameMapping({ gap: ['gap'] });
-// land.ply as one solid surface, as games draw ground: the canvas the
-// points stand on. Pushed back a little in depth (polygonOffset), so what
-// lies on it -- roads 15 cm up, the scene's ground 10 cm up -- wins even a
-// kilometre off, where 15 cm is under the depth buffer's step.
-export function landMesh(buffer) {
+// land.ply as one surface, as games draw ground, painted in patches as the
+// points are spaced (effects/land.js); gapOf(x, z): their spacing there.
+export function parseLand(buffer, gapOf) {
   const geometry = loader.parse(buffer);
   if (!geometry.getAttribute('position')?.count || !geometry.index) {
     geometry.dispose();
     throw Error(`${LAND}.ply has no triangles.`);
   }
   geometry.applyMatrix4(flip);
-  const mesh = new THREE.Mesh(
-    geometry,
-    new THREE.MeshBasicMaterial({
-      vertexColors: true,
-      side: THREE.DoubleSide,
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 4,
-    }),
-  );
-  mesh.userData.surroundings = LAND;
-  return mesh;
+  const land = landSurface(geometry, gapOf);
+  land.userData.surroundings = LAND;
+  return land;
 }
 // A surface stored as triangles (roads.ply, blocks.ply) drawn as the rest of
 // the world is: points (effects/scatter.js), in bands by their spacing
@@ -256,7 +246,8 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           dispose(group);
           return null;
         }
-        group.add(landMesh(buffer));
+        const cams = cameraPlaces(data);
+        group.add(parseLand(buffer, (x, z) => gapAt(x, z, cams)));
       }
       for (const key of placement === 'world' ? [ROADS, BLOCKS] : []) {
         if (!data[key]) continue;

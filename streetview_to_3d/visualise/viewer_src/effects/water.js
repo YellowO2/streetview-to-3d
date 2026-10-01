@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { GAPS, JITTER, level } from '@viewer/effects/scatter';
-import { tunable } from '@viewer/effects/tune-panel';
 
 // The scene's water (postprocess/water.py, water.json: each body a flat
 // shape at its level, and a grid of metres from dry land) as points, coloured
@@ -25,24 +24,24 @@ import { tunable } from '@viewer/effects/tune-panel';
 // lighter or darker (vary), a little bigger or smaller (spread).
 export const RES = 0.5, // the mirror's picture, of the screen's pixels
   SUN = [3, 5, 4]; // as the viewport's light
-// the look's knobs: [value, lowest, highest] (a page opened with ?tune shows them: tune-panel.js)
+// the look, as tuned by eye
 export const KNOBS = {
-  size: [1.83, 0.5, 4], // a point across, of its spacing
-  r0: [0.16, 0, 1], // the share mirrored seen straight down (water's 0.02, Schlick's; more, as games do)
-  edge: [1.06, 1, 8], // ... rising to all of it edge on this steeply (Schlick's 5)
-  distort: [0.025, 0, 0.15], // what a point mirrors shifts this far (of the picture) a unit of tilt
-  flatness: [0.05, 0.02, 1],
-  smear: [0.0107, 0, 0.3],
-  reflectedR: [0.82, 0, 1.2],
-  reflectedG: [0.88, 0, 1.2],
-  reflectedB: [0.96, 0, 1.2],
-  vary: [0.023, 0, 0.4],
-  spread: [0, 0, 0.8],
-  deepM: [15.5, 1, 60], // all of deep this far from dry land
-  glintSharp: [400, 10, 2000], // the sun on it: how sharp
-  glint: [1.5, 0, 5], // ... how bright
-  rough: [1, 0, 4], // the waves' steepness, of WAVES'
-  pace: [0.35, 0, 2], // their speed, of deep water's
+  size: 1.83, // a point across, of its spacing
+  r0: 0.16, // the share mirrored seen straight down (water's 0.02, Schlick's; more, as games do)
+  edge: 1.06, // ... rising to all of it edge on this steeply (Schlick's 5)
+  distort: 0.025, // what a point mirrors shifts this far (of the picture) a unit of tilt
+  flatness: 0.05,
+  smear: 0.0107,
+  reflectedR: 0.82,
+  reflectedG: 0.88,
+  reflectedB: 0.96,
+  vary: 0.023,
+  spread: 0,
+  deepM: 15.5, // all of deep this far from dry land
+  glintSharp: 400, // the sun on it: how sharp
+  glint: 1.5, // ... how bright
+  rough: 1, // the waves' steepness, of WAVES'
+  pace: 0.35, // their speed, of deep water's
 };
 export const COLOURS = { shallow: '#4fc4b0', deep: '#135a80', glintColour: '#fff4d8' };
 // waves: their heading (radians from east), length and steepness (the most their slope tilts)
@@ -60,8 +59,13 @@ export function tickWater(dt) {
   time.value += Math.min(dt, 0.1);
 }
 
-// every water's knobs, one uniform each, shared (a page opened with ?tune shows them)
-const knobs = tunable('Water', KNOBS, COLOURS);
+// the look, one uniform each, shared by every water
+const knobs = {
+  ...Object.fromEntries(Object.entries(KNOBS).map(([k, v]) => [k, { value: v }])),
+  ...Object.fromEntries(
+    Object.entries(COLOURS).map(([k, hex]) => [k, { value: new THREE.Color(hex) }]),
+  ),
+};
 
 const hash = (i, j, k) => {
   const s = Math.sin(i * 12.9898 + j * 78.233 + k * 37.719) * 43758.5453;
@@ -70,7 +74,7 @@ const hash = (i, j, k) => {
 
 // metres from dry land at (east, north), bilinear on the shore's grid
 function shoreAt(shore, e, n) {
-  if (!shore) return KNOBS.deepM[0];
+  if (!shore) return KNOBS.deepM;
   const { lo, cell, size, metres } = shore;
   const x = Math.min(Math.max((e - lo) / cell - 0.5, 0), size - 1.001),
     y = Math.min(Math.max((n - lo) / cell - 0.5, 0), size - 1.001);

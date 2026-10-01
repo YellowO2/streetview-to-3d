@@ -45,11 +45,12 @@ near the scene and bridges to terrain.ply (its "terrain"), the roads
 further out to roads.ply (its "roads", triangles), the buildings,
 spaced the same way, to buildings.ply (its "buildings"), the far ones
 solid to blocks.ply (its "blocks"), all already in the world frame, and the water to water.json (its "water").
-The land is drawn as a surface, the ground everything stands on; all else
-as points: the viewer scatters points over the roads' and far buildings'
-triangles as it loads them (effects/scatter.js), each triangle's corners
-saying how far apart; it draws every point as big as it is spaced (the
-ply's "gap": point_gap; scene-store.js, terrainBands).
+The land is drawn as a surface, the ground everything stands on, painted
+in patches as dabs of paint (effects/land.js); all else as points: the
+viewer scatters points over the roads' and far buildings' triangles as it
+loads them (effects/scatter.js), each triangle's corners saying how far
+apart; it draws every point as big as it is spaced (the ply's "gap":
+point_gap; scene-store.js, terrainBands).
 
     python -m streetview_to_3d.postprocess.terrain SCENE_DIR
 """
