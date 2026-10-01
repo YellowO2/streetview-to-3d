@@ -217,6 +217,33 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
 # (another capture of it), not a new group worth walking from.
 _SAME_PLACE_M = 3.0
 
+# A pano with water under it and all round it, this far every way (the JRC
+# water map), is out on the water -- a boat's, as Matsushima's bay tour:
+# too little shore for DA3 to see, so never walked to. One near land (a
+# bridge, a pier, a path on the shore) is kept.
+_OPEN_WATER_M = 30.0
+
+
+def on_open_water(often):
+    """f(lats, lons) -> whether each is out on the water; often(lat, lon)
+    -> how often water there, 0-1 (postprocess/water.occurrence_map).
+    Nowhere, if the map cannot be had."""
+    from streetview_to_3d.postprocess.water import WET
+
+    def f(lat, lon):
+        lat, lon = np.asarray(lat, float), np.asarray(lon, float)
+        try:
+            out = often(lat, lon) >= WET
+            dlat = _OPEN_WATER_M / 111320.0
+            dlon = dlat / np.cos(np.radians(lat))
+            for a in np.linspace(0, 2 * np.pi, 8, endpoint=False):
+                out &= often(lat + dlat * np.sin(a), lon + dlon * np.cos(a)) >= WET
+            return out
+        except OSError as e:
+            print(f"Water map lookup failed: {e}")
+            return np.zeros(lat.shape, bool)
+    return f
+
 
 def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
     """Auto-discover every real Street View graph within radius_m of
@@ -239,7 +266,9 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
 
     Each walk goes wave by wave, a whole frontier fetched at once. Only
     ever expanding FROM a node still within radius_m -- anything found just
-    past the boundary is kept as a leaf but never expanded further.
+    past the boundary is kept as a leaf but never expanded further. A pano
+    out on the water (on_open_water: a boat's) is never added, so a walk
+    stops at the shore.
 
     Returns (nodes, edges) -- same shape nearby_nodes/tab.py's
     state["nodes"]/state["edges"] already use.
@@ -267,7 +296,20 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
     seeds = [{"key": node_key("google", p.id), "source": "google", "id": p.id,
               "lat": p.lat, "lon": p.lon, "heading": p.heading}
              for p in discovered.values()]
-    seeds = sorted((n for n in seeds if dist(n) <= radius_m), key=dist)
+    seeds = [n for n in seeds if dist(n) <= radius_m]
+    from streetview_to_3d.postprocess.water import occurrence_map
+    at_sea = on_open_water(occurrence_map())
+    afloat = set()  # ids of the panos left out
+
+    def ashore(found):
+        """The found nodes not out on the water, noting those that are."""
+        found = [n for n in found if n["id"] not in afloat]
+        if not found:
+            return found
+        wet = at_sea([n["lat"] for n in found], [n["lon"] for n in found])
+        afloat.update(n["id"] for n, w in zip(found, wet) if w)
+        return [n for n, w in zip(found, wet) if not w]
+    seeds = sorted(ashore(seeds), key=dist)
     if not seeds:
         return [], []
 
@@ -302,7 +344,8 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
             for key, meta in zip(frontier, metas):
                 if not meta:
                     continue
-                for n in meta["neighbors"]:
+                known = [n for n in meta["neighbors"] if node_key("google", n["id"]) in by_key]
+                for n in known + ashore([n for n in meta["neighbors"] if n not in known]):
                     other_key = node_key("google", n["id"])
                     add_node({"key": other_key, "source": "google", "id": n["id"],
                               "lat": n["lat"], "lon": n["lon"], "heading": None})
@@ -315,5 +358,6 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
                         next_frontier.append(other_key)
             frontier = next_frontier
 
-    print(f"expand_area: {len(nodes)} node(s) from {walks} walk(s), {len(discovered)} discovered")
+    print(f"expand_area: {len(nodes)} node(s) from {walks} walk(s), {len(discovered)} discovered, "
+          f"{len(afloat)} out on the water left out")
     return nodes, edges
