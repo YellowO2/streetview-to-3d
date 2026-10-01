@@ -1,17 +1,7 @@
 """Gather every Google panorama along a street corridor (no GPU)."""
-import asyncio
-
-from streetlevel import streetview
-
 from streetview_to_3d.services.geo import haversine_m
-from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id
-from streetview_to_3d.ui.map_selection.candidates import MAX_NODES, nearby_nodes, node_key
-
-# Catchment radius for candidate lookup around each real selection-graph
-# node. Real Street View node spacing is commonly ~10-20m, so this is
-# generous enough to catch nearby coverage without one
-# dot's search reaching into a neighboring dot's own territory.
-POINT_MAX_DIST_M = 5.0
+from streetview_to_3d.services.streetview_fetch import fetch_panos_by_id, run_async
+from streetview_to_3d.ui.map_selection.candidates import node_key
 
 # Real selection-graph nodes within this distance of each other collapse
 # into ONE dot (see corridor_points) -- real coverage is frequently
@@ -20,12 +10,10 @@ POINT_MAX_DIST_M = 5.0
 # capture re-walking the same stretch), which otherwise shows up as
 # several near-duplicate dots each independently competing for a date/
 # candidates instead of one dot with the union of everyone's real
-# candidates. 8.0, not POINT_MAX_DIST_M's 5.0 -- checked on real NTU data
-# after the first pass at 5.0: normal
-# real node spacing along a single path is itself often 8-11m, so 5.0
-# already correctly avoided merging genuinely distinct waypoints; 8.0
-# is a deliberate small step up, not matched to the catchment radius on
-# principle.
+# candidates. 8.0, not 5.0 -- checked on real NTU data after a first pass
+# at 5.0: normal real node spacing along a single path is itself often
+# 8-11m, so 5.0 already correctly avoided merging genuinely distinct
+# waypoints; 8.0 is a deliberate small step up.
 MERGE_DIST_M = 8.0
 
 # Separate graphs closer than this get one bridge edge (see
@@ -33,16 +21,14 @@ MERGE_DIST_M = 8.0
 # panos, so DA3 has as good a chance there as along a street.
 BRIDGE_DIST_M = 15.0
 
-# See _search_at.
-SEARCH_RADIUS_M = 15.0
 
-
-def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[int]]]:
+def corridor_points(edges):
     """Real (lat, lon) dots + structural adjacency straight from the
     corridor's own already-confirmed edges -- edges: list of ((lat1,
-    lon1), (lat2, lon2)) pairs, each a real, already-connected pair (not
-    a single ordered polyline: the corridor can branch or loop, so edges
-    aren't assumed to trace one path in list order).
+    lon1, pano_id1), (lat2, lon2, pano_id2)) pairs, each a real,
+    already-connected pair of selected panos (not a single ordered
+    polyline: the corridor can branch or loop, so edges aren't assumed
+    to trace one path in list order).
 
     No synthetic in-between sampling -- a dot starts as exactly one real
     selection-graph node, not an interpolated point along a straight
@@ -62,30 +48,36 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
     silently drag its own whole neighborhood in behind it. A merged dot's
     own position is the centroid of everything folded into it.
 
-    Returns (points, adjacency). adjacency: {dot_index: [neighbor_dot_index,
-    ...]} -- the corridor's own real dot-to-dot structure, independent of
-    which real panos end up at either dot. This is what the pathfind
-    algorithm walks dot-by-dot over (see
-    reconstruct/walk_graph.py).
+    Returns (points, adjacency, members). adjacency: {dot_index:
+    [neighbor_dot_index, ...]} -- the corridor's own real dot-to-dot
+    structure, independent of which real panos end up at either dot. This
+    is what the pathfind algorithm walks dot-by-dot over (see
+    reconstruct/walk_graph.py). members: per dot, the ids of the selected
+    panos folded into it -- its candidates, with their older dates (see
+    fetch_corridor_nodes).
     """
     raw_points: list[tuple[float, float]] = []
-    raw_index_by_latlon: dict[tuple[float, float], int] = {}
+    raw_ids: list[str] = []
+    raw_index_by_id: dict[str, int] = {}
 
-    def raw_index_for(latlon):
-        idx = raw_index_by_latlon.get(latlon)
+    def raw_index_for(node):
+        lat, lon, pano_id = node
+        idx = raw_index_by_id.get(pano_id)
         if idx is None:
             idx = len(raw_points)
-            raw_points.append(latlon)
-            raw_index_by_latlon[latlon] = idx
+            raw_points.append((lat, lon))
+            raw_ids.append(pano_id)
+            raw_index_by_id[pano_id] = idx
         return idx
 
-    raw_edges = [(raw_index_for((lat1, lon1)), raw_index_for((lat2, lon2))) for (lat1, lon1), (lat2, lon2) in edges]
+    raw_edges = [(raw_index_for(a), raw_index_for(b)) for a, b in edges]
 
     # Greedy, non-transitive merge -- see this function's own docstring
     # for why NOT union-find. O(n^2) distance checks -- fine at real-
     # world selection-graph sizes (a few thousand nodes at most).
     dot_index_by_raw: dict[int, int] = {}
     points: list[tuple[float, float]] = []
+    members: list[list[str]] = []
     claimed = [False] * len(raw_points)
 
     for i in range(len(raw_points)):
@@ -105,6 +97,7 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
         lon = sum(raw_points[m][1] for m in cluster) / len(cluster)
         dot_idx = len(points)
         points.append((lat, lon))
+        members.append([raw_ids[m] for m in cluster])
         for m in cluster:
             dot_index_by_raw[m] = dot_idx
 
@@ -122,7 +115,7 @@ def corridor_points(edges) -> tuple[list[tuple[float, float]], dict[int, list[in
         connect(dot_index_by_raw[a], dot_index_by_raw[b])
 
     bridge_components(points, adjacency, connect)
-    return points, adjacency
+    return points, adjacency, members
 
 
 def bridge_components(points, adjacency, connect, max_gap_m: float = BRIDGE_DIST_M):
@@ -160,42 +153,17 @@ def bridge_components(points, adjacency, connect, max_gap_m: float = BRIDGE_DIST
             connect(i, j)
 
 
-def _search_at(lat, lon, max_dist_m):
-    """The official pano at a dot the tile discovery left empty.
+def fetch_corridor_nodes(edges):
+    """Every Google pano at each real corridor dot (see corridor_points):
+    the selected panos folded into it, each with its real historical dates
+    (one candidate per date). The selection already holds them, so nothing
+    is searched for again -- one fetch_pano_by_id each, all at once, for
+    the dates. (Apple Look Around was here too and needed a search around
+    each dot; its GPS sits 1-1.6 m off Google's and its depth is poor, so
+    it is gone, and the search with it.)
 
-    Discovery keeps a walked (scout) path's panos only every 12-24 m
-    (candidates._probe_line_gaps), so a dot on one often has none within
-    max_dist_m, though the dot itself came from a real pano there. One
-    direct search finds it. Searched wider than max_dist_m (the endpoint
-    misses panos it should return at a few metres) and then held to it.
-    """
-    try:
-        p = streetview.find_panorama(lat, lon, radius=SEARCH_RADIUS_M)
-    except Exception as e:
-        print(f"Google search failed at ({lat}, {lon}): {e}")
-        return []
-    if p is None or (p.source or "").startswith("photos:") or haversine_m(lat, lon, p.lat, p.lon) > max_dist_m:
-        return []
-    return [{"key": node_key("google", p.id), "source": "google", "id": p.id,
-             "lat": p.lat, "lon": p.lon, "heading": p.heading}]
-
-
-def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
-    """Every Google pano within max_dist_m of any real corridor node (see
-    corridor_points). (Apple Look Around was here too: its GPS sits 1-1.6 m
-    off Google's and its depth is poor, so it is gone.)
-
-    - For each point: nearby_nodes (Google stops), metadata only. A
-      newly-seen Google stop gets one extra
-      fetch_pano_by_id call for its real historical dates (one graph node
-      per date); already-seen stops/panos aren't re-fetched.
-
-    Each real pano is assigned to exactly one dot -- the first (lowest-
-    index) dot it's found within max_dist_m of, tracked globally via
-    seen_google_ids so a pano already claimed by an earlier
-    dot never gets double-counted by a later one. The "first dot wins"
-    rule resolves the rare case of a pano sitting within range of two
-    real dots at once.
+    A pano belongs to one dot (corridor_points folds each into exactly
+    one); a date shared by two of a dot's panos is kept once.
 
     Returns (buckets, points, adjacency, elevations): buckets is
     {point_index: [{key, source, id, lat, lon, date}, ...]} -- each dot's
@@ -205,39 +173,29 @@ def fetch_corridor_nodes(edges, max_dist_m: float = POINT_MAX_DIST_M):
     dot, which every pano lookup already returns -- taking it here is what
     saves placement from re-fetching every panorama later just to read it.
     """
-    points, adjacency = corridor_points(edges)
+    points, adjacency, members = corridor_points(edges)
+    ids = [pano_id for m in members for pano_id in m]
+    meta_by_id = dict(zip(ids, run_async(fetch_panos_by_id(ids))))
 
     buckets = {i: [] for i in range(len(points))}
     elevations = [None] * len(points)
-    seen_google_ids = set()
-
-    for i, (lat, lon) in enumerate(points):
-        try:
-            google_candidates, _ = nearby_nodes(lat, lon, radius_m=max_dist_m, max_nodes=MAX_NODES)
-        except Exception as e:
-            print(f"Google lookup failed near ({lat}, {lon}): {e}")
-            google_candidates = []
-        if not google_candidates:
-            google_candidates = _search_at(lat, lon, max_dist_m)
-        for gc in google_candidates:
-            if gc["id"] in seen_google_ids:
-                continue
-            seen_google_ids.add(gc["id"])
-            try:
-                meta = asyncio.run(fetch_pano_by_id(gc["id"]))
-            except Exception as e:
-                print(f"Google date lookup failed for {gc['id']}: {e}")
-                continue
+    for i, pano_ids in enumerate(members):
+        seen = set()
+        for pano_id in pano_ids:
+            meta = meta_by_id.get(pano_id)
             if not meta:
                 continue
             if elevations[i] is None:
                 elevations[i] = meta.get("elevation")
             for entry in meta["dates"]:
+                if entry["id"] in seen:
+                    continue
+                seen.add(entry["id"])
                 # each date's own pose: older captures are separate drives,
                 # metres away and often facing another way
                 buckets[i].append({
                     "key": node_key("google", entry["id"]), "source": "google", "id": entry["id"],
-                    "lat": entry.get("lat", gc["lat"]), "lon": entry.get("lon", gc["lon"]),
+                    "lat": entry.get("lat", meta["lat"]), "lon": entry.get("lon", meta["lon"]),
                     "date": entry["label"],
                     "heading": entry.get("heading", meta.get("heading")),
                     "pitch": entry.get("pitch", meta.get("pitch")),

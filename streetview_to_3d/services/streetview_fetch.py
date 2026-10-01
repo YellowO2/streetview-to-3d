@@ -94,6 +94,21 @@ async def fetch_pano_by_id(pano_id):
         return pano_to_meta(pano)
 
 
+async def fetch_panos_by_id(pano_ids, concurrency=16):
+    """fetch_pano_by_id for many at once, in order; a failed one is None."""
+    sem = asyncio.Semaphore(concurrency)
+
+    async def one(pano_id):
+        async with sem:
+            try:
+                return await fetch_pano_by_id(pano_id)
+            except Exception as e:
+                print(f"Pano lookup failed for {pano_id}: {e}")
+                return None
+
+    return await asyncio.gather(*(one(i) for i in pano_ids))
+
+
 # Zoom baked into the cache filename -- a low-res (DA3-only) and high-res
 # (SHARP appearance) request for the same pano must not collide.
 def _cache_path(pano_id, zoom):

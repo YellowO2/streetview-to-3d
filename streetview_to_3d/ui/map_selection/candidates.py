@@ -14,7 +14,7 @@ from streetlevel.geo import wgs84_to_tile_coord
 
 from streetview_to_3d.services.geo import haversine_m as _haversine_m
 from streetview_to_3d.services.http_headers import BROWSER_HEADERS
-from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id, run_async
+from streetview_to_3d.services.streetview_fetch import fetch_panos_by_id, run_async
 
 # Street View publishes coverage on zoom-17 Slippy Map tiles.
 _TILE_ZOOM = 17
@@ -216,21 +216,6 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
 # A discovered pano this close to one already walked is the same place
 # (another capture of it), not a new group worth walking from.
 _SAME_PLACE_M = 3.0
-_WALK_CONCURRENCY = 16
-
-
-async def _fetch_metas(pano_ids):
-    sem = asyncio.Semaphore(_WALK_CONCURRENCY)
-
-    async def one(pano_id):
-        async with sem:
-            try:
-                return await fetch_pano_by_id(pano_id)
-            except Exception as e:
-                print(f"expand_area: link fetch failed for {pano_id}: {e}")
-                return None
-
-    return await asyncio.gather(*(one(i) for i in pano_ids))
 
 
 def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
@@ -301,7 +286,7 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
         frontier = [seed["key"]]
         while frontier and len(nodes) < max_nodes:
             visited.update(frontier)
-            metas = run_async(_fetch_metas([k.split(":", 1)[1] for k in frontier]))
+            metas = run_async(fetch_panos_by_id([k.split(":", 1)[1] for k in frontier]))
             next_frontier = []
             for key, meta in zip(frontier, metas):
                 if not meta:

@@ -15,7 +15,7 @@ from streetview_to_3d.postprocess import pipeline, water
 from streetview_to_3d.reconstruct import build as street_main
 from streetview_to_3d.services import mask_api
 from streetview_to_3d.services.pipeline_runner import DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, estimate_gpu_seconds
-from streetview_to_3d.ui.map_selection.tab import build_map_section, nodes_by_key
+from streetview_to_3d.ui.map_selection.tab import build_map_section, corridor_edges, nodes_by_key
 
 def _run_dir(prep):
     """A fresh output directory, opened as a scene holding every place this
@@ -48,14 +48,10 @@ def handle_pathfind_prepare(state):
         raise gr.Error("Start node not found.")
     start = (start_node["lat"], start_node["lon"])
     goals = [(by_key[k]["lat"], by_key[k]["lon"]) for k in selected[1:] if k in by_key]
-    corridor_edges = [
-        ((by_key[a]["lat"], by_key[a]["lon"]), (by_key[b]["lat"], by_key[b]["lon"]))
-        for a, b in selected_edges if a in by_key and b in by_key
-    ]
 
     yield None, "<p>Fetching panoramas… This may take a few minutes.</p>"
     try:
-        prep = street_main.prepare_pathfind(start, goals, corridor_edges, (state["lat"], state["lon"]))
+        prep = street_main.prepare_pathfind(start, goals, corridor_edges(state), (state["lat"], state["lon"]))
     except Exception as e:
         yield None, "<p>Preparation failed. Try again.</p>"
         raise gr.Error(f"Prepare failed: {e}")

@@ -63,6 +63,14 @@ def nodes_by_key(state):
     return {n["key"]: n for n in state["nodes"]}
 
 
+def corridor_edges(state):
+    """The selected edges as ((lat, lon, pano_id), (lat, lon, pano_id))
+    pairs -- what fetch_nodes.corridor_points builds the spots from."""
+    by_key = nodes_by_key(state)
+    node = lambda k: (by_key[k]["lat"], by_key[k]["lon"], by_key[k]["id"])
+    return [(node(a), node(b)) for a, b in state.get("selected_edges", []) if a in by_key and b in by_key]
+
+
 def _summary_markdown(state):
     if not state["selected"]:
         return "Enter a location and select a street via 'Expand Area' Button or manually clicking. Then press button 1, wait for it to run, then button 2."
@@ -70,9 +78,7 @@ def _summary_markdown(state):
     n_edges = len(state.get("selected_edges", []))
     # the GPU is spent per spot -- panos within a few metres merge into one
     # (fetch_nodes.corridor_points) -- not per pano
-    by_key = nodes_by_key(state)
-    n_spots = len(corridor_points([((by_key[a]["lat"], by_key[a]["lon"]), (by_key[b]["lat"], by_key[b]["lon"]))
-                                   for a, b in state.get("selected_edges", []) if a in by_key and b in by_key])[0])
+    n_spots = len(corridor_points(corridor_edges(state))[0])
     quick, thorough = (estimate_gpu_seconds(n_spots, e) / 60 for e in ("Quick", "Thorough"))
     return (f"**{n_nodes} panoramas · {n_edges} connections · {n_spots} spots** · "
             f"about {estimate_gpu_seconds(n_spots) / 60:.1f} min of GPU at Normal effort "

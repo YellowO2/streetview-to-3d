@@ -8,24 +8,35 @@ def _north(m):
     return (m * M, 0.0)
 
 
+def _node(m):
+    return (m * M, 0.0, f"pano{m}")
+
+
 def test_close_graphs_get_one_bridge():
     # a street 0-20 m north, and a path 30-50 m north that Google never
     # linked to it: 10 m apart at their nearest, so one bridge, there
-    street = [(_north(0), _north(10)), (_north(10), _north(20))]
-    path = [(_north(30), _north(40)), (_north(40), _north(50))]
-    points, adjacency = corridor_points(street + path)
+    street = [(_node(0), _node(10)), (_node(10), _node(20))]
+    path = [(_node(30), _node(40)), (_node(40), _node(50))]
+    points, adjacency, _ = corridor_points(street + path)
     by_m = {round(p[0] / M): i for i, p in enumerate(points)}
     assert by_m[30] in adjacency[by_m[20]]
     assert sum(len(ns) for ns in adjacency.values()) == 2 * 5
 
 
 def test_far_graphs_stay_apart():
-    street = [(_north(0), _north(10))]
-    path = [(_north(100), _north(110))]
-    points, adjacency = corridor_points(street + path)
+    street = [(_node(0), _node(10))]
+    path = [(_node(100), _node(110))]
+    points, adjacency, _ = corridor_points(street + path)
     by_m = {round(p[0] / M): i for i, p in enumerate(points)}
     assert adjacency[by_m[10]] == [by_m[0]]
     assert adjacency[by_m[100]] == [by_m[110]]
+
+
+def test_each_spot_keeps_the_panos_folded_into_it():
+    # two captures 3 m apart are one spot; 20 m on is another
+    edges = [(_node(0), _node(20)), (_node(3), _node(20))]
+    points, _, members = corridor_points(edges)
+    assert sorted(map(sorted, members)) == [["pano0", "pano3"], ["pano20"]]
 
 
 def test_date_covering_only_the_far_graph_still_connects():

@@ -102,13 +102,13 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
     center: (lat, lon) -- the searched coordinate that defined this area.
     Carried through untouched; postprocess measures every position from it.
     goals: [(lat, lon), ...] -- every other selected node.
-    corridor_edges: [((lat1, lon1), (lat2, lon2)), ...] -- the REAL,
+    corridor_edges: [((lat1, lon1, pano_id1), (lat2, lon2, pano_id2)), ...] -- the REAL,
     already-confirmed edges of the clicked selection graph (from Street
     View's own pano.links, see map_selection/candidates.py and
     map_selection/tab.py's handle_bridge_message) -- not inferred from
-    click order or proximity, since these can branch or loop. Used only to
-    shape *where* to sample candidate panos (fetch_corridor_nodes); the
-    search is still free to use different nodes than exactly these.
+    click order or proximity, since these can branch or loop. These panos,
+    merged into dots, with their older dates, are the candidates
+    (fetch_corridor_nodes).
 
     Returns a dict to pass straight to run_prepared_pathfind."""
     t0 = time.monotonic()
