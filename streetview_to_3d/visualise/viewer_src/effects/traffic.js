@@ -13,7 +13,8 @@ import { cut, fleet, model, random } from '@viewer/effects/moving';
 //
 // A road is a stretch between junctions or ends; two meet where their ends
 // are within JOIN_M, and stretches meeting only each other are one street.
-// A street has one car on it at a time: a quiet place. A car keeps to its
+// A street has one car on it at a time, and the whole a car per CAR_EVERY_M
+// of road (MAX_CARS at most): a quiet place. A car keeps to its
 // side of the road (life.json's side) at its road's own unhurried speed,
 // in its lane's middle, unless a wall is nearer than that (the road's room):
 // then as far over as its width leaves it. At the end of one road it turns
@@ -23,7 +24,8 @@ import { cut, fleet, model, random } from '@viewer/effects/moving';
 // comes back in at an end of a street no car is on, growing as it comes:
 // cars come and go. Its heading eases round a turn (TURN), so it never
 // jumps across.
-const MAX_CARS = 12,
+const CAR_EVERY_M = 250, // a car per this much road, all told
+  MAX_CARS = 4,
   JOIN_M = 1,
   LOOK_M = 2, // its heading from the road this far behind and ahead
   TURN = 4, // how fast its heading eases onto the road's, per second
@@ -192,7 +194,7 @@ export function trafficPoints(data) {
   const total = roads.reduce((sum, r) => sum + r.length, 0);
   const rand = random(roads.length * 7919 + Math.round(total));
   const streets = [...new Set(roads.map((r) => r.street))];
-  const count = Math.min(MAX_CARS, streets.length);
+  const count = Math.min(MAX_CARS, streets.length, Math.max(1, Math.round(total / CAR_EVERY_M)));
   const shape = carDabs();
   const half = BODY_W / 2 + (GAP * 1.6) / 2; // to its dabs' edge
   const { body, glass, tyre, head, tail } = data.colours;

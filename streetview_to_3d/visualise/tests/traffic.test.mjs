@@ -193,6 +193,6 @@ test('a street has one car at a time: stretches meeting only each other are one'
   const one = network({ roads: line });
   assert.equal(one[0].street, one[1].street);
   const cars = trafficPoints({ side: 'right', colours, roads: [...roads, ...line] });
-  assert.equal(cars.userData.moving, 5);
+  assert.equal(cars.userData.moving, 4); // a street each, but a car per 250 m of 1100 m all told
   cars.geometry.dispose();
 });
