@@ -89,8 +89,8 @@ background:rgba(0,0,0,.75);color:#fff;font:12px sans-serif;padding:4px 10px;bord
 .sb-order::before{{border-top-color:{_SELECTED_COLOR}}}
 .sb-hint{{position:absolute;bottom:22px;left:8px;z-index:1000;background:rgba(255,255,255,.9);color:#333;
 font:12px sans-serif;padding:3px 8px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.25)}}
-.sb-handle{{background:{_RADIUS_COLOR};border:2px solid {_RADIUS_COLOR};border-radius:50%;cursor:move}}
-.sb-mid{{background:{_RADIUS_COLOR};opacity:.45;border-radius:50%;cursor:copy}}</style>
+.sb-handle,.sb-mid{{background:{_RADIUS_COLOR};opacity:.45;border-radius:50%}}
+.sb-handle{{cursor:move}}.sb-mid{{cursor:copy}}</style>
 </head><body>
 <div id="map"></div>
 <script>
@@ -115,13 +115,14 @@ L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
     {{maxZoom:22,maxNativeZoom:19,attribution:'© OpenStreetMap'}}).addTo(m);
 
 if (AREA) {{
-  // the area as a shape: drag a corner to move it, a faint middle to add one there
+  // the area as a shape, faintly shaded: drag a corner to move it, a middle to add one
+  // there -- every dot as faint as the shape, a selection, not a thing on the map
   var corners = AREA.map(function(p) {{ return L.latLng(p[0], p[1]); }});
   var shape = L.polygon(corners, {{
-    color: RADIUS_COLOR, weight: 2, fillColor: RADIUS_COLOR, fillOpacity: 0.06,
+    color: RADIUS_COLOR, weight: 2, fillColor: RADIUS_COLOR, fillOpacity: 0.12,
     dashArray: '6,6', interactive: false,
   }}).addTo(m);
-  var corner = L.divIcon({{className: 'sb-handle', iconSize: [12, 12]}});
+  var corner = L.divIcon({{className: 'sb-handle', iconSize: [10, 10]}});
   var middle = L.divIcon({{className: 'sb-mid', iconSize: [10, 10]}});
   function send(points) {{
     var c = m.getCenter();
