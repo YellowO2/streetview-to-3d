@@ -1,5 +1,4 @@
-"""Find cars, people, poles and signs in DA3's views, so their pixels never
-become points.
+"""Find cars and people in DA3's views, so their pixels never become points.
 
 Moving things are what ghost when panoramas are merged: the same car shows
 up once per photo, in a different place each time. A street-scene
@@ -15,10 +14,12 @@ fill needs the whole pano anyway.
 Parked cars are dropped too -- the class can't tell them apart -- which
 leaves a gap on the road that other panoramas usually fill.
 
-Poles, traffic lights and signs go too: DA3 smears anything this thin into
-a streak or a broken stick, and a missing street light reads better than a
-wrong one. Cityscapes' "traffic light" and "traffic sign" are only the
-light box and the board; every post, lamp posts included, is "pole".
+Poles, traffic lights and signs stay: a street reads emptier without its
+lamp posts than with them a little rough, though DA3 smears anything this
+thin into a streak or a broken stick. Named per run (THIN, mask_classes),
+they go -- a pole only where it is a long straight stick (long_poles).
+Cityscapes' "traffic light" and "traffic sign" are only the light box and
+the board; every post, lamp posts included, is "pole".
 
 And water: DA3 lays it at about street height (Stockholm: the harbour 3 m
 too high, grainy) where the scene's flat water surface belongs
@@ -57,7 +58,7 @@ LABEL_IDS = {name: i for i, name in enumerate(CLASSES)}
 WATER_MODEL_ID = "nvidia/segformer-b2-finetuned-ade-512-512"
 WATER_CLASSES = ("water", "sea", "river", "lake", "swimming pool")   # ADE20K's
 # What is dropped by default; any of CLASSES can be named per run instead.
-DROP = MOVERS + THIN + ("water",)
+DROP = MOVERS + ("water",)
 # Grow each mask by a few pixels: depth at an object's edge smears between
 # it and what's behind, and those in-between points are the worst floaters.
 GROW_PX = 3
