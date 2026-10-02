@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { carDabs, network, tickTraffic, trafficPoints } from '@viewer/effects/traffic';
+import { carDabs, network, trafficPoints } from '@viewer/effects/traffic';
+import { tickMoving } from '@viewer/effects/moving';
 
 const colours = {
   body: [[0.8, 0.1, 0.1]],
@@ -53,8 +54,8 @@ test('roads meet where their ends do, and nowhere else', () => {
 // each car's middle: its points' mean, on the ground's plane
 function middles(points) {
   const p = points.geometry.getAttribute('position').array;
-  const per = p.length / 3 / points.userData.traffic;
-  return Array.from({ length: points.userData.traffic }, (_, c) => {
+  const per = p.length / 3 / points.userData.moving;
+  return Array.from({ length: points.userData.moving }, (_, c) => {
     let x = 0,
       y = 0,
       z = 0;
@@ -78,13 +79,13 @@ test('cars drive their roads at their height, to one side, and keep going', () =
     },
   ];
   const cars = trafficPoints({ side: 'right', colours, roads: one });
-  assert.equal(cars.userData.traffic, 1); // one road: one car
+  assert.equal(cars.userData.moving, 1); // one road: one car
   const before = middles(cars);
   for (const [, y, z] of before) {
     assert(y > 5 && y < 6.5); // on it
     assert(Math.abs(Math.abs(z) - 2) < 0.2); // a lane's middle off its centre (8 m: 2 m)
   }
-  for (let i = 0; i < 10; i++) tickTraffic(0.1); // a second
+  for (let i = 0; i < 10; i++) tickMoving(0.1); // a second
   const after = middles(cars);
   // each moved its road's speed (a car near an end may have left),
   // keeping right: north of it (z < 0) going west
@@ -109,7 +110,7 @@ test('on the left where the country drives on it', () => {
   ];
   const cars = trafficPoints({ side: 'left', colours, roads: one });
   const before = middles(cars);
-  tickTraffic(1);
+  tickMoving(1);
   middles(cars).forEach(([x, , z], c) => {
     if (before[c][0] < 15 || before[c][0] > 2985) return;
     assert.equal(z > 0, x < before[c][0]);
@@ -128,11 +129,11 @@ test('a car at an end no road meets shrinks away and comes back in at one, growi
     },
   ];
   const cars = trafficPoints({ side: 'right', colours, roads: one });
-  assert.equal(cars.userData.traffic, 1);
+  assert.equal(cars.userData.moving, 1);
   const dab = cars.geometry.getAttribute('dab').array;
   const sizes = [];
   for (let i = 0; i < 400; i++) {
-    tickTraffic(0.1);
+    tickMoving(0.1);
     sizes.push(dab[0]);
   }
   const full = Math.max(...sizes);
@@ -192,6 +193,6 @@ test('a street has one car at a time: stretches meeting only each other are one'
   const one = network({ roads: line });
   assert.equal(one[0].street, one[1].street);
   const cars = trafficPoints({ side: 'right', colours, roads: [...roads, ...line] });
-  assert.equal(cars.userData.traffic, 5);
+  assert.equal(cars.userData.moving, 5);
   cars.geometry.dispose();
 });

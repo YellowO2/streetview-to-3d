@@ -79,7 +79,7 @@ from PIL import Image
 
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.paths import DATA_DIR
-from streetview_to_3d.postprocess import buildings, elevations, osm, roads, seams, traffic, water
+from streetview_to_3d.postprocess import buildings, elevations, life, osm, roads, seams, water
 from streetview_to_3d.postprocess.ply_io import write_mesh, write_ply
 
 FILENAME = "terrain.ply"
@@ -466,10 +466,10 @@ def build(scene_dir, log=print):
             h[on] = to_scene(xy[on], h[on])
         return h
     over = roads.decks(found, road_h, crossed(road_h), to_scene, ids)
-    # where cars drive (traffic.py): the car roads near the scene, at their height
-    cars = {e["id"] for e in elements if e.get("tags", {}).get("highway") in traffic.CARS}
-    stretches = traffic.roads(elements, to_xy, road_h, [d for d in over if d.ids & cars],
-                              lambda xy: cam_tree.query(xy)[0] < traffic.REACH_M, [o[0] for o in outlines])
+    # where cars drive (life.py): the car roads near the scene, at their height
+    cars = {e["id"] for e in elements if e.get("tags", {}).get("highway") in life.CARS}
+    stretches = life.roads(elements, to_xy, road_h, [d for d in over if d.ids & cars],
+                           lambda xy: cam_tree.query(xy)[0] < life.REACH_M, [o[0] for o in outlines])
     edges = np.concatenate([net.edges(), roads.deck_edges(over)])
     walls, owner = buildings.corners(outlines, lambda xy: LAND_EVERY * gap_at(cam_tree.query(xy)[0]))
     inside = np.linalg.norm(walls, axis=1) < radius
@@ -644,11 +644,12 @@ def build(scene_dir, log=print):
     surfaces = wet.surfaces
     sc.water = water.save(scene_dir, wet) if surfaces else None
     try:
-        side = traffic.side(known[0].pano.id) if known else "right"
+        side = life.side(known[0].pano.id) if known else "right"
     except (OSError, ValueError) as e:      # cars keep right, as most of the world's do
         log(f"terrain: no country for the cars' side ({e!r})")
         side = "right"
-    sc.traffic = traffic.save(scene_dir, stretches, side)
+    sc.life = life.save(scene_dir, stretches, side, life.birds(surfaces, cam_xz, float(np.mean(ground(cam_xz)))),
+                        life.boats(surfaces, cam_xz))
     sc.buildings = None
     if len(bp):
         bc, b_near, keep = seams.toward(bp, bc, b_gap, scene_tree, scene_cols, SCENE_EVERY)

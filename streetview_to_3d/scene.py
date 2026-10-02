@@ -119,8 +119,8 @@ class Scene:
     water: str | None = None
     # the far buildings, solid: a triangle .ply (postprocess/buildings.py's solid)
     blocks: str | None = None
-    # where cars drive, for the viewer to move a few along (postprocess/traffic.py)
-    traffic: str | None = None
+    # what moves round it -- its cars' roads, its birds, its boats' courses (postprocess/life.py)
+    life: str | None = None
 
     @property
     def origin(self):
@@ -179,4 +179,4 @@ class Scene:
                    adjacency={str(k): v for k, v in d["adjacency"].items()},
                    edges=[Edge(**e) for e in d["edges"]],
                    land=d.get("land"), terrain=d.get("terrain"), roads=d.get("roads"), buildings=d.get("buildings"), water=d.get("water"),
-                   blocks=d.get("blocks"), traffic=d.get("traffic"))
+                   blocks=d.get("blocks"), life=d.get("life"))

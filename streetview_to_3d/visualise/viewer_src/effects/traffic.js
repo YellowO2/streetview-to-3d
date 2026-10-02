@@ -1,12 +1,8 @@
 import * as THREE from 'three';
-import { marks, pointsOf } from '@viewer/effects/blocks';
+import { cut, fleet, model, random } from '@viewer/effects/moving';
 
-// Cars driving the map's roads (traffic.json, postprocess/traffic.py), built
-// and drawn as the buildings are (blocks.js): a car's surfaces are
-// triangles, laid with dabs on a grid jittered as theirs, strokes along its
-// creases, each dab lit, varied and scattered as a building's -- its own way
-// carried with it as it moves (pointsOf's grain), so nothing shimmers. Their
-// colours are traffic.json's, never made up here.
+// Cars driving the map's roads (life.json's cars, postprocess/life.py),
+// built and drawn as the buildings are (moving.js).
 //
 // A car is a small hatchback, its real size: its side's outline (bonnet,
 // sloped windscreen, roof, rear window, boot) carried across its width, the
@@ -18,7 +14,7 @@ import { marks, pointsOf } from '@viewer/effects/blocks';
 // A road is a stretch between junctions or ends; two meet where their ends
 // are within JOIN_M, and stretches meeting only each other are one street.
 // A street has one car on it at a time: a quiet place. A car keeps to its
-// side of the road (traffic.json's side) at its road's own unhurried speed,
+// side of the road (life.json's side) at its road's own unhurried speed,
 // in its lane's middle, unless a wall is nearer than that (the road's room):
 // then as far over as its width leaves it. At the end of one road it turns
 // onto another there, any but the one it came by, on its own street or one
@@ -54,28 +50,12 @@ const BODY_W = 1.5, // about 1.7 m to its dabs' edge: half a lane
   WHEELS = [-1.15, 1.15], // their axles, along it
   WHEEL_R = 0.29,
   LAMP = [0.06, 0.34]; // a lamp between these in from each side
-// what each surface is: traffic.json's colours
+// what each surface is: life.json's car colours
 const BODY = 0,
   GLASS = 1,
   TYRE = 2,
   HEAD = 3,
   TAIL_LAMP = 4;
-
-// a polygon ([x, y], ...) cut to x >= at (keep > 0) or x <= at (keep < 0)
-function cut(polygon, at, keep) {
-  const out = [];
-  polygon.forEach((p, i) => {
-    const q = polygon[(i + 1) % polygon.length];
-    const pin = (p[0] - at) * keep >= 0,
-      qin = (q[0] - at) * keep >= 0;
-    if (pin) out.push(p);
-    if (pin !== qin) {
-      const t = (at - p[0]) / (q[0] - p[0]);
-      out.push([at, p[1] + t * (q[1] - p[1])]);
-    }
-  });
-  return out;
-}
 
 // a convex polygon ([x, y], ... anticlockwise) moved in by d all round
 function inset(polygon, d) {
@@ -94,30 +74,10 @@ function inset(polygon, d) {
   });
 }
 
-// A car's surfaces, in its own frame (x ahead, y up, z right): a
-// BufferGeometry of triangles, each corner's colour what it is (what / 4,
-// as marks carries a colour) and its gap.
-export function carGeometry() {
-  const pos = [],
-    what = [];
-  const tri = (a, b, c, w) => {
-    pos.push(...a, ...b, ...c);
-    what.push(w, w, w);
-  };
-  const quad = (a, b, c, d, w) => {
-    tri(a, b, c, w);
-    tri(a, c, d, w);
-  };
-  // a flat polygon ([x, y], ...) at z, with holes
-  const flat = (polygon, z, w, holes = []) => {
-    const v = (p) => new THREE.Vector2(...p);
-    const all = [...polygon, ...holes.flat()];
-    for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(
-      polygon.map(v),
-      holes.map((h) => h.map(v)),
-    ))
-      tri([...all[a], z], [...all[b], z], [...all[c], z], w);
-  };
+// A car's dabs, in its own frame (x ahead, y up, z right): model().dabs()'s.
+export function carDabs() {
+  const { quad, flat, dabs } = model(GAP);
+  const at = (z) => (p) => [...p, z];
   // a strip across from one point of the outline to the next, half wide each side
   const across = (p, q, half, w) =>
     quad([...p, -half], [...q, -half], [...q, half], [...p, half], w);
@@ -126,9 +86,9 @@ export function carGeometry() {
     window = inset(cabin, FRAME),
     windows = [cut(window, PILLAR + FRAME / 2, 1), cut(window, PILLAR - FRAME / 2, -1)];
   for (const side of [-1, 1]) {
-    flat(body, (side * BODY_W) / 2, BODY);
-    flat(cabin, (side * CABIN_W) / 2, BODY, windows);
-    for (const pane of windows) flat(pane, (side * CABIN_W) / 2, GLASS);
+    flat(body, at((side * BODY_W) / 2), BODY);
+    flat(cabin, at((side * CABIN_W) / 2), BODY, windows);
+    for (const pane of windows) flat(pane, at((side * CABIN_W) / 2), GLASS);
     // the waist's ledge, where the cabin narrows
     const [inner, outer] = [(side * CABIN_W) / 2, (side * BODY_W) / 2];
     quad([...HOOD, inner], [...HOOD, outer], [...WAIST_R, outer], [...WAIST_R, inner], BODY);
@@ -138,7 +98,7 @@ export function carGeometry() {
         axle + WHEEL_R * Math.cos((k / 14) * 2 * Math.PI),
         WHEEL_R + WHEEL_R * Math.sin((k / 14) * 2 * Math.PI),
       ]);
-      flat(rim, side * (BODY_W / 2 + 0.03), TYRE);
+      flat(rim, at(side * (BODY_W / 2 + 0.03)), TYRE);
     }
     // the lamps, a little proud of its nose and tail
     const [l0, l1] = [side * (BODY_W / 2 - LAMP[1]), side * (BODY_W / 2 - LAMP[0])];
@@ -153,41 +113,10 @@ export function carGeometry() {
   across(ROOF_R, WAIST_R, CABIN_W / 2, GLASS);
   across(WAIST_R, TAIL, BODY_W / 2, BODY);
   across(TAIL, FOOT_R, BODY_W / 2, BODY);
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute(
-    'color',
-    new THREE.Float32BufferAttribute(
-      what.flatMap((w) => [w / 4, 0, 0]),
-      3,
-    ),
-  );
-  g.setAttribute('gap', new THREE.Float32BufferAttribute(new Array(what.length).fill(GAP), 1));
-  g.setIndex([...Array(what.length).keys()]);
-  return g;
+  return dabs();
 }
 
-// a car's dabs, in its own frame: marks' { centre, facing, tint, dab }, each
-// one's what (tint's red * 4) in what
-export function carDabs() {
-  const g = carGeometry();
-  const made = marks(g);
-  g.dispose();
-  made.what = Array.from({ length: made.dab.length }, (_, i) => Math.round(made.tint[3 * i] * 4));
-  return made;
-}
-
-// a random number generator, the same each time for the same seed
-function random(seed) {
-  return () => {
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// traffic.json's roads in the viewer's frame (east, height, -north): each
+// life.json's car roads in the viewer's frame (east, height, -north): each
 // { points: [Vector3], at: [metres along], room: [m], length, width, speed,
 // lane, ends: [[{ road, end }] at its start, ... at its end], street: the
 // first road of the ones it runs on into without a junction }
@@ -257,14 +186,7 @@ function along(road, s, out, ahead) {
   return road.room[i - 1] * (1 - u) + road.room[i] * u;
 }
 
-const live = new Set();
-
-// Every scene's cars driven on dt seconds (controller.js, as the water's motion).
-export function tickTraffic(dt) {
-  for (const t of live) t.tick(Math.min(dt, 0.1));
-}
-
-// traffic.json (parsed) as its cars, drawn: a THREE.Points, moving each tickTraffic
+// life.json's cars as its cars, drawn: a THREE.Points, driving each tickMoving
 export function trafficPoints(data) {
   const roads = network(data);
   const total = roads.reduce((sum, r) => sum + r.length, 0);
@@ -272,7 +194,6 @@ export function trafficPoints(data) {
   const streets = [...new Set(roads.map((r) => r.street))];
   const count = Math.min(MAX_CARS, streets.length);
   const shape = carDabs();
-  const per = shape.dab.length;
   const half = BODY_W / 2 + (GAP * 1.6) / 2; // to its dabs' edge
   const { body, glass, tyre, head, tail } = data.colours;
   // each car a colour of its own while they last
@@ -333,34 +254,17 @@ export function trafficPoints(data) {
     });
     taken.set(car.street, car);
   };
-  // every car's dabs, drawn as a building's
-  const n = per * cars.length;
-  const made = {
-    centre: new Float32Array(3 * n),
-    facing: new Float32Array(3 * n),
-    tint: new Float32Array(3 * n),
-    dab: new Float32Array(n),
-    near: null,
-    grain: new Float32Array(n).map(() => rand() * 100), // each dab's own way, kept as it moves
-  };
-  cars.forEach((car, c) => {
-    for (let i = 0; i < per; i++)
-      made.tint.set([car.colour, glass, tyre, head, tail][shape.what[i]], 3 * (c * per + i));
-  });
-  const points = pointsOf(made);
-  const g = points.geometry;
-  const position = g.getAttribute('position'),
-    facing = g.getAttribute('facing'),
-    dab = g.getAttribute('dab');
-  for (const a of [position, facing, dab]) a.setUsage(THREE.DynamicDrawUsage);
-
   const here = new THREE.Vector3(),
     ahead = new THREE.Vector3(),
     right = new THREE.Vector3(),
     up = new THREE.Vector3(),
     Y = new THREE.Vector3(0, 1, 0);
-  const traffic = {
-    tick(dt) {
+  const { points, put, step } = fleet(
+    shape,
+    cars.length,
+    (c) => [cars[c].colour, glass, tyre, head, tail],
+    rand,
+    (dt) =>
       cars.forEach((car, c) => {
         let road = roads[car.road];
         car.s += car.way * road.speed * dt;
@@ -402,37 +306,9 @@ export function trafficPoints(data) {
         // in its lane's middle, or as far over as the nearest wall leaves it
         const over = Math.max(0, Math.min(road.lane, room - half - CLEAR));
         here.addScaledVector(right, (data.side === 'left' ? -1 : 1) * over);
-        for (let i = 0; i < per; i++) {
-          const x = shape.centre[3 * i],
-            y = shape.centre[3 * i + 1],
-            z = shape.centre[3 * i + 2];
-          const k = c * per + i;
-          position.setXYZ(
-            k,
-            here.x + h.x * x + up.x * y + right.x * z,
-            here.y + h.y * x + up.y * y + right.y * z,
-            here.z + h.z * x + up.z * y + right.z * z,
-          );
-          const nx = shape.facing[3 * i],
-            ny = shape.facing[3 * i + 1],
-            nz = shape.facing[3 * i + 2];
-          facing.setXYZ(
-            k,
-            h.x * nx + up.x * ny + right.x * nz,
-            h.y * nx + up.y * ny + right.y * nz,
-            h.z * nx + up.z * ny + right.z * nz,
-          );
-          dab.setX(k, shape.dab[i] * car.shown);
-        }
-      });
-      position.needsUpdate = true;
-      facing.needsUpdate = true;
-      dab.needsUpdate = true;
-    },
-  };
-  traffic.tick(0);
-  live.add(traffic);
-  g.addEventListener('dispose', () => live.delete(traffic));
-  points.userData.traffic = cars.length;
+        put(c, here, h, up, right, car.shown);
+      }),
+  );
+  step(0);
   return points;
 }

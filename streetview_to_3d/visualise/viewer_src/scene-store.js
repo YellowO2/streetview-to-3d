@@ -11,10 +11,12 @@ import {
   ROADS,
   WATER,
   BLOCKS,
-  TRAFFIC,
+  LIFE,
 } from '@viewer/scene-format';
 import { waterSurfaces } from '@viewer/effects/water';
 import { trafficPoints } from '@viewer/effects/traffic';
+import { birdPoints } from '@viewer/effects/birds';
+import { boatPoints } from '@viewer/effects/boats';
 import { landPoints } from '@viewer/effects/land';
 import { blockPoints, buildingPoints } from '@viewer/effects/blocks';
 import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
@@ -298,16 +300,23 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           group.add(water);
         }
       }
-      if (placement === 'world' && data[TRAFFIC]) {
-        progress('Loading the traffic…');
-        const buffer = await readBuffer(resolve(relativePath(data[TRAFFIC])));
+      if (placement === 'world' && data[LIFE]) {
+        progress('Loading what moves…');
+        const buffer = await readBuffer(resolve(relativePath(data[LIFE])));
         if (cancelled()) {
           dispose(group);
           return null;
         }
-        const cars = trafficPoints(JSON.parse(new TextDecoder().decode(buffer)));
-        cars.userData.surroundings = TRAFFIC;
-        group.add(cars);
+        const life = JSON.parse(new TextDecoder().decode(buffer));
+        const moving = [
+          life.cars.roads.length ? trafficPoints(life.cars) : null,
+          birdPoints(life.birds),
+          boatPoints(life.boats),
+        ];
+        for (const points of moving.filter(Boolean)) {
+          points.userData.surroundings = LIFE;
+          group.add(points);
+        }
       }
     }
     if (cancelled()) {
