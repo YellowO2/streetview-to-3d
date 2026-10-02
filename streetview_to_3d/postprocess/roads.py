@@ -35,6 +35,7 @@ WIDTH_M = {"motorway": 14, "trunk": 12, "primary": 10, "secondary": 9, "tertiary
 NARROW_M = 2.0            # footways, paths, cycleways, steps, anything else
 SKIP = ("proposed", "construction", "raceway", "bus_stop", "platform", "elevator", "corridor")
 LIFT_M = 0.15
+DETAIL_M = 100.0      # sidewalks, kerbs, paint and crossings only on a way this near a camera (Network)
 ARCH_PER, ARCH_MAX, DECK_M = 0.03, 2.0, 1.0
 LAYER_M, GRADE = 5.0, 0.06      # a bridge on a higher layer this much higher per layer; rising no steeper
 SIDE = np.array([0.60, 0.60, 0.58]) * 0.85      # a bridge's edge: concrete, in shade
@@ -175,9 +176,13 @@ class Network:
     pedestrian street, square, then pavement. Pavements never cover roads.
 
     shapes: {colour: its surface}; strips, fills: what points are laid over
-    (points) before they are kept to shapes."""
+    (points) before they are kept to shapes. Sidewalks, kerbs, paving,
+    paint and crossings only on a way detail(xy) says is near (DETAIL_M of
+    a camera): past it the carriageway alone -- they were half of Lund's
+    roads' time and are not seen from there."""
 
-    def __init__(self, elements, to_xy):
+    def __init__(self, elements, to_xy, detail=None):
+        detail = detail or (lambda xy: True)
         import shapely
         from collections import defaultdict
         layers = defaultdict(list)                  # priority -> [(shape, colour)]
@@ -203,14 +208,17 @@ class Network:
                                       for e in elements if "building" in e.get("tags", {})
                                       and len(e.get("geometry", [])) >= 4])
         for xy, w, c, tags in _ways(elements, to_xy):
+            near = detail(xy)
             if tags["highway"] == "footway" and tags.get("footway") == "sidewalk":
+                if not near:
+                    continue
                 shape = shapely.LineString(xy).buffer(w / 2, cap_style="flat", join_style="mitre")
                 layers[3].append((shape, np.array(PAVEMENT)))
                 self.strips.append((xy, w, np.array(PAVEMENT)))
                 continue
             if tags["highway"] not in KEPT:
                 continue
-            if tags["highway"] not in PATHS:
+            if tags["highway"] not in PATHS and near:
                 for shape, centre, pavement_width in _sidewalks(xy, w, tags):
                     shape = shapely.difference(shape, obstacles)
                     layers[3].append((shape, np.array(PAVEMENT)))
@@ -238,7 +246,7 @@ class Network:
             if tags.get("crossing:markings") not in ("zebra", "yes") and tags.get("crossing") not in ("zebra", "marked", "traffic_signals"):
                 continue
             location = to_xy([e])[0]
-            if not self.street_lines:
+            if not self.street_lines or not detail(location[None]):
                 continue
             xy, width, _ = min(self.street_lines, key=lambda r: shapely.LineString(r[0]).distance(shapely.Point(location)))
             line = shapely.LineString(xy)

@@ -1,7 +1,7 @@
 """OpenStreetMap around the scene: its buildings (and building parts, how
 landmarks are mapped in 3D), roads and water, in one request.
 
-All of it only near by (FULL_M); further off, where points are few and
+All of it only near the cameras (FULL_M); further off, where points are few and
 hazed, only what they can show: the big buildings (FAR_BUILDING_M round)
 and the main roads (FAR_ROADS) -- a city's every house to 800 m was too
 much for a busy server to answer in time (Matsumoto).
@@ -41,7 +41,7 @@ OVERPASS_URLS = ("https://overpass-api.de/api/interpreter",
 TIMEOUT_S = 20          # the request answered in ~2 s; past this a server is stuck
 BUSY_WAIT_S, ROUNDS = 10.0, 3
 BUDGET_S = 30.0         # Overpass's whole time, all servers, before the tiles stand in
-FULL_M = 300.0          # everything this near
+FULL_M = 250.0          # everything this near the cameras: where the viewer's haze begins
 FAR_BUILDING_M = 80.0   # past it, buildings this far round (~20 m across) and more
 FAR_ROADS = "^(motorway|trunk|primary|secondary|tertiary)(_link)?$"   # past it, roads of these
 USER_AGENT = "streetview-to-3d (https://github.com/YellowO2/streetview-to-3d)"
@@ -51,9 +51,10 @@ WATER_WAYS = ('["natural"="water"]', '["waterway"="riverbank"]', '["natural"="co
 WATER_RELATIONS = ('["natural"="water"]', '["waterway"="riverbank"]')
 
 
-def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None, water_m=0):
+def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None, water_m=0, cams=None):
     """Every building and building part way and relation, road way and
-    tagged street-object node within FULL_M; past it, the big buildings
+    tagged street-object node within FULL_M of the cameras' box (cams:
+    their (lats, lons); else the centre); past it, the big buildings
     within buildings_m and the main roads within roads_m; water outlines
     within water_m; geometry included, as Overpass returns them; kept in
     scene_dir's CACHE once had. If Overpass gives none within BUDGET_S,
@@ -66,7 +67,12 @@ def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None
     # geom would print all of them
     water_members = ("(" + "".join(f"rel{t}({box(water_m)});" for t in WATER_RELATIONS)
                      + f");way(r)({box(water_m)});out geom;") if water_m else ""
-    near = box(min(FULL_M, buildings_m, roads_m))
+    if cams is not None and len(cams[0]):
+        r = min(FULL_M, buildings_m, roads_m)
+        near = (f"{min(cams[0]) - r / m_per_lat},{min(cams[1]) - r / m_per_lon},"
+                f"{max(cams[0]) + r / m_per_lat},{max(cams[1]) + r / m_per_lon}")
+    else:
+        near = box(min(FULL_M, buildings_m, roads_m))
     query = (f'[out:json][timeout:{TIMEOUT_S:.0f}];(way["building"]({near});'
              f'way["building"]({box(buildings_m)})(if:length()>={FAR_BUILDING_M:.0f});'
              f'relation["building"]({box(buildings_m)});way["building:part"]({near});'
@@ -85,7 +91,7 @@ def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None
     from streetview_to_3d.postprocess import openfreemap
     pool = ThreadPoolExecutor(1)
     tiles = pool.submit(openfreemap.elements, lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon,
-                        water_m, FULL_M, FAR_BUILDING_M)
+                        water_m, FULL_M, FAR_BUILDING_M, cams=cams)
     pool.shutdown(wait=False)
     try:
         elements = _ask(query, budget=BUDGET_S)["elements"]

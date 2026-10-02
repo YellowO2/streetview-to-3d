@@ -88,6 +88,9 @@ def tiles(lat0, lon0, reach_m, m_per_lat, m_per_lon):
     return fetch([(x, y) for x in range(int(x0), int(x1) + 1) for y in range(int(y0), int(y1) + 1)])
 
 
+_decoded = {}   # (url, x, y) -> decoded tile: the buildings' and the water's asked of the same (~1 s each)
+
+
 def fetch(cells, url=None, download=None):
     """{(x, y): decoded tile} for each ZOOM tile of cells; download(url) ->
     its bytes (terrain.TileMap's, kept on disk: a rebuild asks for none)."""
@@ -96,9 +99,14 @@ def fetch(cells, url=None, download=None):
     if download is None:
         from streetview_to_3d.postprocess.terrain import TileMap
         download = TileMap(url, ZOOM, None, headers=HEADERS)._download
+    new = [c for c in cells if (url, *c) not in _decoded]
     with ThreadPoolExecutor(8) as pool:
-        datas = list(pool.map(lambda c: download(url.format(z=ZOOM, x=c[0], y=c[1])), cells))
-    return {c: decode(d, *c) if d else {} for c, d in zip(cells, datas)}
+        datas = list(pool.map(lambda c: download(url.format(z=ZOOM, x=c[0], y=c[1])), new))
+    if len(_decoded) > 64:
+        _decoded.clear()
+    for c, d in zip(new, datas):
+        _decoded[(url, *c)] = decode(d, *c) if d else {}
+    return {c: _decoded[(url, *c)] for c in cells}
 
 
 def _joined(pieces):
@@ -127,22 +135,29 @@ def _polygons(g):
     return [p for p in shapely.get_parts(g) if p.geom_type == "Polygon" and not p.is_empty]
 
 
-def elements(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, water_m=0, full_m=300.0,
-             far_building_m=80.0, far_roads=MAJOR, decoded=None):
+def elements(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, water_m=0, full_m=250.0,
+             far_building_m=80.0, far_roads=MAJOR, decoded=None, cams=None):
     """osm.fetch's elements, from the tiles: every building and road within
-    full_m; past it the buildings far_building_m round and more within
-    buildings_m and the roads of far_roads within roads_m; the water
-    within water_m. decoded: tiles()'s, or fetched."""
+    full_m of the cameras' box (cams: their (lats, lons); else the centre);
+    past it the buildings far_building_m round and more within buildings_m
+    and the roads of far_roads within roads_m; the water within water_m.
+    decoded: tiles()'s, or fetched."""
     if decoded is None:
         decoded = tiles(lat0, lon0, max(buildings_m, roads_m, water_m), m_per_lat, m_per_lon)
     cx, cy = _tile(lat0, lon0)
+    centre = (cx, cy, cx, cy)
+    if cams is not None and len(cams[0]):
+        kx, ky = _tile(np.asarray(cams[0]), np.asarray(cams[1]))
+        cams = (kx.min(), ky.min(), kx.max(), ky.max())
+    else:
+        cams = centre
     m_per_tile = 2 * math.pi * 6378137 * math.cos(math.radians(lat0)) / 2 ** ZOOM
 
-    def reach(g):
-        """How far, east or north, the nearest of g lies (a box's half-width, metres)."""
+    def reach(g, box=centre):
+        """How far, east or north, g's nearest lies from box (metres)."""
         x0, y0, x1, y1 = g.bounds
-        dx = max(x0 - cx, cx - x1, 0) * m_per_tile
-        dy = max(y0 - cy, cy - y1, 0) * m_per_tile
+        dx = max(x0 - box[2], box[0] - x1, 0) * m_per_tile
+        dy = max(y0 - box[3], box[1] - y1, 0) * m_per_tile
         return max(dx, dy)
 
     out, ids = [], iter(range(-1, -10 ** 9, -1))
@@ -152,8 +167,8 @@ def elements(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, water_m=0, 
               for poly in _polygons(g)]
     for p, g in _joined(pieces):
         for poly in _polygons(g):
-            r = reach(poly)
-            if r > buildings_m or (r > full_m and poly.exterior.length * m_per_tile < far_building_m):
+            if reach(poly) > buildings_m or (reach(poly, cams) > full_m
+                                             and poly.exterior.length * m_per_tile < far_building_m):
                 continue
             tags = {"building": "yes"}
             h, base = p.get("render_height"), p.get("render_min_height") or 0
@@ -174,8 +189,7 @@ def elements(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, water_m=0, 
             for line in shapely.get_parts(shapely.line_merge(g) if g.geom_type == "MultiLineString" else g):
                 if line.geom_type != "LineString" or len(line.coords) < 2:
                     continue
-                r = reach(line)
-                if r > roads_m or (r > full_m and cls not in far_roads):
+                if reach(line) > roads_m or (reach(line, cams) > full_m and cls not in far_roads):
                     continue
                 tags = {"highway": highway}
                 if p.get("brunnel") in ("bridge", "tunnel"):

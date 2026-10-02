@@ -358,7 +358,7 @@ def build(scene_dir, log=print):
     # OpenStreetMap's buildings, roads and water, in one request
     try:
         elements = osm.fetch(lat0, lon0, OSM_M, ROADS_M, M_PER_LAT, m_per_lon, scene_dir,
-                             water_m=OSM_M)
+                             water_m=OSM_M, cams=to_ll(cam_xz))
     except (OSError, ValueError) as e:    # the land stands without them
         log(f"terrain: no OpenStreetMap ({e!r})")
         elements = []
@@ -384,7 +384,7 @@ def build(scene_dir, log=print):
     gap = lambda xy: point_gap(edge_tree.query(xy, workers=-1)[0])
     # the roads a game map keeps, one surface; they decide their own height
     # (the ground smoothed) and the land fits itself to them (roads.py)
-    net = roads.Network(elements, to_xy)
+    net = roads.Network(elements, to_xy, lambda xy: cam_tree.query(xy)[0].min() < roads.DETAIL_M)
     # ... and the scene's own road, where they touch it, its height (DA3's
     # ground there), easing back to theirs over ROAD_MEET_M: aligned where they meet
     road_raw = net.heights(ground, (-ROADS_M - 50, -ROADS_M - 50), (ROADS_M + 50, ROADS_M + 50))

@@ -47,3 +47,13 @@ def test_far_off_only_the_big_buildings_and_main_roads():
     lat0, lon0 = openfreemap._ll([[x + 0.5, y + 0.5]])[0].values()   # ~1.2 km from the tile's corner
     el = openfreemap.elements(lat0, lon0, 5000, 5000, 111320, 111320, decoded={(x, y): openfreemap.decode(t, x, y)})
     assert [e["tags"] for e in el] == [{"highway": "primary"}]
+
+
+def test_full_detail_near_the_cameras_not_the_centre():
+    t = _tile({"transportation": [({"class": "minor"}, "LINESTRING (10 20, 40 20)")]})
+    x, y = 2 ** 13, 2 ** 13
+    lat0, lon0 = openfreemap._ll([[x + 0.5, y + 0.5]])[0].values()
+    cam = openfreemap._ll([[x + 30 / EXT, y + 30 / EXT]])[0]           # a camera by the street
+    el = openfreemap.elements(lat0, lon0, 5000, 5000, 111320, 111320, decoded={(x, y): openfreemap.decode(t, x, y)},
+                              cams=([cam["lat"]], [cam["lon"]]))
+    assert [e["tags"] for e in el] == [{"highway": "residential"}]
