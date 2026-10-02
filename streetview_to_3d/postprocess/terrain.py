@@ -389,7 +389,7 @@ def build(scene_dir, log=print):
 
     # the scene always wins: the map only around it, faded in at its edge
     scene, scene_cols = scene_points(sc, scene_dir)
-    foot = seams.Footprint(scene, scene_cols) if len(scene) else None
+    foot = seams.Footprint(scene, scene_cols, ground) if len(scene) else None
     near = (lambda xy: foot.at(xy)) if foot else \
         (lambda xy: (np.full(len(xy), np.inf), np.full(len(xy), np.nan), np.full((len(xy), 3), np.nan)))
     cam_tree = cKDTree(cam_xz)

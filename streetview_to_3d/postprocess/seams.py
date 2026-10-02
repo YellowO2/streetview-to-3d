@@ -23,6 +23,7 @@ CELL_M, GROW, MIN_POINTS = 1.0, 1, 3   # the footprint: cells holding MIN_POINTS
 PAD_M = 20.0                           # past this beyond the footprint, nothing is near it
 LOW_M = 0.5                            # a cell's ground colour: its points this near its lowest
 MEET_MAX_M = 3.0
+GROUND_M = 3.0                         # a cell's lowest point this near the land's own height is ground
 
 
 def ramp(t):
@@ -50,9 +51,14 @@ def meet(h, ground, dist, band_m, max_m=MEET_MAX_M):
 class Footprint:
     """Where the scene stands, seen from above: for any east/north point,
     how far it is from the scene's footprint (0 on it) and the scene's
-    ground height and colour at the nearest cell of it."""
+    ground height and colour at the nearest cell of it that holds ground:
+    whose lowest point is within GROUND_M of the land's own (land(east/north
+    (n, 2)) -> height; the map bent onto the panos, right near them). A
+    cell with only a wall's, a tree's or a sign's points has none -- one
+    7 m up at Lake Como's edge pulled the road up to it and dropped it at
+    the scene's edge."""
 
-    def __init__(self, pts, cols):
+    def __init__(self, pts, cols, land=None):
         xz = np.floor(pts[:, [0, 2]] / CELL_M).astype(int)
         pad = int(np.ceil(PAD_M / CELL_M))
         self.lo = xz.min(0) - pad
@@ -69,12 +75,19 @@ class Footprint:
         for j in range(3):
             np.add.at(colour[..., j], tuple(a[base] for a in at), cols[base, j])
         real = count >= MIN_POINTS
-        self.ground = np.where(real, -low, np.nan)
-        self.colour = np.where(real[..., None], colour / np.maximum(n, 1)[..., None], np.nan)
+        grounded = real.copy()
+        if land is not None and real.any():
+            i, j = np.nonzero(real)
+            centres = (np.c_[i, j] + self.lo + 0.5) * CELL_M
+            grounded[i, j] = np.abs(-low[i, j] - land(centres)) <= GROUND_M
+            if not grounded.any():
+                grounded = real
+        self.ground = np.where(grounded, -low, np.nan)
+        self.colour = np.where(grounded[..., None], colour / np.maximum(n, 1)[..., None], np.nan)
         on = binary_dilation(real, np.ones((2 * GROW + 1,) * 2, bool))
         self.dist = distance_transform_edt(~on) * CELL_M
-        # the nearest cell with points of its own, for its ground and colour
-        self.nearest = distance_transform_edt(~real, return_distances=False, return_indices=True)
+        # the nearest cell with ground of its own, for its height and colour
+        self.nearest = distance_transform_edt(~grounded, return_distances=False, return_indices=True)
 
     def at(self, xy):
         """(distance m, ground height m, ground colour (n, 3)) at east/north
