@@ -369,7 +369,7 @@ def build(scene_dir, log=print):
     jrc = water.jrc(to_ll, heights)
     wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])), jrc,
                       osm=(water.outline(elements, to_xy, OSM_M,
-                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir, elements), jrc),
+                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir), jrc),
                            OSM_M) if elements else None)
 
     # the scene always wins: the map only around it, faded in at its edge
@@ -522,7 +522,9 @@ def build(scene_dir, log=print):
             panos, pal = ([], []), (np.array(buildings.PASTEL), np.full(len(buildings.PASTEL), 1 / 8))
         base = buildings.colours(outlines, pal)
         n_buildings = len(outlines)
-        blocks = buildings.points(outlines, gap, surface, base)
+        may = np.flatnonzero(buildings.reachable(outlines, scene))      # the rest are solid: no points
+        blocks = buildings.points([outlines[i] for i in may], gap, surface, base[may])
+        blocks.which = may[blocks.which]
         scene_tree = cKDTree(scene) if len(scene) else None
         reached = buildings.reached(blocks, scene_tree, len(outlines))
         if panos[0]:

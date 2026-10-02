@@ -14,9 +14,10 @@ reads them unchanged:
   - a road: highway from its class (subclass for paths, _link for a ramp),
     bridge/tunnel, layer; railways, ferries and the like left out
   - water: an area's outline natural=water, each island's untagged (a
-    water relation's members, as water.outline reads them); the areas
-    themselves on the outline's element ("inner": its islands) for
-    water_at
+    water relation's members, as water.outline reads them)
+
+and which side of a shore is water (water_at: osm.water_at's), from the
+tiles' areas whole -- the sea's too.
 
 A tile holds what crosses it, cut at its edge plus a buffer: each piece
 is cut to the tile, and the two halves of a building split by a tile's
@@ -52,7 +53,7 @@ def tile_url():
 def _tile(lat, lon):
     """The ZOOM tile (x, y) holding (lat, lon), fractional."""
     n = 2 ** ZOOM
-    return (lon + 180) / 360 * n, (1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n
+    return (np.asarray(lon) + 180) / 360 * n, (1 - np.arcsinh(np.tan(np.radians(lat))) / np.pi) / 2 * n
 
 
 def _ll(xy):
@@ -80,17 +81,21 @@ def decode(data, x, y):
     return out
 
 
-def tiles(lat0, lon0, reach_m, m_per_lat, m_per_lon, url=None, download=None):
-    """{(x, y): decoded tile} for every ZOOM tile within reach_m of (lat0,
-    lon0); download(url) -> its bytes (terrain.TileMap's, kept on disk)."""
+def tiles(lat0, lon0, reach_m, m_per_lat, m_per_lon):
+    """{(x, y): decoded tile} for every ZOOM tile within reach_m of (lat0, lon0)."""
+    x0, y0 = _tile(lat0 + reach_m / m_per_lat, lon0 - reach_m / m_per_lon)
+    x1, y1 = _tile(lat0 - reach_m / m_per_lat, lon0 + reach_m / m_per_lon)
+    return fetch([(x, y) for x in range(int(x0), int(x1) + 1) for y in range(int(y0), int(y1) + 1)])
+
+
+def fetch(cells, url=None, download=None):
+    """{(x, y): decoded tile} for each ZOOM tile of cells; download(url) ->
+    its bytes (terrain.TileMap's, kept on disk: a rebuild asks for none)."""
     from concurrent.futures import ThreadPoolExecutor
     url = url or tile_url()
     if download is None:
         from streetview_to_3d.postprocess.terrain import TileMap
         download = TileMap(url, ZOOM, None, headers=HEADERS)._download
-    x0, y0 = _tile(lat0 + reach_m / m_per_lat, lon0 - reach_m / m_per_lon)
-    x1, y1 = _tile(lat0 - reach_m / m_per_lat, lon0 + reach_m / m_per_lon)
-    cells = [(x, y) for x in range(int(x0), int(x1) + 1) for y in range(int(y0), int(y1) + 1)]
     with ThreadPoolExecutor(8) as pool:
         datas = list(pool.map(lambda c: download(url.format(z=ZOOM, x=c[0], y=c[1])), cells))
     return {c: decode(d, *c) if d else {} for c, d in zip(cells, datas)}
@@ -180,25 +185,28 @@ def elements(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, water_m=0, 
                 out.append(way(tags, line.coords))
 
     if water_m:
-        wet = [g for t in decoded.values() for p, g in t.get("water", [])
-               if p.get("class") in WATER and not p.get("intermittent")]
-        for poly in _polygons(shapely.union_all(wet)) if wet else []:
+        for poly in _polygons(_water(decoded)):
             if reach(poly) > water_m:
                 continue
-            e = way({"natural": "water"}, poly.exterior.coords)
-            e["inner"] = [_ll(r.coords) for r in poly.interiors]
-            out.append(e)
+            out.append(way({"natural": "water"}, poly.exterior.coords))
             out += [way({}, r.coords) for r in poly.interiors]
     return out
 
 
-def water_at(elements, latlon):
-    """Whether each (lat, lon) lies in the tiles' water (elements'
-    natural=water outlines, less their islands)."""
-    areas = [shapely.Polygon([(g["lon"], g["lat"]) for g in e["geometry"]],
-                             [[(g["lon"], g["lat"]) for g in r] for r in e["inner"]])
-             for e in elements if "inner" in e]
-    if not areas or not len(latlon):
-        return [False] * len(latlon)
-    latlon = np.asarray(latlon, float)
-    return shapely.contains_xy(shapely.union_all(areas), latlon[:, 1], latlon[:, 0]).tolist()
+def _water(decoded):
+    """The tiles' water areas (WATER's, not the intermittent), joined."""
+    wet = [g for t in decoded.values() for p, g in t.get("water", [])
+           if p.get("class") in WATER and not p.get("intermittent")]
+    return shapely.union_all(wet) if wet else shapely.Polygon()
+
+
+def water_at(latlon, decoded=None):
+    """Whether each (lat, lon) lies in the tiles' water; decoded: the
+    tiles holding them (fetched if not given)."""
+    latlon = np.asarray(latlon, float).reshape(-1, 2)
+    if not len(latlon):
+        return []
+    x, y = _tile(latlon[:, 0], latlon[:, 1])
+    if decoded is None:
+        decoded = fetch(sorted({(int(a), int(b)) for a, b in zip(x, y)}))
+    return shapely.contains_xy(_water(decoded), x, y).tolist()

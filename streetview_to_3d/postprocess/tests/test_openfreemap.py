@@ -32,12 +32,11 @@ def test_tiles_read_as_overpass_ways():
     assert sorted(e["tags"].get("height", "") for e in houses) == ["", "12"]   # 5: OpenMapTiles' guess, dropped
     roads = sorted((e["tags"]["highway"], e["tags"].get("bridge")) for e in el if "highway" in e["tags"])
     assert roads == [("residential", None), ("steps", "yes")]    # the railway left out
-    lake = [e for e in el if e["tags"].get("natural") == "water"]
-    assert len(lake) == 1 and len(lake[0]["inner"]) == 1
+    assert sum(e["tags"].get("natural") == "water" for e in el) == 1
     assert sum(1 for e in el if e["tags"] == {}) == 1           # the island, untagged as a member way
     # a point in the lake, one on the island
     pt = lambda tx, ty: list(openfreemap._ll([[x + tx / EXT, y + ty / EXT]])[0].values())
-    assert openfreemap.water_at(el, [pt(1500, 3800), pt(650, 3350)]) == [True, False]
+    assert openfreemap.water_at([pt(1500, 3800), pt(650, 3350)], decoded) == [True, False]
 
 
 def test_far_off_only_the_big_buildings_and_main_roads():

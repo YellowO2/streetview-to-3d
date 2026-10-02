@@ -148,17 +148,20 @@ def is_water(e):
 WATER_AT_CACHE = "osm_water_at.json"
 
 
-def water_at(latlon, scene_dir=None, elements=None):
-    """Whether each (lat, lon) lies in one of OSM's water areas (a lake, a
-    river, a reservoir -- not the sea, which OSM draws only as its
-    coastline), in one request; kept in scene_dir's WATER_AT_CACHE with the
-    request it answers. Elements from the tiles (fetch's, when Overpass
-    gave none) answer it themselves: they hold the areas whole."""
+def water_at(latlon, scene_dir=None):
+    """Whether each (lat, lon) lies in one of OSM's water areas: OpenFreeMap's
+    tiles' (openfreemap.water_at: the areas whole, the sea's too, already
+    had from fetch), else in one request to Overpass (a lake, a river, a
+    reservoir -- not the sea, which OSM draws only as its coastline), kept
+    in scene_dir's WATER_AT_CACHE with the request it answers. Overpass
+    alone took 31 s to give no answer (Lund)."""
     if not len(latlon):
         return []
-    if elements and any("inner" in e for e in elements):
-        from streetview_to_3d.postprocess import openfreemap
-        return openfreemap.water_at(elements, latlon)
+    from streetview_to_3d.postprocess import openfreemap
+    try:
+        return openfreemap.water_at(latlon)
+    except (OSError, ValueError) as e:
+        print(f"osm: no OpenFreeMap water ({e!r}), Overpass's")
     areas = "".join(f'area.a{t};' for t in WATER_WAYS if "coastline" not in t)
     query = "[out:json][timeout:60];" + "".join(
         f'is_in({lat:.7f},{lon:.7f})->.a;({areas});make p i="{i}",ids=set(id());out;'

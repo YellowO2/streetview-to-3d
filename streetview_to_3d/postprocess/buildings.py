@@ -974,6 +974,30 @@ def toward(pts, cols, gap, tree, da3_cols, every=1):
     return cols, near, keep
 
 
+def reachable(outlines, scene):
+    """True for each outline DA3 could reach (reached): one of scene's
+    points (n, 3) within REACH_M of its outline's box, seen from above --
+    a point that near in 3D is that near on the ground too. Only these
+    are given points; the rest are solid, and laying all their walls and
+    windows first, to throw them away, was a third of Lund's map (39 s)."""
+    out = np.zeros(len(outlines), bool)
+    if not len(scene) or not outlines:
+        return out
+    xz = scene[:, [0, 2]]
+    lo = xz.min(0)
+    cell = np.floor((xz - lo) / REACH_M).astype(int)
+    grid = np.zeros(cell.max(0) + 2, int)
+    grid[cell[:, 0] + 1, cell[:, 1] + 1] = 1
+    seen = grid.cumsum(0).cumsum(1)                     # how many occupied cells to (i, j)
+    top = np.array(seen.shape) - 2
+    for k, (xy, *_) in enumerate(outlines):
+        a = np.clip(np.floor((xy.min(0) - REACH_M - lo) / REACH_M).astype(int), 0, None)
+        b = np.minimum(np.floor((xy.max(0) + REACH_M - lo) / REACH_M).astype(int), top)
+        if (a <= b).all():
+            out[k] = seen[b[0] + 1, b[1] + 1] - seen[a[0], b[1] + 1] - seen[b[0] + 1, a[1]] + seen[a[0], a[1]] > 0
+    return out
+
+
 def reached(blocks, tree, n):
     """True for each of n buildings DA3 has a point within REACH_M of
     (tree: a cKDTree of DA3's points, or None). Only these take the panos'

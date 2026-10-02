@@ -249,7 +249,8 @@ def outline(elements, to_xy, box_m, water_at, wet):
     alone does not say which side is water; each piece is:
 
       - water if a point inside it lies in an OSM water area (water_at:
-        east/north (n, 2) -> whether, osm.water_at, one request)
+        east/north (n, 2) -> whether, osm.water_at, one request; wet's
+        answer if it gives none)
       - water if the coastline runs along it with it on its right: OSM
         draws the sea only as its coastline, the water always on the right
       - land otherwise; wet (east/north -> whether, the JRC map) decides a
@@ -264,7 +265,10 @@ def outline(elements, to_xy, box_m, water_at, wet):
     inside = np.array([f.representative_point().coords[0] for f in faces])
     if len(faces) == 1:
         return faces[0] if wet(inside).all() else shapely.Polygon()
-    water = np.array(water_at(inside), bool)
+    try:
+        water = np.array(water_at(inside), bool)
+    except (OSError, ValueError):          # Overpass busy: the JRC map decides
+        water = np.asarray(wet(inside), bool)
     # the sea: a metre to the right of the coastline, all along it
     right, left = [], []
     for e, xy in ways:
