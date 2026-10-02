@@ -307,7 +307,10 @@ def correction(anchors, fixes):
     return f
 
 
-def scene_points(sc, scene_dir, every=4):
+SCENE_EVERY = 4                            # the scene's points looked at: every this many-th
+
+
+def scene_points(sc, scene_dir, every=SCENE_EVERY):
     """(points, colours): every node's cloud, placed in the world (every
     n-th point)."""
     from streetview_to_3d.postprocess.ply_io import read_ply
@@ -485,7 +488,7 @@ def build(scene_dir, log=print):
     panos = None
     n_buildings = n_seen = n_roads = 0
     bp = bc = b_normal = b_along = np.zeros((0, 3))
-    b_kind = np.zeros(0, int)
+    b_kind, scene_tree = np.zeros(0, int), None
     b_roof = b_alone = np.zeros(0, bool)
     solid, solid_base = [], np.zeros((0, 3))
     n_cut = n_sat = 0
@@ -586,7 +589,12 @@ def build(scene_dir, log=print):
     sc.water = water.save(scene_dir, wet) if surfaces else None
     sc.buildings = None
     if len(bp):
-        write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc, b_gap, b_normal, b_along, b_kind)
+        # turning into DA3's points as they come up to them: their colour, as few as DA3's
+        # (and the viewer their look)
+        bc, b_near, keep = buildings.toward(bp, bc, b_gap, scene_tree, scene_cols, SCENE_EVERY)
+        bp, bc, b_gap, b_normal, b_along, b_kind, b_near = (
+            a[keep] for a in (bp, bc, b_gap, b_normal, b_along, b_kind, b_near))
+        write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc, b_gap, b_normal, b_along, b_kind, b_near)
         sc.buildings = BUILDINGS_FILENAME
     sc.blocks = None
     if solid:

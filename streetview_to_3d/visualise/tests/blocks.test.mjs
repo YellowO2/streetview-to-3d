@@ -93,6 +93,7 @@ test('a window is nothing of its own: the strokes of its wall on it, in the colo
 test('the strokes drawn as one instanced mesh', () => {
   const mesh = blocksStrokes(building());
   assert.ok(mesh.isMesh && mesh.geometry.isInstancedBufferGeometry);
+  assert.ok(mesh.geometry.getAttribute('near').array.every((t) => t === 0)); // far off: none near DA3
   assert.equal(mesh.geometry.instanceCount, mesh.geometry.getAttribute('shape').count);
 });
 
@@ -107,8 +108,11 @@ test('a building DA3 reaches: a stroke on each of its points, as its kind says',
   );
   g.setAttribute('gap', new THREE.Float32BufferAttribute([0.5, 0.5, 0.25], 1));
   g.setAttribute('kind', new THREE.Float32BufferAttribute([0, 0, 1], 1));
+  g.setAttribute('near', new THREE.Float32BufferAttribute([0, 0.5, 1], 1));
   const mesh = pointStrokes(g);
   assert.equal(mesh.geometry.instanceCount, 3);
+  assert.deepEqual(Array.from(mesh.geometry.getAttribute('near').array), [0, 0.5, 1]); // how near DA3
+  assert(mesh.userData.pointStyle && mesh.material.uniforms.styleTime); // moved as DA3's points are
   const shape = mesh.geometry.getAttribute('shape');
   assert.deepEqual([shape.getZ(0), shape.getZ(1), shape.getZ(2)], [0, 0, 1]); // surfaces, an edge
   assert.deepEqual(

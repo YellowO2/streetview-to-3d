@@ -35,6 +35,11 @@ import { tunable } from '@viewer/effects/tune-panel';
 // spacing counted no more than SCATTER_M, so far off big strokes scatter as
 // little as near ones) -- tipped out of it, bigger or smaller, its own way,
 // fixed.
+//
+// Near DA3's own points (the ply's near: within postprocess/buildings.BLEND_M,
+// their colour already mixed toward DA3's there), a stroke turns into one of
+// them as it comes up to them: round, facing the eye, DA3's points' size,
+// floating and pulsing as they do (points.js), lit as they are -- not at all.
 
 export const KNOBS = {
   size: [1.1, 0.5, 2.5], // a stroke's size, of what it was made at
@@ -74,6 +79,8 @@ const vertexShader = `
   uniform float ${Object.keys(KNOBS).join(', ')};
   attribute vec3 centre, facing, along, tint;
   attribute vec4 shape; // length, width (m), kind, seed
+  attribute float near; // how near DA3's points: 1 drawn as they are
+  uniform float pointM, styleTime, styleFloat, styleLook, stylePointScale; // DA3's points' look (points.js)
   varying vec3 colour, world;
   varying vec2 mark;
   varying float seed, shapeOf;
@@ -85,27 +92,40 @@ const vertexShader = `
     vec3 eye = cameraPosition - centre;
     // a face's side toward the eye: its outside, the buildings being closed
     vec3 n = dot(facing, eye) < 0. ? -facing : facing;
+    float t = near; // turning into DA3's points: still scatter giving way to their float
     vec3 across = kind == ${f(EDGE)} ? normalize(cross(along, eye)) : normalize(cross(n, along));
     // scattered, still: off its place, tipped, bigger or smaller, its own way
     vec4 r = vec4(h1(seed * 5.3), h1(seed * 6.7), h1(seed * 8.9), h1(seed * 10.1)) * 2. - 1.;
     float spacing = shape.y / (kind == ${f(EDGE)} ? ${f(EDGE_WIDE)} : ${f(WIDE)});
-    float loose = scatter * min(1., ${f(SCATTER_M)} / spacing); // the same metres however big
+    float loose = scatter * min(1., ${f(SCATTER_M)} / spacing) * (1. - t); // the same metres however big
     vec3 off = (n * r.x * ${f(SCATTER[0])} + (along * r.y + across * r.z) * ${f(SCATTER[1])}) * spacing * loose;
     vec3 way = normalize(along + n * r.w * ${f(TIP)} * loose),
       side = normalize(across + n * r.y * ${f(TIP)} * loose);
-    // its size: a stroke's, or round a dab's
+    // near DA3, facing the eye as its points do
+    vec3 right = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]),
+      up = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+    way = normalize(mix(way, right, t));
+    side = normalize(mix(side, up, t));
+    // its size: a stroke's, or round a dab's -- near DA3, its points' (pulsing as they do)
+    float rounder = mix(round, 1., t);
     vec2 dims = shape.xy;
-    if (kind != ${f(EDGE)}) dims = mix(dims, vec2(shape.y * ${f(ROUND / WIDE)}), round) * size;
-    if (kind == ${f(EDGE)}) dims = mix(dims, vec2(shape.y * 2.), round) * size;
+    if (kind != ${f(EDGE)}) dims = mix(dims, vec2(shape.y * ${f(ROUND / WIDE)}), rounder) * size;
+    if (kind == ${f(EDGE)}) dims = mix(dims, vec2(shape.y * 2.), rounder) * size;
     dims *= 1. + r.z * ${f(SWELL)} * loose;
+    float phase = h1(seed * 11.3) * 6.2832;
+    dims = mix(dims, vec2(pointM * stylePointScale * (1. + sin(styleTime * .8 + phase) * .14 * styleFloat)), t);
     float lift = h1(seed * 7.1) * ${f(LAYER)} * shape.y + (kind == ${f(EDGE)} ? .05 * shape.y : 0.);
-    world = centre + off + (way * position.x * dims.x + side * position.y * dims.y) * .5
-      + (kind == ${f(EDGE)} ? normalize(eye) : n) * lift;
-    shapeOf = round;
-    // its colour, its face lit or in shade, a little lighter or darker its own way
+    // and floating as they do
+    vec3 drift = vec3(sin(styleTime * .55 + phase) * .45, sin(styleTime * .8 + phase) * .65,
+      cos(styleTime * .5 + phase) * .45) * styleLook * .004 * styleFloat * t;
+    world = centre + off + drift + (way * position.x * dims.x + side * position.y * dims.y) * .5
+      + (kind == ${f(EDGE)} ? normalize(eye) : n) * lift * (1. - t);
+    shapeOf = rounder;
+    // its colour, its face lit or in shade, a little lighter or darker its own way --
+    // near DA3, as DA3's points are: as they are
     float sunlit = smoothstep(-.05, .25, dot(n, ${v3(sun)}));
-    colour = tint * mix(vec3(1.), mix(${v3(SHADED)}, ${v3(SUNLIT)}, sunlit), light)
-      * (1. + (h1(seed * 3.3) - .5) * 2. * vary);
+    colour = tint * mix(vec3(1.), mix(${v3(SHADED)}, ${v3(SUNLIT)}, sunlit), light * (1. - t))
+      * (1. + (h1(seed * 3.3) - .5) * 2. * vary * (1. - t));
     gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.);
   }`;
 
@@ -289,7 +309,9 @@ export function pointStrokes(geometry) {
     gapOf = geometry.getAttribute('gap'),
     kindOf = geometry.getAttribute('kind');
   const count = p.count;
+  const nearOf = geometry.getAttribute('near');
   const made = {
+    near: nearOf?.count ? nearOf.array.slice(0, count) : new Float32Array(count),
     centre: p.array.slice(0, 3 * count),
     facing: n.array.slice(0, 3 * count),
     along: a.array.slice(0, 3 * count),
@@ -316,7 +338,21 @@ export function blocksStrokes(geometry) {
   return strokeMesh(made);
 }
 
-// strokes ({ centre, facing, along, tint, shape }) as one instanced mesh
+// the uniforms DA3's points move by (points.js), so strokes near them move alike
+const pointStyle = () => ({
+  styleDensity: { value: 1 },
+  stylePointScale: { value: 1 },
+  styleRound: { value: 0 },
+  styleTime: { value: 0 },
+  styleFloat: { value: 0 },
+  styleScan: { value: 0 },
+  styleRadius: { value: 1 },
+  styleLook: { value: 1 },
+  styleCenter: { value: new THREE.Vector3() },
+  styleReveal: { value: 1 },
+});
+
+// strokes ({ centre, facing, along, tint, shape, near? }) as one instanced mesh
 function strokeMesh(made) {
   const g = new THREE.InstancedBufferGeometry();
   g.setAttribute(
@@ -324,7 +360,9 @@ function strokeMesh(made) {
     new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3),
   );
   g.setIndex([0, 1, 2, 0, 2, 3]);
+  made.near ??= new Float32Array(made.shape.length / 4); // far off: none near DA3
   for (const [name, size] of [
+    ['near', 1],
     ['centre', 3],
     ['facing', 3],
     ['along', 3],
@@ -336,12 +374,14 @@ function strokeMesh(made) {
   const blocks = new THREE.Mesh(
     g,
     new THREE.ShaderMaterial({
-      uniforms: { ...knobs, haze },
+      // DA3's points' look, set as theirs are (app.js setPointSize; controller.js, as points.js has them)
+      uniforms: { ...knobs, haze, pointM: { value: 0.1 }, ...pointStyle() },
       side: THREE.DoubleSide,
       vertexShader,
       fragmentShader,
     }),
   );
   blocks.frustumCulled = false;
+  blocks.userData.pointStyle = true; // moved as DA3's points are (controller.js)
   return blocks;
 }

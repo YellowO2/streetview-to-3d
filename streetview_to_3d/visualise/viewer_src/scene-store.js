@@ -46,7 +46,12 @@ export function dispose(group) {
   });
 }
 const loader = new PLYLoader();
-loader.setCustomPropertyNameMapping({ gap: ['gap'], along: ['ax', 'ay', 'az'], kind: ['kind'] });
+loader.setCustomPropertyNameMapping({
+  gap: ['gap'],
+  along: ['ax', 'ay', 'az'],
+  kind: ['kind'],
+  near: ['near'],
+});
 // land.ply as one surface, as games draw ground, painted in patches as the
 // points are spaced (effects/land.js); gapOf(x, z): their spacing there.
 export function parseLand(buffer, gapOf) {

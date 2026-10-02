@@ -65,6 +65,8 @@ SEE_M = 150.0                 # panos colour the buildings this close to them
 BEHIND_M, BEHIND = 3.0, 0.05  # how far behind what is in front a wall may stand and still be seen
 SEEN_MIN = 20                 # pixels of a building the panos must see to colour it
 REACH_M = 3.0                 # only buildings DA3 has points this near are coloured by the panos
+BLEND_M = 1.0                 # a building's points this near DA3's turn into them: their colour, their look
+LOCAL_K = 6                   # DA3's spacing somewhere: how far its LOCAL_K-th nearest point is
 FIT_M = 5.0                   # buildings this far past the scene's points are not looked at
 WALL_SAMPLE_M = 1.0
 SNAP_MAX_M = 2.0              # OSM's real offsets were 0.2-1.3 m (Stockholm, NTU)
@@ -872,6 +874,35 @@ def detail_quads(xy, h, form, ground, colour, planes=None, gap=2.5):
             yield np.r_[world(ends, foot + .05), world(ends[::-1], top)], colour * .38 + [.02, .03, .04]
             canopy = ends + outward * .4
             yield np.r_[world(ends, top + .12), world(canopy[::-1], top + .12)], np.clip(colour * 1.15, 0, 1)
+
+
+def toward(pts, cols, gap, tree, da3_cols, every=1):
+    """(cols, near, keep): points pts (spaced gap) turning into DA3's as they
+    come within BLEND_M of them -- near 0 that far off or more, 1 on one --
+    their colour mixed toward their nearest DA3 point's by it, and as few
+    of them kept as DA3's are there (keep: each its own chance, fixed in
+    the world, from all of them far off to as sparse as DA3's points on
+    one; never more than were). tree: a cKDTree of DA3's points (every
+    every-th of them), da3_cols their colours. The viewer turns their look
+    into DA3's points' by near too (effects/blocks.js)."""
+    from streetview_to_3d.postprocess.seams import ramp
+    if tree is None or not len(pts):
+        return cols, np.zeros(len(pts)), np.ones(len(pts), bool)
+    d, k = tree.query(pts, distance_upper_bound=BLEND_M)
+    near = 1 - ramp(d / BLEND_M)                               # d is inf past BLEND_M: 0
+    k = np.minimum(k, len(da3_cols) - 1)
+    cols = cols + (da3_cols[k] - cols) * near[:, None]
+    # DA3's spacing round its nearest point: its LOCAL_K-th neighbour's distance, as
+    # if all its points were there, not every every-th
+    keep = np.ones(len(pts), bool)
+    close = np.flatnonzero(near > 0)
+    if len(close):
+        far = tree.query(tree.data[k[close]], k=LOCAL_K + 1)[0][:, -1]
+        spacing = far / np.sqrt(LOCAL_K / np.pi) / np.sqrt(every)
+        share = np.minimum(1, (gap[close] / np.maximum(spacing, 1e-6)) ** 2)    # of these, as many as DA3's
+        chance = np.sin(pts[close] @ [12.9898, 78.233, 37.719]) * 43758.5453 % 1
+        keep[close] = chance < 1 - near[close] * (1 - share)
+    return cols, near, keep
 
 
 def reached(blocks, tree, n):

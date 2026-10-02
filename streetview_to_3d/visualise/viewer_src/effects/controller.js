@@ -97,6 +97,9 @@ export function createStyles(scene, camera, renderer) {
       store.group?.traverse((object) => {
         if (object.isPoints) {
           entries.push({ uniforms: pointMotion(object), animated: false });
+        } else if (object.userData.pointStyle) {
+          // the buildings' strokes: those near DA3 drawn as its points are
+          entries.push({ uniforms: object.material.uniforms, animated: false });
         }
       });
       // Animated world objects share the point look, but retain their own motion.
