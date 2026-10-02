@@ -352,6 +352,9 @@ summary {
   padding: 8px;
   pointer-events: none;
 }
+#flight.dismissed {
+  display: none;
+}
 #flight button {
   pointer-events: auto;
 }

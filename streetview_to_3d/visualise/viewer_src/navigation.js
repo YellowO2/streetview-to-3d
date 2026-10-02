@@ -76,6 +76,11 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
   addEventListener('keyup', (e) => keys.delete(e.code));
   addEventListener('keydown', (e) => {
     if (!flying || !captured() || e.target.matches('input,textarea,select')) return;
+    if (e.code === 'KeyH') {
+      // the keys' bar out of the way (the mouse is captured: no button to click), H again to bring it back
+      document.getElementById('flight')?.classList.toggle('dismissed');
+      return;
+    }
     if (shooting && e.code === 'KeyR') {
       // the world whole again
       clearShots();

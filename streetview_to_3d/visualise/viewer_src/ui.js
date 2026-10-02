@@ -68,8 +68,8 @@ export function createUI(actions, { editable = true } = {}) {
       $('empty').hidden = !!store.group;
       $('flight').hidden = $('reticle').hidden = state.mode !== 'fly';
       $('flight-keys').textContent = state.gun
-        ? 'WASD to move · Q/E down/up · click to shoot · R to mend'
-        : 'WASD to fly · Q/E down/up · Shift boost';
+        ? 'WASD to move · Q/E down/up · click to shoot · R to mend · H to hide'
+        : 'WASD to fly · Q/E down/up · Shift boost · H to hide';
       $('exit-fly').textContent = `Exit ${state.gun ? 'Shoot' : 'Fly'} · Esc`;
       const pressed = {
         inspect: state.mode !== 'fly',

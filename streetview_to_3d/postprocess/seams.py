@@ -36,6 +36,9 @@ CELL_M = 0.5              # the fill's own squares (fill.one_ground.CELL_M)
 PAD_M = 50.0              # the grid this far past the ground: the widest band asking of it (terrain.ROAD_MEET_M)
 BLEND_M = 3.0             # the map's points this near DA3's turn into them: their colour, their look (toward)
 LOCAL_K = 6               # DA3's spacing somewhere: how far its LOCAL_K-th nearest point is
+GREY_C, GREY_N = 8.0, 200   # the satellite's tint: from ground the panos see this grey (Lab chroma), this much of it
+LIGHT_RANGE = (0.7, 1.6)    # its lightness varied at most this much more or less
+BOOST_MAX, VIVID_C = 2.5, 60.0  # its colourfulness: at most this many times, none for colours this vivid (Lab chroma)
 
 
 def ramp(t):
@@ -80,6 +83,73 @@ def toward(pts, cols, gap, tree, da3_cols, every=1):
         chance = np.sin(pts[close] @ [12.9898, 78.233, 37.719]) * 43758.5453 % 1
         keep[close] = chance < 1 - near[close] * (1 - share)
     return cols, near, keep
+
+
+def lab(rgb):
+    """sRGB (n, 3) 0-1 -> CIE Lab (D65)."""
+    c = np.clip(rgb, 0, 1)
+    xyz = np.where(c <= .04045, c / 12.92, ((c + .055) / 1.055) ** 2.4) @ _XYZ.T / _WHITE
+    f = np.where(xyz > .008856, np.cbrt(xyz), 7.787 * xyz + 16 / 116)
+    return np.c_[116 * f[:, 1] - 16, 500 * (f[:, 0] - f[:, 1]), 200 * (f[:, 1] - f[:, 2])]
+
+
+def rgb(lab_):
+    """CIE Lab (n, 3) -> sRGB 0-1, clipped."""
+    fy = (lab_[:, 0] + 16) / 116
+    f = np.c_[fy + lab_[:, 1] / 500, fy, fy - lab_[:, 2] / 200]
+    lin = np.where(f > .2069, f ** 3, (f - 16 / 116) / 7.787) * _WHITE @ np.linalg.inv(_XYZ).T
+    return np.clip(np.where(lin <= .0031308, lin * 12.92, 1.055 * np.clip(lin, 0, None) ** (1 / 2.4) - .055), 0, 1)
+
+
+_XYZ = np.array([[.4124, .3576, .1805], [.2126, .7152, .0722], [.0193, .1192, .9505]])
+_WHITE = np.array([.9505, 1, 1.089])
+
+
+def unhazed(ground, satellite):
+    """f(colours) -> colours: the satellite's colours as the panos see them,
+    learnt where both see the scene's own ground (ground: SceneGround;
+    satellite(east/north (n, 2)) -> (n, 3), NaN where it has none). Seen
+    through the air a satellite's are paler and bluer; undone in Lab, so a
+    grey stays grey:
+
+      - tint: the satellite's cast, from the ground the panos see grey (a
+        road, a pavement: GREY_C or less colourful), at least GREY_N of it
+      - lightness: as bright and as varied as the panos' ground, never
+        darker than the satellite's (the panos see their ground in the shade
+        of what stands round it; the world should not look the gloomier)
+      - colourfulness: as the panos', up to BOOST_MAX times -- the least
+        colourful the most, none past VIVID_C (a red roof stays red, not neon)
+
+    Only ground is seen by both, so only what ground cannot mistake is
+    learnt: no hue (grass greener than the satellite has it is the grass,
+    not the air). Nothing to learn from: as they are."""
+    have = np.argwhere(np.isfinite(ground.height)) if ground.height.size else np.zeros((0, 2), int)
+    if len(have) < GREY_N:
+        return lambda cols: cols
+    pano = ground.colour[tuple(have.T)]
+    sat = satellite((have + ground.lo + .5) * CELL_M)
+    ok = np.isfinite(sat).all(1) & np.isfinite(pano).all(1)
+    if ok.sum() < GREY_N:
+        return lambda cols: cols
+    P, S = lab(pano[ok]), lab(sat[ok])
+    grey = np.hypot(P[:, 1], P[:, 2]) < GREY_C
+    tint = (P[grey, 1:] - S[grey, 1:]).mean(0) if grey.sum() >= GREY_N else np.zeros(2)
+    S[:, 1:] += tint
+    k = np.clip(P[:, 0].std() / max(S[:, 0].std(), 1e-6), *LIGHT_RANGE)
+    o = P[:, 0].mean() - k * S[:, 0].mean()
+    boost = np.clip(np.hypot(P[:, 1], P[:, 2]).mean() / max(np.hypot(S[:, 1], S[:, 2]).mean(), 1e-6), 1, BOOST_MAX)
+
+    def fix(cols):
+        cols = np.asarray(cols, float)
+        out = cols.copy()
+        good = np.isfinite(cols).all(1)
+        L = lab(cols[good])
+        ab = L[:, 1:] + tint
+        c = np.hypot(ab[:, 0], ab[:, 1])
+        ab *= (boost / (1 + (boost - 1) * np.minimum(c / VIVID_C, 1)))[:, None]
+        out[good] = rgb(np.c_[np.clip(np.maximum(k * L[:, 0] + o, L[:, 0]), 0, 100), ab])
+        return out
+    return fix
 
 
 def meet(h, ground, dist, band_m, max_m=np.inf):

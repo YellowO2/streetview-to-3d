@@ -510,7 +510,13 @@ def build(scene_dir, log=print):
     en, h, dist, edge_c, lat, lon = (a[seen] for a in (en, h, dist, edge_c, lat, lon))
     land = np.stack([en[:, 0], -h, en[:, 1]], 1)
 
-    # its colour as it is (unlit: the viewer lights it, effects/land.js)
+    # its colour as it is (unlit: the viewer lights it, effects/land.js), and the
+    # satellite's as the panos see it (seams.unhazed: learnt where both see the scene's ground)
+    try:
+        unhazed = seams.unhazed(scene_ground, lambda xy: google_colours(*to_ll(xy), np.full(len(xy), seams.CELL_M)))
+    except OSError as e:
+        log(f"terrain: satellite colours as they are ({e!r})")
+        unhazed = lambda cols: cols
     colours = colour_map()
     try:
         cols = google_colours(lat, lon, LAND_EVERY * gap_at(cam_tree.query(en, workers=-1)[0]))
@@ -519,6 +525,7 @@ def build(scene_dir, log=print):
         if gone.any():                    # where Google has none, Sentinel-2's, lifted (it is dark from above)
             cols[gone] = colours(lat[gone], lon[gone]) ** LIFT
             source += f", Sentinel-2's for {gone.mean():.0%}"
+        cols = unhazed(cols)
     except OSError as e:                  # the land still stands without its colour
         log(f"terrain: no satellite colour ({e!r}), plain")
         colours = None
@@ -541,12 +548,13 @@ def build(scene_dir, log=print):
         try:                                # roofs as the satellite sees them: Google's, sharp
             roof_at = google_map(ROOF_ZOOM)
             roof_at.fetch(*to_ll(np.concatenate([o[0] for o in outlines])))
-            n_sat = buildings.satellite_roofs(outlines, lambda en: roof_at(*to_ll(en)),
+            n_sat = buildings.satellite_roofs(outlines, lambda en: unhazed(roof_at(*to_ll(en))),
                                               ROOF_INSET_M, ROOF_STEP_M, lively=False)
         except OSError as e:
             log(f"terrain: no Google roofs ({e!r}), Sentinel-2's")
         try:                                # ... else Sentinel-2's, for those still without
-            n_sat += buildings.satellite_roofs(outlines, lambda en: colours(*to_ll(en)) ** LIFT) if colours else 0
+            n_sat += (buildings.satellite_roofs(outlines, lambda en: unhazed(colours(*to_ll(en)) ** LIFT))
+                      if colours else 0)
         except OSError as e:
             log(f"terrain: no satellite roofs ({e!r})")
         try:
