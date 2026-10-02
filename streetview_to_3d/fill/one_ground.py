@@ -27,7 +27,7 @@ from scipy.ndimage import binary_closing, binary_fill_holes
 from streetview_to_3d.postprocess.ground import CELL_M as GROUND_CELL_M, GroundMap, ground, normals_from_neighbours
 from streetview_to_3d.services.da3_ops import VIEW_HFOV
 
-CELL_M, SMOOTH_M, STEP_M = 0.5, 0.5, 0.05
+CELL_M, SMOOTH_M, STEP_M = 0.5, 0.5, 0.08   # its points 8 cm apart: drawn as big as DA3's, solid still, and a third as many as at 5 cm
 DA3_SEED_M = 7.0        # the ground detector may start this far out (DA3's blind disc reaches ~4.5 m)
 CLOSE_M = 1.5           # gaps in the ground area this wide are closed
 ON_GROUND_M = 0.12      # a cloud's points this close to the surface are the surface

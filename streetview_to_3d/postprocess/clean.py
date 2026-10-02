@@ -23,7 +23,7 @@ from scipy.spatial import cKDTree
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
 
-K, SPARSE, CELL_M, SHARE = 8, 3.0, 0.5, 0.2
+K, SPARSE, CELL_M, SHARE = 8, 2.5, 0.5, 0.2
 
 
 def sparse(points):

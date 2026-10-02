@@ -1,5 +1,6 @@
 import numpy as np
 
+from streetview_to_3d.postprocess import blobs
 from streetview_to_3d.postprocess.blobs import loose_bits
 
 
@@ -13,3 +14,17 @@ def test_floating_ball_removed_wall_and_what_touches_it_kept():
     assert not loose[:len(wall)].any()
     assert loose[len(wall):len(wall) + len(ball)].all()
     assert not loose[len(wall) + len(ball):].any()
+
+
+def test_a_far_wall_stays_only_if_another_pano_puts_it_there_too():
+    g = np.arange(0, 4, 0.05)
+    wall = lambda x: np.c_[np.full(g.size ** 2, x), np.repeat(g, g.size), np.tile(g, g.size)]   # a wall x m east
+    real = wall(15.0)
+    a = np.concatenate([real, wall(16.0)])          # A sees the real wall, and makes one up a metre behind it
+    b = real + 0.05                                 # B, 10 m along, sees the real one (a little off)
+    sure = blobs.confirmed([a, b], [np.zeros(3), np.array([0.0, 0.0, 10.0])])
+    assert sure[0][:len(real)].all()                # the real wall: both put it there
+    assert not sure[0][len(real):].any()            # the made-up one: A's alone
+    assert sure[1].all()
+    # a pano too far off to have seen the same place is not asked
+    assert not blobs.confirmed([a, b], [np.zeros(3), np.array([0.0, 0.0, 100.0])])[0].any()
