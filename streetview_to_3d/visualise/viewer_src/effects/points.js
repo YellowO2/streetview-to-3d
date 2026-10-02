@@ -3,11 +3,17 @@ import { demo, DEMO } from '@viewer/effects/demo';
 import { shot, SHOT } from '@viewer/effects/shot';
 
 // Patch the existing material once; never replace geometry or alter exported positions.
+// A node's trees sway in the wind (its ply's sway, 0-255: how much each point
+// moves, a crown's most, a trunk's not at all -- fill): one gust travelling
+// across the scene, a smaller quicker one on it, along WIND, at most SWAY_M.
+const SWAY_M = 0.12,
+  WIND = [0.8, 0.6];
 const patched = new WeakMap();
 export function pointMotion(object) {
   const material = object.material;
   if (patched.has(material)) return patched.get(material);
   const stableSeed = !!object.geometry.getAttribute('styleSeed');
+  const swaying = !!object.geometry.getAttribute('sway');
   const uniforms = {
     styleDensity: { value: 1 },
     stylePointScale: { value: 1 },
@@ -38,6 +44,7 @@ export function pointMotion(object) {
       `
       ${demoed ? DEMO + SHOT : ''}
       ${stableSeed ? 'attribute float styleSeed;' : ''}
+      ${swaying ? 'attribute float sway;' : ''}
       uniform float styleTime, styleFloat, styleLook, styleDensity, stylePointScale;
       uniform vec3 styleCenter;
       varying vec3 stylePosition;
@@ -51,6 +58,12 @@ export function pointMotion(object) {
       vec3 drift = vec3(sin(styleTime*.55+phase)*.45, sin(styleTime*.8+phase)*.65,
         cos(styleTime*.5+phase)*.45);
       transformed += drift * styleLook * .004 * styleFloat;
+      ${
+        swaying
+          ? `float gust = dot(position.xz, vec2(.07, .045)) - styleTime * 1.1;
+      transformed.xz += vec2(${WIND}) * sway / 255. * ${SWAY_M.toFixed(3)} * (sin(gust) + .35 * sin(gust * 2.3 + 1.7));`
+          : ''
+      }
       float demoIn = 1.;
       ${demoed ? 'if (shotAway(stylePosition + styleCenter)) demoIn = 0.;' : ''}
     `,
@@ -98,7 +111,7 @@ export function pointMotion(object) {
     );
   };
   material.customProgramCacheKey = () =>
-    originalKey + ':viewer-point-motion-v7:' + stableSeed + demoed;
+    originalKey + ':viewer-point-motion-v8:' + stableSeed + demoed + swaying;
   material.needsUpdate = true;
   patched.set(material, uniforms);
   return uniforms;

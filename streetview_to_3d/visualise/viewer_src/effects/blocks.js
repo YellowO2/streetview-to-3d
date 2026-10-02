@@ -81,12 +81,19 @@ const vertexShader = `
   uniform float pointM, styleTime, styleFloat, styleLook, stylePointScale; // DA3's points' look (points.js)
   attribute vec3 facing, tint;
   attribute float dab, near; // its size (m); how near DA3's points: 1 drawn as they are
+  #ifdef OWN_SEED
+  attribute float grain; // its own way, carried as it moves (traffic.js: a car's)
+  #endif
   varying vec3 colour, world;
   varying float seed;
   float h1(float x) { return fract(sin(x * 12.9898) * 43758.5453); }
   void main() {
     vec3 centre = position;
+    #ifdef OWN_SEED
+    seed = grain;
+    #else
     seed = fract(sin(dot(centre, vec3(12.9898, 78.233, 37.719))) * 43758.5453) * 100.;
+    #endif
     vec3 eye = cameraPosition - centre;
     // a face's side toward the eye: its outside, the buildings being closed
     vec3 n = dot(facing, eye) < 0. ? -facing : facing;
@@ -355,9 +362,11 @@ const pointStyle = () => ({
   styleReveal: { value: 1 },
 });
 
-// points ({ centre, facing, tint, dab, near? }) as the GPU's points: a few
+// points ({ centre, facing, tint, dab, near?, grain? }) as the GPU's points: a few
 // bytes each (its facing, colour and nearness as bytes); fog: the scene's
-// haze over them, gone by its far edge (the land's, land.js)
+// haze over them, gone by its far edge (the land's, land.js). grain: each
+// one's own way (scatter, size, shade), for points that move (traffic.js);
+// else its place in the world.
 export function pointsOf(made, { fog = false } = {}) {
   const count = made.dab.length;
   const g = new THREE.BufferGeometry();
@@ -376,6 +385,7 @@ export function pointsOf(made, { fog = false } = {}) {
   g.setAttribute('tint', new THREE.BufferAttribute(tint, 3, true));
   g.setAttribute('dab', new THREE.Float32BufferAttribute(made.dab, 1));
   g.setAttribute('near', new THREE.BufferAttribute(near, 1, true));
+  if (made.grain) g.setAttribute('grain', new THREE.Float32BufferAttribute(made.grain, 1));
   const halfHeight = { value: 1 };
   const points = new THREE.Points(
     g,
@@ -392,6 +402,7 @@ export function pointsOf(made, { fog = false } = {}) {
         ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
       },
       fog,
+      defines: made.grain ? { OWN_SEED: '' } : {},
       vertexShader,
       fragmentShader,
     }),

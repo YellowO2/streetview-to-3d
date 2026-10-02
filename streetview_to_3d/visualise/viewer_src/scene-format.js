@@ -33,6 +33,8 @@ export const ROADS = 'roads';
 export const WATER = 'water';
 // Its far buildings, solid: a triangle .ply (postprocess/buildings.py's solid).
 export const BLOCKS = 'blocks';
+// Where cars drive: its roads' lines (postprocess/traffic.py).
+export const TRAFFIC = 'traffic';
 export function relativePath(path) {
   if (
     typeof path !== 'string' ||

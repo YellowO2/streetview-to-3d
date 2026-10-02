@@ -11,8 +11,10 @@ import {
   ROADS,
   WATER,
   BLOCKS,
+  TRAFFIC,
 } from '@viewer/scene-format';
 import { waterSurfaces } from '@viewer/effects/water';
+import { trafficPoints } from '@viewer/effects/traffic';
 import { landPoints } from '@viewer/effects/land';
 import { blockPoints, buildingPoints } from '@viewer/effects/blocks';
 import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
@@ -50,6 +52,7 @@ loader.setCustomPropertyNameMapping({
   gap: ['gap'],
   kind: ['kind'],
   near: ['near'],
+  sway: ['sway'], // a node's: how much each point sways in the wind (fill: a tree's)
 });
 // land.ply's triangles as the land's points (effects/land.js); gapOf(x, z): the world's points' spacing there.
 export function parseLand(buffer, gapOf) {
@@ -294,6 +297,17 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           water.userData.surroundings = WATER;
           group.add(water);
         }
+      }
+      if (placement === 'world' && data[TRAFFIC]) {
+        progress('Loading the traffic…');
+        const buffer = await readBuffer(resolve(relativePath(data[TRAFFIC])));
+        if (cancelled()) {
+          dispose(group);
+          return null;
+        }
+        const cars = trafficPoints(JSON.parse(new TextDecoder().decode(buffer)));
+        cars.userData.surroundings = TRAFFIC;
+        group.add(cars);
       }
     }
     if (cancelled()) {

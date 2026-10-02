@@ -79,7 +79,7 @@ from PIL import Image
 
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.paths import DATA_DIR
-from streetview_to_3d.postprocess import buildings, elevations, osm, roads, seams, water
+from streetview_to_3d.postprocess import buildings, elevations, osm, roads, seams, traffic, water
 from streetview_to_3d.postprocess.ply_io import write_mesh, write_ply
 
 FILENAME = "terrain.ply"
@@ -107,6 +107,9 @@ BRIDGE_CLEAR_M = {"road": 4.5, "water": 2.5}     # a bridge's deck at least this
 ROAD_MEET_M, ROAD_MEET_MAX_M = 40.0, 10.0  # roads, bridges: the scene's road's height where they touch it, their
                                            # own this far out (unless 10 m apart: not the same road)
 UNDER_M = 0.1                             # the land under the scene's ground: this far beneath it
+LAND_GAP_M = 0.3                          # the land's points no closer than this (the viewer's land.MIN_GAP) ...
+EDGE_RATE = 0.06                           # ... but past the scene's ground: as DA3's at its edge, this much
+                                           # further apart a metre out, till they are as the rest
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
 GAP0_M, GAP_PER = 0.05, 0.018              # the land's corners: LAND_EVERY x gap_at apart
 POINT_M = 0.10                             # roads' and buildings' points: as DA3's are drawn at the scene's edge,
@@ -250,15 +253,22 @@ def gap_at(cam_d):
     return GAP0_M + GAP_PER * np.asarray(cam_d)
 
 
+def world_gap(d):
+    """The world's points' spacing d metres off: POINT_M, RATE0 more a
+    metre, easing to RATE by RAMP_M (the viewer's own, scene-store.js pointGap)."""
+    e = np.maximum(np.asarray(d, float), 0)
+    near = POINT_M + RATE0 * e + (RATE - RATE0) * e ** 2 / (2 * RAMP_M)
+    far = POINT_M + RATE0 * RAMP_M + (RATE - RATE0) * RAMP_M / 2 + RATE * (e - RAMP_M)
+    return np.where(e < RAMP_M, near, far)
+
+
 def point_gap(edge_d):
     """Saved spacing from the reconstructed edge: 0.8 m at 100 m, 1.5 m
     at 200 m, easing into the coarser outer map between 250 and 400 m.
     The viewer draws each point as big as this spacing.
     """
     e = np.maximum(np.asarray(edge_d, float), 0)
-    near = POINT_M + RATE0 * e + (RATE - RATE0) * e ** 2 / (2 * RAMP_M)
-    far = POINT_M + RATE0 * RAMP_M + (RATE - RATE0) * RAMP_M / 2 + RATE * (e - RAMP_M)
-    coarse = np.where(e < RAMP_M, near, far)
+    coarse = world_gap(e)
     t = np.clip((e - DETAIL_END_M) / DETAIL_BLEND_M, 0, 1)
     blend = t * t * (3 - 2 * t)
     return (POINT_M + DETAIL_RATE * e) * (1 - blend) + coarse * blend
@@ -458,6 +468,10 @@ def build(scene_dir, log=print):
             h[on] = to_scene(xy[on], h[on])
         return h
     over = roads.decks(found, road_h, crossed(road_h), to_scene, ids)
+    # where cars drive (traffic.py): the car roads near the scene, at their height
+    cars = {e["id"] for e in elements if e.get("tags", {}).get("highway") in traffic.CARS}
+    stretches = traffic.roads(elements, to_xy, road_h, [d for d in over if d.ids & cars],
+                              lambda xy: cam_tree.query(xy)[0] < traffic.REACH_M, [o[0] for o in outlines])
     edges = np.concatenate([net.edges(), roads.deck_edges(over)])
     walls, owner = buildings.corners(outlines, lambda xy: LAND_EVERY * gap_at(cam_tree.query(xy)[0]))
     inside = np.linalg.norm(walls, axis=1) < radius
@@ -611,7 +625,12 @@ def build(scene_dir, log=print):
     land_cols, land_near, _ = seams.toward(land, land_cols, None, scene_tree, scene_cols, SCENE_EVERY)
     cols, _, keep = seams.toward(pts, cols, gap(pts[:, [0, 2]]), scene_tree, scene_cols, SCENE_EVERY)
     pts, cols = pts[keep], cols[keep]
-    write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces, near=land_near)
+    # its points spaced as the world's are from the cameras, no closer than LAND_GAP_M -- but
+    # past the scene's ground growing out of DA3's from its edge, as close as its at it
+    land_gap = np.maximum(LAND_GAP_M, world_gap(cam_tree.query(en, workers=-1)[0]))
+    out = dist > 0
+    land_gap[out] = np.minimum(land_gap[out], POINT_M + EDGE_RATE * edge_tree.query(en[out], workers=-1)[0])
+    write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces, gap=land_gap, near=land_near)
     sc.roads = None
     # tunnels: a mouth where each leaves the ground's roads, at their height
     mouths = roads.portals(elements, to_xy, road_h)
@@ -626,6 +645,12 @@ def build(scene_dir, log=print):
         sc.terrain = FILENAME
     surfaces = wet.surfaces
     sc.water = water.save(scene_dir, wet) if surfaces else None
+    try:
+        side = traffic.side(known[0].pano.id) if known else "right"
+    except (OSError, ValueError) as e:      # cars keep right, as most of the world's do
+        log(f"terrain: no country for the cars' side ({e!r})")
+        side = "right"
+    sc.traffic = traffic.save(scene_dir, stretches, side)
     sc.buildings = None
     if len(bp):
         bc, b_near, keep = seams.toward(bp, bc, b_gap, scene_tree, scene_cols, SCENE_EVERY)
@@ -651,7 +676,8 @@ def build(scene_dir, log=print):
         f"{n_buildings} buildings ({len(solid)} solid) -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
         f"{n_cut} of their points "
         f"left to DA3's own, {n_seen} coloured by the panos, {n_sat} roofs by the satellite -- {n_roads} roads, {n_bridges} bridges, "
-        f"{len(mouths[2]) // 14} tunnel mouths), map shifted "
+        f"{len(mouths[2]) // 14} tunnel mouths, {len(stretches)} stretches of road for cars, "
+        f"keeping {side}), map shifted "
         f"{shift:+.1f} m to Google's datum, the ground near {len(known)} panos and {len(more)} other places "
         f"their elevation (the map off it by up to {fix.max() if len(fix) else 0:.1f} m, "
         f"median {np.median(fix) if len(fix) else 0:.1f})")

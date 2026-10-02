@@ -1,4 +1,5 @@
 import { tickWater } from '@viewer/effects/water';
+import { tickTraffic } from '@viewer/effects/traffic';
 import { playDemo, stopDemo, tickDemo } from '@viewer/effects/demo';
 import { placeShots } from '@viewer/effects/shot';
 import * as THREE from 'three';
@@ -140,6 +141,7 @@ export function createStyles(scene, camera, renderer) {
       if (!editing) time += dt;
       updateMotion(editing);
       if (!editing) tickWater(dt);
+      if (!editing) tickTraffic(dt);
       if (editing) stopDemo();
       else tickDemo(dt);
       environment.update(

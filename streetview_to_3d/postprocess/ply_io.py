@@ -19,18 +19,20 @@ def read_ply(ply_path):
     return pts, cols
 
 
-def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None):
+def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None, sway=None):
     """Points, and with gap (n,) how far each is from its neighbours, metres:
     the viewer draws it that big (scene-store.js, terrainBands). A building's
     also which way each faces (normal (n, 3)), what it is (kind (n,):
     buildings.Blocks) and how near DA3's points it is (near (n,):
-    seams.toward)."""
+    seams.toward). A node's how much each sways in the wind (sway (n,),
+    0-1: a tree's, fill), kept as a byte."""
     n = len(pts)
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")]
     fields += [("gap", "<f4")] if gap is not None else []
     fields += [("nx", "<f4"), ("ny", "<f4"), ("nz", "<f4")] if normal is not None else []
     fields += [("kind", "u1")] if kind is not None else []
     fields += [("near", "<f4")] if near is not None else []
+    fields += [("sway", "u1")] if sway is not None else []
     types = {"<f4": "float", "u1": "uchar"}
     header = ("ply\nformat binary_little_endian 1.0\n"
               f"element vertex {n}\n"
@@ -45,6 +47,8 @@ def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None):
         verts["kind"] = kind
     if near is not None:
         verts["near"] = near
+    if sway is not None:
+        verts["sway"] = np.round(np.clip(sway, 0, 1) * 255)
     verts["x"], verts["y"], verts["z"] = pts[:, 0], pts[:, 1], pts[:, 2]
     rgb = (np.clip(cols, 0, 1) * 255).astype("u1") if cols is not None else np.full((n, 3), 200, dtype="u1")
     verts["red"], verts["green"], verts["blue"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
