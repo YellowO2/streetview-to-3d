@@ -19,17 +19,16 @@ def read_ply(ply_path):
     return pts, cols
 
 
-def write_ply(path, pts, cols, gap=None, normal=None, along=None, kind=None, near=None):
+def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None):
     """Points, and with gap (n,) how far each is from its neighbours, metres:
     the viewer draws it that big (scene-store.js, terrainBands). A building's
-    also which way each faces (normal (n, 3)), which way its stroke goes
-    (along (n, 3)), what it is (kind (n,): buildings.Blocks) and how near
-    DA3's points it is (near (n,): buildings.toward)."""
+    also which way each faces (normal (n, 3)), what it is (kind (n,):
+    buildings.Blocks) and how near DA3's points it is (near (n,):
+    buildings.toward)."""
     n = len(pts)
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")]
     fields += [("gap", "<f4")] if gap is not None else []
     fields += [("nx", "<f4"), ("ny", "<f4"), ("nz", "<f4")] if normal is not None else []
-    fields += [("ax", "<f4"), ("ay", "<f4"), ("az", "<f4")] if along is not None else []
     fields += [("kind", "u1")] if kind is not None else []
     fields += [("near", "<f4")] if near is not None else []
     types = {"<f4": "float", "u1": "uchar"}
@@ -40,10 +39,8 @@ def write_ply(path, pts, cols, gap=None, normal=None, along=None, kind=None, nea
     verts = np.zeros(n, dtype=np.dtype(fields))
     if gap is not None:
         verts["gap"] = gap
-    for names, values in ((("nx", "ny", "nz"), normal), (("ax", "ay", "az"), along)):
-        if values is not None:
-            for d, name in enumerate(names):
-                verts[name] = values[:, d]
+    if normal is not None:
+        verts["nx"], verts["ny"], verts["nz"] = normal[:, 0], normal[:, 1], normal[:, 2]
     if kind is not None:
         verts["kind"] = kind
     if near is not None:

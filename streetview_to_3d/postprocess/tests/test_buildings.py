@@ -153,26 +153,21 @@ def test_points_know_their_facing_stroke_and_kind_their_windows_glass(tmp_path):
     blocks = buildings.points([(*house, {})], lambda xy: np.full(len(xy), .4), ground,
                               np.full((1, 3), .8))
     assert np.allclose(np.linalg.norm(blocks.normal, axis=1), 1)
-    assert np.allclose(np.linalg.norm(blocks.along, axis=1), 1)
-    assert np.allclose((blocks.normal * blocks.along).sum(1), 0, atol=1e-6)       # on its face
-    # a roof (its normals east, north, up): flat, facing up, stroked east-west; sloping east, down it
-    normal, along = buildings._roof_ways(np.array([[0.0, 0.0, 1.0], [0.6, 0.0, 0.8]]))
-    assert np.allclose(normal, [[0, -1, 0], [0.6, -0.8, 0]])       # Blocks' y is down
-    assert np.allclose(along[0], [1, 0, 0]) and along[1, 0] > 0 and along[1, 1] > 0
+    roof = (blocks.edge == buildings.ROOF) & ~blocks.own             # its roof, not its trims
+    assert np.allclose(blocks.normal[roof], [0, -1, 0])            # a flat roof faces up: Blocks' y is down
     wall = blocks.edge >= 0
     assert np.allclose(blocks.normal[wall, 1], 0)                 # a wall level
     edge = blocks.kind == buildings.EDGE
     assert edge.any() and (blocks.edge[edge] >= 0).all()          # corners and eaves, on walls
-    assert (np.abs(blocks.along[edge, 1]) > 0.99).any()           # a corner's stroke goes up it
     house[3].physical_facade = False                                # no balconies of its own: windows painted
     buildings.windows(blocks, [house], ground)
     glass = np.all(np.isclose(blocks.cols, buildings.glass([.8, .8, .8])), axis=1)
     assert glass.sum() > 20 and (blocks.kind[glass] == buildings.SURFACE).all()   # the wall's points, glass
     assert np.allclose(blocks.cols[~glass & (blocks.edge >= 0)], .8)              # its walls as they are: unlit
     path = tmp_path / "buildings.ply"
-    write_ply(path, blocks.pts, blocks.cols, blocks.gap, blocks.normal, blocks.along, blocks.kind)
+    write_ply(path, blocks.pts, blocks.cols, blocks.gap, blocks.normal, blocks.kind)
     head = path.read_bytes()[:400]
-    assert b"property float nx" in head and b"property float ax" in head and b"property uchar kind" in head
+    assert b"property float nx" in head and b"property uchar kind" in head and b"property float ax" not in head
 
 
 def test_points_turn_into_da3s_as_they_come_up_to_them():

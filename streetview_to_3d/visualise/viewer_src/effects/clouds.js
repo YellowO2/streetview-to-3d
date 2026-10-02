@@ -1,12 +1,11 @@
 import * as THREE from 'three';
-import { tunable } from '@viewer/effects/tune-panel';
 import { SUN } from '@viewer/effects/water';
 
 // The clouds as points, as the rest of the world is, shaped as volumetric
 // clouds are -- by noise, not placed one by one:
 //
 // - where: a broad, slow pattern over the sky (WEATHER_M across), cut at a
-//   threshold (coverage): patches of every size, clustered here, clear
+//   threshold (COVERAGE): patches of every size, clustered here, clear
 //   there, ragged at their edges;
 // - how high: every cloud on one flat base (BASE_M), its top the higher the
 //   deeper into the pattern -- middles towering, edges thin (HIGH_M);
@@ -34,12 +33,13 @@ import { SUN } from '@viewer/effects/water';
 // not by depth: so close to the far plane depth cannot tell them apart, and
 // they would flicker. Shown only where the world is big enough to hold them
 // (the camera's far plane past FIELD_M).
-export const KNOBS = {
-  coverage: [0.45, 0, 1], // how much of the sky is cloud (its shapes worked out again)
-  size: [1, 0.5, 2], // a dab's size, of what it was made at
-  light: [0.7, 0, 1], // how far apart the lit and the shaded
-  soft: [0.7, 0, 1], // its edge: 0 sharp, 1 smeared into the sky
-  life: [2.5, 0, 4], // how fast its surface moves
+export const COVERAGE = 0.45; // how much of the sky is cloud
+// the look, as tuned
+const LOOK = {
+  size: 1, // a dab's size, of what it was made at
+  light: 0.7, // how far apart the lit and the shaded
+  soft: 0.7, // its edge: 0 sharp, 1 smeared into the sky
+  life: 2.5, // how fast its surface moves
 };
 const FIELD_M = 12000,
   FADE_M = [3000, 5600], // clear to, gone by
@@ -64,7 +64,6 @@ const LIT = [1.0, 0.98, 0.94],
   HORIZON = [0.78, 0.94, 1.0], // the paint sky's (environment.js), low
   ZENITH = [0.13, 0.55, 1.0]; // and high
 
-const knobs = tunable('Clouds', KNOBS);
 const f = (x) => x.toFixed(4);
 const v3 = (v) => `vec3(${v.map(f).join(', ')})`;
 const sun = new THREE.Vector3(...SUN).normalize().toArray();
@@ -124,7 +123,7 @@ export function inside(x, y, z, coverage) {
 
 // The dabs, a row of the field's grid at a time (each yield one more):
 // { position (east, up, south: on the field), facing (its way out, and how far inside) }
-export function* cloudRows(coverage = KNOBS.coverage[0]) {
+export function* cloudRows(coverage = COVERAGE) {
   const n = Math.round(FIELD_M / STEP_M),
     layers = Math.ceil((HIGH_M + BILLOW[1] - BAND_M[0]) / STEP_M) + 1;
   const position = [],
@@ -174,7 +173,7 @@ export function* cloudRows(coverage = KNOBS.coverage[0]) {
   return { position, facing };
 }
 // all of them at once
-export function cloudField(coverage) {
+export function cloudField(coverage = COVERAGE) {
   const rows = cloudRows(coverage);
   for (;;) {
     const { done, value } = rows.next();
@@ -183,7 +182,10 @@ export function cloudField(coverage) {
 }
 
 const vertexShader = `
-  uniform float ${Object.keys(KNOBS).join(', ')}, time, halfHeight;
+  ${Object.entries(LOOK)
+    .map(([k, v]) => `const float ${k} = ${f(v)};`)
+    .join('\n')}
+  uniform float time, halfHeight;
   uniform vec2 drift; // how far the wind has carried them (east, south), within FIELD_M
   attribute vec4 facing; // its way out of the cloud; how far inside it was made
   varying vec3 colour;
@@ -244,7 +246,7 @@ export function createClouds(parent) {
   const drift = { value: new THREE.Vector2() },
     halfHeight = { value: 1 };
   const material = new THREE.ShaderMaterial({
-    uniforms: { ...knobs, time: { value: 0 }, halfHeight, drift },
+    uniforms: { time: { value: 0 }, halfHeight, drift },
     vertexShader,
     fragmentShader,
     transparent: true, // soft, and drawn after the world, so what stands in front hides them
@@ -262,20 +264,18 @@ export function createClouds(parent) {
   };
   parent.add(clouds);
 
-  // the dabs, worked out when first shown and again when the coverage changes
-  let made = null,
-    asked = null,
-    askedAt = 0,
+  // the dabs, worked out when first shown
+  let made = false,
     count = 0,
     order,
     keys,
     next;
   let building = null; // the rows being worked out, a few milliseconds a frame
-  function make(coverage) {
-    building ??= { rows: cloudRows(coverage), coverage };
+  function make() {
+    building ??= cloudRows();
     const until = performance.now() + BUDGET_MS;
     let step;
-    do step = building.rows.next();
+    do step = building.next();
     while (!step.done && performance.now() < until);
     if (!step.done) return false;
     const field = step.value;
@@ -287,7 +287,7 @@ export function createClouds(parent) {
     keys = new Float32Array(count);
     next = new Uint32Array(count);
     geometry.setIndex(new THREE.BufferAttribute(order, 1));
-    made = coverage;
+    made = true;
     return true;
   }
 
@@ -323,13 +323,8 @@ export function createClouds(parent) {
     update(visible, time, camera) {
       clouds.visible = visible && !!camera && camera.far > FIELD_M;
       if (!clouds.visible) return;
-      // the coverage changed: its shapes worked out again once it has stood a moment
-      const coverage = material.uniforms.coverage.value;
-      if (coverage !== asked) [asked, askedAt] = [coverage, time];
-      if (building && building.coverage !== coverage) building = null; // changed again
-      if (made !== coverage && (made === null || time - askedAt > 0.3) && make(coverage))
-        sortedTime = -Infinity;
-      clouds.visible = made !== null; // none yet
+      if (!made && make()) sortedTime = -Infinity;
+      clouds.visible = made; // none yet
       if (!clouds.visible) return;
       material.uniforms.time.value = time;
       drift.value.set(wrap(WIND[0] * time), wrap(WIND[1] * time));

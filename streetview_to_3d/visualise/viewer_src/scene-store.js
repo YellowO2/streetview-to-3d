@@ -14,7 +14,7 @@ import {
 } from '@viewer/scene-format';
 import { waterSurfaces } from '@viewer/effects/water';
 import { landSurface } from '@viewer/effects/land';
-import { blocksStrokes, pointStrokes } from '@viewer/effects/blocks';
+import { blockPoints, buildingPoints } from '@viewer/effects/blocks';
 import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
@@ -48,7 +48,6 @@ export function dispose(group) {
 const loader = new PLYLoader();
 loader.setCustomPropertyNameMapping({
   gap: ['gap'],
-  along: ['ax', 'ay', 'az'],
   kind: ['kind'],
   near: ['near'],
 });
@@ -65,9 +64,9 @@ export function parseLand(buffer, gapOf) {
   land.userData.surroundings = LAND;
   return land;
 }
-// blocks.ply, the buildings DA3 never reaches, built of brush strokes (effects/blocks.js).
+// blocks.ply, the buildings DA3 never reaches, built of points (effects/blocks.js).
 export function parseBlocks(buffer) {
-  const blocks = blocksStrokes(parseSurface(buffer, flip, `${BLOCKS}.ply`));
+  const blocks = blockPoints(parseSurface(buffer, flip, `${BLOCKS}.ply`));
   blocks.userData.surroundings = BLOCKS;
   return blocks;
 }
@@ -95,9 +94,6 @@ export function parsePoints(buffer, transform) {
     if (!p?.count || !p.array.every(Number.isFinite)) throw Error('PLY has no valid points.');
     if (transform) geometry.applyMatrix4(new THREE.Matrix4().set(...transform.flat()));
     geometry.applyMatrix4(flip);
-    // a building's: its strokes' way (PLYLoader leaves it empty when the ply has none)
-    if (geometry.getAttribute('along')?.count)
-      geometry.getAttribute('along').transformDirection(flip);
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
     if (!Number.isFinite(geometry.boundingSphere.radius)) throw Error('Invalid point bounds.');
@@ -248,13 +244,12 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           return null;
         }
         const points = parsePoints(buffer);
-        // the buildings DA3 reaches built of brush strokes as the rest are, where
+        // the buildings DA3 reaches drawn as the rest are, where
         // their ply says which way each faces (an older one's: points)
-        const { along, normal } = points.geometry.attributes;
-        if (along?.count && normal?.count) {
-          const strokes = pointStrokes(points.geometry);
-          strokes.userData.surroundings = key;
-          group.add(strokes);
+        if (points.geometry.getAttribute('normal')?.count) {
+          const built = buildingPoints(points.geometry);
+          built.userData.surroundings = key;
+          group.add(built);
           continue;
         }
         const spacing = SPACING[key];

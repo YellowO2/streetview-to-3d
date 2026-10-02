@@ -95,11 +95,11 @@ export function createStyles(scene, camera, renderer) {
       box.isEmpty() ? center.set(0, 0, 0) : box.getCenter(center);
       entries = [];
       store.group?.traverse((object) => {
-        if (object.isPoints) {
-          entries.push({ uniforms: pointMotion(object), animated: false });
-        } else if (object.userData.pointStyle) {
-          // the buildings' strokes: those near DA3 drawn as its points are
+        if (object.userData.pointStyle) {
+          // the buildings' points: those near DA3 drawn as its points are
           entries.push({ uniforms: object.material.uniforms, animated: false });
+        } else if (object.isPoints) {
+          entries.push({ uniforms: pointMotion(object), animated: false });
         }
       });
       // Animated world objects share the point look, but retain their own motion.

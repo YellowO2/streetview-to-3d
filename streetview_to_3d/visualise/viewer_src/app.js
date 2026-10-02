@@ -143,8 +143,10 @@ function setPointSize() {
   // (0.2% of it drew NTU's 108 m at 22 cm, Stockholm's 33 m at 7 cm)
   const own = store.placement === 'world' ? PLACED_POINT_M : radius * 0.002;
   store.group?.traverse((o) => {
-    if (o.isPoints) o.material.size = Math.max(o.userData.pointSize ?? 0, own) * pointMultiplier;
-    else if (o.userData.pointStyle) o.material.uniforms.pointM.value = own * pointMultiplier; // strokes near DA3
+    if (o.userData.pointStyle)
+      o.material.uniforms.pointM.value = own * pointMultiplier; // buildings' points near DA3
+    else if (o.isPoints)
+      o.material.size = Math.max(o.userData.pointSize ?? 0, own) * pointMultiplier;
   });
 }
 function frameAll() {
