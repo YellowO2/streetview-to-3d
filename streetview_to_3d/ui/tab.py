@@ -143,11 +143,12 @@ def build_main_tab():
         # download inside one request -- the ZeroGPU proxy token expires
         # on wall-clock time.
         pathfind_prepare_btn = gr.Button("1. Prepare")
-        # How hard to try: the GPU window per spot. More time lets more
-        # capture dates patch what the best one left weak.
-        effort_input = gr.Radio(list(EFFORT_SECONDS_PER_SPOT), value=DEFAULT_EFFORT,
-                                label="Effort", container=False, min_width=220)
         pathfind_run_btn = gr.Button("2. Reconstruct")
+        # How hard to try: the GPU window per spot, beside the button it is
+        # for. More time lets more capture dates patch what the best one
+        # left weak.
+        effort_input = gr.Dropdown(list(EFFORT_SECONDS_PER_SPOT), value=DEFAULT_EFFORT, label="Effort",
+                                   show_label=False, container=False, scale=0, min_width=130)
 
     # A real parameter (services.da3_ops.CONF_LOWER_PERCENTILE), not a UI
     # decision -- kept as a component only so it is callable over the API
