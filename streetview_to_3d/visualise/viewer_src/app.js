@@ -2,7 +2,7 @@ import { panoramaStart, START_HEIGHT } from '@viewer/start-view';
 import * as THREE from 'three';
 import { ViewerState } from '@viewer/state';
 import { SceneStore, loadAsset, dispose } from '@viewer/scene-store';
-import { scenePieces } from '@viewer/scene-format';
+import { scenePieces, LAND } from '@viewer/scene-format';
 import { fileEntries, resolveEntries, droppedFiles } from '@viewer/files';
 import { createViewport } from '@viewer/viewport';
 import { createNavigation } from '@viewer/navigation';
@@ -17,7 +17,6 @@ const ui = createUI(
   {
     mode: setMode,
     style: (name, options) => view.styles.set(name, options),
-    reveal: () => view.styles.reveal(),
     demo: (name) => view.styles.demo(name),
     recenter,
     focus,
@@ -133,13 +132,21 @@ function configure() {
   camera.updateProjectionMatrix();
   // haze, as games have it: the far land and buildings fade into the sky's
   // colour, so their plainness never shows and distance reads
-  scene.fog = store.placement === 'world' ? new THREE.Fog(HAZE, HAZE_M[0], HAZE_M[1]) : null;
+  // ... gone by just inside the land's edge, however far it reaches (a smaller world's sooner)
+  let land = null;
+  store.group?.traverse((o) => {
+    if (o.userData.surroundings === LAND) land = o;
+  });
+  if (land && !land.geometry.boundingSphere) land.geometry.computeBoundingSphere();
+  const far = Math.min(HAZE_M[1], 0.9 * (land?.geometry.boundingSphere.radius ?? Infinity));
+  scene.fog =
+    store.placement === 'world' ? new THREE.Fog(HAZE, (HAZE_M[0] * far) / HAZE_M[1], far) : null;
   view.styles.configure(store, radius);
   setPointSize();
 }
 const PLACED_POINT_M = 0.1;
 const HAZE = 0xc9dbe6,
-  HAZE_M = [250, 900]; // clear to, gone by: the land's edge (terrain.RADIUS_M) never shows
+  HAZE_M = [250, 900]; // clear to, gone by (the land's edge at 1 km, terrain.RADIUS_M, never shows)
 function setPointSize() {
   // the scene's own points at one size; the map's (terrain, buildings) at
   // their spacing's, but never smaller than the scene's, so where they meet

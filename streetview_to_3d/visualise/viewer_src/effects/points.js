@@ -24,7 +24,6 @@ export function pointMotion(object) {
     styleRadius: { value: 1 },
     styleLook: { value: 1 },
     styleCenter: { value: new Vector3() },
-    styleReveal: { value: 1 },
   };
   // points with their own motion (userData.ownMotion: the water's) are left as they
   // are -- no floating, no swelling: the style's settings for them touch nothing
@@ -91,14 +90,13 @@ export function pointMotion(object) {
     shader.fragmentShader =
       `
       varying vec3 stylePosition;
-      uniform float styleTime, styleRadius, styleLook, styleScan, styleReveal, styleRound;
+      uniform float styleTime, styleRadius, styleLook, styleScan, styleRound;
     ` + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <clipping_planes_fragment>',
       `
       #include <clipping_planes_fragment>
       if (styleRound > .5 && length(gl_PointCoord - .5) > .5) discard;
-      if (styleReveal < .999 && length(stylePosition) > styleRadius * styleReveal * 1.5) discard;
     `,
     );
     shader.fragmentShader = shader.fragmentShader.replace(

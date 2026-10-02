@@ -18,7 +18,7 @@ test('style controls retain per-preset settings and expose only supported splat 
   ui.select('paint');
   assert.equal($('point-density').value, '100');
   assert.equal($('style-float').value, '0.3');
-  assert.ok(Math.abs(2 ** Number($('point-size').value) - 1.2) < 1e-9); // DA3's points a little bigger
+  assert.ok(Math.abs(2 ** Number($('point-size').value) - 1.4) < 1e-9); // DA3's points a little bigger
   $('point-density').value = '60';
   $('point-density').dispatchEvent(new dom.window.Event('input'));
   assert.equal(calls.at(-1)[1].density, 60);

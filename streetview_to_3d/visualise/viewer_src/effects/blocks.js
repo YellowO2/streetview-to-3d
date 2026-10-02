@@ -359,7 +359,6 @@ const pointStyle = () => ({
   styleRadius: { value: 1 },
   styleLook: { value: 1 },
   styleCenter: { value: new THREE.Vector3() },
-  styleReveal: { value: 1 },
 });
 
 // points ({ centre, facing, tint, dab, near?, grain? }) as the GPU's points: a few

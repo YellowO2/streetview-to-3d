@@ -26,13 +26,12 @@ export function createStyles(scene, camera, renderer) {
   const matrixBackground = new THREE.Color(0x15191d);
   // A placed scene is in metres, so the look (float, scan) is one
   // fixed size, the small Stockholm scene's radius, whatever
-  // the scene's extent; the reveal still sweeps the scene's own radius.
+  // the scene's extent.
   const LOOK_M = 33;
   let asset = null,
     radius = 1,
     look = 1,
     time = 0,
-    revealStart = null,
     entries = [];
   const center = new THREE.Vector3();
   function initialize() {
@@ -80,10 +79,6 @@ export function createStyles(scene, camera, renderer) {
       uniforms.styleFloat.value =
         style !== 'original' && !animated && !editing && settings.floating ? settings.amount : 0;
       uniforms.styleScan.value = style !== 'original' && !editing && settings.scan ? 1 : 0;
-      uniforms.styleReveal.value =
-        animated || editing || revealStart === null || style === 'original'
-          ? 1
-          : Math.min(1, (time - revealStart) / 4);
     }
   }
   return {
@@ -125,11 +120,7 @@ export function createStyles(scene, camera, renderer) {
           materials.add(uniforms);
         }
       });
-      revealStart = null;
       updateMotion(false);
-    },
-    reveal() {
-      if (entries.length) revealStart = time;
     },
     // a demo (demo.js) round the scene's foot
     demo(name) {

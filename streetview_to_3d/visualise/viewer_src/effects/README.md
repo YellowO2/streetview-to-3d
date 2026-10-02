@@ -23,13 +23,13 @@ Clouds are points too: no raymarching, texture downloads or extra dependencies.
 Postprocessing uses two half-float render targets plus depth textures at the
 viewer's existing pixel ratio cap. Original avoids the extra passes. Editor
 handles/highlights are drawn after processing, preserving axis colours.
-Point motion and reveal stop while editing; point positions and saved transforms
+Point motion stops while editing; point positions and saved transforms
 are never changed by an effect.
 
 Spark 0.1.10 splats work through the same colour pipeline. Their transparent
 rendering does not provide reliable surface depth, so the point-depth mask
-is disabled for splats. Point floating,
-scan and reveal controls are hidden for splats. A future Spark-specific modifier
+is disabled for splats. Point floating
+and scan controls are hidden for splats. A future Spark-specific modifier
 can add these without changing the point adapter.
 
 Validation: existing scene/edit/history/load tests; added preset persistence,

@@ -69,9 +69,14 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
     onRelease();
     onError('Mouse capture was blocked. Fly works in a regular browser that allows pointer lock.');
   });
+  // a shot on letting go, the bigger the longer held (gun.js)
   document.addEventListener('mousedown', (e) => {
     if (!flying || !shooting || !captured() || e.button !== 0) return;
-    gun.fire(camera.position, forward.set(0, 0, -1).applyQuaternion(camera.quaternion));
+    gun.press();
+  });
+  document.addEventListener('mouseup', (e) => {
+    if (!flying || !shooting || e.button !== 0) return;
+    gun.release(camera.position, forward.set(0, 0, -1).applyQuaternion(camera.quaternion));
   });
   addEventListener('keyup', (e) => keys.delete(e.code));
   addEventListener('keydown', (e) => {
@@ -186,6 +191,7 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
     tick(dt) {
       gun.update(Math.min(Math.max(dt, 0), 0.05));
       if (!flying) {
+        gun.hold(camera, false);
         if (orbit.enabled) orbit.update();
         return;
       }
@@ -215,6 +221,7 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
         camera.position.lerp(cameraTarget, 1 - Math.exp(-12 * dt));
       }
       camera.quaternion.copy(smoothHeading);
+      gun.hold(camera, shooting); // in the eye's hand, as it now is
     },
   };
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
 import { shot, placeShots, clearShots, carve, CELL_M, SIZE } from '@viewer/effects/shot';
-import { createGun, RADIUS, SPEED } from '@viewer/gun';
+import { createGun, RADIUS, SPEED, AIM_M, BIG, CHARGE_S } from '@viewer/gun';
 import { pointMotion } from '@viewer/effects/points';
 import { blockPoints } from '@viewer/effects/blocks';
 import { landPoints } from '@viewer/effects/land';
@@ -66,10 +66,54 @@ test('the gun shoots a ball ahead, which cuts its way through and is gone', () =
   const [first] = gun.shots;
   assert(first.ball.visible && first.ball.userData.styleAnimated);
   for (let t = 0; t < 0.5; t += 0.02) gun.update(0.02);
+  assert.equal(first.radius, RADIUS);
   assert(Math.abs(first.ball.position.z + 1.6 + SPEED * 0.5) < SPEED * 0.03);
   assert.equal(cell(new THREE.Vector3(0, 2 + RADIUS / 2, -8)), 255);
   for (let t = 0; t < 5; t += 0.05) gun.update(0.05);
   assert(!first.ball.visible);
+  gun.dispose();
+  clearShots();
+});
+
+test('held, the gun is at the lower right of the eye and shoots from its muzzle toward where the eye looks', () => {
+  const scene = new THREE.Scene();
+  placeShots(new THREE.Vector3());
+  const gun = createGun(scene);
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.set(0, 2, 0); // looking along -z
+  gun.hold(camera, true);
+  assert(gun.held.visible && gun.held.userData.styleAnimated);
+  assert(gun.held.position.x > 0 && gun.held.position.y < 2 && gun.held.position.z < 0);
+  assert(gun.fire(camera.position, new THREE.Vector3(0, 0, -1)));
+  const [shot] = gun.shots;
+  assert(shot.ball.position.distanceTo(camera.position) < 1); // at the muzzle, not 1.6 m ahead
+  const aim = camera.position.clone().add(new THREE.Vector3(0, 0, -AIM_M));
+  const toward = aim.sub(shot.ball.position).normalize();
+  assert(shot.way.dot(toward) > 0.9999); // at where the eye looks
+  gun.hold(camera, false);
+  assert(!gun.held.visible);
+  gun.dispose();
+  clearShots();
+});
+
+test('a click shoots as ever; held longer, the shot goes bigger, its hole as big', () => {
+  const scene = new THREE.Scene();
+  placeShots(new THREE.Vector3());
+  const gun = createGun(scene);
+  const eye = new THREE.Vector3(0, 2, 0),
+    way = new THREE.Vector3(0, 0, -1);
+  gun.press();
+  assert(gun.release(eye, way)); // a click
+  const [click, big] = gun.shots;
+  assert.equal(click.radius, RADIUS);
+  for (let t = 0; t < 0.3; t += 0.05) gun.update(0.05);
+  gun.press();
+  for (let t = 0; t < CHARGE_S + 1; t += 0.05) gun.update(0.05); // held past CHARGE_S
+  assert(gun.release(eye, way));
+  assert.equal(big.radius, BIG);
+  assert.equal(big.ball.scale.x, BIG / RADIUS);
+  for (let t = 0; t < 0.5; t += 0.02) gun.update(0.02);
+  assert.equal(cell(new THREE.Vector3(BIG * 0.8, 2, -10)), 255); // cut as wide as it
   gun.dispose();
   clearShots();
 });
