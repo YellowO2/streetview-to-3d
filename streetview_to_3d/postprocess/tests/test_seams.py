@@ -25,3 +25,23 @@ def test_points_turn_into_da3s_as_they_come_up_to_them():
                         np.full((len(wall), 3), .5))[2].all()
     # a mesh's corners (no gap): coloured and how near, none left out
     assert seams.toward(mine, np.full((len(mine), 3), .5), None, cKDTree(wall), np.full((len(wall), 3), .5))[2].all()
+
+
+def test_the_satellite_as_the_panos_see_it_a_grey_stays_grey():
+    rng = np.random.default_rng(0)
+    # the scene's ground: panos see grass, vivid; the satellite the same grass, paler and lighter
+    n = 30
+    grass = np.clip([.3, .45, .15] + rng.normal(0, .03, (n, n, 3)), 0, 1)
+    ground = seams.SceneGround(np.zeros(2, int), np.zeros((n, n)), grass)
+    pale = lambda xy: np.clip(grass.reshape(-1, 3)[:len(xy)] * .6 + .3, 0, 1)
+    fix = seams.unhazed(ground, pale)
+    L = lambda c: seams.lab(np.atleast_2d(c))[0]
+    grey = fix(np.array([[.5, .5, .5]]))[0]
+    assert abs(L(grey)[1]) < 1 and abs(L(grey)[2]) < 1                       # a grey stays grey
+    sat = np.array([[.55, .6, .5], [.8, .1, .1]])
+    out = fix(sat)
+    assert (seams.lab(out)[:, 0] >= seams.lab(sat)[:, 0] - .5).all()          # never darker
+    chroma = lambda c: np.hypot(*seams.lab(c)[:, 1:].T)
+    gain = chroma(out) / chroma(sat)
+    assert gain[0] > 1.3 and gain[1] < 1.1                                    # the pale the most, the vivid hardly
+    assert np.allclose(seams.unhazed(seams.SceneGround.none(), pale)(sat), sat)   # nothing to learn from: as they are
