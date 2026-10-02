@@ -145,3 +145,16 @@ test("the land's dabs turn into DA3's points as its corners do: their nearness c
   for (let i = 0; i < p.count; i++)
     assert.ok(Math.abs(near.getX(i) - Math.round((1 - p.getX(i) / 100) * 255) / 255) < 0.01);
 });
+
+test("the land spaced as land.ply has it, where it has a gap: closing to DA3's as it turns into them", () => {
+  const across = (gap) => {
+    const geometry = field();
+    geometry.setAttribute('gap', new THREE.Float32BufferAttribute([gap, gap, gap, gap], 1));
+    return landPoints(geometry, () => 1)
+      .geometry.getAttribute('dab')
+      .getX(0);
+  };
+  const as = (gap) => Math.fround(GAPS[level(gap)] * covering(0.1)); // land.js SPACE 1, JITTER
+  assert.equal(across(0.1), as(0.1)); // on DA3's: as close as its points, under MIN_GAP
+  assert.equal(across(2), as(2));
+});

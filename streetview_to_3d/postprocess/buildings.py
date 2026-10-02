@@ -120,7 +120,6 @@ CUT_REACH_M = 20.0            # ... looked at this far out: the map's bumps are 
 BESIDE_M = 1.5                # DA3's ground beside a corner: this near it
 ON_GROUND_M = 0.05            # a wall's points from this far under the ground where it stands, never lower
 CHUNK_M = 4.0                 # a wall is spaced in pieces this long, each as at its middle
-ROOF_MIN_STEP_M = 0.5         # roofs are seen from above only
 COVER = 0.75                  # an OSM point DA3 has a point within this much of its gap of is DA3's
 SEAM_FADE_M = 3.0             # the seam's width
 SEAM_TINT, SEAM_MIN = 0.8, 20
@@ -696,7 +695,7 @@ def points(outlines, spacing, ground, colour):
         roof = form.roof
         eaves = max(base, top - roof.height)
         # roof, spaced as at its middle; an underside if it starts in the air
-        s = float(max(spacing(xy.mean(0)[None])[0], ROOF_MIN_STEP_M))
+        s = float(spacing(xy.mean(0)[None])[0])
         rp, rn = roof.surface(s)
         rp[:, 2] += eaves
         if form.base_m > 0:

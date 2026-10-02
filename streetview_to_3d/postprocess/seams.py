@@ -34,7 +34,7 @@ from scipy.ndimage import distance_transform_edt
 FILENAME = "ground.npz"   # beside scene.json: the fill's ground, as SceneGround keeps it
 CELL_M = 0.5              # the fill's own squares (fill.one_ground.CELL_M)
 PAD_M = 50.0              # the grid this far past the ground: the widest band asking of it (terrain.ROAD_MEET_M)
-BLEND_M = 1.0             # the map's points this near DA3's turn into them: their colour, their look (toward)
+BLEND_M = 3.0             # the map's points this near DA3's turn into them: their colour, their look (toward)
 LOCAL_K = 6               # DA3's spacing somewhere: how far its LOCAL_K-th nearest point is
 
 

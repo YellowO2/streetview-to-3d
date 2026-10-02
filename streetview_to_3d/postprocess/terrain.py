@@ -107,9 +107,7 @@ BRIDGE_CLEAR_M = {"road": 4.5, "water": 2.5}     # a bridge's deck at least this
 ROAD_MEET_M, ROAD_MEET_MAX_M = 40.0, 10.0  # roads, bridges: the scene's road's height where they touch it, their
                                            # own this far out (unless 10 m apart: not the same road)
 UNDER_M = 0.1                             # the land under the scene's ground: this far beneath it
-LAND_GAP_M = 0.3                          # the land's points no closer than this (the viewer's land.MIN_GAP) ...
-EDGE_RATE = 0.06                           # ... but past the scene's ground: as DA3's at its edge, this much
-                                           # further apart a metre out, till they are as the rest
+LAND_GAP_M = 0.3                          # the land's points no closer than this (the viewer's land.MIN_GAP)
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
 GAP0_M, GAP_PER = 0.05, 0.018              # the land's corners: LAND_EVERY x gap_at apart
 POINT_M = 0.10                             # roads' and buildings' points: as DA3's are drawn at the scene's edge,
@@ -626,10 +624,10 @@ def build(scene_dir, log=print):
     cols, _, keep = seams.toward(pts, cols, gap(pts[:, [0, 2]]), scene_tree, scene_cols, SCENE_EVERY)
     pts, cols = pts[keep], cols[keep]
     # its points spaced as the world's are from the cameras, no closer than LAND_GAP_M -- but
-    # past the scene's ground growing out of DA3's from its edge, as close as its at it
+    # past the scene's ground, as they turn into DA3's, as close as DA3's (POINT_M) by how near
     land_gap = np.maximum(LAND_GAP_M, world_gap(cam_tree.query(en, workers=-1)[0]))
     out = dist > 0
-    land_gap[out] = np.minimum(land_gap[out], POINT_M + EDGE_RATE * edge_tree.query(en[out], workers=-1)[0])
+    land_gap[out] += (POINT_M - land_gap[out]) * land_near[out]
     write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces, gap=land_gap, near=land_near)
     sc.roads = None
     # tunnels: a mouth where each leaves the ground's roads, at their height
