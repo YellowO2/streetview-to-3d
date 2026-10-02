@@ -401,6 +401,7 @@ def build(scene_dir, log=print):
 
     # the scene always wins: the map only around it, faded in at its edge
     scene, scene_cols = scene_points(sc, scene_dir)
+    scene_tree = cKDTree(scene) if len(scene) else None
     scene_ground = seams.SceneGround.load(scene_dir)          # its ground, as the fill found it
     near = scene_ground.at
     cam_tree = cKDTree(cam_xz)
@@ -520,7 +521,7 @@ def build(scene_dir, log=print):
     panos = None
     n_buildings = n_seen = n_roads = 0
     bp = bc = b_normal = np.zeros((0, 3))
-    b_kind, scene_tree = np.zeros(0, int), None
+    b_kind = np.zeros(0, int)
     b_roof = b_alone = np.zeros(0, bool)
     solid, solid_base = [], np.zeros((0, 3))
     n_cut = n_sat = 0
@@ -547,7 +548,6 @@ def build(scene_dir, log=print):
         may = np.flatnonzero(buildings.reachable(outlines, scene))      # the rest are solid: no points
         blocks = buildings.points([outlines[i] for i in may], gap, surface, base[may])
         blocks.which = may[blocks.which]
-        scene_tree = cKDTree(scene) if len(scene) else None
         reached = buildings.reached(blocks, scene_tree, len(outlines))
         if panos[0]:
             # a building the panos see enough of: their colour, softened as the palette's is (in
@@ -607,7 +607,11 @@ def build(scene_dir, log=print):
         n_painted = n + k + m
     except (OSError, ValueError) as e:    # the maps' colours stand
         log(f"terrain: no pano paint ({e!r})")
-    write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces)
+    # everything where it stands: what comes up to DA3's points turns into them (seams.toward)
+    land_cols, land_near, _ = seams.toward(land, land_cols, None, scene_tree, scene_cols, SCENE_EVERY)
+    cols, _, keep = seams.toward(pts, cols, gap(pts[:, [0, 2]]), scene_tree, scene_cols, SCENE_EVERY)
+    pts, cols = pts[keep], cols[keep]
+    write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces, near=land_near)
     sc.roads = None
     # tunnels: a mouth where each leaves the ground's roads, at their height
     mouths = roads.portals(elements, to_xy, road_h)
@@ -624,9 +628,7 @@ def build(scene_dir, log=print):
     sc.water = water.save(scene_dir, wet) if surfaces else None
     sc.buildings = None
     if len(bp):
-        # turning into DA3's points as they come up to them: their colour, as few as DA3's
-        # (and the viewer their look)
-        bc, b_near, keep = buildings.toward(bp, bc, b_gap, scene_tree, scene_cols, SCENE_EVERY)
+        bc, b_near, keep = seams.toward(bp, bc, b_gap, scene_tree, scene_cols, SCENE_EVERY)
         bp, bc, b_gap, b_normal, b_kind, b_near = (a[keep] for a in (bp, bc, b_gap, b_normal, b_kind, b_near))
         write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc, b_gap, b_normal, b_kind, b_near)
         sc.buildings = BUILDINGS_FILENAME

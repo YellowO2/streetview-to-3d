@@ -24,7 +24,7 @@ def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None):
     the viewer draws it that big (scene-store.js, terrainBands). A building's
     also which way each faces (normal (n, 3)), what it is (kind (n,):
     buildings.Blocks) and how near DA3's points it is (near (n,):
-    buildings.toward)."""
+    seams.toward)."""
     n = len(pts)
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")]
     fields += [("gap", "<f4")] if gap is not None else []
@@ -53,13 +53,13 @@ def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None):
         f.write(verts.tobytes())
 
 
-def write_mesh(path, pts, cols, faces, facade=None, gap=None):
+def write_mesh(path, pts, cols, faces, facade=None, gap=None, near=None):
     """A triangle mesh: pts (n, 3), cols (n, 3) 0-1, faces (m, 3) indices
     into them, facade (n, 2) each vertex's place on its wall, metres along
     and up, or (n, 4) with bay/floor sizes, or (n, 7) with its windows' colour too
     (buildings.solid), or None (land); gap (n,) how
     far apart the viewer spaces the points it draws the surface as, there,
-    or None."""
+    or None; near (n,) how near DA3's points each is (seams.toward), or None."""
     n, m = len(pts), len(faces)
     layout = facade is not None and facade.shape[1] >= 4
     glass = facade is not None and facade.shape[1] >= 7
@@ -71,7 +71,8 @@ def write_mesh(path, pts, cols, faces, facade=None, gap=None):
         + ("property float facade_u\nproperty float facade_v\n" if facade is not None else "")
         + ("property float facade_bay\nproperty float facade_floor\n" if layout else "")
         + ("property float glass_r\nproperty float glass_g\nproperty float glass_b\n" if glass else "")
-        + ("property float gap\n" if gap is not None else "") +
+        + ("property float gap\n" if gap is not None else "")
+        + ("property float near\n" if near is not None else "") +
         f"element face {m}\n"
         "property list uchar int vertex_indices\n"
         "end_header\n"
@@ -81,6 +82,7 @@ def write_mesh(path, pts, cols, faces, facade=None, gap=None):
     fields += [("facade_bay", "<f4"), ("facade_floor", "<f4")] if layout else []
     fields += [("glass_r", "<f4"), ("glass_g", "<f4"), ("glass_b", "<f4")] if glass else []
     fields += [("gap", "<f4")] if gap is not None else []
+    fields += [("near", "<f4")] if near is not None else []
     verts = np.zeros(n, dtype=np.dtype(fields))
     verts["x"], verts["y"], verts["z"] = pts[:, 0], pts[:, 1], pts[:, 2]
     rgb = (np.clip(cols, 0, 1) * 255).astype("u1")
@@ -93,6 +95,8 @@ def write_mesh(path, pts, cols, faces, facade=None, gap=None):
         verts["glass_r"], verts["glass_g"], verts["glass_b"] = facade[:, 4], facade[:, 5], facade[:, 6]
     if gap is not None:
         verts["gap"] = gap
+    if near is not None:
+        verts["near"] = near
     tris = np.zeros(m, dtype=np.dtype([("n", "u1"), ("i", "<i4", 3)]))
     tris["n"], tris["i"] = 3, faces
     with open(path, "wb") as f:
