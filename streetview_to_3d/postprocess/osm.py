@@ -14,9 +14,11 @@ joins them into areas.
 The Overpass API needs no key (credit "© OpenStreetMap contributors") but
 is a free public service and is often too busy (a 504 on NTU, every
 mirror for an evening): each mirror in OVERPASS_URLS (the wiki's public
-instances) is tried in turn, each given TIMEOUT_S -- the land stands
-without them rather than wait -- the request saying who asks (USER_AGENT,
-as they ask too). The answer is
+instances) is tried in turn, each given TIMEOUT_S, all of them ROUNDS
+times BUSY_WAIT_S apart -- a server is busy for a minute or two (Lake
+Como: one hung, one refused, one hung; all answered in 2 s minutes later)
+-- the land standing without them past that; the request saying who asks
+(USER_AGENT, as they ask too). The answer is
 kept beside the scene (CACHE) with the request it answers -- asking
 something new (water, building parts) asks again, once.
 
@@ -34,8 +36,8 @@ import urllib.request
 OVERPASS_URLS = ("https://overpass-api.de/api/interpreter",
                  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
                  "https://overpass.private.coffee/api/interpreter")
-TIMEOUT_S = 60          # a busy server took 72 s for a city centre's every house (Lund, 4 MB)
-BUSY_WAIT_S, ROUNDS = 30.0, 1
+TIMEOUT_S = 20          # the request answered in ~2 s; past this a server is stuck
+BUSY_WAIT_S, ROUNDS = 10.0, 3
 FULL_M = 300.0          # everything this near
 FAR_BUILDING_M = 80.0   # past it, buildings this far round (~20 m across) and more
 FAR_ROADS = "^(motorway|trunk|primary|secondary|tertiary)(_link)?$"   # past it, roads of these

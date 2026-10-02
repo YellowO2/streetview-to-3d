@@ -23,7 +23,6 @@ def _server(monkeypatch, answers):
 
 
 def test_every_mirror_busy_waits_once_then_asks_them_again(monkeypatch):
-    monkeypatch.setattr(osm, "ROUNDS", 2)
     n = len(osm.OVERPASS_URLS)
     asked = _server(monkeypatch, [504] * n + [429, {"elements": [1]}])
     waits = []
