@@ -190,3 +190,58 @@ def test_points_turn_into_da3s_as_they_come_up_to_them():
     off = np.c_[mine[:, :2], np.full(len(mine), 1.5)]
     assert buildings.toward(off, np.full((len(off), 3), .5), np.full(len(off), .1), cKDTree(wall),
                             np.full((len(wall), 3), .5))[2].all()
+
+
+def test_a_wall_da3_has_is_left_to_it_and_met_beside_it():
+    # a house whose south wall (z = 0, facing -z) DA3 has, over its west half
+    house = _box(0, 0)
+    planes = {0: (np.array([0.0, 0.0, -1.0]), 0.0)}
+    blocks = buildings.points([(*house, planes)], lambda xy: np.full(len(xy), .5), lambda xy: np.zeros(len(xy)),
+                              np.full((1, 3), .8))
+    gx, gy = np.meshgrid(np.arange(0, 5, .05), np.arange(0, 9, .05))
+    da3 = np.c_[gx.ravel(), -gy.ravel(), np.full(gx.size, 0.0)]           # its points on that wall
+    normals = np.tile([0.0, 0.0, -1.0], (len(da3), 1))
+    cols = np.tile([1.0, 0.0, 0.0], (len(da3), 1))
+    south = blocks.edge == 0
+    before = south.sum()
+    cut = buildings.seam(blocks, da3, normals, cols, np.full(len(blocks.pts), np.inf))
+    assert cut > 0 and (blocks.edge == 0).sum() == before - cut                # DA3's half left to it
+    assert (blocks.pts[blocks.edge == 0, 0] > 4.5).all()                       # the rest, east of it
+
+
+def test_the_land_round_a_building_made_da3s_ground_before_it_is_stood_on():
+    # a house on map land 0.5 m below DA3's ground, which lies along its south side only
+    house = _box(0, 0)
+    gx, gz = np.meshgrid(np.arange(-5, 16, 1.0), np.arange(-5, 16, 1.0))
+    grid = np.c_[gx.ravel(), gz.ravel()]
+    walls, owner = buildings.corners([house], lambda xy: np.full(len(xy), 1.0))
+    xy = np.concatenate([grid, walls])
+    own = np.r_[np.full(len(grid), -1), owner]
+    h = np.full(len(xy), 0.0)
+    ex, ez = np.meshgrid(np.arange(-2, 12, .2), np.arange(-3, 1, .2))
+    da3 = np.c_[ex.ravel(), np.full(ex.size, -0.5), ez.ravel()]           # its ground: 0.5 m up (y down)
+    under = np.zeros(len(xy), bool)
+    out = buildings.onto_scene([house], xy, h, own, da3, under)
+    out = buildings.settle([house], xy, out, own)
+    assert np.isclose(house[3].foot_m, 0.5)                                # stood on DA3's ground, not the map's
+    assert (out[own == 0] >= 0.5 - 1e-9).all()
+    far = np.linalg.norm(grid - [5, 5], axis=1) > 14
+    assert np.allclose(out[:len(grid)][far], 0.0)                          # the land its own further off
+    kept = under.copy(); kept[:len(grid)] = True                           # where DA3's ground is: never raised
+    assert np.allclose(buildings.onto_scene([house], xy, h, own, da3, kept)[:len(grid)], 0.0)
+
+
+def test_walls_from_the_ground_up_never_under_it():
+    # a house on ground rising 0.2 m a metre east, stood on its lowest corner
+    house = _box(0, 0)
+    ground = lambda xy: 0.2 * xy[:, 0]
+    house[3].foot_m = 0.0
+    blocks = buildings.points([(*house, {})], lambda xy: np.full(len(xy), .3), ground, np.full((1, 3), .8))
+    wall = blocks.edge != buildings.ROOF
+    under = -blocks.pts[wall, 1] < ground(blocks.pts[wall][:, [0, 2]]) - buildings.ON_GROUND_M - 1e-9
+    assert not under.any()                                                # nothing under the ground
+    east = wall & (blocks.pts[:, 0] > 9.9)
+    assert (-blocks.pts[east, 1]).min() < 2.0 + 0.31                      # its high side starts at the ground there
+    v, _, f, facade = buildings.solid([house], ground, np.full((1, 3), .8))
+    walls = facade[:, 1] > buildings.NO_FACADE
+    assert (-v[walls, 1] >= ground(v[walls][:, [0, 2]]) - 1e-6).all()     # the far one's walls too

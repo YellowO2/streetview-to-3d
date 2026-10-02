@@ -143,16 +143,10 @@ def facade_quads(xy, height, form, foot, colour, planes=None):
     normals = np.c_[tangents[:, 1], -tangents[:, 0]]
 
     def emit(quad, rgb):
+        # its colour as it is: the viewer lights it by which way it faces
         q = np.asarray(quad, float).copy()
         q[:, 2] += foot + form.base_m
-        # Surfaces facing down/inwards are darker, giving depth without mesh lighting.
-        normal = np.cross(q[1] - q[0], q[3] - q[0])
-        norm = float(np.linalg.norm(normal))
-        if norm < 1e-9:
-            return
-        normal /= norm
-        shade = .76 + .24 * abs(float(normal @ np.array([-.5, .5, .7]) / np.linalg.norm([-.5, .5, .7])))
-        rows.append((q[:, [0, 2, 1]] * [1, -1, 1], np.clip(np.asarray(rgb) * shade, 0, 1)))
+        rows.append((q[:, [0, 2, 1]] * [1, -1, 1], np.clip(np.asarray(rgb), 0, 1)))
 
     for mesh in spec.meshes:
         if mesh.role not in allowed:
@@ -183,7 +177,7 @@ def facade_quads(xy, height, form, foot, colour, planes=None):
                 back[:, :2] -= normals[side] * max(profile.frame_depth, .2)
                 for k in range(4):
                     j = (k + 1) % 4
-                    emit(np.array([quad[k], quad[j], back[j], back[k]]), rgb * .85)
+                    emit(np.array([quad[k], quad[j], back[j], back[k]]), rgb)
 
     for side, (start, tangent, normal, length) in enumerate(zip(a, tangents, normals, lengths)):
         if side in skipped or length < 2.5:

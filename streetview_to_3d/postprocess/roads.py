@@ -325,12 +325,13 @@ class Network:
         total = gaussian_filter(total.reshape(shape), sigma)
         count = gaussian_filter(count.reshape(shape), sigma)
         field = np.where(count > 1e-3, total / np.maximum(count, 1e-9), np.nan)
+        value, known = np.nan_to_num(field), np.isfinite(field).astype(float)    # once, not every call
 
         def f(xy):
             if not len(xy):
                 return np.zeros(0)
-            v = map_coordinates(np.nan_to_num(field), ((xy - lo) / c).T, order=1, mode="nearest")
-            w = map_coordinates(np.isfinite(field).astype(float), ((xy - lo) / c).T, order=1, mode="nearest")
+            v = map_coordinates(value, ((xy - lo) / c).T, order=1, mode="nearest")
+            w = map_coordinates(known, ((xy - lo) / c).T, order=1, mode="nearest")
             return np.where(w > 0.5, v, ground(xy))
         return f
 
@@ -343,7 +344,7 @@ class Network:
         edge = self.edges(1.0)
         if not len(edge):
             return h
-        d = cKDTree(edge).query(xy, distance_upper_bound=SHOULDER_M)[0]
+        d = cKDTree(edge).query(xy, distance_upper_bound=SHOULDER_M, workers=-1)[0]
         d[shapely.contains_xy(self.all, *xy.T)] = 0.0
         near = np.flatnonzero(d < SHOULDER_M)
         if not len(near):
@@ -548,7 +549,7 @@ def under_decks(decks_, xy, h):
     centre = np.concatenate([d.xy for d in decks_])
     height = np.concatenate([d.h for d in decks_])
     half = np.concatenate([np.full(len(d.xy), d.width / 2) for d in decks_])
-    dist, k = cKDTree(centre).query(xy, distance_upper_bound=float(half.max()) + SHOULDER_M)
+    dist, k = cKDTree(centre).query(xy, distance_upper_bound=float(half.max()) + SHOULDER_M, workers=-1)
     near = np.flatnonzero(np.isfinite(dist))
     near = near[dist[near] < half[k[near]] + SHOULDER_M]
     if not len(near):
@@ -665,9 +666,9 @@ def _curb_faces(net, ground, where):
         if part.geom_type not in ("LineString", "LinearRing"):
             continue
         xy = shapely.get_coordinates(part)
-        for a, b in zip(xy[:-1], xy[1:]):
-            en = np.array([a, b])
-            bottom = ground(en) + LIFT_M
+        foot = ground(xy) + LIFT_M                                   # the whole line's at once
+        for k in range(len(xy) - 1):
+            en, bottom = xy[k:k + 2], foot[k:k + 2]
             yield np.r_[np.c_[en[:, 0], -bottom, en[:, 1]],
                         np.c_[en[::-1, 0], -(bottom[::-1] + KERB_M), en[::-1, 1]]]
 

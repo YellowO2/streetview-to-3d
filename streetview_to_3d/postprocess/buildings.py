@@ -19,14 +19,17 @@ Footprints from osm.py, each raised into a block of points:
     made DA3's (fit_to_scene); what DA3 already has of it is left to DA3 and the rest
     faded in next to it, judged on the wall itself (seam)
   - standing where the land meets it, the land fitted to it as a game's
-    terrain is (settle): its foot the lowest land along its outline, the
-    land cut down to that round it -- level within PAD_M, then rising at
-    most CUT_SLOPE -- so no wall is ever buried (the map's own ground, a
-    30 m blur with the buildings in it, buried a third of them by over a
-    metre); else, past the land, the lowest ground under its outline
-  - walls and a flat roof, spaced by how near the scene's cameras they
-    are, as the land is (terrain.gap_at), and the walls again further in,
-    sparser (INNER_M), so it is not seen through
+    terrain is: first, beside DA3's ground, the land round it made DA3's
+    ground (onto_scene), then its foot the lowest land along its outline,
+    the land cut down to that round it -- level within PAD_M, then rising
+    at most CUT_SLOPE (settle) -- so no wall is ever buried (the map's own
+    ground, a 30 m blur with the buildings in it, buried a third of them
+    by over a metre); else, past the land, the lowest ground under its
+    outline
+  - walls from the ground up, each column from the ground where it
+    stands, nothing under it, and a roof, spaced by how near the scene's
+    cameras they are, as the land is (terrain.gap_at), and the walls
+    again further in, sparser (INNER_M), so it is not seen through
   - one colour per building: what the scene's panos see of it where they
     see enough (pano_colours), else its own "building:colour" tag (or
     building:material's, MATERIAL), else one
@@ -52,7 +55,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .geometry import sample_quad
+from .geometry import sample_quads
 from scipy.spatial import cKDTree
 
 from streetview_to_3d.postprocess.roofs import Roof
@@ -64,6 +67,8 @@ DEFAULT_OTHER_M = 12.0
 SEE_M = 150.0                 # panos colour the buildings this close to them
 BEHIND_M, BEHIND = 3.0, 0.05  # how far behind what is in front a wall may stand and still be seen
 SEEN_MIN = 20                 # pixels of a building the panos must see to colour it
+SAMPLE = 16                   # a building's colour, or whether DA3 reaches it, from every SAMPLE-th of its points
+SAMPLE_HIDING = 4             # what hides a building from a pano: every SAMPLE_HIDING-th of DA3's points
 REACH_M = 3.0                 # only buildings DA3 has points this near are coloured by the panos
 BLEND_M = 1.0                 # a building's points this near DA3's turn into them: their colour, their look
 LOCAL_K = 6                   # DA3's spacing somewhere: how far its LOCAL_K-th nearest point is
@@ -114,6 +119,9 @@ NO_FACADE = -1e4              # a roof's place on a wall: none (a skirt's is bel
 MIN_HEIGHT_M = 2.5
 PAD_M, CUT_SLOPE = 1.0, 0.5   # the land level with a building's foot this far round it, then rising at most this
 CUT_REACH_M = 20.0            # ... looked at this far out: the map's bumps are a few metres
+BESIDE_M, BESIDE_MIN = 1.5, 10   # DA3's ground beside a corner: its points this near it, this many at least
+RAISE_MAX_M = 3.0             # the land raised to DA3's ground by at most this: more is a canopy, not ground
+ON_GROUND_M = 0.05            # a wall's points from this far under the ground where it stands, never lower
 CHUNK_M = 4.0                 # a wall is spaced in pieces this long, each as at its middle
 ROOF_MIN_STEP_M = 0.5         # roofs are seen from above only
 COVER = 0.75                  # an OSM point DA3 has a point within this much of its gap of is DA3's
@@ -196,6 +204,48 @@ def corners(outlines, spacing):
         pts.append(p)
         owner.append(np.full(len(p), i))
     return np.concatenate(pts), np.concatenate(owner)
+
+
+def onto_scene(outlines, xy, h, owner, scene, under):
+    """The land made DA3's ground round each building DA3 has ground
+    beside (at two of its corners at least), before the buildings are
+    stood on it (settle): each corner where DA3 has ground its ground
+    there -- its typical ground, the lowest tenth of its points within
+    BESIDE_M, not the land kept just under DA3's lowest ones -- and the
+    building's other corners and the land round it raised to DA3's level
+    beside it (the median of those), level within PAD_M and easing back
+    down to the land's own at CUT_SLOPE, as settle cuts it: so no corner
+    stands on the map's lower land, sinking the building below DA3's
+    ground. Never raised by more than RAISE_MAX_M, nor where DA3's own
+    ground is (under: the land kept just beneath it there). scene: DA3's
+    points (world: x east, y down, z north). Returns the land's h."""
+    import shapely
+    if not len(scene) or not len(owner):
+        return h
+    beside, tree, out = cKDTree(scene[:, [0, 2]]), cKDTree(xy), h.copy()
+    for i, (ring, _, _, form, *_) in enumerate(outlines):
+        mine = np.flatnonzero(owner == i)
+        if not len(mine) or form.base_m > 0:
+            continue
+        ground = np.full(len(mine), np.nan)
+        for k, near in enumerate(beside.query_ball_point(xy[mine], BESIDE_M)):
+            if len(near) >= BESIDE_MIN:
+                ground[k] = np.percentile(-scene[near, 1], 10)
+        has = np.isfinite(ground)
+        if has.sum() < 2:
+            continue
+        out[mine[has]] = ground[has]
+        level = float(np.median(ground[has]))
+        c = ring[:-1].mean(0)
+        reach = np.linalg.norm(ring - c, axis=1).max() + PAD_M + RAISE_MAX_M / CUT_SLOPE
+        idx = np.asarray(tree.query_ball_point(c, reach), int)
+        idx = idx[~np.isin(idx, mine[has]) & ~under[idx]]
+        if not len(idx):
+            continue
+        d = shapely.distance(shapely.polygons(ring), shapely.points(xy[idx]))
+        up = np.maximum(out[idx], level - np.maximum(d - PAD_M, 0) * CUT_SLOPE)
+        out[idx] = np.where(up - out[idx] <= RAISE_MAX_M, up, out[idx])
+    return out
 
 
 def settle(outlines, xy, h, owner):
@@ -413,14 +463,24 @@ def colours(outlines, palette_):
     return out
 
 
-def da3_copy(n, d, x, da3, da3_normals):
+def near_box(xz, centre, half):
+    """Indices of the points within half of centre each way on the map
+    (xz: a cKDTree of their east/north): one lookup, not a scan of them all."""
+    half = np.broadcast_to(np.asarray(half, float), (2,))
+    idx = np.asarray(xz.query_ball_point(centre, float(np.hypot(*half))), int)
+    return idx[np.all(np.abs(xz.data[idx] - centre) <= half, axis=1)] if len(idx) else idx
+
+
+def da3_copy(n, d, x, da3, da3_normals, xz):
     """DA3's own copy of the wall plane (n, d) that the points x lie on:
     (n2, d2, agrees) fitted to DA3's points within SAME_M of it, facing
     within SAME_DEG of its way and within SAME_NEAR_M of x -- trees face
     every way and the ground up, so neither counts -- agrees when it faces
-    within AGREE_DEG of n; None if DA3 has under SAME_MIN such points."""
+    within AGREE_DEG of n; None if DA3 has under SAME_MIN such points.
+    xz: a cKDTree of DA3's points' east/north."""
     lo, hi = x.min(0) - SAME_NEAR_M, x.max(0) + SAME_NEAR_M
-    cand = np.flatnonzero(np.all((da3 >= lo) & (da3 <= hi), axis=1))
+    cand = near_box(xz, (lo[[0, 2]] + hi[[0, 2]]) / 2, (hi[[0, 2]] - lo[[0, 2]]) / 2)
+    cand = cand[(da3[cand, 1] >= lo[1]) & (da3[cand, 1] <= hi[1])]
     cand = cand[(np.abs(da3[cand] @ n - d) < SAME_M)
                 & (np.abs(da3_normals[cand] @ n) > np.cos(np.radians(SAME_DEG)))]
     if len(cand) < SAME_MIN:
@@ -463,7 +523,7 @@ def _wall_samples(a, c, base, top):
     return np.column_stack([np.repeat(xy[:, 0], len(v)), -np.tile(v, len(u)), np.repeat(xy[:, 1], len(v))])
 
 
-def _walls(xy, base, h, da3, da3_normals):
+def _walls(xy, base, h, da3, da3_normals, xz):
     """{edge index: (n2, d2, DA3's points on that plane)} for the walls of
     outline xy DA3 has a copy of (da3_copy: DA3's points near
     its plane that face its way, so trees, poles and the ground never
@@ -475,12 +535,11 @@ def _walls(xy, base, h, da3, da3_normals):
             continue
         t = (c - a) / length
         n = np.array([t[1], 0.0, -t[0]])                 # outward: outlines run counter-clockwise
-        copy = da3_copy(n, float(n @ [a[0], 0, a[1]]), _wall_samples(a, c, base, base + h), da3, da3_normals)
+        copy = da3_copy(n, float(n @ [a[0], 0, a[1]]), _wall_samples(a, c, base, base + h), da3, da3_normals, xz)
         if copy is None or not copy[2]:
             continue
         n2, d2, _ = copy
-        near = np.all(np.abs(da3[:, [0, 2]] - (a + c) / 2) < length / 2 + FIT_M, axis=1)
-        idx = np.flatnonzero(near)
+        idx = near_box(xz, (a + c) / 2, length / 2 + FIT_M)
         walls[j] = (n2, d2, idx[on_plane(n2, d2, da3[idx], da3_normals[idx])])
     return walls
 
@@ -539,13 +598,14 @@ def fit_to_scene(outlines, da3, da3_normals, ground, on_road=None):
     if not len(da3):
         return [o + ({},) for o in outlines], 0, 0
     lo, hi = da3[:, [0, 2]].min(0) - FIT_M, da3[:, [0, 2]].max(0) + FIT_M
+    xz = cKDTree(da3[:, [0, 2]])
     out, moved, trimmed = [], 0, 0
     for xy, h, guessed, form in outlines:
         if form.part or not ((xy.max(0) >= lo) & (xy.min(0) <= hi)).all():
             out.append((xy, h, guessed, form, {}))
             continue
         base = foot_of(xy, form, ground)
-        walls = _walls(xy, base, h, da3, da3_normals)
+        walls = _walls(xy, base, h, da3, da3_normals, xz)
         if not walls:
             out.append((xy, h, guessed, form, {}))
             continue
@@ -561,7 +621,7 @@ def fit_to_scene(outlines, da3, da3_normals, ground, on_road=None):
         cut = _trim(xy, walls, da3)
         if cut is not None:
             xy, trimmed = cut, trimmed + 1
-            walls = _walls(xy, base, h, da3, da3_normals)
+            walls = _walls(xy, base, h, da3, da3_normals, xz)
         if shift.any() or cut is not None:
             form.roof = form.roof.on(xy)
         if guessed and walls:
@@ -630,7 +690,8 @@ def points(outlines, spacing, ground, colour):
 
     spacing(xy): point spacing at east/north points -- a wall is laid in
     pieces up to CHUNK_M long, each spaced as at its middle, so only what
-    is near gets dense; ground(xy): the ground's height there; colour:
+    is near gets dense; ground(xy): the ground's height there -- the land
+    as it is at last, a wall's points only from it up; colour:
     (n, 3) each building's (colours), as it is: the viewer lights it. Each
     stands from its Form's base_m over its ground up to the roof, the roof
     (roofs.py) up to its height, the walls reaching up to meet it (a
@@ -664,18 +725,28 @@ def points(outlines, spacing, ground, colour):
             out = np.array([t[1], -t[0]])                    # outward for a counter-clockwise ring
             e = len(edges)
             edges.append((a, t, out, length, planes.get(j)))
+            # its pieces, each spaced as at its middle, and the ground under all their columns at once
+            pieces = []
             for c0 in np.arange(0, length, CHUNK_M):
                 c1 = min(length, c0 + CHUNK_M)
                 s = float(spacing((a + t * (c0 + c1) / 2)[None])[0])
-                along = np.arange(c0, c1, s)
+                pieces.append((c0, s, np.arange(c0, c1, s)))
+            columns = np.concatenate([p[2] for p in pieces])
+            floors = ground(a + t * columns[:, None]) if not form.base_m else np.full(len(columns), low)
+            for (c0, s, along), floor in zip(pieces, np.split(floors, np.cumsum([len(p[2]) for p in pieces])[:-1])):
                 rise = roof.rise(a + t * along[:, None])
-                levels = np.arange(low, eaves + (rise.max() if len(rise) else 0), s)
+                # each column from the ground where it stands (a part in the air: from its base),
+                # its rows the building's, as far down as the ground goes
+                start = low - s * np.ceil(max(0.0, low - floor.min()) / s) if len(floor) else low
+                levels = np.arange(start, eaves + (rise.max() if len(rise) else 0), s)
                 U, V = np.repeat(along, len(levels)), np.tile(levels, len(along))
-                ok = V <= eaves + np.repeat(rise, len(levels)) + 1e-6
+                ok = (V <= eaves + np.repeat(rise, len(levels)) + 1e-6) & \
+                    (V >= np.repeat(floor, len(levels)) - ON_GROUND_M)
                 U, V = U[ok], V[ok]
                 kind = np.full(len(U), SURFACE)
                 # its edges, as points of their own: its corner (where it starts) and the eaves
-                corner = np.arange(low, eaves + (rise[0] if len(rise) else 0), s) if c0 == 0 else np.zeros(0)
+                corner = np.arange(start, eaves + (rise[0] if len(rise) else 0), s) if c0 == 0 else np.zeros(0)
+                corner = corner[corner >= (floor[0] if len(floor) else low) - ON_GROUND_M]
                 top = eaves + rise
                 U = np.r_[U, np.zeros(len(corner)), along]
                 V = np.r_[V, corner, top]
@@ -695,18 +766,25 @@ def points(outlines, spacing, ground, colour):
                 if length < 1e-6:
                     continue
                 t = (c - a) / length
+                U, V, G = [], [], []
                 for c0 in np.arange(0, length, CHUNK_M):
                     c1 = min(length, c0 + CHUNK_M)
                     s = INNER_GAP * float(spacing((a + t * (c0 + c1) / 2)[None])[0])
                     along, levels = np.arange(c0, c1, s), np.arange(low, eaves, s)
-                    U, V = np.repeat(along, len(levels)), np.tile(levels, len(along))
-                    w.append(np.column_stack([a[0] + t[0] * U, -V, a[1] + t[1] * U]))
-                    eo.append(np.full(len(U), INNER))
-                    uu.append(np.zeros(len(U)))
-                    vv.append(V)
-                    gg.append(np.full(len(U), s))
-                    nn.append(np.tile([t[1], 0.0, -t[0]], (len(U), 1)))
-                    kk.append(np.full(len(U), SURFACE))
+                    U.append(np.repeat(along, len(levels)))
+                    V.append(np.tile(levels, len(along)))
+                    G.append(np.full(len(along) * len(levels), s))
+                U, V, G = np.concatenate(U), np.concatenate(V), np.concatenate(G)
+                if not form.base_m and len(U):                            # from the ground up: one look for the wall
+                    keep = V >= ground(a + t * U[:, None]) - ON_GROUND_M
+                    U, V, G = U[keep], V[keep], G[keep]
+                w.append(np.column_stack([a[0] + t[0] * U, -V, a[1] + t[1] * U]))
+                eo.append(np.full(len(U), INNER))
+                uu.append(np.zeros(len(U)))
+                vv.append(V)
+                gg.append(G)
+                nn.append(np.tile([t[1], 0.0, -t[0]], (len(U), 1)))
+                kk.append(np.full(len(U), SURFACE))
         walls.append(np.concatenate(w) if w else np.zeros((0, 3)))
         edge_of.append(np.concatenate(eo) if eo else np.zeros(0, int))
         us.append(np.concatenate(uu) if uu else np.zeros(0))
@@ -737,19 +815,26 @@ def points(outlines, spacing, ground, colour):
         step = float(max(spacing(xy).min(), .12))
         from streetview_to_3d.postprocess.facade_geometry import enabled
         form.physical_facade = enabled(form, h, step)
-        for quad, col in detail_quads(xy, h, form, ground, colour[i], planes, gap=step):
-            q = sample_quad(quad, step)
-            facing = np.cross(quad[1] - quad[0], quad[-1] - quad[0])
-            normal.append(np.tile(facing / max(np.linalg.norm(facing), 1e-9), (len(q), 1)))
-            kind.append(np.full(len(q), SURFACE))
-            pts.append(q)
-            cols.append(np.tile(col, (len(q), 1)))
-            which.append(np.full(len(q), i))
-            edge.append(np.full(len(q), ROOF))
-            u.append(np.zeros(len(q)))
-            v.append(-q[:, 1])
-            gap.append(np.full(len(q), step))
-            own.append(np.ones(len(q), bool))
+        details = list(detail_quads(xy, h, form, ground, colour[i], planes, gap=step))
+        if not details:
+            continue
+        # all its details at once: each quad's points, facing and colour
+        quads = np.array([q for q, _ in details], float)
+        facing = np.cross(quads[:, 1] - quads[:, 0], quads[:, 3] - quads[:, 0])
+        size = np.linalg.norm(facing, axis=1)
+        flat = size > 1e-9                                          # a quad with no area has none
+        q, at = sample_quads(quads[flat], step)
+        facing = (facing[flat] / size[flat, None])[at]
+        normal.append(facing)
+        kind.append(np.full(len(q), SURFACE))
+        pts.append(q)
+        cols.append(np.array([np.broadcast_to(c, 3) for _, c in details], float)[flat][at])
+        which.append(np.full(len(q), i))
+        edge.append(np.full(len(q), ROOF))
+        u.append(np.zeros(len(q)))
+        v.append(-q[:, 1])
+        gap.append(np.full(len(q), step))
+        own.append(np.ones(len(q), bool))
     return Blocks(np.concatenate(pts), np.concatenate(cols), np.concatenate(which), np.concatenate(edge),
                   np.concatenate(u), np.concatenate(v), np.concatenate(gap), edges, np.concatenate(own),
                   np.concatenate(normal), np.concatenate(kind))
@@ -795,8 +880,11 @@ def windows(blocks, outlines, ground):
     close enough to tell them (two to a bay and a floor) -- as the viewer
     lays the far buildings' (effects/blocks.js, from blocks.ply's facade).
     Nothing of their own: the wall's points that fall on them."""
+    wall = np.flatnonzero((blocks.edge >= 0) & (blocks.kind == SURFACE))
+    wall = wall[np.argsort(blocks.which[wall], kind="stable")]           # each building's together, once
+    bounds = np.searchsorted(blocks.which[wall], np.arange(len(outlines) + 1))
     for owner, (xy, h, _, form, *_) in enumerate(outlines):
-        i = np.flatnonzero((blocks.edge >= 0) & (blocks.which == owner) & (blocks.kind == SURFACE))
+        i = wall[bounds[owner]:bounds[owner + 1]]
         if not len(i) or form.physical_facade:
             continue  # real window modules, without a second painted window grid
         layout = facade_layout(form, h)
@@ -869,7 +957,7 @@ def toward(pts, cols, gap, tree, da3_cols, every=1):
     from streetview_to_3d.postprocess.seams import ramp
     if tree is None or not len(pts):
         return cols, np.zeros(len(pts)), np.ones(len(pts), bool)
-    d, k = tree.query(pts, distance_upper_bound=BLEND_M)
+    d, k = tree.query(pts, distance_upper_bound=BLEND_M, workers=-1)
     near = 1 - ramp(d / BLEND_M)                               # d is inf past BLEND_M: 0
     k = np.minimum(k, len(da3_cols) - 1)
     cols = cols + (da3_cols[k] - cols) * near[:, None]
@@ -878,7 +966,7 @@ def toward(pts, cols, gap, tree, da3_cols, every=1):
     keep = np.ones(len(pts), bool)
     close = np.flatnonzero(near > 0)
     if len(close):
-        far = tree.query(tree.data[k[close]], k=LOCAL_K + 1)[0][:, -1]
+        far = tree.query(tree.data[k[close]], k=LOCAL_K + 1, workers=-1)[0][:, -1]
         spacing = far / np.sqrt(LOCAL_K / np.pi) / np.sqrt(every)
         share = np.minimum(1, (gap[close] / np.maximum(spacing, 1e-6)) ** 2)    # of these, as many as DA3's
         chance = np.sin(pts[close] @ [12.9898, 78.233, 37.719]) * 43758.5453 % 1
@@ -892,9 +980,9 @@ def reached(blocks, tree, n):
     colour -- it is there to meet DA3's; one it never reaches keeps its
     palette's."""
     out = np.zeros(n, bool)
-    if tree is not None and len(blocks.pts):
-        d = tree.query(blocks.pts, distance_upper_bound=REACH_M)[0]
-        out[np.unique(blocks.which[d < REACH_M])] = True
+    if tree is not None and len(blocks.pts):                    # every SAMPLE-th point: one yes or no
+        d = tree.query(blocks.pts[::SAMPLE], distance_upper_bound=REACH_M, workers=-1)[0]
+        out[np.unique(blocks.which[::SAMPLE][d < REACH_M])] = True
     return out
 
 
@@ -915,9 +1003,10 @@ def _wall_facade(form, h, u, v, glass_colour):
 def solid(outlines, ground, colour, spacing=None):
     """Every outline as triangles: (vertices (n, 3) world frame, colours
     (n, 3), as they are -- the viewer lights them --, faces (m, 3), facade
-    (n, 7)): walls from its base (Form.base_m) to where the roof meets
-    them; its roof (roofs.Roof.triangles); a flat underside if it starts
-    in the air. facade: a wall vertex's metres along its wall and up from
+    (n, 7)): walls from the ground under them (ground(xy): the land as it
+    is at last; a part in the air from its base, Form.base_m) to where the
+    roof meets them; its roof (roofs.Roof.triangles); a flat underside if
+    it starts in the air. facade: a wall vertex's metres along its wall and up from
     the ground, its bay/floor sizes and its windows' colour (glass);
     NO_FACADE on roofs and on walls with no windows. No details
     (balconies, trims, doors): drawn far off as paint (effects/blocks.js),
@@ -948,16 +1037,18 @@ def solid(outlines, ground, colour, spacing=None):
             if length < 1e-6:
                 continue
             t = (c - a) / length
-            u = length * roof.bends(a, c)
+            # where its roof bends, and every SOLID_STEP_M: its foot follows the ground along it
+            u = np.unique(np.r_[length * roof.bends(a, c), np.arange(0, length, SOLID_STEP_M), length])
             en = a + t * u[:, None]
             up = eaves + roof.rise(en)
             if (up - base).max() < 1e-3:
                 continue
-            pts = np.concatenate([world(en, np.full(len(u), low)), world(en, up)])
+            bottom = np.minimum(ground(en), up) if not form.base_m else np.full(len(u), low)
+            pts = np.concatenate([world(en, bottom), world(en, up)])
             k = np.arange(len(u) - 1)
             n = len(u)
             faces = np.concatenate([np.c_[k, k + 1, n + k + 1], np.c_[k, n + k + 1, n + k]])
-            add(pts, colour[i], faces, _wall_facade(form, h, np.r_[u, u], np.r_[np.full(n, low), up] - foot,
+            add(pts, colour[i], faces, _wall_facade(form, h, np.r_[u, u], np.r_[bottom, up] - foot,
                                                    glass(colour[i])))
         tris = roof.triangles(SOLID_STEP_M)
         if form.base_m > 0:
@@ -1005,13 +1096,13 @@ def seam(blocks, da3, da3_normals, da3_cols, roofs_near):
     keep[roof] = roofs_near[roof] > COVER * blocks.gap[roof]
     order = np.argsort(blocks.edge, kind="stable")
     bounds = np.searchsorted(blocks.edge[order], np.arange(len(blocks.edges) + 1))
+    xz = cKDTree(da3[:, [0, 2]]) if len(da3) else None
     for e, (a, t, out, length, plane) in enumerate(blocks.edges):
         mine = order[bounds[e]:bounds[e + 1]]
-        if plane is None or not len(mine):
+        if plane is None or not len(mine) or xz is None:
             continue
         n2, d2 = plane
-        box = np.all(np.abs(da3[:, [0, 2]] - (a + t * length / 2)) < length / 2 + SEAM_FADE_M + 1, axis=1)
-        idx = np.flatnonzero(box)
+        idx = near_box(xz, a + t * length / 2, length / 2 + SEAM_FADE_M + 1)
         idx = idx[on_plane(n2, d2, da3[idx], da3_normals[idx])]
         if len(idx) < SEAM_MIN:
             continue
@@ -1037,11 +1128,13 @@ def pano_colours(pts, which, n, cameras, photos, occluders):
     a tree or a nearer building further off does -- and its pixel is
     labelled building or wall (never sky over a building guessed too tall,
     nor a car). A building's colour is the median over every such pixel,
-    SEEN_MIN of them at least: one flat colour, robust to a stray one."""
+    SEEN_MIN of them at least: one flat colour, robust to a stray one --
+    looked up at every SAMPLE-th of its points, as many as one median needs."""
     from streetview_to_3d.fill.paint import NADIR_DEG, ZB_W, _at
     from streetview_to_3d.services.segment import LABEL_IDS
     ids = [LABEL_IDS["building"], LABEL_IDS["wall"]]
-    everything = np.concatenate([occluders, pts])
+    pts, which = pts[::SAMPLE], which[::SAMPLE]
+    everything = np.concatenate([occluders[::SAMPLE_HIDING], pts])
     samples, owners = [], []
     h, w = ZB_W // 2, ZB_W
     for cam, ph in zip(cameras, photos):
@@ -1049,11 +1142,10 @@ def pano_colours(pts, which, n, cameras, photos, occluders):
             continue
         u, v, r, _ = cam.look(everything)
         near = np.full(h * w, np.inf)
-        o = np.argsort(-r)
-        iu, iv = (u[o] * w).astype(int), (v[o] * h).astype(int)
-        for du in (-1, 0, 1):
+        iu, iv = (u * w).astype(int), (v * h).astype(int)
+        for du in (-1, 0, 1):                                   # a point covers its neighbours; the nearest wins
             for dv in (-1, 0, 1):
-                near[np.clip(iv + dv, 0, h - 1) * w + (iu + du) % w] = r[o]
+                np.minimum.at(near, np.clip(iv + dv, 0, h - 1) * w + (iu + du) % w, r)
         u, v, r, below = cam.look(pts)
         px = np.clip((v * h).astype(int), 0, h - 1) * w + (u * w).astype(int) % w
         seen = (r < SEE_M) & (below < NADIR_DEG) & (r <= near[px] + BEHIND_M + BEHIND * r)
@@ -1071,6 +1163,6 @@ def pano_colours(pts, which, n, cameras, photos, occluders):
     samples, owners = samples[order], owners[order]
     starts = np.flatnonzero(np.r_[True, owners[1:] != owners[:-1]])
     for a, b in zip(starts, np.r_[starts[1:], len(owners)]):
-        if b - a >= SEEN_MIN:
+        if b - a >= max(3, SEEN_MIN / SAMPLE):
             out[owners[a]] = np.median(samples[a:b], 0)
     return out

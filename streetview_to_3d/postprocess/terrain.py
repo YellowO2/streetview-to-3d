@@ -381,7 +381,7 @@ def build(scene_dir, log=print):
     # points spaced from the scene's edge: its 1 m squares holding a few points
     cell, n = np.unique(np.floor(scene[:, [0, 2]]), axis=0, return_counts=True) if len(scene) else (cam_xz, None)
     edge_tree = cKDTree(cell[n >= 3] + 0.5 if n is not None and (n >= 3).any() else cam_xz)
-    gap = lambda xy: point_gap(edge_tree.query(xy)[0])
+    gap = lambda xy: point_gap(edge_tree.query(xy, workers=-1)[0])
     # the roads a game map keeps, one surface; they decide their own height
     # (the ground smoothed) and the land fits itself to them (roads.py)
     net = roads.Network(elements, to_xy)
@@ -440,9 +440,9 @@ def build(scene_dir, log=print):
     # the scene's ground-level points: the land fills exactly where they are not
     low = scene[-scene[:, 1] < ground(scene[:, [0, 2]]) + LOW_M] if len(scene) else scene
     low_tree = cKDTree(low[:, [0, 2]]) if len(low) else None
-    uncovered = (lambda xy, gap: low_tree.query(xy)[0] > COVER * gap) if low_tree else \
+    uncovered = (lambda xy, gap: low_tree.query(xy, workers=-1)[0] > COVER * gap) if low_tree else \
         (lambda xy, gap: np.ones(len(xy), bool))
-    under = ~uncovered(en, LAND_EVERY * gap_at(cam_tree.query(en)[0]))
+    under = ~uncovered(en, LAND_EVERY * gap_at(cam_tree.query(en, workers=-1)[0]))
     dist, edge_h, edge_c = near(en)
     lat, lon = to_ll(en)
     raw = heights(lat, lon)
@@ -451,14 +451,24 @@ def build(scene_dir, log=print):
     # under the scene's own ground too, just beneath it: one shared ground,
     # so the scene's is not seen through, the land never over it
     h = np.where(under & np.isfinite(edge_h), np.minimum(h, np.nan_to_num(edge_h) - UNDER_M), h)
-    # every building stood where the land meets it, the land cut down round it (buildings.settle)
+    # the land round a building DA3 has ground beside made DA3's ground (buildings.onto_scene),
+    # then every building stood where the land meets it, the land cut down round it (buildings.settle)
+    h = buildings.onto_scene(outlines, en, h, owner, scene, under)
     h = buildings.settle(outlines, en, h, owner)
     # the shore shaped as a game's (water.py): the land eases into the water,
     # a quay by a road stands; under it the land goes on as the water's bed
     lines = roads.lines(elements, to_xy)
     h = wet.carve(en, h, roads.near(lines, water.QUAY_M))
+    from scipy.interpolate import LinearNDInterpolator
     from scipy.spatial import Delaunay
-    faces = Delaunay(en).simplices
+    tri = Delaunay(en)
+    faces = tri.simplices
+    at = LinearNDInterpolator(tri, h)
+
+    def surface(xy):
+        """The land as it is at last (the map's ground past its edge): buildings stand on it."""
+        v = at(xy)
+        return np.where(np.isfinite(v), v, ground(xy))
     seen = np.zeros(len(en), bool)
     seen[faces] = True
     faces = (np.cumsum(seen) - 1)[faces]
@@ -468,7 +478,7 @@ def build(scene_dir, log=print):
     # its colour as it is (unlit: the viewer lights it, effects/land.js)
     colours = colour_map()
     try:
-        cols = google_colours(lat, lon, LAND_EVERY * gap_at(cam_tree.query(en)[0]))
+        cols = google_colours(lat, lon, LAND_EVERY * gap_at(cam_tree.query(en, workers=-1)[0]))
         source = "Google's satellite"
         gone = np.isnan(cols[:, 0])
         if gone.any():                    # where Google has none, Sentinel-2's, lifted (it is dark from above)
@@ -512,7 +522,7 @@ def build(scene_dir, log=print):
             panos, pal = ([], []), (np.array(buildings.PASTEL), np.full(len(buildings.PASTEL), 1 / 8))
         base = buildings.colours(outlines, pal)
         n_buildings = len(outlines)
-        blocks = buildings.points(outlines, gap, ground, base)
+        blocks = buildings.points(outlines, gap, surface, base)
         scene_tree = cKDTree(scene) if len(scene) else None
         reached = buildings.reached(blocks, scene_tree, len(outlines))
         if panos[0]:
@@ -528,10 +538,12 @@ def build(scene_dir, log=print):
         solid, solid_base = [o for o, r in zip(outlines, reached) if not r], base[~reached]
         blocks.take(reached[blocks.which])
         # what DA3 already has of a building is left to it; the rest meets it
-        roofs_near = scene_tree.query(blocks.pts, distance_upper_bound=1.0)[0] if scene_tree \
-            else np.full(len(blocks.pts), np.inf)
+        roofs_near = np.full(len(blocks.pts), np.inf)                 # only roofs are judged by it
+        roof = blocks.edge == buildings.ROOF
+        if scene_tree is not None and roof.any():
+            roofs_near[roof] = scene_tree.query(blocks.pts[roof], distance_upper_bound=1.0, workers=-1)[0]
         n_cut = buildings.seam(blocks, scene, scene_normals, scene_cols, roofs_near)
-        buildings.windows(blocks, outlines, ground)
+        buildings.windows(blocks, outlines, surface)
         bp, bc, b_roof, b_gap = blocks.pts, blocks.cols, blocks.edge == buildings.ROOF, blocks.gap
         b_normal, b_kind = blocks.normal, blocks.kind
         b_alone = ~reached[blocks.which]                                # no DA3 near: no pano paint
@@ -603,7 +615,7 @@ def build(scene_dir, log=print):
             d = edge_tree.query(xy)[0]
             return np.minimum(point_gap(d), POINT_M + BLOCK_RATE * d).min()
         one = np.array([block_gap(xy) for xy, *_ in solid])
-        v, c, f, facade, g = buildings.solid(solid, ground, solid_base, one)
+        v, c, f, facade, g = buildings.solid(solid, surface, solid_base, one)
         write_mesh(os.path.join(scene_dir, BLOCKS_FILENAME), v, c, f, facade, g)
         sc.blocks = BLOCKS_FILENAME
     sc.save(scene_dir)
@@ -644,7 +656,7 @@ def _paint(panos, pts, cols, scene, skip=None):
         return cols, 0
     centres = np.array([c.centre for c in cams])
     from scipy.spatial import cKDTree
-    near = cKDTree(centres[:, [0, 2]]).query(pts[:, [0, 2]])[0] < PAINT_M
+    near = cKDTree(centres[:, [0, 2]]).query(pts[:, [0, 2]], workers=-1)[0] < PAINT_M
     near = np.flatnonzero(near & ~skip if skip is not None else near)
     if not len(near):
         return cols, 0

@@ -30,6 +30,7 @@ so a filled hole matches the ground around it.
 import numpy as np
 from PIL import Image
 from scipy.ndimage import label, uniform_filter
+from scipy.spatial import cKDTree
 
 from streetview_to_3d.postprocess.ground import blend
 
@@ -96,42 +97,50 @@ def _at(grid, u, v):
 def paint(points, occluders, cameras, photos, max_m=MAX_M):
     """(colours, which camera painted each point -- the nearest -- or -1).
     points: the added points; occluders: DA3's points, what can hide them;
-    photos[k]: (image path, drop mask) of cameras[k]'s pano, or None."""
-    n, K = len(points), len(cameras)
-    sees = np.zeros((K, n), bool)
-    dist = np.full((K, n), np.inf)
-    looks = [None] * K
+    photos[k]: (image path, drop mask) of cameras[k]'s pano, or None. A
+    camera only paints within max_m, so only what lies that near it -- to
+    paint, or to hide what it paints -- is looked at, never all of them."""
+    n = len(points)
     h, w = ZB_W // 2, ZB_W
+    to_paint = cKDTree(points) if n else None
+    hiding = cKDTree(occluders) if len(occluders) else None
+    seen = [None] * len(cameras)                      # each camera's: (points, how far, u, v)
+    best = np.full(n, np.inf)
+    who = np.full(n, -1)
     for k, (cam, ph) in enumerate(zip(cameras, photos)):
-        if ph is None:
+        if ph is None or to_paint is None:
             continue
-        u, v, r, _ = cam.look(occluders)
+        idx = np.asarray(to_paint.query_ball_point(cam.centre, max_m), int)
+        if not len(idx):
+            continue
         near = np.full(h * w, np.inf)
-        o = np.argsort(-r)                            # nearest written last wins
-        iu, iv = (u[o] * w).astype(int), (v[o] * h).astype(int)
-        for du in (-1, 0, 1):                         # a point covers its neighbours too
-            for dv in (-1, 0, 1):
-                near[np.clip(iv + dv, 0, h - 1) * w + (iu + du) % w] = r[o]
-        u, v, r, below = cam.look(points)
+        if hiding is not None:
+            o = np.asarray(hiding.query_ball_point(cam.centre, max_m + 0.1), int)
+            if len(o):
+                u, v, r, _ = cam.look(occluders[o])
+                iu, iv = (u * w).astype(int), (v * h).astype(int)
+                for du in (-1, 0, 1):                 # a point covers its neighbours too; the nearest wins
+                    for dv in (-1, 0, 1):
+                        np.minimum.at(near, np.clip(iv + dv, 0, h - 1) * w + (iu + du) % w, r)
+        u, v, r, below = cam.look(points[idx])
         px = np.clip((v * h).astype(int), 0, h - 1) * w + (u * w).astype(int) % w
-        visible = (r <= near[px] + 0.1) & (r < max_m)
-        sees[k] = visible & (below < NADIR_DEG) & ~_at(ph[1], u, v)
-        dist[k] = r
-        looks[k] = (u, v)
+        ok = (r <= near[px] + 0.1) & (r < max_m) & (below < NADIR_DEG) & ~_at(ph[1], u, v)
+        idx, r, u, v = idx[ok], r[ok], u[ok], v[ok]
+        seen[k] = idx, r, u, v
+        closer = r < best[idx]                        # the nearest camera; the first of equals
+        best[idx[closer]], who[idx[closer]] = r[closer], k
 
-    # per point: the nearest camera that can colour it (whose node it joins),
-    # and every camera that can, mixed by how much further it is than that
-    near = np.where(sees, dist, np.inf)
-    best = near.min(0)
-    who = np.where(np.isfinite(best), near.argmin(0), -1)
+    # every camera that can colour a point, mixed by how much further it is than the nearest
     colours, total = np.zeros((n, 3)), np.zeros(n)
     for k, ph in enumerate(photos):
-        w = blend(near[k], best)
-        idx = np.flatnonzero(w > BLEND_MIN)
-        if len(idx):
+        if seen[k] is None:
+            continue
+        idx, r, u, v = seen[k]
+        wt = blend(r, best[idx])
+        keep = wt > BLEND_MIN
+        if keep.any():
             img = np.asarray(Image.open(ph[0]).convert("RGB"))
-            u, v = looks[k]
-            colours[idx] += w[idx, None] * _at(img, u[idx], v[idx]) / 255.0
-            total[idx] += w[idx]
+            colours[idx[keep]] += wt[keep, None] * _at(img, u[keep], v[keep]) / 255.0
+            total[idx[keep]] += wt[keep]
     colours /= np.maximum(total, 1e-9)[:, None]
     return colours, who

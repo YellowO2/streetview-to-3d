@@ -40,7 +40,7 @@ BLEND_M = 2.0             # blend: a camera this much further than the nearest c
 def normals_from_neighbours(x, k=12):
     """Each point's surface normal, from the flattest direction of its k
     nearest neighbours."""
-    _, nb = cKDTree(x).query(x, k=k)
+    _, nb = cKDTree(x).query(x, k=k, workers=-1)
     P = x[nb] - x[nb].mean(1, keepdims=True)
     return np.linalg.eigh(np.einsum("nki,nkj->nij", P, P))[1][:, :, 0]
 
