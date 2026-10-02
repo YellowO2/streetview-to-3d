@@ -17,6 +17,8 @@ import { waterSurfaces } from '@viewer/effects/water';
 import { trafficPoints } from '@viewer/effects/traffic';
 import { birdPoints } from '@viewer/effects/birds';
 import { boatPoints } from '@viewer/effects/boats';
+import { duckPoints } from '@viewer/effects/ducks';
+import { catPoints } from '@viewer/effects/cats';
 import { landPoints } from '@viewer/effects/land';
 import { blockPoints, buildingPoints } from '@viewer/effects/blocks';
 import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
@@ -312,6 +314,8 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           life.cars.roads.length ? trafficPoints(life.cars) : null,
           birdPoints(life.birds),
           boatPoints(life.boats),
+          life.ducks && duckPoints(life.ducks),
+          life.cats && catPoints(life.cats),
         ];
         for (const points of moving.filter(Boolean)) {
           points.userData.surroundings = LIFE;

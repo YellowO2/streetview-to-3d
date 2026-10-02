@@ -164,21 +164,23 @@ def meet(h, ground, dist, band_m, max_m=np.inf):
 class SceneGround:
     """The scene's own ground as the fill laid it (fill.one_ground), seen
     from above in CELL_M squares: each one's height (metres up) and colour,
-    NaN where the scene has no ground. For any east/north point: how far it
-    is from that ground (0 on it), and the height and colour of the nearest
-    square of it (at). The fill saves it beside the scene (save); a scene
-    without one has no ground of its own, and nothing is near it."""
+    NaN where the scene has no ground, and how much of it its panos call
+    road (road: 0-1, None if not known). For any east/north point: how far
+    it is from that ground (0 on it), and the height and colour of the
+    nearest square of it (at). The fill saves it beside the scene (save); a
+    scene without one has no ground of its own, and nothing is near it."""
 
-    def __init__(self, lo, height, colour):
-        self.lo, self.height, self.colour = np.asarray(lo, int), height, colour
+    def __init__(self, lo, height, colour, road=None):
+        self.lo, self.height, self.colour, self.road = np.asarray(lo, int), height, colour, road
         have = np.isfinite(height)
         self.dist, self.nearest = (distance_transform_edt(~have, return_indices=True) if have.any()
                                    else (None, None))
 
     @classmethod
-    def from_points(cls, pts, cols):
+    def from_points(cls, pts, cols, road=None):
         """The ground's points (world: x east, y down, z north) and their
-        colours (0-1), averaged in each square."""
+        colours (0-1), and whether each is road (road (n,): bool, or None),
+        averaged in each square."""
         if not len(pts):
             return cls.none()
         ij = np.floor(pts[:, [0, 2]] / CELL_M).astype(int)
@@ -194,16 +196,22 @@ class SceneGround:
         for j in range(3):
             np.add.at(c[..., j], at, cols[:, j])
         have = n > 0
+        r = None
+        if road is not None:
+            r = np.zeros(shape)
+            np.add.at(r, at, np.asarray(road, float))
         with np.errstate(invalid="ignore", divide="ignore"):
-            return cls(lo, np.where(have, h / n, np.nan), np.where(have[..., None], c / n[..., None], np.nan))
+            return cls(lo, np.where(have, h / n, np.nan), np.where(have[..., None], c / n[..., None], np.nan),
+                       None if r is None else np.where(have, r / n, np.nan))
 
     @classmethod
     def none(cls):
         return cls(np.zeros(2, int), np.zeros((0, 0)), np.zeros((0, 0, 3)))
 
     def save(self, scene_dir):
+        road = {} if self.road is None else {"road": self.road.astype(np.float32)}
         np.savez_compressed(os.path.join(scene_dir, FILENAME), lo=self.lo,
-                            height=self.height.astype(np.float32), colour=self.colour.astype(np.float32))
+                            height=self.height.astype(np.float32), colour=self.colour.astype(np.float32), **road)
         return FILENAME
 
     @classmethod
@@ -212,7 +220,8 @@ class SceneGround:
         if not os.path.exists(path):
             return cls.none()
         with np.load(path) as f:
-            return cls(f["lo"], f["height"].astype(float), f["colour"].astype(float))
+            return cls(f["lo"], f["height"].astype(float), f["colour"].astype(float),
+                       f["road"].astype(float) if "road" in f else None)
 
     def at(self, xy):
         """(distance m, ground height m, ground colour (n, 3)) at east/north
@@ -234,3 +243,14 @@ class SceneGround:
     def covers(self, xy):
         """Whether the scene has ground of its own at each east/north point."""
         return self.at(xy)[0] == 0
+
+    def road_at(self, xy):
+        """How much of the ground at each east/north point its panos call
+        road (0-1); NaN off it, or not known."""
+        out = np.full(len(xy), np.nan)
+        if self.road is None or self.dist is None:
+            return out
+        c = np.floor(np.asarray(xy) / CELL_M).astype(int) - self.lo
+        inside = ((c >= 0) & (c < self.height.shape)).all(1)
+        out[inside] = self.road[tuple(c[inside].T)]
+        return out

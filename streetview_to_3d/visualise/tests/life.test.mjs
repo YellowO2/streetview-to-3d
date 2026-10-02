@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { birdDabs, birdPoints, KINDS, wingAngle } from '@viewer/effects/birds';
 import { boatDabs, boatPoints } from '@viewer/effects/boats';
 import { tickMoving } from '@viewer/effects/moving';
+import { duckDabs, duckPoints } from '@viewer/effects/ducks';
+import { catDabs, catPoints } from '@viewer/effects/cats';
 
 const extent = (made, d) => {
   const v = Array.from({ length: made.dab.length }, (_, i) => made.centre[3 * i + d]);
@@ -92,4 +94,64 @@ test('a boat its real size, cruising round its course on the water', () => {
   assert(mid(after, 0) > -4 && mid(after, 0) < 104 && mid(after, 2) < 4 && mid(after, 2) > -104);
   assert(mid(after, 1) > 2 - 0.2 && mid(after, 1) < 3.2);
   boats.geometry.dispose();
+});
+
+test('ducks their real size, paddling round their home on the water, never past its reach', () => {
+  const duck = duckDabs();
+  assert(Math.abs(spread(duck, 0) - 0.62) < 0.08 && spread(duck, 1) < 0.4);
+  assert.equal(duckPoints({ colours: [], homes: [] }), null);
+  const colours = [
+    { body: [0.6, 0.6, 0.6], head: [0, 0.3, 0.2], tail: [0, 0, 0], bill: [0.9, 0.8, 0.2] },
+  ];
+  const ducks = duckPoints({ colours, homes: [{ level: 2, at: [10, 20], reach: 5 }] });
+  assert.equal(ducks.userData.moving, 4);
+  const before = places(ducks);
+  for (let i = 0; i < 600; i++) {
+    tickMoving(0.1);
+    const p = places(ducks);
+    for (let j = 0; j < p.length; j += 3) {
+      assert(Math.hypot(p[j] - 10, p[j + 2] + 20) < 5 + 0.5); // within its reach (and its own length)
+      assert(p[j + 1] > 2 - 0.05 && p[j + 1] < 2 + 0.45); // on the water
+    }
+  }
+  assert(places(ducks).some((v, i) => Math.abs(v - before[i]) > 0.5)); // they moved
+  ducks.geometry.dispose();
+});
+
+test('a cat sits at its spots and walks between them, on the ground', () => {
+  const cat = catDabs();
+  assert(Math.abs(spread(cat, 0) - 0.56) < 0.08 && Math.abs(spread(cat, 2) - 0.16) < 0.04);
+  assert.equal(catPoints({ colours: [], cats: [] }), null);
+  const colours = [{ body: [0.8, 0.5, 0.2], tail: [0.7, 0.4, 0.2] }];
+  const cats = catPoints({
+    colours,
+    cats: [
+      {
+        spots: [
+          [0, 0, 3],
+          [3, 0, 3],
+        ],
+      },
+    ],
+  });
+  const middle = () => {
+    const p = places(cats);
+    return [0, 1, 2].map(
+      (d) => p.filter((_, i) => i % 3 === d).reduce((s, v) => s + v, 0) / (p.length / 3),
+    );
+  };
+  const xs = [];
+  for (let i = 0; i < 1200; i++) {
+    tickMoving(0.05);
+    const [x, y] = middle();
+    xs.push(x);
+    assert(Math.min(...places(cats).filter((_, j) => j % 3 === 1)) > 3 - 0.06); // never under the ground
+    assert(y > 3 && y < 3.4);
+  }
+  // it went from one spot to the other, sitting a while at each
+  assert(
+    xs.some((x) => Math.abs(x - 3) < 0.4) &&
+      xs.filter((x) => Math.abs(x) < 0.4 || Math.abs(x - 3) < 0.4).length > 400,
+  );
+  cats.geometry.dispose();
 });

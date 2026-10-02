@@ -469,7 +469,8 @@ def build(scene_dir, log=print):
     # where cars drive (life.py): the car roads near the scene, at their height
     cars = {e["id"] for e in elements if e.get("tags", {}).get("highway") in life.CARS}
     stretches = life.roads(elements, to_xy, road_h, [d for d in over if d.ids & cars],
-                           lambda xy: cam_tree.query(xy)[0] < life.REACH_M, [o[0] for o in outlines])
+                           lambda xy: cam_tree.query(xy)[0] < life.REACH_M, [o[0] for o in outlines],
+                           scene_ground)
     edges = np.concatenate([net.edges(), roads.deck_edges(over)])
     walls, owner = buildings.corners(outlines, lambda xy: LAND_EVERY * gap_at(cam_tree.query(xy)[0]))
     inside = np.linalg.norm(walls, axis=1) < radius
@@ -656,8 +657,10 @@ def build(scene_dir, log=print):
     except (OSError, ValueError) as e:      # cars keep right, as most of the world's do
         log(f"terrain: no country for the cars' side ({e!r})")
         side = "right"
-    sc.life = life.save(scene_dir, stretches, side, life.birds(surfaces, cam_xz, float(np.mean(ground(cam_xz)))),
-                        life.boats(surfaces, cam_xz))
+    sc.life = life.save(scene_dir, cars=life.cars(stretches, side),
+                        birds=life.birds(surfaces, cam_xz, float(np.mean(ground(cam_xz)))),
+                        boats=life.boats(surfaces, cam_xz), ducks=life.ducks(surfaces, cam_xz, scene_ground),
+                        cats=life.cats(scene_ground, stretches, cam_xz))
     sc.buildings = None
     if len(bp):
         bc, b_near, keep = seams.toward(bp, bc, b_gap, scene_tree, scene_cols, SCENE_EVERY)

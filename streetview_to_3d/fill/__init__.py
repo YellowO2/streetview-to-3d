@@ -114,7 +114,13 @@ def run(scene_dir, log=print):
         src = np.flatnonzero(painted)[nb]
         col[fallback], who[fallback] = col[src], who[src]
     ok = who >= 0
-    scene_ground = SceneGround.from_points(added[ok], col[ok])
+    # which of it is road: as the pano that painted each point calls it (cars keep to it: life.py)
+    road = np.zeros(len(added), bool)
+    for k in range(len(nodes)):
+        mine = ok & (who == k)
+        if mine.any():
+            road[mine] = _classed(added[mine], cameras[k], photos[k], ("road",), False)
+    scene_ground = SceneGround.from_points(added[ok], col[ok], road[ok])
     scene_ground.save(scene_dir)
 
     for k, n in enumerate(nodes):
