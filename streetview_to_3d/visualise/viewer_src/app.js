@@ -18,6 +18,7 @@ const ui = createUI(
     mode: setMode,
     style: (name, options) => view.styles.set(name, options),
     reveal: () => view.styles.reveal(),
+    demo: (name) => view.styles.demo(name),
     recenter,
     focus,
     select,
@@ -96,6 +97,9 @@ function refresh() {
   ui.render(store, state, { busy, dragging: editor.dragging, points });
 }
 function setMode(mode) {
+  // Shoot: flying, from the eye, with the gun
+  const gun = mode === 'shoot';
+  if (gun) mode = 'fly';
   if (
     busy ||
     !['inspect', 'fly', 'edit'].includes(mode) ||
@@ -107,9 +111,10 @@ function setMode(mode) {
   // Update state before releasing pointer lock so the unlock callback cannot
   // overwrite an explicit switch to Edit.
   state.mode = mode;
+  state.gun = gun;
   if (mode === 'fly') {
     refresh();
-    navigation.start();
+    navigation.start(gun);
   } else {
     navigation.stop();
     refresh();
@@ -144,7 +149,7 @@ function setPointSize() {
   const own = store.placement === 'world' ? PLACED_POINT_M : radius * 0.002;
   store.group?.traverse((o) => {
     if (o.userData.pointStyle)
-      o.material.uniforms.pointM.value = own * pointMultiplier; // buildings' points near DA3
+      o.material.uniforms.pointM.value = own * pointMultiplier; // strokes near DA3
     else if (o.isPoints)
       o.material.size = Math.max(o.userData.pointSize ?? 0, own) * pointMultiplier;
   });

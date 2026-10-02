@@ -1,4 +1,6 @@
 import { Vector3 } from 'three';
+import { demo, DEMO } from '@viewer/effects/demo';
+import { shot, SHOT } from '@viewer/effects/shot';
 
 // Patch the existing material once; never replace geometry or alter exported positions.
 const patched = new WeakMap();
@@ -24,14 +26,17 @@ export function pointMotion(object) {
     patched.set(material, uniforms);
     return uniforms;
   }
+  // the demos move the world's points and the gun shoots them away (shot.js), not the bird flying through it
+  const demoed = !object.userData.styleAnimated;
   const before = material.onBeforeCompile,
     key = material.customProgramCacheKey.bind(material);
   const originalKey = key();
   material.onBeforeCompile = (shader, renderer) => {
     before.call(material, shader, renderer);
-    Object.assign(shader.uniforms, uniforms);
+    Object.assign(shader.uniforms, uniforms, demoed ? { ...demo, ...shot } : {});
     shader.vertexShader =
       `
+      ${demoed ? DEMO + SHOT : ''}
       ${stableSeed ? 'attribute float styleSeed;' : ''}
       uniform float styleTime, styleFloat, styleLook, styleDensity, stylePointScale;
       uniform vec3 styleCenter;
@@ -46,13 +51,27 @@ export function pointMotion(object) {
       vec3 drift = vec3(sin(styleTime*.55+phase)*.45, sin(styleTime*.8+phase)*.65,
         cos(styleTime*.5+phase)*.45);
       transformed += drift * styleLook * .004 * styleFloat;
+      float demoIn = 1.;
+      ${demoed ? 'if (shotAway(stylePosition + styleCenter)) demoIn = 0.;' : ''}
     `,
     );
+    if (demoed)
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <project_vertex>',
+        `
+      #include <project_vertex>
+      float demoHere;
+      mvPosition = viewMatrix * vec4(demoed((modelMatrix * vec4(transformed, 1.)).xyz,
+        phase / 6.2831853, 1., demoHere), 1.);
+      gl_Position = projectionMatrix * mvPosition;
+      demoIn = min(demoIn, demoHere);
+    `,
+      );
     shader.vertexShader = shader.vertexShader.replace(
       '#include <logdepthbuf_vertex>',
       `
       gl_PointSize *= stylePointScale * (1.0 + sin(styleTime*.8+phase)*.14*styleFloat);
-      if (phase / 6.2831853 >= styleDensity) { gl_Position = vec4(2.,2.,2.,1.); gl_PointSize = 0.; }
+      if (phase / 6.2831853 >= styleDensity || demoIn < .5) { gl_Position = vec4(2.,2.,2.,1.); gl_PointSize = 0.; }
       #include <logdepthbuf_vertex>
     `,
     );
@@ -78,7 +97,8 @@ export function pointMotion(object) {
     `,
     );
   };
-  material.customProgramCacheKey = () => originalKey + ':viewer-point-motion-v5:' + stableSeed;
+  material.customProgramCacheKey = () =>
+    originalKey + ':viewer-point-motion-v7:' + stableSeed + demoed;
   material.needsUpdate = true;
   patched.set(material, uniforms);
   return uniforms;

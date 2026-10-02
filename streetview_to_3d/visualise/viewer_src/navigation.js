@@ -1,8 +1,10 @@
-import { FLIGHT, advanceFlight } from '@viewer/flight-motion';
+import { FLIGHT, advanceFlight, steerBird } from '@viewer/flight-motion';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { createBird } from '@viewer/bird';
+import { createGun } from '@viewer/gun';
+import { clearShots } from '@viewer/effects/shot';
 
 // Owns camera input, never selection or piece transforms. Escape/unlock returns
 // to Inspect through the supplied callback, without clearing scene state.
@@ -16,8 +18,10 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
   look.minPolarAngle = 0.12;
   look.maxPolarAngle = Math.PI - 0.12;
   look.pointerSpeed = 0.65;
-  const { bird, animate, resetTrails } = createBird();
+  const { bird, animate, resetPlume } = createBird();
   scene.add(bird);
+  const gun = createGun(scene); // Shoot: flying as the bird does, but from the eye, shooting
+  const steer = { yaw: 0, pitch: 0, roll: 0 }; // the bird's way (steerBird)
   const keys = new Set(),
     forward = new THREE.Vector3(),
     right = new THREE.Vector3(),
@@ -27,12 +31,15 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
     smoothHeading = new THREE.Quaternion(),
     cameraTarget = new THREE.Vector3();
   let flying = false,
+    shooting = false,
     radius = 5,
     speed = 1,
     chase = 1;
   const captured = () => document.pointerLockElement === canvas;
   const chaseOffset = () =>
-    offset.set(0, FLIGHT.height, FLIGHT.distance * chase).applyQuaternion(smoothHeading);
+    shooting
+      ? offset.set(0, 0, 0)
+      : offset.set(0, FLIGHT.height, FLIGHT.distance * chase).applyQuaternion(smoothHeading);
   const stop = () => {
     keys.clear();
     velocity.set(0, 0, 0);
@@ -40,7 +47,7 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
     flying = false;
     look.unlock();
     bird.visible = false;
-    resetTrails();
+    resetPlume();
     camera.getWorldDirection(forward);
     orbit.target.copy(camera.position).addScaledVector(forward, FLIGHT.distance * chase);
     orbit.enabled = true;
@@ -62,9 +69,19 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
     onRelease();
     onError('Mouse capture was blocked. Fly works in a regular browser that allows pointer lock.');
   });
+  document.addEventListener('mousedown', (e) => {
+    if (!flying || !shooting || !captured() || e.button !== 0) return;
+    gun.fire(camera.position, forward.set(0, 0, -1).applyQuaternion(camera.quaternion));
+  });
   addEventListener('keyup', (e) => keys.delete(e.code));
   addEventListener('keydown', (e) => {
     if (!flying || !captured() || e.target.matches('input,textarea,select')) return;
+    if (shooting && e.code === 'KeyR') {
+      // the world whole again
+      clearShots();
+      gun.reset();
+      return;
+    }
     if (
       ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'Space', 'ShiftLeft', 'ShiftRight'].includes(
         e.code,
@@ -91,6 +108,9 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
     get flying() {
       return flying;
     },
+    get shooting() {
+      return flying && shooting;
+    },
     configure(r) {
       radius = Math.max(r, 0.001);
       bird.scale.setScalar(FLIGHT.birdScale);
@@ -101,11 +121,20 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
       speed = s;
       chase = c;
     },
-    start() {
+    // fly as the bird, or (gun) shoot from the eye
+    start(withGun = false) {
       if (flying) {
+        if (shooting !== withGun) {
+          // straight from one to the other: the bird left where the eye is
+          shooting = withGun;
+          bird.position.copy(camera.position).sub(chaseOffset());
+          resetPlume();
+          bird.visible = !shooting;
+        }
         look.lock();
         return;
       }
+      shooting = withGun;
       orbit.enableDamping = false;
       orbit.update();
       orbit.enableDamping = true;
@@ -118,8 +147,9 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
       velocity.set(0, 0, 0);
       bird.position.copy(camera.position).sub(chaseOffset());
       bird.quaternion.copy(heading.quaternion);
-      resetTrails();
-      bird.visible = true;
+      Object.assign(steer, { yaw: angles.y, pitch: 0, roll: 0 });
+      resetPlume();
+      bird.visible = !shooting;
       flying = true;
       look.lock();
     },
@@ -149,6 +179,7 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
       orbit.enableDamping = true;
     },
     tick(dt) {
+      gun.update(Math.min(Math.max(dt, 0), 0.05));
       if (!flying) {
         if (orbit.enabled) orbit.update();
         return;
@@ -170,10 +201,14 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
         boost = keys.has('ShiftLeft') || keys.has('ShiftRight');
       move.normalize().multiplyScalar(FLIGHT.speed * speed * (boost ? FLIGHT.boost : 1));
       advanceFlight(bird.position, velocity, move, dt);
-      bird.quaternion.slerp(smoothHeading, 1 - Math.exp(-12 * dt));
-      animate(dt, moving);
-      cameraTarget.copy(bird.position).add(chaseOffset());
-      camera.position.lerp(cameraTarget, 1 - Math.exp(-12 * dt));
+      if (shooting)
+        camera.position.copy(bird.position); // the eye, no bird
+      else {
+        steerBird(bird.quaternion, velocity, smoothHeading, steer, dt);
+        animate(dt, moving);
+        cameraTarget.copy(bird.position).add(chaseOffset());
+        camera.position.lerp(cameraTarget, 1 - Math.exp(-12 * dt));
+      }
       camera.quaternion.copy(smoothHeading);
     },
   };

@@ -3,6 +3,9 @@ import { GAPS } from '@viewer/effects/scatter';
 import { PATCHES } from '@viewer/effects/patches';
 import { tunable } from '@viewer/effects/tune-panel';
 import { SUN } from '@viewer/effects/water';
+import { demo, DEMO } from '@viewer/effects/demo';
+import { shot, SHOT } from '@viewer/effects/shot';
+import { covering, marks, pointsOf } from '@viewer/effects/blocks';
 
 // The land (land.ply, postprocess/terrain.py: triangles, its colours the
 // satellite's and the panos') as one surface, painted: cut into patches
@@ -52,6 +55,7 @@ const g0 = GAPS[0].toFixed(4);
 
 const vertexShader = `
   #include <fog_pars_vertex>
+  ${DEMO}
   attribute float gap;
   varying vec3 colour, world, n;
   varying float spacing;
@@ -61,6 +65,10 @@ const vertexShader = `
     n = normalize(mat3(modelMatrix) * normal);
     vec4 w = modelMatrix * vec4(position, 1.);
     world = w.xyz;
+    // the demos: its corners moved as the points are, turning together -- a
+    // sheet, not points (demo.js); painted where it stands
+    float demoIn;
+    w.xyz = demoed(w.xyz, .5, 0., demoIn);
     vec4 mvPosition = viewMatrix * w;
     gl_Position = projectionMatrix * mvPosition;
     #include <fog_vertex>
@@ -75,7 +83,10 @@ const fragmentShader = `
   varying vec3 colour, world, n;
   varying float spacing;
   ${PATCHES}
+  ${DEMO}
+  ${SHOT}
   void main() {
+    if (demoShown(world) < .5) discard;
     vec3 up = normalize(n);
     // the grid's step, one of GAPS: finer on a slope, as it faces up
     float want = max(spacing * size * max(up.y, FINE), ${g0});
@@ -89,6 +100,8 @@ const fragmentShader = `
     // patches are longer that way), the edge a little rough
     vec2 best = patchAt(world.xz / grid, around, longer, k, .5, ROUGH);
     vec2 middle = middleOf(best, k, .5) * grid;
+    // a patch shot away whole, as a point is (shot.js)
+    if (shotAway(vec3(middle.x, world.y, middle.y))) discard;
     // the land there, its colour and its facing: from how they change over
     // this triangle (on the map, a pixel's step east, north)
     vec2 ex = dFdx(world.xz), ey = dFdy(world.xz);
@@ -113,9 +126,9 @@ const fragmentShader = `
     #include <fog_fragment>
   }`;
 
-// The land's triangles (the viewer's frame) as its painted surface; gapOf(x,
-// z): the world's points' spacing there.
-export function landSurface(geometry, gapOf) {
+// The land's triangles (the viewer's frame), each corner its facing (up),
+// colour and spacing (gapOf(x, z): the world's points' there, never under MIN_GAP).
+function prepare(geometry, gapOf) {
   geometry.computeVertexNormals();
   // a triangle wound either way: every normal up
   const nor = geometry.getAttribute('normal');
@@ -131,10 +144,17 @@ export function landSurface(geometry, gapOf) {
       'color',
       new THREE.Float32BufferAttribute(new Float32Array(3 * p.count).fill(0.5), 3),
     );
+  return geometry;
+}
+
+// The land's triangles (the viewer's frame) as its painted surface; gapOf(x,
+// z): the world's points' spacing there.
+export function landSurface(geometry, gapOf) {
+  prepare(geometry, gapOf);
   return new THREE.Mesh(
     geometry,
     new THREE.ShaderMaterial({
-      uniforms: { ...knobs, ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog) },
+      uniforms: { ...knobs, ...demo, ...shot, ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog) },
       fog: true, // and over it the scene's haze, gone by its far edge
       vertexColors: true,
       side: THREE.DoubleSide,
@@ -145,4 +165,25 @@ export function landSurface(geometry, gapOf) {
       fragmentShader,
     }),
   );
+}
+
+// The land as points, as the buildings are (blocks.js): its dabs on a grid
+// fixed in the world, each lying on the land as it faces there; hazed as
+// the surface is. Each as big as covers what JITTER moves them apart
+// (blocks.covering), so nothing under the land ever shows between them --
+// their spacing (SPACE) the one thing to choose: closer, smaller dabs, more
+// of them.
+const SPACE = 1, // its points this much of the world's spacing apart: closer than a building's
+  JITTER = 0.1; // each off its grid's place at most this much of its spacing: a third of a building's
+export function landPoints(geometry, gapOf) {
+  const made = marks(prepare(geometry, gapOf), {
+    edges: false,
+    levels: true,
+    smooth: true,
+    space: SPACE,
+    jitter: JITTER,
+    round: covering(JITTER),
+  });
+  geometry.dispose();
+  return pointsOf(made, { fog: true, lying: true });
 }

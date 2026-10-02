@@ -66,6 +66,9 @@ export function createStyleControls(actions) {
   $('visual-style').onchange = () => select($('visual-style').value);
   for (const input of document.querySelectorAll('#style-controls input')) input.oninput = apply;
   $('style-reveal').onclick = () => actions.reveal?.();
+  $('style-rise').onclick = () => actions.demo?.('rise');
+  $('style-swirl').onclick = () => actions.demo?.('swirl');
+  $('style-gentle').onclick = () => actions.demo?.('gentle');
   return {
     select,
     render(store, disabled) {

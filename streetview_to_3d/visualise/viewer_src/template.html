@@ -21,13 +21,14 @@
       <button id="open-folder">Open scene</button>
       <nav aria-label="Interaction mode">
         <button id="inspect" aria-pressed="true">Inspect</button
-        ><button id="fly" aria-pressed="false" disabled>Fly</button>
+        ><button id="fly" aria-pressed="false" disabled>Fly</button
+        ><button id="shoot" aria-pressed="false" disabled>Shoot</button>
       </nav>
       <select id="visual-style" aria-label="Visual style">
-        <option value="original">Photoreal</option>
         <option value="paint">1 · Soft paint</option>
         <option value="dither">2 · Dither</option>
         <option value="matrix">3 · Matrix</option>
+        <option value="original">4 · Photoreal</option>
       </select>
       <button id="toggle-settings" class="quiet" aria-pressed="false" aria-controls="view-panel">
         Settings
@@ -73,6 +74,9 @@
               </label>
               <label class="check"><input id="style-scan" type="checkbox" /> Living scan</label>
               <button id="style-reveal">Replay reveal</button>
+              <button id="style-rise">Rise from a disk</button>
+              <button id="style-swirl">Swirl</button>
+              <button id="style-gentle">Swirl gently</button>
               <p class="muted">Point motion pauses while editing.</p>
             </div>
             <p id="style-splat-note" class="muted" hidden>
@@ -104,7 +108,7 @@
           <p>Load a scene folder</p>
         </div>
         <div id="flight" hidden>
-          <span>WASD to fly · Q/E down/up · Shift boost</span
+          <span id="flight-keys">WASD to fly · Q/E down/up · Shift boost</span
           ><button id="exit-fly">Exit Fly · Esc</button>
         </div>
         <div id="reticle" hidden></div>

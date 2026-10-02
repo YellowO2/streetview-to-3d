@@ -1,4 +1,6 @@
 import { tickWater } from '@viewer/effects/water';
+import { playDemo, stopDemo, tickDemo } from '@viewer/effects/demo';
+import { placeShots } from '@viewer/effects/shot';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -45,6 +47,14 @@ export function createStyles(scene, camera, renderer) {
     composer.addPass(dither);
     composer.addPass(matrix);
     composer.addPass(new OutputPass());
+  }
+  // the scene's own points' middle, at their bottom
+  function foot() {
+    const box = asset?.box();
+    if (!box || box.isEmpty()) return null;
+    const at = box.getCenter(new THREE.Vector3());
+    at.y = box.min.y;
+    return at;
   }
   function resize() {
     if (!composer) return;
@@ -94,9 +104,11 @@ export function createStyles(scene, camera, renderer) {
       const box = store.box();
       box.isEmpty() ? center.set(0, 0, 0) : box.getCenter(center);
       entries = [];
+      stopDemo();
+      placeShots(foot() ?? new THREE.Vector3()); // the world whole, shots kept round it
       store.group?.traverse((object) => {
         if (object.userData.pointStyle) {
-          // the buildings' points: those near DA3 drawn as its points are
+          // the buildings' strokes: those near DA3 drawn as its points are
           entries.push({ uniforms: object.material.uniforms, animated: false });
         } else if (object.isPoints) {
           entries.push({ uniforms: pointMotion(object), animated: false });
@@ -118,11 +130,18 @@ export function createStyles(scene, camera, renderer) {
     reveal() {
       if (entries.length) revealStart = time;
     },
+    // a demo (demo.js) round the scene's foot
+    demo(name) {
+      const at = foot();
+      if (at) playDemo(name, at);
+    },
     resize,
     render(dt, editing = false) {
       if (!editing) time += dt;
       updateMotion(editing);
       if (!editing) tickWater(dt);
+      if (editing) stopDemo();
+      else tickDemo(dt);
       environment.update(
         style === 'paint' ? 'anime' : style,
         camera,

@@ -115,8 +115,8 @@ test('bird materials compose with shared point styling and stable particle densi
   };
   cloud.material.onBeforeCompile(shader);
   assert.match(shader.vertexShader, /float phase = styleSeed/);
-  assert.match(shader.vertexShader, /vBirdAlpha = birdAlpha/);
-  assert.match(shader.fragmentShader, /vBirdAlpha/);
+  assert.match(shader.vertexShader, /paintAlpha = /);
+  assert.match(shader.fragmentShader, /smoothstep\(\.15, 1\., r\)/);
   assert.equal(shader.uniforms.stylePointScale.value, 1.2);
   assert.equal(shader.uniforms.styleDensity.value, 0.9);
   model.dispose();

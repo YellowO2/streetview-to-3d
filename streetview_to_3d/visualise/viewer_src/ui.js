@@ -19,7 +19,7 @@ export function createUI(actions, { editable = true } = {}) {
   const styles = createStyleControls(actions);
   const manager = editable ? createSceneManager(actions) : null;
   const bind = (id, fn) => ($(id).onclick = fn);
-  for (const mode of ['inspect', 'fly']) bind(mode, () => actions.mode(mode));
+  for (const mode of ['inspect', 'fly', 'shoot']) bind(mode, () => actions.mode(mode));
   bind('exit-fly', () => actions.mode('inspect'));
   bind('recenter', actions.recenter);
   bind('open-folder', () => $('folder').click());
@@ -67,12 +67,18 @@ export function createUI(actions, { editable = true } = {}) {
       $('scene-name').textContent = store.name;
       $('empty').hidden = !!store.group;
       $('flight').hidden = $('reticle').hidden = state.mode !== 'fly';
-      for (const mode of ['inspect', 'fly']) {
-        $(mode).setAttribute(
-          'aria-pressed',
-          String(mode === 'inspect' ? state.mode !== 'fly' : state.mode === 'fly'),
-        );
-        $(mode).disabled = blocked || (mode === 'fly' && !store.group);
+      $('flight-keys').textContent = state.gun
+        ? 'WASD to move · Q/E down/up · click to shoot · R to mend'
+        : 'WASD to fly · Q/E down/up · Shift boost';
+      $('exit-fly').textContent = `Exit ${state.gun ? 'Shoot' : 'Fly'} · Esc`;
+      const pressed = {
+        inspect: state.mode !== 'fly',
+        fly: state.mode === 'fly' && !state.gun,
+        shoot: state.mode === 'fly' && state.gun,
+      };
+      for (const mode of ['inspect', 'fly', 'shoot']) {
+        $(mode).setAttribute('aria-pressed', String(pressed[mode]));
+        $(mode).disabled = blocked || (mode !== 'inspect' && !store.group);
       }
       $('recenter').disabled = blocked || !store.group;
       for (const id of ['open-folder', 'toggle-settings']) $(id).disabled = blocked;

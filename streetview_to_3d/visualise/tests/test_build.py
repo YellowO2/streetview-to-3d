@@ -12,8 +12,9 @@ class BuildTests(unittest.TestCase):
     def test_packaged_modules_match_sources(self):
         doc = build_document()
         imports = json.loads(re.search(r'<script type="importmap">(.*?)</script>', doc, re.S)[1])["imports"]
-        for path in SOURCE.glob("*.js"):
-            encoded = imports[f"@viewer/{path.stem}"].split(",", 1)[1]
+        for path in SOURCE.rglob("*.js"):
+            key = path.relative_to(SOURCE).with_suffix('').as_posix()
+            encoded = imports[f"@viewer/{key}"].split(",", 1)[1]
             self.assertEqual(base64.b64decode(encoded), path.read_bytes())
             for dependency in re.findall(r"from ['\"](@viewer/[^'\"]+)", path.read_text()):
                 self.assertIn(dependency, imports)

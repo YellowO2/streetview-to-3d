@@ -2,6 +2,7 @@
 // Mode changes never clear selection, visibility or edit history.
 export class ViewerState {
   mode = 'inspect';
+  gun = false; // in Fly, shooting (Shoot) rather than the bird
   selected = null;
   selectionKind = 'piece';
   hidden = new Set();

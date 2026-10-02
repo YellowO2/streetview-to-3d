@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { GAPS, JITTER, level } from '@viewer/effects/scatter';
+import { demo, DEMO } from '@viewer/effects/demo';
+import { shot, SHOT } from '@viewer/effects/shot';
 
 // The scene's water (postprocess/water.py, water.json: each body a flat
 // shape at its level, and a grid of metres from dry land) as points, coloured
@@ -177,12 +179,16 @@ function pointsMaterial(mirror, matrix, halfHeight) {
       matrix: { value: matrix },
       halfHeight,
       time,
+      ...demo,
+      ...shot,
       ...knobs,
       ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
     },
     fog: true, // the scene's haze: far water fades into the sky as the land does
     vertexShader: `
       #include <fog_pars_vertex>
+      ${DEMO}
+      ${SHOT}
       uniform sampler2D mirror; uniform mat4 matrix; uniform float halfHeight, time;
       uniform float ${Object.keys(KNOBS).join(', ')};
       uniform vec3 ${Object.keys(COLOURS).join(', ')};
@@ -206,8 +212,12 @@ function pointsMaterial(mirror, matrix, halfHeight) {
           + glintColour * pow(max(dot(reflect(-v, n), vec3(${vec(sun)})), 0.), glintSharp) * glint;
         colour *= 1. + (dab - .5) * 2. * vary;
         squash = max(abs(v.y), flatness);
+        // the demos: moved as every point is (demo.js)
+        float demoIn;
+        if (shotAway(world.xyz)) demoIn = 0.; // shot away (shot.js)
+        else world.xyz = demoed(world.xyz, dab, 1., demoIn);
         vec4 mv = viewMatrix * world, mvPosition = mv;
-        gl_Position = projectionMatrix * mv;
+        gl_Position = demoIn < .5 ? vec4(2., 2., 2., 1.) : projectionMatrix * mv;
         #include <fog_vertex>
         gl_PointSize = size * (1. + (fract(dab * 3.71) - .5) * 2. * spread) * water.y
           * projectionMatrix[1][1] * halfHeight / -mv.z;
