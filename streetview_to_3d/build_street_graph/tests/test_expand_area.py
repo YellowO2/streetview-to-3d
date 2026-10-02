@@ -40,14 +40,14 @@ def test_an_area_redrawn_fetches_only_what_it_adds(monkeypatch):
     nodes, edges = candidates.expand_area(10 * STEP, 0.0, area=_area(55))
     walked = set(asked)
     assert walked == {f"p{i}" for i in range(5, 16)}                    # walked from inside it only
-    assert {n["id"] for n in nodes} == {f"p{i}" for i in range(4, 17)}  # one past it kept, as a leaf
+    assert {n["id"] for n in nodes} == walked                           # none past it
     asked.clear()
     nodes, _ = candidates.expand_area(10 * STEP, 0.0, area=_area(25))   # pulled in
     assert not asked                                                     # nothing fetched again
-    assert {n["id"] for n in nodes} == {f"p{i}" for i in range(7, 14)}
+    assert {n["id"] for n in nodes} == {f"p{i}" for i in range(8, 13)}
     nodes, _ = candidates.expand_area(10 * STEP, 0.0, area=_area(85))   # pushed out
     assert set(asked) == {"p2", "p3", "p4", "p16", "p17", "p18"}         # only what it adds
-    assert {n["id"] for n in nodes} == {f"p{i}" for i in range(1, 20)}
+    assert {n["id"] for n in nodes} == {f"p{i}" for i in range(2, 19)}
 
 
 def test_a_circle_and_its_shape_find_the_same(monkeypatch):

@@ -62,8 +62,10 @@ def _nearest_to(lat, lon, radius_m):
     return _centre_cache[key]
 
 
-def circle(lat, lon, radius_m, corners=16):
-    """An area as a polygon: corners (lat, lon) on the circle radius_m round (lat, lon)."""
+def circle(lat, lon, radius_m, corners=8):
+    """An area as a polygon: corners (lat, lon) on the circle radius_m round
+    (lat, lon) -- few, so a corner dragged moves a good part of its edge, not
+    a spike."""
     a = np.linspace(0, 2 * np.pi, corners, endpoint=False)
     return [[lat + radius_m * np.sin(t) / 111320.0,
              lon + radius_m * np.cos(t) / (111320.0 * math.cos(math.radians(lat)))] for t in a]
@@ -303,9 +305,9 @@ def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None
     piece is placed by its own GPS (postprocess/place.py), and
     fetch_nodes.corridor_points bridges the ones that come close.
 
-    Each walk goes wave by wave, a whole frontier fetched at once. Only
-    ever expanding FROM a node still within radius_m -- anything found just
-    past the boundary is kept as a leaf but never expanded further. A pano
+    Each walk goes wave by wave, a whole frontier fetched at once, and
+    keeps only what lies within the area: a pano just past it is left out,
+    so what is selected is what the area shows. A pano
     out on the water (on_open_water: a boat's) is never added, so a walk
     stops at the shore.
 
@@ -399,7 +401,8 @@ def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None
                 if not meta:
                     continue
                 known = [n for n in meta["neighbors"] if node_key("google", n["id"]) in by_key]
-                for n in known + ashore([n for n in meta["neighbors"] if n not in known]):
+                new = [n for n in meta["neighbors"] if n not in known]
+                for n in known + ashore([n for n, ok in zip(new, within(new)) if ok]):
                     other_key = node_key("google", n["id"])
                     add_node({"key": other_key, "source": "google", "id": n["id"],
                               "lat": n["lat"], "lon": n["lon"], "heading": None})
@@ -409,8 +412,6 @@ def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None
                         edge_set.add(fe)
                     if other_key not in visited and other_key not in next_frontier:
                         next_frontier.append(other_key)
-            # only ever expanding from a node within the area: one past it is kept, as a leaf
-            next_frontier = [k for k, ok in zip(next_frontier, within([by_key[k] for k in next_frontier])) if ok]
             frontier = next_frontier
 
     print(f"expand_area: {len(nodes)} node(s) from {walks} walk(s), {len(discovered)} discovered, "
