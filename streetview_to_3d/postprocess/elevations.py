@@ -1,6 +1,6 @@
 """Google's elevation of every Street View pano around the scene, not only
 the scene's own: more places where the land's height is known (terrain.py
-bends the map onto them, correction).
+lays the ground on them, from_panos).
 
 Google's coverage tiles (zoom TILE_ZOOM, the ones the map picker reads) list
 each pano with its elevation -- no pano asked one by one: Lund's 1585
@@ -10,10 +10,9 @@ user photospheres.
 Not all of them are the ground: a pano on a bridge stands over it, one in
 a tunnel under it (Lake Como's lakeside road: 66 m under the hill). So
 those on OSM's bridges and in its tunnels are left out (on_ground), the
-rest thinned to one per CELL_M square (the median of its panos' fixes,
-Google minus the map), a square whose fix is more than OUTLIER_M off its
-neighbours' (within NEIGHBOUR_M) left out, and (terrain.py) one more than
-MAX_FIX_M off the scene's own.
+rest thinned to one per CELL_M square (the median of its panos'
+elevation), a square more than OUTLIER_M off the slope of its neighbours
+(within NEIGHBOUR_M) left out -- an unmapped bridge's, an underpass's.
 """
 import math
 
@@ -24,7 +23,6 @@ REACH_M = 300.0         # panos this far past the scene's cameras
 CELL_M = 25.0
 NEIGHBOUR_M, OUTLIER_M = 80.0, 2.5
 OFF_GROUND_M = 15.0     # a pano this near a bridge's or a tunnel's way is on it (Lake Como's: 9-10 m off the line)
-MAX_FIX_M = 15.0
 
 
 def around(lats, lons, reach_m=REACH_M, m_per_lat=111320.0):
@@ -75,21 +73,23 @@ def _raised(tags):
             or tags.get("covered", "no") != "no" or tags.get("layer", "0") not in ("0", ""))
 
 
-def thinned(xy, fix):
-    """(xy (m, 2), fix (m,)): xy's (east/north (n, 2)) fixes, one per
-    CELL_M square (its panos' middle, their median fix), less the squares
-    more than OUTLIER_M off the median of their neighbours' within
-    NEIGHBOUR_M (a bridge's, a tunnel's)."""
+def thinned(xy, elevation):
+    """(xy (m, 2), elevation (m,)): xy's (east/north (n, 2)) elevations,
+    one per CELL_M square (its panos' middle, their median), less the
+    squares more than OUTLIER_M off the plane through their neighbours'
+    within NEIGHBOUR_M (a bridge's, a tunnel's)."""
     from scipy.spatial import cKDTree
     if not len(xy):
         return np.zeros((0, 2)), np.zeros(0)
     key, inv = np.unique(np.floor(xy / CELL_M), axis=0, return_inverse=True)
     inv = inv.ravel()
     at = np.array([xy[inv == k].mean(0) for k in range(len(key))])
-    f = np.array([np.median(fix[inv == k]) for k in range(len(key))])
+    h = np.array([np.median(elevation[inv == k]) for k in range(len(key))])
     keep = np.ones(len(at), bool)
     for k, near in enumerate(cKDTree(at).query_ball_point(at, NEIGHBOUR_M)):
         others = [j for j in near if j != k]
-        if len(others) >= 2 and abs(f[k] - np.median(f[others])) > OUTLIER_M:
-            keep[k] = False
-    return at[keep], f[keep]
+        if len(others) >= 3:
+            rows = np.c_[np.ones(len(others)), at[others] - at[k]]
+            plane = np.linalg.lstsq(rows, h[others], rcond=None)[0]
+            keep[k] = abs(h[k] - plane[0]) <= OUTLIER_M
+    return at[keep], h[keep]

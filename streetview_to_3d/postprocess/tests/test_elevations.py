@@ -3,14 +3,14 @@ import numpy as np
 from streetview_to_3d.postprocess import elevations
 
 
-def test_one_fix_a_square_and_a_bridge_left_out():
-    # a street east along y = 0, a pano every 10 m, the map 1 m low; a bridge's 6 m up over 200-225 m
+def test_one_height_a_square_and_a_bridge_left_out():
+    # a street east along y = 0 climbing 5 m in 100, a pano every 10 m; a bridge's 6 m up over 200-225 m
     x = np.arange(0, 400, 10.0)
     xy = np.c_[x, np.zeros_like(x)]
-    fix = np.where((x >= 200) & (x < 225), 7.0, 1.0)
-    at, f = elevations.thinned(xy, fix)
+    slope = 0.05 * x
+    at, h = elevations.thinned(xy, slope + np.where((x >= 200) & (x < 225), 6.0, 0.0))
     assert len(at) == len(np.unique(np.floor(x / elevations.CELL_M))) - 1
-    assert np.allclose(f, 1.0) and not ((at[:, 0] >= 200) & (at[:, 0] < 225)).any()
+    assert np.allclose(h, 0.05 * at[:, 0], atol=0.3) and not ((at[:, 0] >= 200) & (at[:, 0] < 225)).any()
 
 
 def test_nothing_around():

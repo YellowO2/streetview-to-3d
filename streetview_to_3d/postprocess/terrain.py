@@ -22,11 +22,14 @@ roads and buildings on it are points, spaced the same way:
    seen through, the land never over it -- and around it meeting that
    ground and taking its colour at its edge (seams.py)
 2. height read off the tiles, the sea (the tiles also carry the sea bed)
-   laid flat at sea level; the whole map shifted onto Google's datum (the
-   median of its panos' elevation minus the map's), then bent near the
-   panos onto each one's own elevation (correction). 30 m SRTM is the top
-   of whatever stands there, trees included, and old: on NTU it was off by
-   -4..+2.5 m along the route, where Google's matched DA3's own slope
+   laid flat at sea level, shifted onto Google's datum (the median of the
+   panos' elevation minus the map's); near the panos -- the scene's and
+   every other around (elevations.py) -- not the map at all but their own
+   elevation, spread between them (from_panos). 30 m SRTM is the top of
+   whatever stands there, trees and buildings included, and old: on NTU
+   it was off by -4..+2.5 m along the route, where Google's matched DA3's
+   own slope; by Singapore's river it read -19..+20 m within 50 m of
+   ground at 8 m -- no nudge of it mends that, only leaving it
 3. coloured from the satellite, lifted a little (it is dark from above),
    with a light slope shading so relief reads; plain if the imagery
    cannot be had
@@ -116,8 +119,8 @@ M_PER_LAT = 111320.0
 PLAIN = np.array([0.50, 0.55, 0.45])
 LIFT = 0.75               # colour ** LIFT: brighter shadows, same hues
 SEA_M = 0.5               # map height at or under this is sea
-BEND_K, BEND_SOFT_M = 8, 10.0             # panos each bend is spread from; softening near one
-BEND_FROM_M, BEND_TO_M = 30.0, 150.0      # the bend fades out between these from the nearest pano
+PANOS_K, PANOS_SOFT_M = 8, 10.0           # panos the ground is spread from; softening near one
+PANOS_FROM_M, PANOS_TO_M = 30.0, 150.0    # the panos' ground fades into the map between these from the nearest
 
 
 TILES_DIR = os.path.join(DATA_DIR, "tiles")     # every tile ever downloaded, kept: a rebuild asks for none
@@ -292,25 +295,26 @@ def _merged(a, b):
     return np.concatenate([a[0], b[0]]), np.concatenate([a[1], b[1]]), np.concatenate([a[2], b[2] + len(a[0])])
 
 
-def correction(anchors, fixes):
-    """f(east/north (n, 2)) -> metres to add to the map there: near the
-    anchors (the panos, whose Google elevation is right -- it matched DA3's
-    own slope to 0.1 m where SRTM was twice as steep, NTU), their fixes
-    (Google minus the map) spread by inverse distance; faded out between
-    BEND_FROM_M and BEND_TO_M from the nearest one, where the map stands."""
+def from_panos(at, elevation):
+    """f(east/north (n, 2)) -> (height, weight): the ground the panos at
+    (m, 2) stand on, their Google elevation (right where the map is not --
+    it matched DA3's own slope to 0.1 m where SRTM was twice as steep,
+    NTU) spread between them by inverse distance; and how much it holds
+    there, fully within PANOS_FROM_M of the nearest, fading to nothing at
+    PANOS_TO_M, where the map stands."""
     from scipy.spatial import cKDTree
-    if not len(anchors):
-        return lambda xy: np.zeros(len(xy))
-    tree = cKDTree(anchors)
+    if not len(at):
+        return lambda xy: (np.zeros(len(xy)), np.zeros(len(xy)))
+    tree = cKDTree(at)
 
     def f(xy):
-        k = min(BEND_K, len(anchors))
+        k = min(PANOS_K, len(at))
         d, i = tree.query(xy, k=k)
         d, i = d.reshape(len(xy), k), i.reshape(len(xy), k)
-        w = 1 / (d ** 2 + BEND_SOFT_M ** 2)
-        spread = (w * fixes[i]).sum(1) / w.sum(1)
-        t = np.clip((d[:, 0] - BEND_FROM_M) / (BEND_TO_M - BEND_FROM_M), 0, 1)
-        return spread * (1 - t * t * (3 - 2 * t))
+        w = 1 / (d ** 2 + PANOS_SOFT_M ** 2)
+        spread = (w * elevation[i]).sum(1) / w.sum(1)
+        t = np.clip((d[:, 0] - PANOS_FROM_M) / (PANOS_TO_M - PANOS_FROM_M), 0, 1)
+        return spread, 1 - t * t * (3 - 2 * t)
     return f
 
 
@@ -348,14 +352,13 @@ def build(scene_dir, log=print):
     cam_xz = np.array([(np.asarray(n.transform)[:3, :3] @ n.position + np.asarray(n.transform)[:3, 3])[[0, 2]]
                        for n in cams])
 
-    # the ground: the map, one shift to Google's datum, then bent onto every
-    # pano's own elevation near them
+    # the ground: Google's own elevation where it has panos -- the scene's and
+    # every other's around -- and the map, shifted onto Google's datum, past them
     heights = height_map()
     known = [n for n in sc.nodes if n.pano.elevation is not None]
-    anchors = np.array([((n.pano.lon - lon0) * m_per_lon, (n.pano.lat - lat0) * M_PER_LAT) for n in known])
-    under = heights(*to_ll(anchors)) if len(known) else np.zeros(0)
-    fixes = np.array([n.pano.elevation for n in known]) - under
-    shift = float(np.median(fixes)) if len(known) else 0.0
+    anchors = np.array([((n.pano.lon - lon0) * m_per_lon, (n.pano.lat - lat0) * M_PER_LAT)
+                        for n in known]).reshape(-1, 2)
+    own_el = np.array([n.pano.elevation for n in known])
     # OpenStreetMap's buildings, roads and water, in one request
     try:
         elements = osm.fetch(lat0, lon0, OSM_M, ROADS_M, M_PER_LAT, m_per_lon, scene_dir,
@@ -364,32 +367,34 @@ def build(scene_dir, log=print):
         log(f"terrain: no OpenStreetMap ({e!r})")
         elements = []
 
-    # ... and onto every other pano's around (elevations.py: Google's coverage tiles,
-    # thinned; one on OSM's bridges or in its tunnels, or far off the scene's, left out),
-    # where the scene's own are not
+    # ... and every other pano's around (elevations.py: Google's coverage tiles, thinned;
+    # one on OSM's bridges or in its tunnels left out), where the scene's own are not
     try:
         la, lo, el = elevations.around(*to_ll(cam_xz))
         xy = np.c_[(lo - lon0) * m_per_lon, (la - lat0) * M_PER_LAT]
         level = elevations.on_ground(xy, elements, to_xy)
-        more, more_fix = elevations.thinned(xy[level], (el - heights(la, lo))[level])
+        more, more_el = elevations.thinned(xy[level], el[level])
     except (OSError, ValueError) as e:
         log(f"terrain: no other panos' elevation ({e!r})")
-        more, more_fix = np.zeros((0, 2)), np.zeros(0)
-    keep = np.abs(more_fix - shift) <= elevations.MAX_FIX_M
+        more, more_el = np.zeros((0, 2)), np.zeros(0)
     if len(anchors) and len(more):
-        keep &= cKDTree(anchors).query(more)[0] > elevations.CELL_M
-    more, more_fix = more[keep], more_fix[keep]
-    bend = correction(np.r_[anchors.reshape(-1, 2), more], np.r_[fixes, more_fix] - shift)
+        keep = cKDTree(anchors).query(more)[0] > elevations.CELL_M
+        more, more_el = more[keep], more_el[keep]
+    at, elevation = np.r_[anchors, more], np.r_[own_el, more_el]
+    fixes = elevation - heights(*to_ll(at)) if len(at) else np.zeros(0)
+    shift = float(np.median(fixes)) if len(at) else 0.0
+    panos_ground = from_panos(at, elevation)
 
     def ground(xy, raw=None):
         raw = heights(*to_ll(xy)) if raw is None else raw
-        return np.where(raw <= SEA_M, 0.0, raw) + shift + bend(xy)
+        h, w = panos_ground(xy)
+        return (np.where(raw <= SEA_M, 0.0, raw) + shift) * (1 - w) + h * w
 
     # water: each body at its level over the land, which goes on under it (water.py);
     # its outline OSM's where OSM has one
     radius = RADIUS_M
     jrc = water.jrc(to_ll, heights)
-    wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])), jrc,
+    wet = water.Water(radius, to_ll, heights, shift, (anchors, own_el), jrc,
                       osm=(water.outline(elements, to_xy, OSM_M,
                                          lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir), jrc),
                            OSM_M) if elements else None)
@@ -645,9 +650,9 @@ def build(scene_dir, log=print):
         f"{n_cut} of their points "
         f"left to DA3's own, {n_seen} coloured by the panos, {n_sat} roofs by the satellite -- {n_roads} roads, {n_bridges} bridges, "
         f"{len(mouths[2]) // 14} tunnel mouths), map shifted "
-        f"{shift:+.1f} m to Google's datum, then bent onto {len(known)} panos' elevation "
-        f"and {len(more)} other places' "
-        f"(by up to {fix.max() if len(fix) else 0:.1f} m, median {np.median(fix) if len(fix) else 0:.1f})")
+        f"{shift:+.1f} m to Google's datum, the ground near {len(known)} panos and {len(more)} other places "
+        f"their elevation (the map off it by up to {fix.max() if len(fix) else 0:.1f} m, "
+        f"median {np.median(fix) if len(fix) else 0:.1f})")
 
 
 def _panos(sc, scene_dir):

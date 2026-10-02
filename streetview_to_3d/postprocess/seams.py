@@ -17,7 +17,7 @@ panos' class maps call road, sidewalk or terrain, and read here as it is
 edge with only a wall's or a tree's took them for the ground (Lake Como:
 a road pulled 7 m up to one, dropped 7 m at the scene's edge).
 
-Everything is aligned before it is faded (terrain.correction,
+Everything is aligned before it is faded (terrain.from_panos,
 buildings.fit_to_scene): a fade only hides a seam where the two already
 roughly agree; across a real offset it would only blur a double wall.
 """
