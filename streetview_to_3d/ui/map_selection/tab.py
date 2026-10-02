@@ -1,8 +1,8 @@
-"""Gradio wiring for the map-picking section: load an area, optionally
-auto-expand it, then click markers to extend a graph of real Google
-Street View nodes. Exposes build_map_section() for ui/tab.py
-to mount, plus nodes_by_key() (shared state-shape helper) for its pathfind
-handlers to use.
+"""Gradio wiring for the map-picking section: a location pasted loads its
+area (no button), optionally auto-expand it, then click markers to extend
+a graph of real Google Street View nodes. Exposes build_map_section() for
+ui/tab.py to mount, plus nodes_by_key() (shared state-shape helper) for
+its pathfind handlers to use.
 
 The map lives in a sandboxed iframe (see map_ui.py) so a marker click can't
 call back into Python directly. The bridge: the iframe does
@@ -113,7 +113,7 @@ def _augment_real_links(state, key):
     to -- confirmed directly (a specific node's linked neighbor was simply
     absent from the tile listing even when queried centered right on that
     node, not just a radius/max_nodes cutoff issue). nearby_nodes also only
-    ever runs once, centered on the original "Load area" point, so a click
+    ever runs once, centered on the location first given, so a click
     far from that point can be missing edges just from being out of range.
     This fixes both: always goes straight to the accurate per-node source
     for whichever node was actually clicked, regardless of how far it is
@@ -152,11 +152,13 @@ def _augment_real_links(state, key):
     return {**state, "nodes": nodes, "edges": edges}
 
 
-def handle_load_area(area_input, state):
+def handle_load_area(area_input, radius_input, state):
+    """A location pasted (or typed): its area loads, the nearest pano the
+    start -- no button. Text not yet a location (half typed) is left alone."""
     try:
         lat, lon = extract_lat_lon(area_input)
-    except ValueError as e:
-        raise gr.Error(str(e))
+    except ValueError:
+        return gr.skip(), gr.skip(), state
 
     nodes, edges = candidates_mod.nearby_nodes(lat, lon)
     if not nodes:
@@ -168,6 +170,7 @@ def handle_load_area(area_input, state):
     state = {
         "lat": lat, "lon": lon, "nodes": nodes, "edges": edges,
         "selected": [start_key], "selected_edges": [], "view": None,
+        "radius_m": _radius(radius_input), "preview_center": None, "area": None,
     }
     state = _augment_real_links(state, start_key)
     return _map_html(state), _summary_markdown(state), state
@@ -221,9 +224,8 @@ def handle_area_drag(payload, state):
 
 
 def handle_preview_radius(area_input, radius_input, state):
-    """Draws the blue radius circle live as the radius (or location) is
-    typed, without running the actual (network-heavy) expand_area walk --
-    so the radius can be sanity-checked visually before committing to it.
+    """Draws the blue radius circle live as the radius is typed, without
+    running the actual (network-heavy) expand_area walk -- so the radius can be sanity-checked visually before committing to it.
     Only ever touches radius_m/preview_center, never nodes/edges/selected,
     so it's always safe to fire on every keystroke without disturbing an
     already-loaded graph."""
@@ -234,15 +236,17 @@ def handle_preview_radius(area_input, radius_input, state):
     if lat is None:
         return _map_html(state), state
 
+    state = {**state, "radius_m": _radius(radius_input), "preview_center": (lat, lon)}
+    return _map_html(state), state
+
+
+def _radius(radius_input):
+    """The radius typed, in metres; None if it is not one yet."""
     try:
         radius_m = float(radius_input)
-        if radius_m <= 0:
-            radius_m = None
     except (TypeError, ValueError):
-        radius_m = None
-
-    state = {**state, "radius_m": radius_m, "preview_center": (lat, lon)}
-    return _map_html(state), state
+        return None
+    return radius_m if radius_m > 0 else None
 
 
 def handle_bridge_message(payload_str, state):
@@ -330,21 +334,19 @@ def build_map_section():
     and mounts its own controls below map_view/selection_view."""
     state = gr.State(_empty_state())
 
+    # one row: the location loads as it is pasted, so the only button is Expand
     with gr.Row(equal_height=True):
         area_input = gr.Textbox(
             placeholder="Google Maps URL or lat,lon (e.g. 1.3237, 103.7555)",
             show_label=False,
             container=False,
-            scale=5,
+            scale=4,
         )
-        load_btn = gr.Button("Load area", variant="primary", scale=1, min_width=100)
-
-    with gr.Row(equal_height=True):
         expand_radius_input = gr.Textbox(
-            placeholder="Radius in metres (e.g. 500)",
+            placeholder="Radius in metres (e.g. 50)",
             show_label=False,
             container=False,
-            scale=5,
+            scale=2,
         )
         expand_btn = gr.Button("Expand area", scale=1, min_width=100)
 
@@ -358,9 +360,9 @@ def build_map_section():
         with gr.Column(scale=0, min_width=140):
             clear_btn = gr.Button("Clear selection")
 
-    load_btn.click(
+    area_input.change(
         fn=handle_load_area,
-        inputs=[area_input, state],
+        inputs=[area_input, expand_radius_input, state],
         outputs=[map_view, selection_view, state],
     )
 
@@ -373,11 +375,6 @@ def build_map_section():
     )
 
     expand_radius_input.change(
-        fn=handle_preview_radius,
-        inputs=[area_input, expand_radius_input, state],
-        outputs=[map_view, state],
-    )
-    area_input.change(
         fn=handle_preview_radius,
         inputs=[area_input, expand_radius_input, state],
         outputs=[map_view, state],

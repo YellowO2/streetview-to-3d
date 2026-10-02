@@ -57,7 +57,7 @@ def handle_pathfind_prepare(state):
         raise gr.Error(f"Prepare failed: {e}")
 
     n = len(prep["node_entries"])
-    yield prep, f"<p>{n} panoramas ready.</p>"
+    yield prep, f"<p>{n} panoramas ready. Now click button 2.</p>"
 
 
 def _zip(run_dir):
