@@ -215,7 +215,7 @@ function pointsMaterial(mirror, matrix, halfHeight) {
         // the demos: moved as every point is (demo.js)
         float demoIn;
         if (shotAway(world.xyz)) demoIn = 0.; // shot away (shot.js)
-        else world.xyz = demoed(world.xyz, dab, 1., demoIn);
+        else world.xyz = demoed(world.xyz, dab, demoIn);
         vec4 mv = viewMatrix * world, mvPosition = mv;
         gl_Position = demoIn < .5 ? vec4(2., 2., 2., 1.) : projectionMatrix * mv;
         #include <fog_vertex>

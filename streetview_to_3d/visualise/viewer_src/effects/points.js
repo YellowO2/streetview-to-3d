@@ -62,7 +62,7 @@ export function pointMotion(object) {
       #include <project_vertex>
       float demoHere;
       mvPosition = viewMatrix * vec4(demoed((modelMatrix * vec4(transformed, 1.)).xyz,
-        phase / 6.2831853, 1., demoHere), 1.);
+        phase / 6.2831853, demoHere), 1.);
       gl_Position = projectionMatrix * mvPosition;
       demoIn = min(demoIn, demoHere);
     `,

@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { PATCHES } from '@viewer/effects/patches';
-import { haze } from '@viewer/effects/land';
+import { haze, HAZED } from '@viewer/effects/haze';
 
 // The bird's paint (bird.js; its trail, bird-plume.js): points as the world's
 // are -- the DA3 points' size, styled as they are (effects/points.js) --
@@ -52,7 +51,7 @@ export function birdPaint({ trail = false } = {}) {
       `uniform float haze;
       varying vec3 paintWorld;
       varying float paintAlpha;
-      ${PATCHES}\n` +
+      ${HAZED}\n` +
       shader.fragmentShader.replace(
         '#include <opaque_fragment>',
         `outgoingLight = hazed(${v3(WHITE)}, length(paintWorld - cameraPosition), haze);

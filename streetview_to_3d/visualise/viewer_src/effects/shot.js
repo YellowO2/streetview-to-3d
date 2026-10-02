@@ -2,8 +2,8 @@ import * as THREE from 'three';
 
 // Where the world has been shot away (gun.js): one rule every point follows,
 // as the demos' (demo.js) -- the scene's points and the map's (points.js),
-// the buildings' strokes (blocks.js), the water's (water.js), the land's
-// patches (land.js) -- a point inside it is gone, wherever it stands.
+// the buildings' and the land's (blocks.js), the water's (water.js) -- a
+// point inside it is gone, wherever it stands.
 //
 // Held as a grid of cells round the scene's foot (CELL_M apart, SIZE of them:
 // east, up from FLOOR_M under it, south), each how much is shot away there,

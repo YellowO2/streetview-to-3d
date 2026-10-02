@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 
 // The demos: the whole world moved at once, as one rule every point follows
-// -- the scene's points and the map's (points.js), the buildings' strokes
-// (blocks.js), the water's (water.js), the land's corners (land.js) -- each
+// -- the scene's points and the map's (points.js), the buildings' and the
+// land's (blocks.js), the water's (water.js) -- each
 // from where it stands (and its own seed), so it ends exactly back there.
 //
 // - rise: the world a flat disk at the scene's foot, spreading out from its
@@ -44,21 +44,16 @@ export const demo = {
 };
 const f = (x) => x.toFixed(4);
 
-// GLSL, vertex or fragment. demoed(p, seed, whole, shown): world point p
-// where the demo has it now; seed its own (0..1); whole 0 for a mesh's
-// corners, which must turn together (one turn, the land a sheet), 1 for a
-// point. shown 0 where the world is not yet.
+// GLSL, vertex or fragment. demoed(p, seed, shown): world point p where the
+// demo has it now; seed its own (0..1). shown 0 where the world is not yet.
 export const DEMO = `
   uniform float demoKind, demoT;
   uniform vec3 demoCentre;
   float demoReach(vec3 p) {
     return log(1. + length(p.xz - demoCentre.xz) / ${f(NEAR_M)}) / ${f(Math.log(1 + FAR_M / NEAR_M))};
   }
-  float demoShown(vec3 p) {
-    return demoKind > .5 && demoKind < 1.5 ? step(demoReach(p), demoT / ${f(SPREAD_S)}) : 1.;
-  }
-  vec3 demoed(vec3 p, float seed, float whole, out float shown) {
-    shown = demoShown(p);
+  vec3 demoed(vec3 p, float seed, out float shown) {
+    shown = demoKind > .5 && demoKind < 1.5 ? step(demoReach(p), demoT / ${f(SPREAD_S)}) : 1.;
     if (demoKind < .5) return p;
     vec3 d = p - demoCentre;
     float r = length(d.xz);
@@ -76,7 +71,7 @@ export const DEMO = `
     }
     float e = smoothstep(0., 1., clamp((demoT - seed * ${f(STAGGER)}) / ${f(SWIRL_S - STAGGER)}, 0., 1.)),
       a = sin(3.14159265 * e),
-      turns = 1. + whole * floor(${f(TURNS)} / (1. + r / ${f(NEAR_M)}) + .5),
+      turns = 1. + floor(${f(TURNS)} / (1. + r / ${f(NEAR_M)}) + .5),
       angle = 6.2831853 * turns * e + a * (seed - .5) * 1.5,
       c = cos(angle), s = sin(angle);
     vec2 xz = mat2(c, s, -s, c) * d.xz * mix(1., ${f(PULL)}, a);

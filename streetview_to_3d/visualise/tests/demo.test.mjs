@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { demo, DEMOS, playDemo, tickDemo } from '@viewer/effects/demo';
 import { pointMotion } from '@viewer/effects/points';
 import { blockPoints } from '@viewer/effects/blocks';
-import { landSurface } from '@viewer/effects/land';
+import { landPoints } from '@viewer/effects/land';
 import { waterSurfaces } from '@viewer/effects/water';
 
 const points = () => {
@@ -34,9 +34,8 @@ test('every kind of point follows the demos, one rule, the bird not', () => {
   assert.match(blocks.material.vertexShader, /demoed\(centre/);
   assert.equal(blocks.material.uniforms.demoT, demo.demoT);
 
-  const land = landSurface(square(0), () => 1);
-  assert.match(land.material.vertexShader, /demoed\(w\.xyz/);
-  assert.match(land.material.fragmentShader, /demoShown\(world\)/);
+  const land = landPoints(square(0), () => 1);
+  assert.match(land.material.vertexShader, /demoed\(centre/);
   assert.equal(land.material.uniforms.demoCentre, demo.demoCentre);
 
   const [water] = waterSurfaces(

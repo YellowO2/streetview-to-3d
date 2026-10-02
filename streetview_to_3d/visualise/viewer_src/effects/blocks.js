@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { PATCHES } from '@viewer/effects/patches';
-import { haze } from '@viewer/effects/land';
+import { haze, HAZED } from '@viewer/effects/haze';
 import { SUN } from '@viewer/effects/water';
 import { FLAT, GAPS, JITTER, level } from '@viewer/effects/scatter';
 import { tunable } from '@viewer/effects/tune-panel';
@@ -84,10 +83,6 @@ const vertexShader = `
   attribute float dab, near; // its size (m); how near DA3's points: 1 drawn as they are
   varying vec3 colour, world;
   varying float seed;
-  #ifdef LYING
-  varying vec2 dir;
-  varying float flatness;
-  #endif
   float h1(float x) { return fract(sin(x * 12.9898) * 43758.5453); }
   void main() {
     vec3 centre = position;
@@ -110,19 +105,13 @@ const vertexShader = `
       pointM * stylePointScale * (1. + sin(styleTime * .8 + phase) * .14 * styleFloat), t);
     // the demos: moved whole, as a point is (demo.js); shot away whole (shot.js)
     float demoIn;
-    world += demoed(centre, h1(seed * 13.7), 1., demoIn) - centre;
+    world += demoed(centre, h1(seed * 13.7), demoIn) - centre;
     if (shotAway(centre)) demoIn = 0.;
     vec4 mv = viewMatrix * vec4(world, 1.);
     gl_Position = demoIn < .5 ? vec4(2., 2., 2., 1.) : projectionMatrix * mv;
     vec4 mvPosition = mv;
     #include <fog_vertex>
     gl_PointSize = demoIn < .5 ? 0. : d * projectionMatrix[1][1] * halfHeight / -mv.z;
-    #ifdef LYING
-    // a disc lying on its face, as seen: squashed along its facing on the screen, the more edge-on
-    vec3 nv = normalize((viewMatrix * vec4(n, 0.)).xyz);
-    flatness = mix(max(abs(dot(nv, normalize(-mv.xyz))), .25), 1., t);
-    dir = length(nv.xy) > 1e-4 ? normalize(nv.xy) : vec2(1., 0.);
-    #endif
     // its colour, its face lit or in shade, a little lighter or darker its own way --
     // near DA3, as DA3's points are: as they are
     float sunlit = smoothstep(-.05, .25, dot(n, ${v3(sun)}));
@@ -135,19 +124,10 @@ const fragmentShader = `
   uniform float haze;
   varying vec3 colour, world;
   varying float seed;
-  #ifdef LYING
-  varying vec2 dir;
-  varying float flatness;
-  #endif
-  ${PATCHES}
+  ${HAZED}
   void main() {
-    // round, facing the eye as DA3's points do (lying: squashed as a disc on its face is seen), its edge uneven
-    vec2 q = vec2(gl_PointCoord.x, 1. - gl_PointCoord.y) * 2. - 1.;
-    #ifdef LYING
-    float u = dot(q, dir) / flatness, v = dot(q, vec2(-dir.y, dir.x));
-    #else
-    float u = q.x, v = q.y;
-    #endif
+    // round, facing the eye as DA3's points do, its edge uneven
+    float u = gl_PointCoord.x * 2. - 1., v = 1. - gl_PointCoord.y * 2.;
     if (u * u + v * v > 1. - ${f(ROUGH)} * vnoise(vec2(u * 3. + seed * 17., v * 2.))) discard;
     gl_FragColor = vec4(hazed(colour, length(world - cameraPosition), haze), 1.);
     #include <tonemapping_fragment>
@@ -377,9 +357,8 @@ const pointStyle = () => ({
 
 // points ({ centre, facing, tint, dab, near? }) as the GPU's points: a few
 // bytes each (its facing, colour and nearness as bytes); fog: the scene's
-// haze over them, gone by its far edge (the land's, land.js); lying: each
-// drawn as a disc lying on its face is seen, not facing the eye (the land's)
-export function pointsOf(made, { fog = false, lying = false } = {}) {
+// haze over them, gone by its far edge (the land's, land.js)
+export function pointsOf(made, { fog = false } = {}) {
   const count = made.dab.length;
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(made.centre, 3));
@@ -413,7 +392,6 @@ export function pointsOf(made, { fog = false, lying = false } = {}) {
         ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
       },
       fog,
-      defines: lying ? { LYING: '' } : {},
       vertexShader,
       fragmentShader,
     }),

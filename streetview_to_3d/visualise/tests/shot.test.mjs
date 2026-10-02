@@ -5,7 +5,7 @@ import { shot, placeShots, clearShots, carve, CELL_M, SIZE } from '@viewer/effec
 import { createGun, RADIUS, SPEED } from '@viewer/gun';
 import { pointMotion } from '@viewer/effects/points';
 import { blockPoints } from '@viewer/effects/blocks';
-import { landSurface } from '@viewer/effects/land';
+import { landPoints } from '@viewer/effects/land';
 
 const cell = (p) => {
   const c = p.clone().sub(shot.shotCorner.value).divideScalar(CELL_M).floor();
@@ -49,7 +49,7 @@ test('every kind of point is shot away by the one rule, the bird not', () => {
   assert.match(world.vertexShader, /shotAway\(stylePosition \+ styleCenter\)/);
   assert.equal(world.uniforms.shotField, shot.shotField);
   assert.match(blockPoints(square()).material.vertexShader, /shotAway\(centre\)/);
-  assert.match(landSurface(square(), () => 1).material.fragmentShader, /shotAway\(vec3\(middle/);
+  assert.match(landPoints(square(), () => 1).material.vertexShader, /shotAway\(centre\)/);
   const bird = new THREE.Points(square(), new THREE.PointsMaterial());
   bird.userData.styleAnimated = true;
   assert.doesNotMatch(compiled(bird).vertexShader, /shotAway/);

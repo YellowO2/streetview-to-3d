@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { landPoints, landSurface, MIN_GAP } from '@viewer/effects/land';
+import { landPoints, MIN_GAP } from '@viewer/effects/land';
+import { covering } from '@viewer/effects/blocks';
 import { GAPS, level } from '@viewer/effects/scatter';
 
 // 100 m square in the viewer's frame (y up), two triangles, wound downwards
@@ -15,20 +16,20 @@ function field() {
   return geometry;
 }
 
-test('the land is one painted surface, its patches as the points are spaced', () => {
-  const land = landSurface(field(), (x) => (x < 50 ? 0.01 : 2));
-  assert.ok(land.isMesh && land.material.isShaderMaterial);
-  const gap = land.geometry.getAttribute('gap'),
-    p = land.geometry.getAttribute('position'),
-    n = land.geometry.getAttribute('normal');
+test('the land is points spaced as the world is, never under MIN_GAP, facing up however wound', () => {
+  const land = landPoints(field(), (x) => (x < 50 ? 0.01 : 2));
+  const p = land.geometry.getAttribute('position'),
+    dab = land.geometry.getAttribute('dab'),
+    facing = land.geometry.getAttribute('facing');
+  const across = (gap) => Math.fround(GAPS[level(gap)] * covering(0.1)); // land.js SPACE 1, JITTER
   for (let i = 0; i < p.count; i++) {
-    assert.equal(gap.getX(i), Math.fround(p.getX(i) < 50 ? MIN_GAP : 2)); // never under MIN_GAP
-    assert.ok(n.getY(i) > 0.999); // up, whichever way the triangles wind
+    // a triangle spaced by its closest corner: the west one's all MIN_GAP
+    if (p.getX(i) < 40) assert.equal(dab.getX(i), across(MIN_GAP));
+    assert.ok(facing.getY(i) > 0.99); // up: lit as the land faces
   }
-  assert.equal(land.geometry.getAttribute('color').count, p.count); // plain if it had none
 });
 
-test('the land as points: dabs lying on it, spaced by one grid, no edges, fogged', () => {
+test('the land as points: spaced by one grid, no edges, fogged', () => {
   const land = landPoints(field(), () => 1);
   assert.ok(land.isPoints && land.material.fog);
   const p = land.geometry.getAttribute('position'),
@@ -37,7 +38,7 @@ test('the land as points: dabs lying on it, spaced by one grid, no edges, fogged
   assert.ok(Math.abs(p.count - (100 / s) ** 2) < 0.1 * p.count); // the grid's, none along its rim
   for (let i = 0; i < p.count; i++) {
     assert.equal(p.getY(i), 2);
-    assert.ok(Math.abs(facing.getY(i)) > 0.99); // lying on it
+    assert.ok(Math.abs(facing.getY(i)) > 0.99); // facing as the land does
   }
 });
 

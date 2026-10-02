@@ -13,7 +13,7 @@ import {
   BLOCKS,
 } from '@viewer/scene-format';
 import { waterSurfaces } from '@viewer/effects/water';
-import { landPoints, landSurface } from '@viewer/effects/land';
+import { landPoints } from '@viewer/effects/land';
 import { blockPoints, buildingPoints } from '@viewer/effects/blocks';
 import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
@@ -51,10 +51,7 @@ loader.setCustomPropertyNameMapping({
   kind: ['kind'],
   near: ['near'],
 });
-// for now, to compare: a page opened with ?land=points draws the land as points
-const LAND_POINTS = new URLSearchParams(globalThis.location?.search ?? '').get('land') === 'points';
-// land.ply as one surface, as games draw ground, painted in patches as the
-// points are spaced (effects/land.js); gapOf(x, z): their spacing there.
+// land.ply's triangles as the land's points (effects/land.js); gapOf(x, z): the world's points' spacing there.
 export function parseLand(buffer, gapOf) {
   const geometry = loader.parse(buffer);
   if (!geometry.getAttribute('position')?.count || !geometry.index) {
@@ -62,7 +59,7 @@ export function parseLand(buffer, gapOf) {
     throw Error(`${LAND}.ply has no triangles.`);
   }
   geometry.applyMatrix4(flip);
-  const land = (LAND_POINTS ? landPoints : landSurface)(geometry, gapOf);
+  const land = landPoints(geometry, gapOf);
   land.userData.surroundings = LAND;
   return land;
 }
