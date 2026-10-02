@@ -17,10 +17,10 @@ roads and buildings on it are points, spaced the same way:
 1. the land's corners out to RADIUS_M (past it the viewer's haze has
    hidden everything), further apart the further from the nearest
    camera (LAND_EVERY x gap_at), joined into triangles;
-   where the scene has its own ground, just beneath it (UNDER_M) -- one
-   shared ground, the scene's no longer seen through, the land never over
-   it -- and around it meeting its ground and taking its colour at its
-   edge (seams.py)
+   where the scene has its own ground (the fill's, seams.SceneGround),
+   just beneath it (UNDER_M) -- one shared ground, the scene's no longer
+   seen through, the land never over it -- and around it meeting that
+   ground and taking its colour at its edge (seams.py)
 2. height read off the tiles, the sea (the tiles also carry the sea bed)
    laid flat at sea level; the whole map shifted onto Google's datum (the
    median of its panos' elevation minus the map's), then bent near the
@@ -103,9 +103,7 @@ TINT_M, MEET_M = 8.0, 10.0                # the ground's seam with the scene (se
 BRIDGE_CLEAR_M = {"road": 4.5, "water": 2.5}     # a bridge's deck at least this over each (the land fits under it)
 ROAD_MEET_M, ROAD_MEET_MAX_M = 40.0, 10.0  # roads, bridges: the scene's road's height where they touch it, their
                                            # own this far out (unless 10 m apart: not the same road)
-UNDER_M = 0.1                             # the land under the scene: this far beneath its lowest points
-LOW_M, COVER = 1.0, 0.75                  # the scene's ground: points this near the map's; land it has within
-                                          # this much of the land's own gap is the scene's
+UNDER_M = 0.1                             # the land under the scene's ground: this far beneath it
 TINT = 0.8                                # how far the map takes the scene's colour at its edge
 GAP0_M, GAP_PER = 0.05, 0.018              # the land's corners: LAND_EVERY x gap_at apart
 POINT_M = 0.10                             # roads' and buildings' points: as DA3's are drawn at the scene's edge,
@@ -389,9 +387,8 @@ def build(scene_dir, log=print):
 
     # the scene always wins: the map only around it, faded in at its edge
     scene, scene_cols = scene_points(sc, scene_dir)
-    foot = seams.Footprint(scene, scene_cols, ground) if len(scene) else None
-    near = (lambda xy: foot.at(xy)) if foot else \
-        (lambda xy: (np.full(len(xy), np.inf), np.full(len(xy), np.nan), np.full((len(xy), 3), np.nan)))
+    scene_ground = seams.SceneGround.load(scene_dir)          # its ground, as the fill found it
+    near = scene_ground.at
     cam_tree = cKDTree(cam_xz)
     # points spaced from the scene's edge: its 1 m squares holding a few points
     cell, n = np.unique(np.floor(scene[:, [0, 2]]), axis=0, return_counts=True) if len(scene) else (cam_xz, None)
@@ -452,23 +449,19 @@ def build(scene_dir, log=print):
     edges = edges[np.linalg.norm(edges, axis=1) < radius]
     owner = np.r_[np.full(len(en) + len(edges), -1), owner[inside]]
     en = np.concatenate([en, edges, walls[inside]])
-    # the scene's ground-level points: the land fills exactly where they are not
-    low = scene[-scene[:, 1] < ground(scene[:, [0, 2]]) + LOW_M] if len(scene) else scene
-    low_tree = cKDTree(low[:, [0, 2]]) if len(low) else None
-    uncovered = (lambda xy, gap: low_tree.query(xy, workers=-1)[0] > COVER * gap) if low_tree else \
-        (lambda xy, gap: np.ones(len(xy), bool))
-    under = ~uncovered(en, LAND_EVERY * gap_at(cam_tree.query(en, workers=-1)[0]))
+    # the land fills exactly where the scene has no ground of its own
     dist, edge_h, edge_c = near(en)
+    under = dist == 0
     lat, lon = to_ll(en)
     raw = heights(lat, lon)
     h = seams.meet(ground(en, raw), edge_h, dist, MEET_M)
     h = roads.under_decks(over, en, net.adapt(en, h, road_h))
     # under the scene's own ground too, just beneath it: one shared ground,
     # so the scene's is not seen through, the land never over it
-    h = np.where(under & np.isfinite(edge_h), np.minimum(h, np.nan_to_num(edge_h) - UNDER_M), h)
+    h = np.where(under, np.minimum(h, edge_h - UNDER_M), h)
     # the land round a building DA3 has ground beside made DA3's ground (buildings.onto_scene),
     # then every building stood where the land meets it, the land cut down round it (buildings.settle)
-    h = buildings.onto_scene(outlines, en, h, owner, scene, under)
+    h = buildings.onto_scene(outlines, en, h, owner, scene_ground, under)
     h = buildings.settle(outlines, en, h, owner)
     # the shore shaped as a game's (water.py): the land eases into the water,
     # a quay by a road stands; under it the land goes on as the water's bed
@@ -570,7 +563,7 @@ def build(scene_dir, log=print):
         road_mesh = roads.surface(net, road_h,
                                   shapely.difference(shapely.box(-radius, -radius, radius, radius), near_cams))
         rp, rc = roads.points(net, gap, road_h, lambda xy: cam_tree.query(xy)[0] < NEAR_M)
-        keep = uncovered(rp[:, [0, 2]], gap(rp[:, [0, 2]]))
+        keep = ~scene_ground.covers(rp[:, [0, 2]])
         keep &= ~wet.inside(rp[:, [0, 2]])                              # no road in the water
         rp = rp[keep]
         pts, cols = np.concatenate([pts, rp]), np.concatenate([cols, rc[keep]])

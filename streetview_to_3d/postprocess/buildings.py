@@ -119,8 +119,7 @@ NO_FACADE = -1e4              # a roof's place on a wall: none (a skirt's is bel
 MIN_HEIGHT_M = 2.5
 PAD_M, CUT_SLOPE = 1.0, 0.5   # the land level with a building's foot this far round it, then rising at most this
 CUT_REACH_M = 20.0            # ... looked at this far out: the map's bumps are a few metres
-BESIDE_M, BESIDE_MIN = 1.5, 10   # DA3's ground beside a corner: its points this near it, this many at least
-RAISE_MAX_M = 3.0             # the land raised to DA3's ground by at most this: more is a canopy, not ground
+BESIDE_M = 1.5                # DA3's ground beside a corner: this near it
 ON_GROUND_M = 0.05            # a wall's points from this far under the ground where it stands, never lower
 CHUNK_M = 4.0                 # a wall is spaced in pieces this long, each as at its middle
 ROOF_MIN_STEP_M = 0.5         # roofs are seen from above only
@@ -206,45 +205,39 @@ def corners(outlines, spacing):
     return np.concatenate(pts), np.concatenate(owner)
 
 
-def onto_scene(outlines, xy, h, owner, scene, under):
+def onto_scene(outlines, xy, h, owner, own, under):
     """The land made DA3's ground round each building DA3 has ground
     beside (at two of its corners at least), before the buildings are
-    stood on it (settle): each corner where DA3 has ground its ground
-    there -- its typical ground, the lowest tenth of its points within
-    BESIDE_M, not the land kept just under DA3's lowest ones -- and the
+    stood on it (settle): each corner within BESIDE_M of the scene's
+    ground (own: seams.SceneGround, the fill's) its height there, and the
     building's other corners and the land round it raised to DA3's level
     beside it (the median of those), level within PAD_M and easing back
-    down to the land's own at CUT_SLOPE, as settle cuts it: so no corner
-    stands on the map's lower land, sinking the building below DA3's
-    ground. Never raised by more than RAISE_MAX_M, nor where DA3's own
-    ground is (under: the land kept just beneath it there). scene: DA3's
-    points (world: x east, y down, z north). Returns the land's h."""
+    down to the land's own at CUT_SLOPE out to CUT_REACH_M, as settle cuts
+    it: so no corner stands on the map's lower land, sinking the building
+    below DA3's ground. Never where DA3's own ground is (under: the land
+    kept just beneath it there). Returns the land's h."""
     import shapely
-    if not len(scene) or not len(owner):
+    if not len(owner):
         return h
-    beside, tree, out = cKDTree(scene[:, [0, 2]]), cKDTree(xy), h.copy()
+    dist, ground, _ = own.at(xy)
+    tree, out = cKDTree(xy), h.copy()
     for i, (ring, _, _, form, *_) in enumerate(outlines):
         mine = np.flatnonzero(owner == i)
         if not len(mine) or form.base_m > 0:
             continue
-        ground = np.full(len(mine), np.nan)
-        for k, near in enumerate(beside.query_ball_point(xy[mine], BESIDE_M)):
-            if len(near) >= BESIDE_MIN:
-                ground[k] = np.percentile(-scene[near, 1], 10)
-        has = np.isfinite(ground)
-        if has.sum() < 2:
+        has = mine[dist[mine] <= BESIDE_M]
+        if len(has) < 2:
             continue
-        out[mine[has]] = ground[has]
+        out[has] = ground[has]
         level = float(np.median(ground[has]))
         c = ring[:-1].mean(0)
-        reach = np.linalg.norm(ring - c, axis=1).max() + PAD_M + RAISE_MAX_M / CUT_SLOPE
+        reach = np.linalg.norm(ring - c, axis=1).max() + PAD_M + CUT_REACH_M
         idx = np.asarray(tree.query_ball_point(c, reach), int)
-        idx = idx[~np.isin(idx, mine[has]) & ~under[idx]]
+        idx = idx[~np.isin(idx, has) & ~under[idx]]
         if not len(idx):
             continue
         d = shapely.distance(shapely.polygons(ring), shapely.points(xy[idx]))
-        up = np.maximum(out[idx], level - np.maximum(d - PAD_M, 0) * CUT_SLOPE)
-        out[idx] = np.where(up - out[idx] <= RAISE_MAX_M, up, out[idx])
+        out[idx] = np.maximum(out[idx], level - np.maximum(d - PAD_M, 0) * CUT_SLOPE)
     return out
 
 

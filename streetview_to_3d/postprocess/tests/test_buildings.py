@@ -1,6 +1,6 @@
 import numpy as np
 
-from streetview_to_3d.postprocess import buildings
+from streetview_to_3d.postprocess import buildings, seams
 from streetview_to_3d.postprocess.roofs import Roof
 
 
@@ -220,15 +220,16 @@ def test_the_land_round_a_building_made_da3s_ground_before_it_is_stood_on():
     h = np.full(len(xy), 0.0)
     ex, ez = np.meshgrid(np.arange(-2, 12, .2), np.arange(-3, 1, .2))
     da3 = np.c_[ex.ravel(), np.full(ex.size, -0.5), ez.ravel()]           # its ground: 0.5 m up (y down)
+    ground = seams.SceneGround.from_points(da3, np.full((len(da3), 3), .5))
     under = np.zeros(len(xy), bool)
-    out = buildings.onto_scene([house], xy, h, own, da3, under)
+    out = buildings.onto_scene([house], xy, h, own, ground, under)
     out = buildings.settle([house], xy, out, own)
     assert np.isclose(house[3].foot_m, 0.5)                                # stood on DA3's ground, not the map's
     assert (out[own == 0] >= 0.5 - 1e-9).all()
     far = np.linalg.norm(grid - [5, 5], axis=1) > 14
     assert np.allclose(out[:len(grid)][far], 0.0)                          # the land its own further off
     kept = under.copy(); kept[:len(grid)] = True                           # where DA3's ground is: never raised
-    assert np.allclose(buildings.onto_scene([house], xy, h, own, da3, kept)[:len(grid)], 0.0)
+    assert np.allclose(buildings.onto_scene([house], xy, h, own, ground, kept)[:len(grid)], 0.0)
 
 
 def test_walls_from_the_ground_up_never_under_it():

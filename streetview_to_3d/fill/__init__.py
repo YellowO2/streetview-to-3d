@@ -15,7 +15,9 @@ lowered, whole, to meet the others' road, and its ground points replaced.
 
 Points belong to nodes (see scene.py), so every added point is written into
 the node whose pano coloured it -- in that node's own frame, like the rest
-of its cloud -- and the viewer needs nothing new.
+of its cloud -- and the viewer needs nothing new. The ground is kept on its
+own too (postprocess.seams.SceneGround, ground.npz): where the scene's
+ground is, for the map to meet -- found here once, never guessed again.
 
     python -m streetview_to_3d.fill SCENE_DIR [OUT_DIR]
 """
@@ -28,6 +30,7 @@ from scipy.spatial import cKDTree
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.fill import level
 from streetview_to_3d.fill.one_ground import grounds, one_ground
+from streetview_to_3d.postprocess.seams import SceneGround
 from streetview_to_3d.fill.paint import Camera, blurred, paint
 from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
 from streetview_to_3d.services.segment import pano_mask
@@ -99,6 +102,7 @@ def run(scene_dir, log=print):
         src = np.flatnonzero(painted)[nb]
         col[fallback], who[fallback] = col[src], who[src]
     ok = who >= 0
+    SceneGround.from_points(added[ok], col[ok]).save(scene_dir)
 
     for k, n in enumerate(nodes):
         mine = ok & (who == k)
