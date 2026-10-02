@@ -17,8 +17,9 @@ mirror for an evening): each mirror in OVERPASS_URLS (the wiki's public
 instances) is tried in turn, each given TIMEOUT_S, all of them ROUNDS
 times BUSY_WAIT_S apart -- a server is busy for a minute or two (Lake
 Como: one hung, one refused, one hung; all answered in 2 s minutes later)
--- the land standing without them past that; the request saying who asks
-(USER_AGENT, as they ask too). The answer is
+-- but never past BUDGET_S: OpenFreeMap's tiles of the same map, fetched
+meanwhile, stand in (openfreemap.py: every building, road and water, few
+tags); the request saying who asks (USER_AGENT, as they ask too). The answer is
 kept beside the scene (CACHE) with the request it answers -- asking
 something new (water, building parts) asks again, once.
 
@@ -27,6 +28,7 @@ OSM is a flat map -- outlines with no ground height, a building's
 ground from terrain.py.
 """
 import json
+import math
 import os
 import time
 import urllib.error
@@ -38,6 +40,7 @@ OVERPASS_URLS = ("https://overpass-api.de/api/interpreter",
                  "https://overpass.private.coffee/api/interpreter")
 TIMEOUT_S = 20          # the request answered in ~2 s; past this a server is stuck
 BUSY_WAIT_S, ROUNDS = 10.0, 3
+BUDGET_S = 30.0         # Overpass's whole time, all servers, before the tiles stand in
 FULL_M = 300.0          # everything this near
 FAR_BUILDING_M = 80.0   # past it, buildings this far round (~20 m across) and more
 FAR_ROADS = "^(motorway|trunk|primary|secondary|tertiary)(_link)?$"   # past it, roads of these
@@ -53,7 +56,9 @@ def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None
     tagged street-object node within FULL_M; past it, the big buildings
     within buildings_m and the main roads within roads_m; water outlines
     within water_m; geometry included, as Overpass returns them; kept in
-    scene_dir's CACHE once had."""
+    scene_dir's CACHE once had. If Overpass gives none within BUDGET_S,
+    OpenFreeMap's tiles' (openfreemap.elements, never kept: a rebuild asks
+    Overpass again); only if neither, the refusal raised."""
     box = lambda r: (f"{lat0 - r / m_per_lat},{lon0 - r / m_per_lon},"
                      f"{lat0 + r / m_per_lat},{lon0 + r / m_per_lon}")
     water_ways = "".join(f"way{t}({box(water_m)});" for t in WATER_WAYS) if water_m else ""
@@ -76,27 +81,48 @@ def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None
             kept = json.load(f)
         if isinstance(kept, dict) and kept.get("query") == query:
             return kept["elements"]
-    elements = _ask(query)["elements"]
+    from concurrent.futures import ThreadPoolExecutor
+    from streetview_to_3d.postprocess import openfreemap
+    pool = ThreadPoolExecutor(1)
+    tiles = pool.submit(openfreemap.elements, lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon,
+                        water_m, FULL_M, FAR_BUILDING_M)
+    pool.shutdown(wait=False)
+    try:
+        elements = _ask(query, budget=BUDGET_S)["elements"]
+    except (OSError, ValueError) as e:
+        try:
+            elements = tiles.result()
+        except (OSError, ValueError) as e2:
+            print(f"osm: no OpenFreeMap tiles either ({e2!r})")
+            raise e
+        print(f"osm: Overpass gave no answer ({e!r}); OpenFreeMap's tiles instead, "
+              f"{sum('building' in x['tags'] for x in elements)} buildings")
+        return elements
     if cache:
         with open(cache, "w") as f:
             json.dump({"query": query, "elements": elements}, f)
     return elements
 
 
-def _ask(query, sleep=time.sleep):
+def _ask(query, sleep=time.sleep, budget=None, clock=time.monotonic):
     """Overpass's JSON answer to query from the first mirror that gives one,
-    every mirror asked ROUNDS times, BUSY_WAIT_S apart; the last refusal
-    raised if none does. One saying the request itself is wrong (a 4xx not
-    429) is raised at once: no other server helps."""
+    every mirror asked ROUNDS times, BUSY_WAIT_S apart, all within budget
+    seconds if given; the last refusal raised if none does. One saying the
+    request itself is wrong (a 4xx not 429) is raised at once: no other
+    server helps."""
     data = urllib.parse.urlencode({"data": query}).encode()
-    error = None
+    end = clock() + budget if budget else math.inf
+    error = TimeoutError(f"Overpass: no answer within {budget} s")
     for attempt in range(ROUNDS):
         if attempt:
-            sleep(BUSY_WAIT_S)
+            sleep(min(BUSY_WAIT_S, max(end - clock(), 0)))
         for url in OVERPASS_URLS:
+            left = end - clock()
+            if left < 1:
+                raise error
             try:
                 req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT})
-                with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+                with urllib.request.urlopen(req, timeout=min(TIMEOUT_S, left)) as r:
                     return json.load(r)
             except urllib.error.HTTPError as e:
                 if 400 <= e.code < 500 and e.code != 429:
@@ -122,13 +148,17 @@ def is_water(e):
 WATER_AT_CACHE = "osm_water_at.json"
 
 
-def water_at(latlon, scene_dir=None):
+def water_at(latlon, scene_dir=None, elements=None):
     """Whether each (lat, lon) lies in one of OSM's water areas (a lake, a
     river, a reservoir -- not the sea, which OSM draws only as its
     coastline), in one request; kept in scene_dir's WATER_AT_CACHE with the
-    request it answers."""
+    request it answers. Elements from the tiles (fetch's, when Overpass
+    gave none) answer it themselves: they hold the areas whole."""
     if not len(latlon):
         return []
+    if elements and any("inner" in e for e in elements):
+        from streetview_to_3d.postprocess import openfreemap
+        return openfreemap.water_at(elements, latlon)
     areas = "".join(f'area.a{t};' for t in WATER_WAYS if "coastline" not in t)
     query = "[out:json][timeout:60];" + "".join(
         f'is_in({lat:.7f},{lon:.7f})->.a;({areas});make p i="{i}",ids=set(id());out;'
@@ -139,7 +169,7 @@ def water_at(latlon, scene_dir=None):
             kept = json.load(f)
         if kept.get("query") == query:
             return kept["water"]
-    found = {int(e["tags"]["i"]): e["tags"]["ids"] != "" for e in _ask(query)["elements"]}
+    found = {int(e["tags"]["i"]): e["tags"]["ids"] != "" for e in _ask(query, budget=BUDGET_S)["elements"]}
     answer = [found.get(i, False) for i in range(len(latlon))]
     if cache:
         with open(cache, "w") as f:

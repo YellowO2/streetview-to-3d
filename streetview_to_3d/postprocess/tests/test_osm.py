@@ -4,7 +4,7 @@ import urllib.error
 
 import pytest
 
-from streetview_to_3d.postprocess import osm
+from streetview_to_3d.postprocess import openfreemap, osm
 
 
 def _server(monkeypatch, answers):
@@ -42,3 +42,25 @@ def test_refused_every_round_raises_the_last_refusal(monkeypatch):
     _server(monkeypatch, [504] * (len(osm.OVERPASS_URLS) * osm.ROUNDS))
     with pytest.raises(urllib.error.HTTPError):
         osm._ask("q", sleep=lambda s: None)
+
+
+def test_no_answer_within_the_budget_raises(monkeypatch):
+    now = [0.0]
+
+    def urlopen(req, timeout):
+        now[0] += timeout
+        raise TimeoutError("hung")
+    monkeypatch.setattr(osm.urllib.request, "urlopen", urlopen)
+    with pytest.raises(TimeoutError):
+        osm._ask("q", sleep=lambda s: now.__setitem__(0, now[0] + s), budget=30, clock=lambda: now[0])
+    assert now[0] <= 31
+
+
+def test_without_overpass_the_tiles_stand_in_and_are_not_kept(monkeypatch, tmp_path):
+    def busy(query, **kw):
+        raise TimeoutError("busy")
+    tiles = [{"type": "way", "id": -1, "tags": {"building": "yes"}, "geometry": []}]
+    monkeypatch.setattr(osm, "_ask", busy)
+    monkeypatch.setattr(openfreemap, "elements", lambda *a, **k: tiles)
+    assert osm.fetch(0, 0, 800, 700, 111320, 111320, str(tmp_path)) == tiles
+    assert not (tmp_path / osm.CACHE).exists()

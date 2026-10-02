@@ -369,7 +369,7 @@ def build(scene_dir, log=print):
     jrc = water.jrc(to_ll, heights)
     wet = water.Water(radius, to_ll, heights, shift, (anchors, np.array([n.pano.elevation for n in known])), jrc,
                       osm=(water.outline(elements, to_xy, OSM_M,
-                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir), jrc),
+                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir, elements), jrc),
                            OSM_M) if elements else None)
 
     # the scene always wins: the map only around it, faded in at its edge
