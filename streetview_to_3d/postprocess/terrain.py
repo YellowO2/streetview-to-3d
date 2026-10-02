@@ -283,6 +283,15 @@ def sample_points(radius_m, cams, every=1):
     return np.concatenate(out) if out else np.zeros((0, 2))
 
 
+def _merged(a, b):
+    """Two (points, colours, triangles) meshes as one; a may be None."""
+    if a is None or not len(a[2]):
+        return b
+    if not len(b[2]):
+        return a
+    return np.concatenate([a[0], b[0]]), np.concatenate([a[1], b[1]]), np.concatenate([a[2], b[2] + len(a[0])])
+
+
 def correction(anchors, fixes):
     """f(east/north (n, 2)) -> metres to add to the map there: near the
     anchors (the panos, whose Google elevation is right -- it matched DA3's
@@ -574,11 +583,7 @@ def build(scene_dir, log=print):
     if over:
         # near the cameras points, as the roads; further, a surface with the far roads
         close = np.array([cam_tree.query(b.xy)[0].min() < NEAR_M for b in over], bool)
-        far_b = roads.bridge_surface([b for b, c in zip(over, close) if not c])
-        if len(far_b[2]):
-            road_mesh = far_b if road_mesh is None or not len(road_mesh[2]) else (
-                np.concatenate([road_mesh[0], far_b[0]]), np.concatenate([road_mesh[1], far_b[1]]),
-                np.concatenate([road_mesh[2], far_b[2] + len(road_mesh[0])]))
+        road_mesh = _merged(road_mesh, roads.bridge_surface([b for b, c in zip(over, close) if not c]))
         over = [b for b, c in zip(over, close) if c]
     if over:
         bp_, bc_ = roads.bridge_points(over, gap)
@@ -599,6 +604,9 @@ def build(scene_dir, log=print):
         log(f"terrain: no pano paint ({e!r})")
     write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces)
     sc.roads = None
+    # tunnels: a mouth where each leaves the ground's roads, at their height
+    mouths = roads.portals(elements, to_xy, road_h)
+    road_mesh = _merged(road_mesh, mouths)
     if road_mesh is not None and len(road_mesh[2]):
         write_mesh(os.path.join(scene_dir, ROADS_FILENAME), *road_mesh, gap=gap(road_mesh[0][:, [0, 2]]))
         sc.roads = ROADS_FILENAME
@@ -635,7 +643,8 @@ def build(scene_dir, log=print):
         f"painted from the panos ({len(surfaces)} water surfaces ({wet.source}), {source} colour, "
         f"{n_buildings} buildings ({len(solid)} solid) -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
         f"{n_cut} of their points "
-        f"left to DA3's own, {n_seen} coloured by the panos, {n_sat} roofs by the satellite -- {n_roads} roads, {n_bridges} bridges), map shifted "
+        f"left to DA3's own, {n_seen} coloured by the panos, {n_sat} roofs by the satellite -- {n_roads} roads, {n_bridges} bridges, "
+        f"{len(mouths[2]) // 14} tunnel mouths), map shifted "
         f"{shift:+.1f} m to Google's datum, then bent onto {len(known)} panos' elevation "
         f"and {len(more)} other places' "
         f"(by up to {fix.max() if len(fix) else 0:.1f} m, median {np.median(fix) if len(fix) else 0:.1f})")
