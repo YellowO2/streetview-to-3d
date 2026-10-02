@@ -76,7 +76,7 @@ from PIL import Image
 
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.paths import DATA_DIR
-from streetview_to_3d.postprocess import buildings, osm, roads, seams, water
+from streetview_to_3d.postprocess import buildings, elevations, osm, roads, seams, water
 from streetview_to_3d.postprocess.ply_io import write_mesh, write_ply
 
 FILENAME = "terrain.ply"
@@ -349,12 +349,6 @@ def build(scene_dir, log=print):
     under = heights(*to_ll(anchors)) if len(known) else np.zeros(0)
     fixes = np.array([n.pano.elevation for n in known]) - under
     shift = float(np.median(fixes)) if len(known) else 0.0
-    bend = correction(anchors, fixes - shift)
-
-    def ground(xy, raw=None):
-        raw = heights(*to_ll(xy)) if raw is None else raw
-        return np.where(raw <= SEA_M, 0.0, raw) + shift + bend(xy)
-
     # OpenStreetMap's buildings, roads and water, in one request
     try:
         elements = osm.fetch(lat0, lon0, OSM_M, ROADS_M, M_PER_LAT, m_per_lon, scene_dir,
@@ -362,6 +356,27 @@ def build(scene_dir, log=print):
     except (OSError, ValueError) as e:    # the land stands without them
         log(f"terrain: no OpenStreetMap ({e!r})")
         elements = []
+
+    # ... and onto every other pano's around (elevations.py: Google's coverage tiles,
+    # thinned; one on OSM's bridges or in its tunnels, or far off the scene's, left out),
+    # where the scene's own are not
+    try:
+        la, lo, el = elevations.around(*to_ll(cam_xz))
+        xy = np.c_[(lo - lon0) * m_per_lon, (la - lat0) * M_PER_LAT]
+        level = elevations.on_ground(xy, elements, to_xy)
+        more, more_fix = elevations.thinned(xy[level], (el - heights(la, lo))[level])
+    except (OSError, ValueError) as e:
+        log(f"terrain: no other panos' elevation ({e!r})")
+        more, more_fix = np.zeros((0, 2)), np.zeros(0)
+    keep = np.abs(more_fix - shift) <= elevations.MAX_FIX_M
+    if len(anchors) and len(more):
+        keep &= cKDTree(anchors).query(more)[0] > elevations.CELL_M
+    more, more_fix = more[keep], more_fix[keep]
+    bend = correction(np.r_[anchors.reshape(-1, 2), more], np.r_[fixes, more_fix] - shift)
+
+    def ground(xy, raw=None):
+        raw = heights(*to_ll(xy)) if raw is None else raw
+        return np.where(raw <= SEA_M, 0.0, raw) + shift + bend(xy)
 
     # water: each body at its level over the land, which goes on under it (water.py);
     # its outline OSM's where OSM has one
@@ -629,6 +644,7 @@ def build(scene_dir, log=print):
         f"{n_cut} of their points "
         f"left to DA3's own, {n_seen} coloured by the panos, {n_sat} roofs by the satellite -- {n_roads} roads, {n_bridges} bridges), map shifted "
         f"{shift:+.1f} m to Google's datum, then bent onto {len(known)} panos' elevation "
+        f"and {len(more)} other places' "
         f"(by up to {fix.max() if len(fix) else 0:.1f} m, median {np.median(fix) if len(fix) else 0:.1f})")
 
 
