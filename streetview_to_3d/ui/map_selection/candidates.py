@@ -30,6 +30,43 @@ _PROBE_CONCURRENCY = 16
 _MAX_PROBE_WAVES = 6
 _MAX_CACHED_TILES = 512
 _tile_cache = {}  # (tx, ty) -> [panorama]; coverage barely changes within a run
+# A pano's links and the pano nearest a place, kept as tiles are: an area
+# redrawn only looks up what it has not seen (pulled in: nothing at all).
+_MAX_CACHED_PANOS = 50000
+_meta_cache = {}    # pano id -> fetch_panos_by_id's metadata (its links)
+_centre_cache = {}  # (lat, lon, radius) rounded -> the pano nearest it, or None
+
+
+def _metas(ids):
+    """fetch_panos_by_id's metadata for ids, each fetched once (_meta_cache)."""
+    missing = [i for i in dict.fromkeys(ids) if i not in _meta_cache]
+    if missing:
+        for i, meta in zip(missing, run_async(fetch_panos_by_id(missing))):
+            if meta:                                  # a failed lookup is tried again next time
+                if len(_meta_cache) >= _MAX_CACHED_PANOS:
+                    _meta_cache.pop(next(iter(_meta_cache)))
+                _meta_cache[i] = meta
+    return [_meta_cache.get(i) for i in ids]
+
+
+def _nearest_to(lat, lon, radius_m):
+    """The official pano nearest (lat, lon) within radius_m, looked up once."""
+    key = (round(lat, 6), round(lon, 6), round(radius_m, 1))
+    if key not in _centre_cache:
+        try:
+            p = streetview.find_panorama(lat, lon, radius=radius_m)
+        except Exception as e:
+            print(f"Google search at the center failed: {e}")
+            return None
+        _centre_cache[key] = p if _is_official(p) else None
+    return _centre_cache[key]
+
+
+def circle(lat, lon, radius_m, corners=16):
+    """An area as a polygon: corners (lat, lon) on the circle radius_m round (lat, lon)."""
+    a = np.linspace(0, 2 * np.pi, corners, endpoint=False)
+    return [[lat + radius_m * np.sin(t) / 111320.0,
+             lon + radius_m * np.cos(t) / (111320.0 * math.cos(math.radians(lat)))] for t in a]
 
 
 def _official_lines_url(tx, ty):
@@ -245,9 +282,11 @@ def on_open_water(often):
     return f
 
 
-def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
+def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None):
     """Auto-discover every real Street View graph within radius_m of
-    (center_lat, center_lon) -- the same real-link expansion
+    (center_lat, center_lon), or inside area (a polygon: [(lat, lon), ...],
+    as the map's edges were dragged; the center still where walks start
+    nearest) -- the same real-link expansion
     map_selection/tab.py's _augment_real_links does for one clicked node,
     just driven by a BFS instead of a person clicking node by node. Feed
     the result straight in as corridor_edges, same shape a manually-built
@@ -270,9 +309,28 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
     out on the water (on_open_water: a boat's) is never added, so a walk
     stops at the shore.
 
+    Every lookup is cached (tiles, a pano's links, the pano at the
+    center), so an area redrawn walks again from memory: only what it adds
+    is fetched.
+
     Returns (nodes, edges) -- same shape nearby_nodes/tab.py's
     state["nodes"]/state["edges"] already use.
     """
+    import shapely
+    if area is not None:
+        here = _to_metres(center_lat, [(center_lat, center_lon)])[0]
+        corners = _to_metres(center_lat, area)
+        shape = shapely.Polygon(corners).buffer(0)
+        shapely.prepare(shape)
+        radius_m = float(np.linalg.norm(corners - here, axis=1).max())
+
+        def within(nodes):
+            xy = _to_metres(center_lat, [(n["lat"], n["lon"]) for n in nodes])
+            return shapely.contains_xy(shape, xy[:, 0], xy[:, 1]) if len(nodes) else np.zeros(0, bool)
+    else:
+        def within(nodes):
+            return np.array([_haversine_m(center_lat, center_lon, n["lat"], n["lon"]) <= radius_m
+                             for n in nodes], bool)
     try:
         discovered = google_tile_panos(center_lat, center_lon, radius_m)
     except Exception as e:
@@ -282,12 +340,8 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
     # walked path's panos only every 12-24 m (_probe_line_gaps), so a small
     # radius inside a park can hold none of them, though one stands right
     # at the center.
-    try:
-        at_center = streetview.find_panorama(center_lat, center_lon, radius=min(max(radius_m, 15), 50))
-    except Exception as e:
-        print(f"Google search at the center failed: {e}")
-        at_center = None
-    if _is_official(at_center):
+    at_center = _nearest_to(center_lat, center_lon, min(max(radius_m, 15), 50))
+    if at_center is not None:
         discovered.setdefault(at_center.id, at_center)
 
     def dist(n):
@@ -296,7 +350,7 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
     seeds = [{"key": node_key("google", p.id), "source": "google", "id": p.id,
               "lat": p.lat, "lon": p.lon, "heading": p.heading}
              for p in discovered.values()]
-    seeds = [n for n in seeds if dist(n) <= radius_m]
+    seeds = [n for n, ok in zip(seeds, within(seeds)) if ok]
     from streetview_to_3d.postprocess.water import occurrence_map
     at_sea = on_open_water(occurrence_map())
     afloat = set()  # ids of the panos left out
@@ -339,7 +393,7 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
         frontier = [seed["key"]]
         while frontier and len(nodes) < max_nodes:
             visited.update(frontier)
-            metas = run_async(fetch_panos_by_id([k.split(":", 1)[1] for k in frontier]))
+            metas = _metas([k.split(":", 1)[1] for k in frontier])
             next_frontier = []
             for key, meta in zip(frontier, metas):
                 if not meta:
@@ -353,9 +407,10 @@ def expand_area(center_lat, center_lon, radius_m, max_nodes=2000):
                     if fe not in edge_set:
                         edges.append((key, other_key))
                         edge_set.add(fe)
-                    if (other_key not in visited and other_key not in next_frontier
-                            and dist(by_key[other_key]) <= radius_m):
+                    if other_key not in visited and other_key not in next_frontier:
                         next_frontier.append(other_key)
+            # only ever expanding from a node within the area: one past it is kept, as a leaf
+            next_frontier = [k for k, ok in zip(next_frontier, within([by_key[k] for k in next_frontier])) if ok]
             frontier = next_frontier
 
     print(f"expand_area: {len(nodes)} node(s) from {walks} walk(s), {len(discovered)} discovered, "

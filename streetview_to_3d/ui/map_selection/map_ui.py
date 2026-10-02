@@ -23,10 +23,12 @@ _RADIUS_COLOR = "#2979ff"
 _SPOT_COLOR = "#212121"
 
 _MESSAGE_TYPE = "map_node_click"
+AREA_MESSAGE_TYPE = "map_area_drag"     # the area's edges dragged: its new corners
+MESSAGE_TYPES = (_MESSAGE_TYPE, AREA_MESSAGE_TYPE)
 
 
 def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom=17, view=None, radius_m=None,
-                     spots=None):
+                     spots=None, area=None):
     """nodes: list of {key, source, id, lat, lon, heading} for the whole loaded
     area (only the relevant subset -- see module docstring -- actually gets
     rendered). edges: list of (key_a, key_b) pairs from Street View's coverage
@@ -42,6 +44,9 @@ def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom
     radius_m: optional -- draws a blue circle of this radius (meters) around
     (lat, lon), so the auto-expand radius can be sanity-checked visually
     before/after running it, same center expand_area itself uses.
+    area: optional [(lat, lon), ...] -- the expanded area as a shape whose
+    corners (and a new corner at each edge's middle) drag; a drag's end
+    posts the new corners (AREA_MESSAGE_TYPE), drawn instead of the circle.
     spots: optional (points, adjacency) from fetch_nodes.corridor_points --
     the selection as the walk will use it, one ring per spot. Drawn over
     the panos but never catching a click, so the panos stay clickable.
@@ -69,6 +74,7 @@ def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom
     selected_json = json.dumps(selected_keys)
     selected_edges_json = json.dumps(selected_edges)
     radius_json = json.dumps(radius_m)
+    area_json = json.dumps([[float(a), float(b)] for a, b in area] if area else None)
     spot_points, spot_adjacency = spots or ([], {})
     spots_json = json.dumps(spot_points)
     spot_links_json = json.dumps(sorted({tuple(sorted((i, j))) for i, ns in spot_adjacency.items() for j in ns}))
@@ -80,7 +86,11 @@ def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom
 .sb-empty{{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:1000;
 background:rgba(0,0,0,.75);color:#fff;font:12px sans-serif;padding:4px 10px;border-radius:6px}}
 .sb-order{{background:{_SELECTED_COLOR};color:#fff;border:none;font-weight:600}}
-.sb-order::before{{border-top-color:{_SELECTED_COLOR}}}</style>
+.sb-order::before{{border-top-color:{_SELECTED_COLOR}}}
+.sb-hint{{position:absolute;bottom:22px;left:8px;z-index:1000;background:rgba(255,255,255,.9);color:#333;
+font:12px sans-serif;padding:3px 8px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.25)}}
+.sb-handle{{background:{_RADIUS_COLOR};border:2px solid {_RADIUS_COLOR};border-radius:50%;cursor:move}}
+.sb-mid{{background:{_RADIUS_COLOR};opacity:.45;border-radius:50%;cursor:copy}}</style>
 </head><body>
 <div id="map"></div>
 <script>
@@ -95,6 +105,7 @@ var SELECTED_COLOR = {json.dumps(_SELECTED_COLOR)};
 var EDGE_COLOR = {json.dumps(_EDGE_COLOR)};
 var RADIUS_COLOR = {json.dumps(_RADIUS_COLOR)};
 var RADIUS_M = {radius_json};
+var AREA = {area_json};
 var SPOTS = {spots_json};
 var SPOT_LINKS = {spot_links_json};
 var SPOT_COLOR = {json.dumps(_SPOT_COLOR)};
@@ -103,7 +114,45 @@ var m = L.map('map').setView([{view_lat},{view_lon}], {view_zoom});
 L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
     {{maxZoom:22,maxNativeZoom:19,attribution:'© OpenStreetMap'}}).addTo(m);
 
-if (RADIUS_M) {{
+if (AREA) {{
+  // the area as a shape: drag a corner to move it, a faint middle to add one there
+  var corners = AREA.map(function(p) {{ return L.latLng(p[0], p[1]); }});
+  var shape = L.polygon(corners, {{
+    color: RADIUS_COLOR, weight: 2, fillColor: RADIUS_COLOR, fillOpacity: 0.06,
+    dashArray: '6,6', interactive: false,
+  }}).addTo(m);
+  var corner = L.divIcon({{className: 'sb-handle', iconSize: [12, 12]}});
+  var middle = L.divIcon({{className: 'sb-mid', iconSize: [10, 10]}});
+  function send(points) {{
+    var c = m.getCenter();
+    window.parent.postMessage({{
+      type: {json.dumps(AREA_MESSAGE_TYPE)},
+      area: points.map(function(p) {{ return [p.lat, p.lng]; }}),
+      view: {{lat: c.lat, lon: c.lng, zoom: m.getZoom()}},
+      _ts: Date.now(),
+    }}, '*');
+  }}
+  corners.forEach(function(p, i) {{
+    var h = L.marker(p, {{icon: corner, draggable: true, zIndexOffset: 1000}}).addTo(m);
+    h.on('drag', function(e) {{ corners[i] = e.target.getLatLng(); shape.setLatLngs(corners); }});
+    h.on('dragend', function() {{ send(corners); }});
+  }});
+  corners.forEach(function(p, i) {{
+    var q = corners[(i + 1) % corners.length];
+    var h = L.marker([(p.lat + q.lat) / 2, (p.lng + q.lng) / 2],
+                     {{icon: middle, draggable: true, zIndexOffset: 900}}).addTo(m);
+    var added = null;
+    h.on('drag', function(e) {{
+      added = corners.slice(0, i + 1).concat([e.target.getLatLng()], corners.slice(i + 1));
+      shape.setLatLngs(added);
+    }});
+    h.on('dragend', function() {{ if (added) send(added); }});
+  }});
+  var hint = document.createElement('div');
+  hint.className = 'sb-hint';
+  hint.textContent = 'Drag the circle selection area to adjust selection.';
+  document.body.appendChild(hint);
+}} else if (RADIUS_M) {{
   L.circle([{lat},{lon}], {{
     radius: RADIUS_M, color: RADIUS_COLOR, weight: 2,
     fillColor: RADIUS_COLOR, fillOpacity: 0.06, dashArray: '6,6',

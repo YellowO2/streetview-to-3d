@@ -21,7 +21,7 @@ import gradio as gr
 
 from streetview_to_3d.services.geo import extract_lat_lon
 from streetview_to_3d.build_street_graph.fetch_nodes import corridor_points
-from streetview_to_3d.services.pipeline_runner import estimate_gpu_seconds
+from streetview_to_3d.services.pipeline_runner import estimate_gpu_seconds, estimate_other_seconds
 from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id, run_async
 from streetview_to_3d.ui.map_selection import candidates as candidates_mod
 from streetview_to_3d.ui.map_selection import map_ui
@@ -38,7 +38,7 @@ BRIDGE_HEAD_SCRIPT = f"""
 <script>
 console.log('[map] bridge listener registered');
 window.addEventListener('message', function(ev) {{
-  if (!ev.data || ev.data.type !== {json.dumps(map_ui._MESSAGE_TYPE)}) return;
+  if (!ev.data || {json.dumps(list(map_ui.MESSAGE_TYPES))}.indexOf(ev.data.type) === -1) return;
   console.log('[map] message received from map iframe:', ev.data);
   var el = document.querySelector('#{BRIDGE_ELEM_ID} textarea, #{BRIDGE_ELEM_ID} input');
   if (!el) {{
@@ -56,7 +56,7 @@ window.addEventListener('message', function(ev) {{
 
 def _empty_state():
     return {"lat": None, "lon": None, "nodes": [], "edges": [], "selected": [], "selected_edges": [], "view": None,
-            "radius_m": None, "preview_center": None}
+            "radius_m": None, "preview_center": None, "area": None}
 
 
 def nodes_by_key(state):
@@ -74,16 +74,15 @@ def corridor_edges(state):
 def _summary_markdown(state):
     if not state["selected"]:
         return "Enter a location and select a street via 'Expand Area' Button or manually clicking. Then press button 1, wait for it to run, then button 2."
-    n_nodes = len(state["selected"])
-    n_edges = len(state.get("selected_edges", []))
     # the GPU is spent per spot -- panos within a few metres merge into one
     # (fetch_nodes.corridor_points) -- not per pano
     n_spots = len(corridor_points(corridor_edges(state))[0])
-    quick, thorough = (estimate_gpu_seconds(n_spots, e) / 60 for e in ("Quick", "Thorough"))
-    return (f"**{n_nodes} panoramas · {n_edges} connections · {n_spots} spots** · "
-            f"about {estimate_gpu_seconds(n_spots) / 60:.1f} min of GPU at Normal effort "
-            f"({quick:.1f} Quick, {thorough:.1f} Thorough; daily ZeroGPU quota: "
-            "2 min logged out, 5 min free account, 40 min PRO)")
+    gpu, quick = (estimate_gpu_seconds(n_spots, e) / 60 for e in ("Normal", "Quick"))
+    other = max(1, round(estimate_other_seconds(n_spots) / 60))
+    return (f"**{n_spots} spots selected**  \n"
+            f"This takes ~{gpu:.1f} min of GPU. HF offers 5 min/day for a free account. "
+            f"You may switch to Quick ({quick:.1f} min) to save usage.  \n"
+            f"It will also take ~{other} minutes for fetching map data etc, which will not cost GPU.")
 
 
 def _map_html(state, zoom=19):
@@ -98,6 +97,7 @@ def _map_html(state, zoom=19):
         state["lat"], state["lon"], state["nodes"], state["edges"],
         state["selected"], state.get("selected_edges", []),
         zoom=zoom, view=state.get("view"), radius_m=radius_m, spots=(points, adjacency),
+        area=state.get("area"),
     )
 
 
@@ -198,9 +198,26 @@ def handle_expand_area(area_input, radius_input, state, progress=gr.Progress(tra
     state = {
         "lat": lat, "lon": lon, "nodes": nodes, "edges": edges,
         "selected": [n["key"] for n in nodes], "selected_edges": list(edges), "view": None,
-        "radius_m": radius_m, "preview_center": None,
+        "radius_m": None, "preview_center": None,
+        # its circle as a shape whose edges drag (handle_area_drag)
+        "area": candidates_mod.circle(lat, lon, radius_m),
     }
     return _map_html(state), _summary_markdown(state), state
+
+
+def handle_area_drag(payload, state):
+    """The expanded area's edges dragged: everything inside the new shape,
+    walked again as expand_area walks -- from what it has already looked
+    up, so pulling an edge in fetches nothing and pushing it out only what
+    is new. The whole of it selected, as after expanding."""
+    area = payload.get("area") or []
+    if len(area) < 3 or state.get("lat") is None:
+        return state
+    nodes, edges = candidates_mod.expand_area(state["lat"], state["lon"], area=area)
+    view = payload.get("view")
+    return {**state, "nodes": nodes, "edges": edges, "selected": [n["key"] for n in nodes],
+            "selected_edges": list(edges), "area": area, "radius_m": None,
+            "view": (view["lat"], view["lon"], view["zoom"]) if view else state.get("view")}
 
 
 def handle_preview_radius(area_input, radius_input, state):
@@ -240,6 +257,10 @@ def handle_bridge_message(payload_str, state):
     try:
         payload = json.loads(payload_str)
     except (TypeError, ValueError):
+        return _map_html(state), _summary_markdown(state), state, ""
+
+    if payload.get("type") == map_ui.AREA_MESSAGE_TYPE:
+        state = handle_area_drag(payload, state)
         return _map_html(state), _summary_markdown(state), state, ""
 
     key = payload.get("key")

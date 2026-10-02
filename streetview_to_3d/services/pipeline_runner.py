@@ -31,6 +31,20 @@ def estimate_gpu_seconds(n_dots: int, effort: str = DEFAULT_EFFORT) -> float:
     return MODEL_LOAD_S + n_dots * EFFORT_SECONDS_PER_SPOT[effort] + SAVE_BUFFER_S
 
 
+# The rest, on the CPU around the GPU's window: the panos downloaded before
+# it, and after it the scene placed, filled and the maps' land, roads and
+# buildings laid round it (postprocess) -- mostly fixed (the area's map
+# tiles and OpenStreetMap), a little more a spot. Rough: Lund 110 m, 35
+# spots, laid its terrain in about 2 min.
+OTHER_BASE_S, OTHER_SECONDS_PER_SPOT = 90.0, 4.0
+
+
+def estimate_other_seconds(n_dots: int) -> float:
+    """Roughly how long a run over n_dots takes off the GPU, shown to the
+    user as they select: it costs no GPU quota, only waiting."""
+    return OTHER_BASE_S + n_dots * OTHER_SECONDS_PER_SPOT
+
+
 def _gpu_seconds(points, gpu_seconds=None) -> float:
     """The window this call actually gets: the caller's override, else the
     estimate for this many dots."""
