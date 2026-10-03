@@ -45,7 +45,8 @@ existing scenes and the spacing defaults.
 - [osm_building_grammar](https://github.com/p-schulz/osm_building_grammar), vendored facade geometry core (Apache 2.0)
 - [Depth-Anything-3](https://github.com/ByteDance-Seed/Depth-Anything-3) (Apache 2.0)
 - [streetlevel](https://github.com/sk-zk/streetlevel), for Street View coverage and downloads
+- Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL)
 
 ## License
 
-MIT.
+MIT, see [LICENSE](LICENSE).
