@@ -1,16 +1,6 @@
-"""Builds the Leaflet map HTML for the street-builder node picker.
-
-Pure string-building — no Gradio here. The map runs inside a sandboxed
-iframe (same pattern app.py already uses for its single-pano map/viewers),
-so clicking a marker can't call back into Python directly; instead it
-posts a window message that a page-level listener (injected via
-gr.Blocks(head=...), see tab.py) relays into a hidden Gradio textbox.
-
-Google-only: Street View's own coverage graph (pano.links) gives real
-street topology. Rather than showing every node fetched for the loaded
-area (a scattered, cluttered cloud), only the chain built so far plus
-whichever nodes are directly linked to its current end get shown — those
-are the only markers that make sense to click next anyway.
+"""The Leaflet map HTML for the node picker (no Gradio). It runs in a sandboxed iframe, so a
+click posts a window message that tab.py's bridge relays to Python. Only the selection and
+the nodes linked to it are drawn: the only ones worth clicking next.
 """
 import json
 
@@ -29,35 +19,19 @@ MESSAGE_TYPES = (_MESSAGE_TYPE, AREA_MESSAGE_TYPE)
 
 def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom=17, view=None, radius_m=None,
                      spots=None, area=None):
-    """nodes: list of {key, source, id, lat, lon, heading} for the whole loaded
-    area (only the relevant subset -- see module docstring -- actually gets
-    rendered). edges: list of (key_a, key_b) pairs from Street View's coverage
-    graph. selected_keys: node keys selected so far (a graph, not necessarily
-    a simple chain -- branches and loops are both possible). selected_edges:
-    (key_a, key_b) pairs actually confirmed by a click, drawn as the
-    highlighted graph instead of assuming selected_keys' list order traces a
-    single path (it doesn't, once branches exist).
-    view: optional (lat, lon, zoom) to open the map at instead of (lat, lon, zoom)
-    above -- used to restore whatever pan/zoom the map was at before a click
-    triggered a rebuild, since Gradio replaces the iframe wholesale on every
-    update and a fresh Leaflet map otherwise has no memory of that.
-    radius_m: optional -- draws a blue circle of this radius (meters) around
-    (lat, lon), so the auto-expand radius can be sanity-checked visually
-    before/after running it, same center expand_area itself uses.
-    area: optional [(lat, lon), ...] -- the expanded area as a shape whose
-    corners (and a new corner at each edge's middle) drag; a drag's end
-    posts the new corners (AREA_MESSAGE_TYPE), drawn instead of the circle.
-    spots: optional (points, adjacency) from fetch_nodes.corridor_points --
-    the selection as the walk will use it, one ring per spot. Drawn over
-    the panos but never catching a click, so the panos stay clickable.
+    """The picker map as an iframe.
+
+    nodes/edges: the whole loaded area (node dicts, (key_a, key_b) links); selected_keys and
+    selected_edges: the selection graph (branches and loops allowed). view: (lat, lon, zoom)
+    to reopen at, since Gradio replaces the iframe on every update. radius_m: a circle round
+    (lat, lon). area: [(lat, lon)] corners that drag (AREA_MESSAGE_TYPE), drawn instead of
+    the circle. spots: (points, adjacency) from corridor_points, drawn but never clickable.
     """
     view_lat, view_lon, view_zoom = view if view else (lat, lon, zoom)
 
     by_key = {n["key"]: n for n in nodes}
     selected_set = set(selected_keys)
-    # Frontier = neighbors of ANY selected node, not just the most recent one
-    # -- an earlier node's unvisited branch stays visible/clickable even
-    # after the chain has moved past it.
+    # the frontier: neighbours of any selected node, so an earlier branch stays clickable
     next_keys = set()
     for a, b in edges:
         if a in selected_set and b not in selected_set:

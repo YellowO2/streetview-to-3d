@@ -28,5 +28,5 @@ def test_a_spot_no_link_reached_keeps_its_best_single_across_dates():
     segments = run_pathfind_reconstruction(
         date_graphs, points, {0: [], 1: []}, 0.0, 0.0,
         test_edge=lambda *a: None, rate_pano=_rate)
-    picked = sorted(key for s in segments for key in s[5])
+    picked = sorted(key for s in segments for key in s[3])
     assert picked == ["A0", "B1"]

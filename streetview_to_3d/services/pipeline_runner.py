@@ -1,77 +1,64 @@
-"""The street reconstruction's GPU task: the walk, in one window sized
-from the dot count (estimate_gpu_seconds). The GPU itself and
-the DA3 model come from streetview_to_3d.gpu.
-"""
+"""The street reconstruction's GPU task: the walk, in one ZeroGPU window sized from the dot count."""
+from dataclasses import dataclass
+
 from streetview_to_3d import gpu
 
-# Headroom left after the walk for saving the result before the hard
-# ZeroGPU window closes. Carved OUT of the window (see _walk_budget_s).
+# Headroom after the walk for saving the result before the window closes.
 SAVE_BUFFER_S = 10.0
-# DA3 is loaded at startup (see streetview_to_3d.gpu), so a call only waits
-# for ZeroGPU to move it onto the GPU: "timing: model load 0.0s" measured.
-# Was 45 when it loaded from disk inside the call (17-41 s).
+# DA3 is loaded at startup (streetview_to_3d.gpu), so a call only waits for ZeroGPU to move it.
 MODEL_LOAD_S = 5.0
 
 
-# How hard to try, as GPU seconds per spot (a dot: fetch_nodes.corridor_points).
-# The window is the only knob: the walk goes best date first and each later
-# date patches only what is still weak, so more time lets more dates patch.
-# Measured 2026-10-01, Tokyo 70 m (100 dots, trees, joins mostly failing):
-# ~25 s rating dates up front, then ~2 s a dot for each date walking it --
-# 405 s with all 5 dates walking every dot they had, the hardest case.
+# How hard to try, as GPU seconds per spot: more time lets more capture dates patch weak stretches.
 EFFORT_SECONDS_PER_SPOT = {"Quick": 4.0, "Normal": 8.0, "Thorough": 14.0}
 DEFAULT_EFFORT = "Normal"
 
 
 def estimate_gpu_seconds(n_dots: int, effort: str = DEFAULT_EFFORT) -> float:
-    """The GPU window to ask for a run over n_dots at this effort, model load
-    and the save headroom included. Shown to the user as they select. The
-    window is checked against the user's ZeroGPU quota before a run starts,
-    so it is kept no bigger than the effort calls for."""
+    """The GPU window for a run over n_dots, model load and save headroom included.
+    Kept no bigger than needed: it is checked against the user's ZeroGPU quota."""
     return MODEL_LOAD_S + n_dots * EFFORT_SECONDS_PER_SPOT[effort] + SAVE_BUFFER_S
 
 
-# The rest, on the CPU around the GPU's window: the panos downloaded before
-# it, and after it the scene placed, filled and the maps' land, roads and
-# buildings laid round it (postprocess) -- mostly fixed (the area's map
-# tiles and OpenStreetMap), a little more a spot. Rough: Lund 110 m, 35
-# spots, laid its terrain in about 2 min.
+# The CPU time around the window (downloads, then postprocess): mostly fixed, a little per spot.
 OTHER_BASE_S, OTHER_SECONDS_PER_SPOT = 90.0, 4.0
 
 
 def estimate_other_seconds(n_dots: int) -> float:
-    """Roughly how long a run over n_dots takes off the GPU, shown to the
-    user as they select: it costs no GPU quota, only waiting."""
+    """Roughly how long a run over n_dots takes off the GPU (no quota, only waiting)."""
     return OTHER_BASE_S + n_dots * OTHER_SECONDS_PER_SPOT
 
 
 def _gpu_seconds(points, gpu_seconds=None) -> float:
-    """The window this call actually gets: the caller's override, else the
-    estimate for this many dots."""
+    """The caller's window, else the estimate for this many dots."""
     return float(gpu_seconds) if gpu_seconds else estimate_gpu_seconds(len(points))
 
 
-def run_walk_gpu(date_graphs, points, adjacency, start_lat, start_lon,
-                 step_degrees=None, conf_lower_percentile=None, gpu_seconds=None, model=None,
-                 hfov=None, masker=None, mask_classes=None, conf_floor=None):
-    """The walk in one GPU window (see streetview_to_3d.gpu).
+@dataclass(frozen=True)
+class WalkSettings:
+    """Per-run settings for the walk; None keeps each default. Picklable for ZeroGPU.
 
-    gpu_seconds: the window to ask for. None sizes it from the dot count
-    (estimate_gpu_seconds). model: a DA3 repo; None is config.DA3_MODEL_REPO.
-    hfov, masker, mask_classes, conf_floor: per-run view width, masker and
-    confidence floor (services.da3_ops.options)."""
-    return gpu.run(_run_walk_impl, date_graphs, points, adjacency, start_lat, start_lon,
-                   step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
-                   gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor,
-                   seconds=_gpu_seconds(points, gpu_seconds))
+    gpu_seconds: the window (None: estimate_gpu_seconds). model: a DA3 repo (config.DA3_MODEL_REPO).
+    hfov, masker, mask_classes, conf_floor: see services.da3_ops.options.
+    """
+    step_degrees: int | None = None
+    conf_lower_percentile: float | None = None
+    gpu_seconds: float | None = None
+    model: str | None = None
+    hfov: float | None = None
+    masker: str | None = None
+    mask_classes: list[str] | None = None
+    conf_floor: float | None = None
 
 
-def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon,
-                   step_degrees=None, conf_lower_percentile=None, gpu_seconds=None, model=None,
-                   hfov=None, masker=None, mask_classes=None, conf_floor=None):
-    """The walk (run_pathfind_reconstruction) on the downloaded panos, with
-    the whole window but model load and the save headroom.
+def run_walk_gpu(date_graphs, points, adjacency, start_lat, start_lon, settings=WalkSettings()):
+    """The walk in one GPU window (see streetview_to_3d.gpu)."""
+    return gpu.run(_run_walk_impl, date_graphs, points, adjacency, start_lat, start_lon, settings,
+                   seconds=_gpu_seconds(points, settings.gpu_seconds))
 
+
+def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon, settings):
+    """The walk on the downloaded panos, given the window less model load and save headroom.
     Returns [(clouds, metadata), ...], one per piece (reconstruct.pieces)."""
     import itertools
     import tempfile
@@ -85,22 +72,22 @@ def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon,
     from streetview_to_3d.reconstruct.pieces import pieces_to_output
     from streetview_to_3d.reconstruct.walk_graph import run_pathfind_reconstruction
 
-    if conf_lower_percentile is None:
-        conf_lower_percentile = CONF_LOWER_PERCENTILE
-    if step_degrees is None:
-        step_degrees = VIEW_STEP_DEGREES
+    conf_lower_percentile = (CONF_LOWER_PERCENTILE if settings.conf_lower_percentile is None
+                             else settings.conf_lower_percentile)
+    step_degrees = VIEW_STEP_DEGREES if settings.step_degrees is None else settings.step_degrees
 
     t0 = time.monotonic()
-    total_s = _gpu_seconds(points, gpu_seconds)
+    total_s = _gpu_seconds(points, settings.gpu_seconds)
     print(f"GPU window: {total_s:.0f}s for {len(points)} dot(s)", flush=True)
 
-    cfg = gpu.get_da3_config(model)
-    da3 = gpu.get_da3(model)
-    # "timing:" lines are what the per-phase constants above get
-    # calibrated from -- grep the Space's logs for them.
+    cfg = gpu.get_da3_config(settings.model)
+    da3 = gpu.get_da3(settings.model)
+    # "timing:" lines calibrate the constants above (grep the Space's logs)
     print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
     try:
-        with tempfile.TemporaryDirectory() as views_base, options(hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor):
+        with tempfile.TemporaryDirectory() as views_base, options(
+                hfov=settings.hfov, masker=settings.masker, mask_classes=settings.mask_classes,
+                conf_floor=settings.conf_floor):
             def test_edge(path_a, path_b, test_id):
                 return da3_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id,
                                      step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile)
@@ -122,10 +109,6 @@ def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon,
 
 
 def save_pointcloud(points, colors, path):
-    """Not GPU-wrapped -- pure disk I/O (numpy/manual PLY write, no
-    open3d -- see Saver._voxel_downsample's docstring for why), no CUDA
-    involved. Lazy import to match get_da3_config()'s pattern, so this
-    module still imports cleanly on machines without panoramic_da3
-    installed."""
+    """Write a point cloud .ply (CPU only; lazy import so this module loads without panoramic_da3)."""
     from panoramic_da3 import save_da3_pointcloud
     return save_da3_pointcloud(points, colors, path)

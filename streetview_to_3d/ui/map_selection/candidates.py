@@ -1,6 +1,4 @@
-"""Low-level fetch of real Street View panoramas near a
-location. Used by the map picker and by build_street_graph/.
-"""
+"""Find the real Street View panoramas and links near a location, for the map picker."""
 import asyncio
 import io
 import math
@@ -12,26 +10,22 @@ from scipy.spatial import cKDTree
 from streetlevel import streetview
 from streetlevel.geo import wgs84_to_tile_coord
 
-from streetview_to_3d.services.geo import haversine_m as _haversine_m
+from streetview_to_3d.scene import node_key
+from streetview_to_3d.services.geo import haversine_m as _haversine_m, latlon_to_local_m, local_m_to_latlon
 from streetview_to_3d.services.http_headers import BROWSER_HEADERS
-from streetview_to_3d.services.streetview_fetch import fetch_panos_by_id, run_async
+from streetview_to_3d.services.streetview_fetch import fetch_panos_by_id, google_node, run_async
 
 # Street View publishes coverage on zoom-17 Slippy Map tiles.
 _TILE_ZOOM = 17
 
-# The coverage tile listing only holds car ("launch") panos. Google's own
-# walked captures (Trekker/backpack, source "scout": parks, plazas, paths)
-# are left out, though Maps draws them as blue lines. So each tile's
-# official-coverage raster (the one Maps draws, image type 2 = Google's
-# own, no user photospheres) is read, and only where a line runs farther
-# than _GAP_M from every pano already known is a pano searched for.
+# The tile listing holds only car panos, not walked (scout) ones, so where a tile's official
+# coverage lines run farther than _GAP_M from every known pano, a pano is searched for.
 _GAP_M = 12.0
 _PROBE_CONCURRENCY = 16
 _MAX_PROBE_WAVES = 6
 _MAX_CACHED_TILES = 512
 _tile_cache = {}  # (tx, ty) -> [panorama]; coverage barely changes within a run
-# A pano's links and the pano nearest a place, kept as tiles are: an area
-# redrawn only looks up what it has not seen (pulled in: nothing at all).
+# cached like tiles, so a redrawn area only looks up what it has not seen
 _MAX_CACHED_PANOS = 50000
 _meta_cache = {}    # pano id -> fetch_panos_by_id's metadata (its links)
 _centre_cache = {}  # (lat, lon, radius) rounded -> the pano nearest it, or None
@@ -63,12 +57,10 @@ def _nearest_to(lat, lon, radius_m):
 
 
 def circle(lat, lon, radius_m, corners=8):
-    """An area as a polygon: corners (lat, lon) on the circle radius_m round
-    (lat, lon) -- few, so a corner dragged moves a good part of its edge, not
-    a spike."""
+    """An area as a polygon: a few (lat, lon) corners on the circle radius_m round (lat, lon),
+    so dragging one moves a good part of its edge."""
     a = np.linspace(0, 2 * np.pi, corners, endpoint=False)
-    return [[lat + radius_m * np.sin(t) / 111320.0,
-             lon + radius_m * np.cos(t) / (111320.0 * math.cos(math.radians(lat)))] for t in a]
+    return [list(local_m_to_latlon(radius_m * np.cos(t), radius_m * np.sin(t), lat, lon)) for t in a]
 
 
 def _official_lines_url(tx, ty):
@@ -85,8 +77,10 @@ def _tile_pixel_to_latlon(tx, ty, px, py, size):
 
 
 def _to_metres(lat0, latlons):
+    """(lat, lon) rows -> flat-earth (north, east) metres, for distances only."""
     a = np.asarray(latlons, float).reshape(-1, 2)
-    return np.c_[(a[:, 0] - lat0) * 111320.0, a[:, 1] * 111320.0 * math.cos(math.radians(lat0))]
+    east, north = latlon_to_local_m(a[:, 0], a[:, 1], lat0, 0.0)
+    return np.c_[north, east]
 
 
 def _is_official(p):
@@ -182,10 +176,8 @@ def _tile_neighborhood(lat, lon, radius_m=None):
 
 
 def google_tile_panos(lat, lon, radius_m=None):
-    """All official Street View panos on the tiles around (lat, lon) (see
-    _tile_neighborhood), keyed by id: the tile listing plus walked (scout)
-    captures. Tiles are cached, so neighbouring lookups (fetch_corridor_nodes
-    runs one per corridor point) only fetch the tiles they haven't seen."""
+    """All official panos (listed and walked) on the tiles around (lat, lon), keyed by id.
+    Tiles are cached, so neighbouring lookups fetch only what they haven't seen."""
     tiles = list(_tile_neighborhood(lat, lon, radius_m))
     missing = [t for t in tiles if t not in _tile_cache]
     if missing:
@@ -200,22 +192,13 @@ def google_tile_panos(lat, lon, radius_m=None):
     return seen
 
 
-def node_key(source, pano_id):
-    return f"{source}:{pano_id}"
-
-
 DEFAULT_RADIUS_M = 350
 MAX_NODES = 200
 
 
 def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
-    """Google Street View nodes within radius_m of (lat, lon), distance-sorted,
-    plus edges from Street View's own coverage graph.
-
-    Returns (nodes, edges). Node: {key, source, id, lat, lon, heading} --
-    no date (tile listing doesn't carry it; see build_graph/fetch_nodes.py
-    for the full per-pano fetch that does). Edge: (key_a, key_b).
-    """
+    """(nodes, edges) within radius_m of (lat, lon): google_node dicts, nearest first (no
+    date: the tile listing lacks it), and (key_a, key_b) links from the coverage graph."""
     try:
         panos = google_tile_panos(lat, lon)
     except Exception as e:
@@ -226,14 +209,7 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
     for p in panos.values():
         if _haversine_m(lat, lon, p.lat, p.lon) > radius_m:
             continue
-        nodes.append({
-            "key": node_key("google", p.id),
-            "source": "google",
-            "id": p.id,
-            "lat": p.lat,
-            "lon": p.lon,
-            "heading": p.heading,
-        })
+        nodes.append(google_node(p.id, p.lat, p.lon, p.heading))
     nodes.sort(key=lambda n: _haversine_m(lat, lon, n["lat"], n["lon"]))
     nodes = nodes[:max_nodes]
 
@@ -252,14 +228,10 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
     return nodes, sorted(edges)
 
 
-# A discovered pano this close to one already walked is the same place
-# (another capture of it), not a new group worth walking from.
+# A discovered pano this close to a walked one is the same place, not a new walk.
 _SAME_PLACE_M = 3.0
 
-# A pano with water under it and all round it, this far every way (the JRC
-# water map), is out on the water -- a boat's, as Matsushima's bay tour:
-# too little shore for DA3 to see, so never walked to. One near land (a
-# bridge, a pier, a path on the shore) is kept.
+# A pano with water this far all round is a boat's: too little shore for DA3, never walked to.
 _OPEN_WATER_M = 30.0
 
 
@@ -273,10 +245,8 @@ def on_open_water(often):
         lat, lon = np.asarray(lat, float), np.asarray(lon, float)
         try:
             out = often(lat, lon) >= WET
-            dlat = _OPEN_WATER_M / 111320.0
-            dlon = dlat / np.cos(np.radians(lat))
             for a in np.linspace(0, 2 * np.pi, 8, endpoint=False):
-                out &= often(lat + dlat * np.sin(a), lon + dlon * np.cos(a)) >= WET
+                out &= often(*local_m_to_latlon(_OPEN_WATER_M * np.cos(a), _OPEN_WATER_M * np.sin(a), lat, lon)) >= WET
             return out
         except OSError as e:
             print(f"Water map lookup failed: {e}")
@@ -285,38 +255,12 @@ def on_open_water(often):
 
 
 def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None):
-    """Auto-discover every real Street View graph within radius_m of
-    (center_lat, center_lon), or inside area (a polygon: [(lat, lon), ...],
-    as the map's edges were dragged; the center still where walks start
-    nearest) -- the same real-link expansion
-    map_selection/tab.py's _augment_real_links does for one clicked node,
-    just driven by a BFS instead of a person clicking node by node. Feed
-    the result straight in as corridor_edges, same shape a manually-built
-    selection already produces.
+    """Every real Street View graph within radius_m of the center, or inside area (a polygon
+    [(lat, lon)] as the map's edges were dragged), as (nodes, edges) like nearby_nodes'.
 
-    Edges are only ever real per-pano links (fetch_pano_by_id), never
-    guessed from proximity. But the area can hold several graphs Google
-    never linked -- a park's walked (scout) paths next to the car's roads,
-    streets meeting only across a gap. Each is walked on its own: the first
-    from the discovered pano nearest the center, then, while any discovered
-    pano in radius is still unreached (and not within _SAME_PLACE_M of a
-    walked one), a new walk from the nearest of those. So the result can
-    be several components; they no longer need joining here, since every
-    piece is placed by its own GPS (postprocess/place.py), and
-    fetch_nodes.corridor_points bridges the ones that come close.
-
-    Each walk goes wave by wave, a whole frontier fetched at once, and
-    keeps only what lies within the area: a pano just past it is left out,
-    so what is selected is what the area shows. A pano
-    out on the water (on_open_water: a boat's) is never added, so a walk
-    stops at the shore.
-
-    Every lookup is cached (tiles, a pano's links, the pano at the
-    center), so an area redrawn walks again from memory: only what it adds
-    is fetched.
-
-    Returns (nodes, edges) -- same shape nearby_nodes/tab.py's
-    state["nodes"]/state["edges"] already use.
+    Edges are only real per-pano links. Each graph is walked on its own, wave by wave: the
+    first from the pano nearest the center, then from the nearest still unreached. Panos
+    past the area or out on open water are left out. Every lookup is cached.
     """
     import shapely
     if area is not None:
@@ -338,10 +282,8 @@ def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None
     except Exception as e:
         print(f"Google coverage lookup failed: {e}")
         return [], []
-    # The pano nearest the center too, looked up directly: discovery keeps a
-    # walked path's panos only every 12-24 m (_probe_line_gaps), so a small
-    # radius inside a park can hold none of them, though one stands right
-    # at the center.
+    # also the pano nearest the center: discovery keeps a walked path's panos only every
+    # 12-24 m, so a small radius in a park can hold none
     at_center = _nearest_to(center_lat, center_lon, min(max(radius_m, 15), 50))
     if at_center is not None:
         discovered.setdefault(at_center.id, at_center)
@@ -349,9 +291,7 @@ def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None
     def dist(n):
         return _haversine_m(center_lat, center_lon, n["lat"], n["lon"])
 
-    seeds = [{"key": node_key("google", p.id), "source": "google", "id": p.id,
-              "lat": p.lat, "lon": p.lon, "heading": p.heading}
-             for p in discovered.values()]
+    seeds = [google_node(p.id, p.lat, p.lon, p.heading) for p in discovered.values()]
     seeds = [n for n, ok in zip(seeds, within(seeds)) if ok]
     from streetview_to_3d.postprocess.water import occurrence_map
     at_sea = on_open_water(occurrence_map())
@@ -403,9 +343,9 @@ def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None
                 known = [n for n in meta["neighbors"] if node_key("google", n["id"]) in by_key]
                 new = [n for n in meta["neighbors"] if n not in known]
                 for n in known + ashore([n for n, ok in zip(new, within(new)) if ok]):
-                    other_key = node_key("google", n["id"])
-                    add_node({"key": other_key, "source": "google", "id": n["id"],
-                              "lat": n["lat"], "lon": n["lon"], "heading": None})
+                    node = google_node(n["id"], n["lat"], n["lon"])
+                    other_key = node["key"]
+                    add_node(node)
                     fe = frozenset((key, other_key))
                     if fe not in edge_set:
                         edges.append((key, other_key))

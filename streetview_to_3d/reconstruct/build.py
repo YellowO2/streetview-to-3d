@@ -1,36 +1,22 @@
-"""Orchestrator for the pathfind flow, called from ui/tab.py:
-
-1. prepare_pathfind (no GPU): build_corridor_graphs gathers candidate
-   panos along the clicked graph and splits them into isolated per-date
-   graphs (see build_street_graph/), then every candidate is downloaded.
-2. run_prepared_pathfind: ONE GPU call (pipeline_runner.run_walk_gpu)
-   that walks the date graphs (reconstruct/walk_graph.py). Pieces it
-   leaves separate stay separate, each placed by GPS in postprocess/.
-3. The result is written into the run's scene (open_scene,
-   _save_joined_pieces); placement happens afterwards, in postprocess/.
+"""The reconstruction's orchestrator, called from ui/tab.py: prepare_pathfind gathers and
+downloads candidates (no GPU), run_prepared_pathfind walks them in one GPU call and writes
+the pieces into the run's scene. Placement happens afterwards, in postprocess/.
 """
 import asyncio
 import os
 import time
 
-from streetview_to_3d.services.da3_ops import VIEW_STEP_DEGREES
-from streetview_to_3d.services.pipeline_runner import save_pointcloud
-from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, run_async, download_pano_by_id
+from streetview_to_3d.services.pipeline_runner import WalkSettings, run_walk_gpu, save_pointcloud
+from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, fetch_da3_pano, run_async
 from streetview_to_3d.build_street_graph.build_graph import build_corridor_graphs
 
-# How many panos download at once. Downloads used to run one at a time
-# (each its own fresh event loop) -- for a large batch (100+ candidates on
-# a real branching selection) that alone can take long enough to let the
-# ZeroGPU proxy token expire before the GPU call ever fires, since the
-# token's lifetime is wall-clock, not "how many GPU calls made". Bounded
-# rather than unlimited for the same reason download_panorama_image caps
-# its own per-pano tile connections -- don't burst past what Google's rate
-# limiter tolerates.
+# Panos downloaded at once: fast enough that the ZeroGPU token (wall-clock) doesn't expire
+# before the GPU call, bounded so Google's rate limiter isn't tripped.
 DOWNLOAD_CONCURRENCY = 10
 
 
 async def _download_one(node, sem):
-    """Download a node's equirectangular image at DA3-only res, return path (None on failure)."""
+    """A node's pano at DA3's resolution: its path, or None on failure."""
     async with sem:
         try:
             return await download_pano_by_id(node["id"], zoom=DA3_ONLY_ZOOM)
@@ -45,21 +31,13 @@ async def _download_all(nodes):
 
 
 def _download_date_graphs(date_graphs):
-    """Download every node referenced by any of the given date graphs' dot
-    buckets, in one combined batch (concurrently, DOWNLOAD_CONCURRENCY at a
-    time -- node keys are unique across graphs, since each graph only ever
-    holds its own date's own real panos). Returns (ready_graphs,
-    node_entries): ready_graphs -- each date graph with dot_candidates
-    values replaced by (key, path, lat, lon) tuples for whatever actually
-    downloaded (a dot that loses every candidate to a failed download is
-    dropped entirely -- the walk algorithm treats it exactly like a dot
-    that was never populated, same skip-one handling either way);
-    node_entries -- flat (key, path, lat, lon, date) list across ALL
-    graphs;
-    catalog -- {pano key: {dot, source, id, lat, lon, date, heading, pitch,
-    roll}} for every candidate, whichever date it belongs to. It is what
-    lets a reconstructed pano be matched back to the place it came from,
-    since which date wins is not decided until the walk is over."""
+    """Download every candidate of every date graph in one batch.
+
+    Returns (ready_graphs, catalog): ready_graphs has each dot's candidates as
+    (key, path, lat, lon), dropping what failed to download (a dot left empty goes);
+    catalog is {pano key: {dot, source, id, lat, lon, date, heading, pitch, roll}}, which
+    matches a reconstructed pano back to its place once the walk picks a date.
+    """
     all_nodes = [n for g in date_graphs for bucket in g["dot_candidates"].values() for n in bucket]
     keys = [n["key"] for n in all_nodes]
     catalog = {n["key"]: {"dot": dot, "source": n["source"], "id": n["id"],
@@ -72,7 +50,6 @@ def _download_date_graphs(date_graphs):
     path_by_key = {key: path for key, path in zip(keys, paths) if path}
 
     ready_graphs = []
-    node_entries = []
     for g in date_graphs:
         dot_candidates = {}
         for dot_idx, bucket in g["dot_candidates"].items():
@@ -80,37 +57,20 @@ def _download_date_graphs(date_graphs):
                        for n in bucket if n["key"] in path_by_key]
             if entries:
                 dot_candidates[dot_idx] = entries
-                node_entries.extend((key, path, lat, lon, g["date"]) for key, path, lat, lon in entries)
         if dot_candidates:
             ready_graphs.append({"date": g["date"], "dot_candidates": dot_candidates})
 
-    return ready_graphs, node_entries, catalog
+    return ready_graphs, catalog
 
 
 def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
-    """CPU/network only, no GPU -- gathers candidates along the corridor,
-    splits them into isolated per-date graphs, and downloads every node
-    any of them reference. Split out from the GPU step specifically so
-    the GPU-triggering click (run_prepared_pathfind) can happen as its
-    own fresh, minimal-latency user interaction right before the
-    @spaces.GPU call, instead of that call being buried at the end of a
-    long download inside one combined request -- the ZeroGPU proxy token's
-    validity is wall-clock, and a long blocking step ahead of it is exactly
-    what can let it go stale before schedule() is ever reached.
+    """Gather the corridor's candidates into per-date graphs and download them (no GPU).
 
-    start: (lat, lon) -- the fixed start node's real position.
-    center: (lat, lon) -- the searched coordinate that defined this area.
-    Carried through untouched; postprocess measures every position from it.
-    goals: [(lat, lon), ...] -- every other selected node.
-    corridor_edges: [((lat1, lon1, pano_id1), (lat2, lon2, pano_id2)), ...] -- the REAL,
-    already-confirmed edges of the clicked selection graph (from Street
-    View's own pano.links, see map_selection/candidates.py and
-    map_selection/tab.py's handle_bridge_message) -- not inferred from
-    click order or proximity, since these can branch or loop. These panos,
-    merged into dots, with their older dates, are the candidates
-    (fetch_corridor_nodes).
-
-    Returns a dict to pass straight to run_prepared_pathfind."""
+    Kept apart from the GPU step so the GPU click is a fresh interaction: the ZeroGPU
+    token expires on wall-clock time. start/center: (lat, lon); goals: [(lat, lon)], the
+    other selected nodes; corridor_edges: the selection's real Street View links,
+    [((lat, lon, id), (lat, lon, id))]. Returns the dict run_prepared_pathfind takes.
+    """
     t0 = time.monotonic()
     if not goals:
         raise ValueError("Need at least one goal (a second selected node).")
@@ -125,56 +85,29 @@ def prepare_pathfind(start, goals, corridor_edges, center) -> dict:
     n_candidates = sum(len(bucket) for g in date_graphs for bucket in g["dot_candidates"].values())
     print(f"Downloading {n_candidates} candidate(s) across {len(date_graphs)} date graph(s): "
           f"{[g['date'] for g in date_graphs]}")
-    for g in date_graphs:
-        for dot, bucket in g["dot_candidates"].items():
-            print(f"  [candidates] date={g['date']} dot={dot}: {[n['key'] for n in bucket]}")
-    ready_graphs, node_entries, catalog = _download_date_graphs(date_graphs)
+    ready_graphs, catalog = _download_date_graphs(date_graphs)
     if not ready_graphs:
         raise ValueError("Nothing downloaded successfully -- can't reconstruct.")
 
     prep = {
         "date_graphs": ready_graphs,
-        "node_entries": node_entries,
         "points": points,
         "adjacency": adjacency,
         "elevations": elevations,
         "catalog": catalog,
         "start": start,
         "center": center,
-        "goals": goals,
-        "top_dates": [g["date"] for g in ready_graphs],
     }
     print(f"prepare_pathfind: done in {time.monotonic() - t0:.1f}s")
     return prep
 
 
-def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_DEGREES,
-                          conf_lower_percentile: float | None = None,
-                          gpu_seconds: float | None = None, model=None, hfov=None, masker=None,
-                          mask_classes=None, conf_floor=None):
-    """Walk and join in one GPU call, then write the pieces into the scene
-    at output_dir. Returns one "piece i: n node(s)" line per piece.
-
-    conf_lower_percentile: how much of each view's own weakest pixels DA3
-    drops before backprojection -- see services.da3_ops.CONF_LOWER_PERCENTILE.
-    None keeps that module's own default.
-
-    gpu_seconds: the ZeroGPU window to ask for. None sizes it from the dot
-    count -- see services.pipeline_runner.estimate_gpu_seconds.
-
-    model: the DA3 repo to use; None is config.DA3_MODEL_REPO. hfov, masker,
-    mask_classes: view width, masker model and the class names it drops, for
-    this run (services.da3_ops.options); None keeps the defaults.
-    conf_floor: the lowest DA3 confidence kept (services.da3_ops.CONF_FLOOR).
-    """
-    from streetview_to_3d.services.pipeline_runner import run_walk_gpu
+def run_prepared_pathfind(prep: dict, output_dir, settings=WalkSettings()):
+    """Walk in one GPU call, then write the pieces into the scene at output_dir.
+    Returns one "piece i: n node(s)" line per piece."""
     t0 = time.monotonic()
     start_lat, start_lon = prep["start"]
-    pieces = run_walk_gpu(
-        prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon,
-        step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
-        gpu_seconds=gpu_seconds, model=model, hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor,
-    )
+    pieces = run_walk_gpu(prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon, settings)
     if not pieces:
         raise RuntimeError("No connected path found from start toward any goal.")
     results = _save_joined_pieces(pieces, output_dir, prep["catalog"])
@@ -183,12 +116,8 @@ def run_prepared_pathfind(prep: dict, output_dir, step_degrees: int = VIEW_STEP_
 
 
 def open_scene(prep, output_dir):
-    """A scene holding every place this run will try to reconstruct.
-
-    One node per dot that has a candidate, carrying the best-ranked pano
-    we know of there -- so the nodes, their adjacency and the road lines
-    all exist before the GPU runs. Reconstruction fills in the rest.
-    """
+    """A scene with one node per dot that has a candidate (its best-ranked pano), saved
+    before the GPU runs; reconstruction fills in the rest."""
     from streetview_to_3d import scene as scene_mod
     best, elevations = {}, prep.get("elevations") or []
     for key, c in prep["catalog"].items():
@@ -212,14 +141,13 @@ def open_scene(prep, output_dir):
 
 
 def _keep_labels(pano, output_dir):
-    """Copy the class map its mask was made from into the scene, if the run
-    made one (segment.pano_labels)."""
+    """Copy the pano's class map (segment.pano_labels) into the scene, if the run made one."""
     import glob
     import shutil
     from streetview_to_3d.services.segment import labels_path
     if pano.source != "google":
         return
-    path = run_async(download_pano_by_id(pano.id, zoom=DA3_ONLY_ZOOM))
+    path = fetch_da3_pano(pano.id)
     made = sorted(glob.glob(f"{glob.escape(path)}.*.labels.png"), key=os.path.getmtime) if path else []
     if made:
         os.makedirs(os.path.dirname(labels_path(output_dir, pano.id)), exist_ok=True)
@@ -227,23 +155,11 @@ def _keep_labels(pano, output_dir):
 
 
 def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
-    """Fill the scene's nodes in with what the reconstruction produced.
+    """Write each node's points (one .ply per node), the pano that filled it, DA3's pose,
+    and the edges by node index.
 
-    A node already exists for every place; this writes each one's points,
-    the pano that actually filled it, and DA3's camera pose. One .ply per
-    NODE: DA3 reconstructs one or two panoramas at a time and a node's
-    points enter exactly once, so a panorama is the smallest thing ever
-    independently produced.
-
-    Edges are recorded by node index, which is what makes a piece a
-    connected component rather than something stored.
-
-    Two pieces can both hold a panorama for the same place: patching walks
-    overlapping stretches on purpose, and set_cover keeps a piece for any
-    place it adds. A place is one node, so the bigger piece keeps it and the
-    other's panorama there is dropped with its links. Writing both let the
-    second overwrite the first while the first's links survived, gluing two
-    DA3 frames into one piece.
+    Patches overlap, so two pieces can hold the same place: the bigger keeps it and the
+    other's pano there is dropped with its links (keeping both glued two frames together).
     """
     from streetview_to_3d import scene as scene_mod
     from streetview_to_3d.reconstruct.pieces import _piece_edges
@@ -273,9 +189,7 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
                 views_kept=m.get("n_views_kept"), views_total=m.get("n_views_total"))
             node.position = list(m["position"])
             node.rotation = m.get("rotation")
-            # A pano DA3 kept none of the views of has no points. Its
-            # camera still places the piece, but an empty .ply would
-            # stop the viewer opening the scene at all.
+            # no points: the camera still places the piece, but an empty .ply breaks the viewer
             pts, cols = clouds[key]
             if len(pts):
                 node.ply = f"node_{i}.ply"
@@ -291,5 +205,3 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
 
     sc.save(output_dir)
     return results
-
-

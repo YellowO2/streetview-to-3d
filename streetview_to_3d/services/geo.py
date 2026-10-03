@@ -1,6 +1,10 @@
-"""Shared geo helpers -- used by app.py's single-pano flow and reconstruct/."""
+"""Shared geo helpers: distances, flat-earth metres, parsing a location."""
 import math
 import re
+
+import numpy as np
+
+M_PER_DEG_LAT = 111320.0  # flat-earth: fine over one scene (hundreds of metres)
 
 
 def haversine_m(lat1, lon1, lat2, lon2):
@@ -13,15 +17,15 @@ def haversine_m(lat1, lon1, lat2, lon2):
 
 
 def latlon_to_local_m(lat, lon, origin_lat, origin_lon):
-    """(lat, lon) -> local ENU meters (east, north) relative to an origin --
-    flat-earth approximation, fine over the scale of one reconstruction
-    (hundreds of meters, not kilometers). Used to fit a segment's DA3-frame
-    node positions against their real-world positions."""
-    m_per_lat = 111320.0
-    m_per_lon = 111320.0 * math.cos(math.radians(origin_lat))
-    east = (lon - origin_lon) * m_per_lon
-    north = (lat - origin_lat) * m_per_lat
-    return east, north
+    """(lat, lon) -> (east, north) metres from an origin, flat-earth."""
+    m_per_lon = M_PER_DEG_LAT * math.cos(math.radians(origin_lat))
+    return (lon - origin_lon) * m_per_lon, (lat - origin_lat) * M_PER_DEG_LAT
+
+
+def local_m_to_latlon(east, north, origin_lat, origin_lon):
+    """(east, north) metres from an origin -> (lat, lon), flat-earth; origin may be arrays."""
+    return (origin_lat + north / M_PER_DEG_LAT,
+            origin_lon + east / (M_PER_DEG_LAT * np.cos(np.radians(origin_lat))))
 
 
 def extract_lat_lon(raw: str):

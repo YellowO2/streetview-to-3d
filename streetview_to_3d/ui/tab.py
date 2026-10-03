@@ -1,8 +1,4 @@
-"""The two buttons: prepare candidates, then reconstruct and place.
-
-Mounts map_selection's own map-picking section above its own controls,
-wired against the same shared `state` that section's handlers update.
-"""
+"""The main tab: the map section, then two buttons -- prepare, then reconstruct and place."""
 import os
 import zipfile
 
@@ -14,29 +10,24 @@ from streetview_to_3d.paths import new_run_dir
 from streetview_to_3d.postprocess import life, pipeline, seams, water
 from streetview_to_3d.reconstruct import build as street_main
 from streetview_to_3d.services import mask_api
-from streetview_to_3d.services.pipeline_runner import DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, estimate_gpu_seconds
+from streetview_to_3d.services.pipeline_runner import (
+    DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, WalkSettings, estimate_gpu_seconds,
+)
 from streetview_to_3d.ui.map_selection.tab import build_map_section, corridor_edges, nodes_by_key
 
+
 def _run_dir(prep):
-    """A fresh output directory, opened as a scene holding every place this
-    run will try to reconstruct. See scene.py for what a scene holds."""
+    """A fresh output directory, opened as a scene of every place this run will try."""
     path = new_run_dir()
-    # Logged so a run can still be found after the page is refreshed:
-    # Gradio serves any file under it at this URL, but can't list the folder.
+    # logged so a run can be found after a page refresh (Gradio serves files, not folders)
     print(f"run dir: {path}  (scene: {viewers.file_url(os.path.join(path, scene_mod.FILENAME))})",
           flush=True)
     street_main.open_scene(prep, path)
     return path
 
 def handle_pathfind_prepare(state):
-    """Experimental button, step 1 of 3: gathers every Google pano
-    near the clicked graph's real shape -- branches and loops included,
-    since the selection graph (state["selected"] + state["selected_edges"])
-    is only ever built from real Street View edges (see
-    map_selection/tab.py's handle_bridge_message), not guessed from click
-    order -- and downloads the top-date candidate batch. No GPU here; see
-    handle_pathfind_run for why this is its own separate step instead of
-    one combined button. See street_main.prepare_pathfind."""
+    """Button 1: gather and download the selection's candidates (no GPU; see
+    street_main.prepare_pathfind)."""
     selected = state.get("selected", [])
     selected_edges = state.get("selected_edges", [])
     if len(selected) < 2 or not selected_edges:
@@ -56,20 +47,13 @@ def handle_pathfind_prepare(state):
         yield None, "<p>Preparation failed. Try again.</p>"
         raise gr.Error(f"Prepare failed: {e}")
 
-    n = len(prep["node_entries"])
+    n = sum(len(c) for g in prep["date_graphs"] for c in g["dot_candidates"].values())
     yield prep, f"<p>{n} panoramas ready. Now click button 2.</p>"
 
 
 def _zip(run_dir):
-    """The whole scene -- scene.json, every .ply (the nodes', the terrain),
-    water.json, life.json (what moves round it), the fill's ground (ground.npz: a rebuild of the map meets
-    it) and each pano's class map (labels/) -- as one zip.
-
-    One file, because a browser can only download files, not a folder, and
-    the viewer opens exactly this set once unzipped. Stored, not
-    compressed: point data barely shrinks, so compressing would only cost
-    time. The Space's disk is wiped on restart, so the scene is handed back
-    rather than left as a link into it."""
+    """The whole scene (scene.json, .ply files, water.json, life.json, ground.npz, labels/) as one
+    zip the viewer opens. Stored, not compressed: point data barely shrinks."""
     names = sorted(n for n in os.listdir(run_dir)
                    if n in (scene_mod.FILENAME, water.FILENAME, seams.FILENAME, life.FILENAME)
                    or n.endswith(".ply"))
@@ -85,25 +69,11 @@ def _zip(run_dir):
 
 def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
                        mask_classes="", fill=True, conf_floor=0, effort=DEFAULT_EFFORT):
-    """Reconstruct (GPU), then place and fill (CPU), in one click.
+    """Button 2: reconstruct (GPU), then place and fill (CPU), in one click.
 
-    Placement never needs its own GPU call, so it runs immediately after
-    reconstruction returns rather than waiting for a second click --
-    nothing about it requires a fresh ZeroGPU token the way the GPU call
-    itself does (see handle_pathfind_prepare for why THAT stays separate).
-
-    keep_pct: how much of each view's own weakest pixels to keep, from the
-    slider -- a UI value, not a redeploy, so it can change without
-    rebuilding the Space (see services.da3_ops.CONF_LOWER_PERCENTILE).
-
-    gpu_seconds: the GPU window to ask for; 0 sizes it from the dot count
-    and effort, how hard to try (see services.pipeline_runner.estimate_gpu_seconds).
-
-    view_hfov, da3_model, masker, mask_classes: the view width (0), DA3 repo,
-    masker SegFormer repo and comma-separated Cityscapes classes to drop
-    (blank) for this run; defaults otherwise (config, services.da3_ops,
-    services.segment). fill: False leaves the placed scene unfilled.
-    conf_floor: the lowest DA3 confidence kept (0: services.da3_ops.CONF_FLOOR).
+    The rest are hidden per-run overrides for the API (0/blank: defaults): keep_pct of
+    each view's pixels, gpu_seconds (else sized from effort), view_hfov, da3_model, masker,
+    comma-separated mask_classes, fill, conf_floor. See pipeline_runner.WalkSettings.
     """
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -114,13 +84,13 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
            "<p>Reconstructing… This may take a few minutes.</p>")
     try:
         output_dir = _run_dir(prep)
-        street_main.run_prepared_pathfind(
-            prep, output_dir, conf_lower_percentile=100 - keep_pct,
+        street_main.run_prepared_pathfind(prep, output_dir, WalkSettings(
+            conf_lower_percentile=100 - keep_pct,
             gpu_seconds=gpu_seconds or estimate_gpu_seconds(len(prep["points"]), effort or DEFAULT_EFFORT),
             hfov=view_hfov or None,
             model=(da3_model or "").strip() or None, masker=(masker or "").strip() or None,
             mask_classes=[c.strip() for c in (mask_classes or "").split(",") if c.strip()] or None,
-            conf_floor=conf_floor or None)
+            conf_floor=conf_floor or None))
         yield gr.skip(), gr.skip(), "<p>Aligning the scene and filling the gaps…</p>"
         pipeline.process(output_dir, log=lambda m: print(m, flush=True), fill=bool(fill))
     except Exception as e:
@@ -132,35 +102,21 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
            gr.DownloadButton(value=_zip(output_dir), visible=True),
            "<p>Scene ready.</p>")
 
+
 def build_main_tab():
     state, map_view, selection_view = build_map_section()
 
-    # Three sequential steps, so one row read left to right rather than a
-    # narrow sidebar column -- the buttons' own full sentences need real
-    # width, and nothing else shares this row with them.
     with gr.Row(equal_height=True):
-        # Prepare is separate and has no GPU, so the GPU-triggering click
-        # is its own fresh interaction rather than following a long
-        # download inside one request -- the ZeroGPU proxy token expires
-        # on wall-clock time.
+        # separate, so the GPU click is a fresh interaction: the ZeroGPU token expires on wall-clock
         pathfind_prepare_btn = gr.Button("1. Prepare")
         pathfind_run_btn = gr.Button("2. Reconstruct")
-        # How hard to try: the GPU window per spot, beside the button it is
-        # for. More time lets more capture dates patch what the best one
-        # left weak.
+        # how hard to try: the GPU window per spot
         effort_input = gr.Dropdown(list(EFFORT_SECONDS_PER_SPOT), value=DEFAULT_EFFORT, label="Effort",
                                    show_label=False, container=False, scale=0, min_width=130)
 
-    # A real parameter (services.da3_ops.CONF_LOWER_PERCENTILE), not a UI
-    # decision -- kept as a component only so it is callable over the API
-    # with a different value; hidden so it isn't something every user has
-    # to understand. See handle_reconstruct.
+    # hidden per-run overrides, settable over the API (see handle_reconstruct)
     keep_pct_slider = gr.Slider(50, 100, value=75, step=5, visible=False)
-    # Same idea: the ZeroGPU window in seconds, 0 = sized from the dot
-    # count. Hidden for now; the estimate is shown beside the selection.
     gpu_seconds_input = gr.Number(value=0, precision=0, minimum=0, visible=False)
-    # View width, DA3 model and masker model per run, for comparing
-    # settings over the API; 0/blank = the defaults. Hidden.
     view_hfov_input = gr.Number(value=0, precision=0, minimum=0, visible=False)
     da3_model_input = gr.Textbox(value="", visible=False)
     masker_input = gr.Textbox(value="", visible=False)
@@ -171,13 +127,10 @@ def build_main_tab():
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
 
-    # The download is what a run is for, so it sits above the viewer and
-    # only appears once there is a scene to download (see _zip).
+    # shown once there is a scene to download
     download_btn = gr.DownloadButton("Download scene (.zip)", visible=False,
                                      variant="primary")
-    # Drop-ready from page load (not a static placeholder) -- lets you
-    # preview an already-downloaded scene without needing a GPU run first.
-    # Hidden while a run is going; see handle_reconstruct.
+    # a working viewer from page load: a downloaded scene can be dropped in
     reconstruct_view = gr.HTML(viewers.build_viewer())
 
     pathfind_prepare_btn.click(

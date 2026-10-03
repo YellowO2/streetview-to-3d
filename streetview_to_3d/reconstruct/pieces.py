@@ -1,17 +1,8 @@
-"""The walk's pieces in the shape the scene is saved from.
-
-A piece is the nodes DA3 linked into one frame. Pieces the walk left
-separate stay separate: each is placed by its own nodes' GPS later, in
-postprocess/.
-"""
+"""The walk's pieces in the shape the scene is saved from; each is placed by its GPS later."""
 
 
 def _links_by_node(path_edges):
-    """{node key: {neighbour key: [views kept, views total]}}.
-
-    Stored per node so it survives the per-node metadata JSON the Hub
-    already holds.
-    """
+    """{node key: {neighbour key: [views kept, views total]}}."""
     links = {}
     for a, b, keep_a, keep_b in path_edges:
         links.setdefault(a, {})[b] = keep_a
@@ -32,18 +23,10 @@ def _piece_edges(metadata):
 
 
 def pieces_to_output(pieces):
-    """[(clouds, metadata), ...] -- one entry per still-separate piece.
-
-    clouds is {node key: (points, colors)}: DA3 only ever reconstructs one
-    or two panoramas at a time and a node's points enter exactly once, so
-    every point belongs to a known node and nothing needs re-deriving it.
-
-    metadata carries, per node, its real lat/lon/date, its position and
-    rotation in this piece's frame, the view counts behind DA3's own
-    confidence in it, and its links to the nodes it was reconstructed with.
-    """
+    """[(clouds, metadata), ...], one per piece: clouds is {node key: (points, colors)};
+    metadata per node is its lat/lon/date, pose in the piece's frame, view counts and links."""
     results = []
-    for clouds, path_edges, date, reached, node_positions, frame_poses in pieces:
+    for clouds, path_edges, date, frame_poses in pieces:
         links = _links_by_node(path_edges)
         metadata = {k: {"lat": lat, "lon": lon, "date": date, "position": pos.tolist(),
                         "rotation": rot.tolist(), "n_views_kept": n_kept,

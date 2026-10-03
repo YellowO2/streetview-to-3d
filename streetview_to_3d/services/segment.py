@@ -1,33 +1,8 @@
-"""Find cars, people, poles and signs in DA3's views, so their pixels never
-become points.
+"""Mark cars, people, thin poles/signs and water in a pano, so DA3 never turns them into points.
 
-Moving things are what ghost when panoramas are merged: the same car shows
-up once per photo, in a different place each time. A street-scene
-segmenter (SegFormer-B2 trained on Cityscapes, 27M parameters) marks them
-on the whole pano, once; each DA3 view takes its part of that mask and
-panoramic_da3 leaves those pixels out (its drop_mask). DA3 itself still
-sees the whole view, so poses are unchanged. The pano's full class map is
-kept with the scene (labels_path): the fill colours by the same mask. DA3's views masked one by one (every view that saw a spot
-having to agree) were tried: a little cleaner on NTU, where the whole pano
-takes part of a long walkway roof for a bus, but twice the code, and the
-fill needs the whole pano anyway.
-
-Parked cars are dropped too -- the class can't tell them apart -- which
-leaves a gap on the road that other panoramas usually fill.
-
-Poles, traffic lights and signs go too (a pole only where it is a long
-straight stick: long_poles): DA3 smears anything this thin into a streak or
-a broken stick, and a missing street light reads better than a wrong one
-(kept for a while, they looked it). Cityscapes' "traffic light" and
-"traffic sign" are only the light box and the board; every post, lamp posts
-included, is "pole".
-
-And water: DA3 lays it at about street height (Stockholm: the harbour 3 m
-too high, grainy) where the scene's flat water surface belongs
-(postprocess/water.py). Cityscapes has no water class -- it calls it road,
-terrain or sky -- so a second SegFormer-B2, trained on ADE20K, marks it
-(WATER_MODEL_ID, WATER_CLASSES), written into the same class map as class
-"water".
+Movers ghost when panos merge, DA3 smears thin things into streaks and lays water at street
+height. Each pano is segmented once, whole (Cityscapes SegFormer, plus an ADE20K one for water);
+each DA3 view cuts its part of that mask, and the class map is kept with the scene for the fill.
 """
 import os
 import re
@@ -42,15 +17,7 @@ from scipy.ndimage import binary_dilation
 MODEL_ID = "nvidia/segformer-b2-finetuned-cityscapes-1024-1024"
 MOVERS = ("person", "rider", "car", "truck", "bus", "motorcycle", "bicycle")   # not train: it is part of the place
 THIN = ("pole", "traffic light", "traffic sign")
-# Sky has no real distance: DA3 puts it on a dome 100-140 m out. Off by
-# default -- the confidence floor (services.da3_ops.CONF_FLOOR) already
-# cuts it, with everything else far; name it per run (mask_classes) to drop
-# it by label instead, e.g. with the floor lowered. At a harbour the masker
-# missed patches of sky that views disagreed on.
-SKY = ("sky",)
-# Cityscapes' 19 classes, by id: every Cityscapes SegFormer labels this way
-# (get_segmenter checks), so a saved class map reads without the model --
-# then "water", from WATER_MODEL_ID.
+# Cityscapes' 19 classes by id (get_segmenter checks), so a saved class map reads without the model
 CITYSCAPES = ("road", "sidewalk", "building", "wall", "fence", "pole", "traffic light", "traffic sign",
               "vegetation", "terrain", "sky", "person", "rider", "car", "truck", "bus", "train",
               "motorcycle", "bicycle")
@@ -67,11 +34,8 @@ BATCH = 8   # images per pass; 16 ran a bigger model out of GPU memory
 # The masker's input width, the image's own shape kept (None: the
 # processor's square 512 x 512, which stretched the image)
 MASK_W = 1024
-# A pole is dropped only when it is a long straight stick (a lamp post, a
-# sign's post): at least POLE_LONG times taller than it is wide, and
-# POLE_STRAIGHT of its rows within POLE_TOL widths of one straight line --
-# a lamp's arm is only a few rows, a bollard, a thick pillar or a curved
-# pole is kept.
+# A pole is dropped only as a long straight stick: POLE_LONG times taller than wide, and
+# POLE_STRAIGHT of its rows within POLE_TOL widths of one line (bollards, pillars are kept).
 POLE_LONG, POLE_STRAIGHT, POLE_TOL = 4.0, 0.8, 1.0
 
 _models = {}

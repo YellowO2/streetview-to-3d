@@ -1,14 +1,10 @@
-"""Turn fetch_nodes' per-dot candidate buckets into isolated, per-date
-graphs (no GPU, no validation)."""
+"""Turn fetch_nodes' per-dot candidate buckets into isolated per-date graphs (no GPU)."""
 from streetview_to_3d.services.geo import haversine_m
 from streetview_to_3d.build_street_graph.date_ranking import DATE_TOP_N, date_connects, rank_dates
 from streetview_to_3d.build_street_graph.fetch_nodes import fetch_corridor_nodes
 
-# Per dot, per date, how many of that date's own closest panos to keep --
-# and so download and rate. A dense capture date (Apple's ~1.2m frame
-# spacing) put up to 10 same-date panos on one dot, and the walk rated all
-# of them: 51 ratings, over half a 7-dot run's budget. 3 still leaves a
-# fallback when the closest is bad; beyond that it's the same spot again.
+# Per dot, per date, how many of the closest panos to keep (and so download and rate):
+# enough for a fallback when the closest is bad; more is the same spot again.
 TOP_PANOS_PER_DOT = 3
 
 
@@ -21,35 +17,12 @@ def cap_bucket_for_date(bucket, date, dot_lat, dot_lon, top_n):
 
 def build_corridor_graphs(corridor_edges, start_lat, start_lon, goals,
                            top_n_dates=DATE_TOP_N, top_per_dot=TOP_PANOS_PER_DOT):
-    """Build up to top_n_dates ISOLATED per-date graphs along the corridor
-    traced by corridor_edges (see fetch_corridor_nodes -- real, already-
-    connected edges, not an assumed-linear list).
+    """Up to top_n_dates per-date graphs along the corridor, best first (rank_dates).
 
-    Each date graph is built independently: every dot gets capped to that
-    date's own top_per_dot closest panos, so a dense capture date can
-    never trap the search in one dot's worth of redundant same-spot
-    candidates -- at most top_per_dot real options exist at any dot, for
-    any date.
-
-    A dot IS a real selection-graph node (see fetch_nodes.corridor_points)
-    -- the pathfind algorithm (reconstruct/walk_graph.py)
-    walks the shared dot-to-dot adjacency directly (dot i to its real
-    structural neighbors, branching wherever the corridor itself
-    branches), no distance-based fallback needed since each dot is
-    already a real, individually-searched location.
-
-    Ranked best-first by new dots covered (see date_ranking.rank_dates), and
-    a candidate date only counts toward top_n_dates if its own dots can
-    structurally reach from the start toward at least one goal (see
-    date_ranking.date_connects) -- checked AFTER capping, since
-    reachability depends on which dots actually end up with candidates.
-
-    Returns (date_graphs, points, adjacency, elevations). date_graphs: [{"date": str,
-    "dot_candidates": {dot_index: [panos]}}, ...], ranked best first, each
-    graph already isolated to its own date and containing only its own
-    non-empty dots. points/adjacency: shared across every date graph --
-    the corridor's own dot positions and structure (see
-    fetch_nodes.corridor_points).
+    Each dot keeps that date's top_per_dot closest panos; a date counts only if its
+    dots reach from the start toward a goal (date_connects), checked after capping.
+    Returns (date_graphs, points, adjacency, elevations); date_graphs is
+    [{"date", "dot_candidates": {dot: [panos]}}], points/adjacency are shared by all dates.
     """
     buckets, points, adjacency, elevations = fetch_corridor_nodes(corridor_edges)
     ranked_dates = rank_dates(buckets)

@@ -1,19 +1,9 @@
-"""Gradio wiring for the map-picking section: a location pasted loads its
-area (no button), optionally auto-expand it, then click markers to extend
-a graph of real Google Street View nodes. Exposes build_map_section() for
-ui/tab.py to mount, plus nodes_by_key() (shared state-shape helper) for
-its pathfind handlers to use.
+"""The map-picking section: a pasted location loads its area, Expand selects everything in a
+radius, clicks extend the selection along real Street View links.
 
-The map lives in a sandboxed iframe (see map_ui.py) so a marker click can't
-call back into Python directly. The bridge: the iframe does
-window.parent.postMessage(...); a listener injected into the page's <head>
-(BRIDGE_HEAD_SCRIPT, wired via gr.Blocks(head=...) in app.py) catches that
-message and writes it into a hidden Gradio Textbox by simulating a DOM
-input event, which triggers this module's Python handler via .change().
-
-This DOM-event bridge is the one part of this feature I can't verify
-end-to-end myself (browser testing is intentionally not something I do
-autonomously here) — it needs to be tried in an actual browser.
+The map is a sandboxed iframe, so a click is relayed: the iframe posts a message, a listener
+in the page head (BRIDGE_HEAD_SCRIPT) writes it into a hidden textbox, and its .change() runs
+handle_bridge_message.
 """
 import json
 
@@ -22,24 +12,19 @@ import gradio as gr
 from streetview_to_3d.services.geo import extract_lat_lon
 from streetview_to_3d.build_street_graph.fetch_nodes import corridor_points
 from streetview_to_3d.services.pipeline_runner import estimate_gpu_seconds, estimate_other_seconds
-from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id, run_async
+from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id, google_node, run_async
 from streetview_to_3d.ui.map_selection import candidates as candidates_mod
 from streetview_to_3d.ui.map_selection import map_ui
 
 BRIDGE_ELEM_ID = "map_bridge"
 
-# CSS-hidden rather than Gradio's own visible=False: some frontends don't
-# render conditionally-hidden components into the DOM at all, which would
-# make the textarea unfindable regardless of whether the bridge script runs.
-# Keeping it in the DOM (just visually collapsed) removes that uncertainty.
+# hidden by CSS, not visible=False, which can leave it out of the DOM
 BRIDGE_CSS = f"#{BRIDGE_ELEM_ID} {{ position: fixed !important; width: 1px !important; height: 1px !important; opacity: 0 !important; pointer-events: none !important; overflow: hidden !important; }}"
 
 BRIDGE_HEAD_SCRIPT = f"""
 <script>
-console.log('[map] bridge listener registered');
 window.addEventListener('message', function(ev) {{
   if (!ev.data || {json.dumps(list(map_ui.MESSAGE_TYPES))}.indexOf(ev.data.type) === -1) return;
-  console.log('[map] message received from map iframe:', ev.data);
   var el = document.querySelector('#{BRIDGE_ELEM_ID} textarea, #{BRIDGE_ELEM_ID} input');
   if (!el) {{
     console.error('[map] bridge element #{BRIDGE_ELEM_ID} not found in DOM');
@@ -48,7 +33,6 @@ window.addEventListener('message', function(ev) {{
   el.value = JSON.stringify(ev.data);
   el.dispatchEvent(new Event('input', {{bubbles: true}}));
   el.dispatchEvent(new Event('change', {{bubbles: true}}));
-  console.log('[map] dispatched input+change on bridge element, value:', el.value);
 }});
 </script>
 """
@@ -103,23 +87,8 @@ def _map_html(state, zoom=19):
 
 
 def _augment_real_links(state, key):
-    """Fetch this node's own real links directly (Street View's per-pano
-    metadata, same as fetch_pano_by_id uses elsewhere) and merge any new
-    nodes/edges into state.
-
-    Why this is needed even though nodes/edges already came from
-    candidates.nearby_nodes(): that fetch sources positions from Street
-    View's TILE coverage listing, which is a different endpoint than
-    per-pano links and can genuinely omit a pano that a real link points
-    to -- confirmed directly (a specific node's linked neighbor was simply
-    absent from the tile listing even when queried centered right on that
-    node, not just a radius/max_nodes cutoff issue). nearby_nodes also only
-    ever runs once, centered on the location first given, so a click
-    far from that point can be missing edges just from being out of range.
-    This fixes both: always goes straight to the accurate per-node source
-    for whichever node was actually clicked, regardless of how far it is
-    from the original load point or what the bulk tile listing happened to
-    include."""
+    """Merge this node's own per-pano links into state: the tile listing nearby_nodes uses
+    can omit a linked pano, and only covers the area first loaded."""
     if not key.startswith("google:"):
         return state  # only Google panos have real link data
     pano_id = key.split(":", 1)[1]
@@ -137,12 +106,9 @@ def _augment_real_links(state, key):
     edge_set = {frozenset(e) for e in edges}
 
     for n in meta["neighbors"]:
-        other_key = candidates_mod.node_key("google", n["id"])
+        new_node = google_node(n["id"], n["lat"], n["lon"])
+        other_key = new_node["key"]
         if other_key not in by_key:
-            new_node = {
-                "key": other_key, "source": "google", "id": n["id"],
-                "lat": n["lat"], "lon": n["lon"], "heading": None,
-            }
             nodes.append(new_node)
             by_key[other_key] = new_node
         fe = frozenset((key, other_key))
@@ -178,11 +144,8 @@ def handle_load_area(area_input, radius_input, state):
 
 
 def handle_expand_area(area_input, radius_input, state, progress=gr.Progress(track_tqdm=False)):
-    """Experimental: auto-discover the real Street View graph within a
-    radius of the given area (see candidates.expand_area) instead of
-    clicking node by node -- sets the WHOLE discovered graph as already
-    selected, ready to press "Prepare auto-path" directly. Reuses the
-    exact same geocoding handle_load_area uses for the center point."""
+    """Select the whole real Street View graph within a radius (candidates.expand_area),
+    ready for "Prepare"."""
     try:
         lat, lon = extract_lat_lon(area_input)
     except ValueError as e:
@@ -225,11 +188,8 @@ def handle_area_drag(payload, state):
 
 
 def handle_preview_radius(area_input, radius_input, state):
-    """Draws the blue radius circle live as the radius is typed, without
-    running the actual (network-heavy) expand_area walk -- so the radius can be sanity-checked visually before committing to it.
-    Only ever touches radius_m/preview_center, never nodes/edges/selected,
-    so it's always safe to fire on every keystroke without disturbing an
-    already-loaded graph."""
+    """Draw the radius circle as it is typed, without expanding; touches only
+    radius_m/preview_center, so it is safe on every keystroke."""
     try:
         lat, lon = extract_lat_lon(area_input)
     except ValueError:
@@ -251,11 +211,7 @@ def _radius(radius_input):
 
 
 def handle_bridge_message(payload_str, state):
-    # Printed server-side (visible in the terminal running `python app.py`,
-    # not the browser console) -- confirms whether Gradio's .change() ever
-    # actually fires, independent of anything happening in the browser.
-    print(f"[map] handle_bridge_message called, payload={payload_str!r}")
-
+    """A map click or area drag, relayed from the iframe (see BRIDGE_HEAD_SCRIPT)."""
     if not payload_str or state.get("lat") is None:
         return _map_html(state), _summary_markdown(state), state, ""
 
@@ -272,19 +228,11 @@ def handle_bridge_message(payload_str, state):
     if not key:
         return _map_html(state), _summary_markdown(state), state, ""
 
-    # Always refresh this node's real links before validating the click --
-    # see _augment_real_links for why nodes/edges from the initial bulk
-    # fetch alone aren't reliable enough to gate frontier expansion on.
+    # refresh the clicked node's real links before validating the click
     state = _augment_real_links(state, key)
 
-    # Graph selection, fixed start: a click only ever adds a node/edge that's
-    # a REAL edge (Street View's own pano.links, sourced in candidates.py) to
-    # something already selected -- never guessed from click proximity. This
-    # is what lets a branch (two clicks off the same node) or a loop-closing
-    # click (a "next" node that happens to already be selected via a
-    # different branch) just fall out naturally, instead of needing special
-    # handling: any real edge between the clicked node and an already-
-    # selected node gets recorded, whether or not the node itself is new.
+    # A click adds only real links to the selection, never guessed from proximity; every
+    # real link to an already selected node is recorded, so branches and loops just work.
     selected = list(state["selected"])
     selected_set = set(selected)
     selected_edges = list(state.get("selected_edges", []))
@@ -295,10 +243,7 @@ def handle_bridge_message(payload_str, state):
     if is_new:
         has_real_link = any(frozenset((s, key)) in edge_set for s in selected_set)
         if selected_set and not has_real_link:
-            # Not a real neighbor of anything selected -- ignore. The map only
-            # ever shows real frontier nodes as clickable, so this shouldn't
-            # normally happen; guards against a stale/late click after a
-            # rebuild changed what's selected.
+            # not linked to the selection: a stale click after a rebuild
             return _map_html(state), _summary_markdown(state), state, ""
         selected.append(key)
         selected_set.add(key)
@@ -311,8 +256,7 @@ def handle_bridge_message(payload_str, state):
             selected_edges.append((s, key))
             confirmed.add(fe)
 
-    # Carry through whatever pan/zoom the map was at when clicked, so the
-    # rebuilt iframe reopens there instead of snapping back to the load center.
+    # reopen the rebuilt map at the pan/zoom it was clicked at
     view = payload.get("view")
     new_view = (view["lat"], view["lon"], view["zoom"]) if view else state.get("view")
 
@@ -321,18 +265,15 @@ def handle_bridge_message(payload_str, state):
 
 
 def handle_clear(state):
-    # "Clear" resets the graph back to just the fixed start node, not to
-    # nothing -- the start node comes from the load-area input, not a click.
+    # back to just the start node (which comes from the location, not a click)
     start = [state["nodes"][0]["key"]] if state.get("nodes") else []
     state = {**state, "selected": start, "selected_edges": []}
     return _map_html(state), _summary_markdown(state), state
 
 
 def build_map_section():
-    """Builds the load/expand/click-picker UI and wires its own handlers.
-    Returns (state, map_view, selection_view) -- ui/tab.py's
-    build_tab() reads `state` as input for its own (pathfind) handlers,
-    and mounts its own controls below map_view/selection_view."""
+    """Build and wire the map section. Returns (state, map_view, selection_view) for
+    ui/tab.py's build_main_tab."""
     state = gr.State(_empty_state())
 
     # one row: the location loads as it is pasted, so the only button is Expand
@@ -352,8 +293,7 @@ def build_map_section():
         expand_btn = gr.Button("Expand area", scale=1, min_width=100)
 
     map_view = gr.HTML(_map_html(_empty_state()), elem_classes="no-pad")
-    # visible=True + CSS hiding (BRIDGE_CSS), not visible=False -- see the
-    # comment above BRIDGE_CSS for why.
+    # hidden by BRIDGE_CSS
     bridge = gr.Textbox(elem_id=BRIDGE_ELEM_ID, show_label=False, container=False)
 
     with gr.Row(equal_height=True):

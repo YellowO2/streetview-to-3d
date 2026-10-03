@@ -1,12 +1,5 @@
-"""Our own domain-specific decisions about DA3 results: what counts as a
-passing edge test or a usable solo rating. Lives
-here rather than in panoramic_da3 on purpose -- these are OUR
-pipeline's own thresholds/shape choices (keep-rate cutoffs, what "rating"
-means for our corridor search), not something a general
-"run DA3 on a list of panos" library should know about. panoramic_da3
-exposes exactly one primitive (run_da3); this module is the only place
-that calls it and interprets the raw result.
-"""
+"""Our decisions about DA3 results: thresholds, view settings, what a passing edge
+test or a solo rating is. The only caller of panoramic_da3.run_da3."""
 import os
 from contextlib import contextmanager
 
@@ -14,39 +7,16 @@ import numpy as np
 
 KEEP_RATE_THRESHOLD = 0.6
 
-# Yaw step for slicing a panorama into DA3 views: 30 gives 12 views. The
-# tested middle ground between DA3's own default 20 (18 views) and a too-
-# coarse 45 (8 views, which turned 2 of 4 winners from partial acceptance
-# to full rejection in an earlier scoring experiment). Every caller uses
-# this one value, so a view count means the same thing everywhere.
+# Yaw step between DA3 views: 30 gives 12 views, so a view count means the same everywhere.
 VIEW_STEP_DEGREES = 30
 
-# What fraction of a view's weakest pixels DA3 discards before we ever see
-# them (see panoramic_da3's CONF_LOWER_PERCENTILE). Kept as our own default
-# rather than panoramic_da3's, so raising it here is a one-line change and
-# doesn't require touching that package.
-#
-# Measured on a real 4-node chunk: 60% kept gave 669,590 points, 80% gave
-# 857,247 (+28%), 90% gave 868,398 (+30%) -- CONF_ABS_FLOOR catches most of
-# what 90 would additionally let through, so 80 gets nearly all the gain
-# for less storage. 80 was chosen before the terrain filled what lies
-# beyond the scene; with it, the least sure twentieth is more noise (a
-# bumpy road) than use. The UI's "Keep %" slider overrides this per run without
-# a redeploy; this is only the fallback when a caller doesn't pass one.
+# How much of each view's least confident pixels DA3 drops; the UI's hidden "Keep %" overrides it.
 CONF_LOWER_PERCENTILE = 25.0   # keep top 75%
 
-# Width of each view in degrees, same 12 views (panoramic_da3's
-# extract_views_for_da3): 90 reaches ~29 deg above/below the horizon, 100
-# ~33. On Stockholm 95-105 kept as many views as 90 and added points; 110
-# lost panos. Tilted rings of extra views were tried and made whole panos
-# fail. Back to 90: on New York, 100 kept more views and points but 90
-# looked a lot better.
+# Width of each view in degrees: wider kept more points but looked worse.
 VIEW_HFOV = 90.0
 
-# The lowest DA3 confidence a pixel needs to become a point, on top of
-# CONF_LOWER_PERCENTILE (both apply). panoramic_da3's own value; it is what
-# cut a harbour's water and far shore (everything past ~35 m) at any keep
-# percentage. Per run: options(conf_floor=...).
+# The lowest DA3 confidence a pixel needs to become a point, on top of CONF_LOWER_PERCENTILE.
 CONF_FLOOR = 1.05
 
 # Leave cars, people and poles out of every point cloud (see services.segment).
@@ -58,9 +28,8 @@ _options = {"hfov": None, "masker": None, "mask_classes": None, "conf_floor": No
 
 @contextmanager
 def options(hfov=None, masker=None, mask_classes=None, conf_floor=None):
-    """Every DA3 run inside uses this view width, masker model (a SegFormer
-    repo id), list of class names to drop and confidence floor; None keeps
-    the defaults. For changing them per run from the UI, without a redeploy."""
+    """Every DA3 run inside uses this view width, masker repo, classes to drop and
+    confidence floor; None keeps the defaults."""
     old = dict(_options)
     _options.update(hfov=hfov, masker=masker, mask_classes=mask_classes, conf_floor=conf_floor)
     try:
@@ -70,9 +39,8 @@ def options(hfov=None, masker=None, mask_classes=None, conf_floor=None):
 
 
 def run_da3(target, support, *args, **kwargs):
-    """panoramic_da3.run_da3 with this pipeline's view width, mask and
-    confidence floor. Also for callers outside this package (the app's
-    splat tab)."""
+    """panoramic_da3.run_da3 with this pipeline's view width, mask and confidence
+    floor. Also used by the HF app."""
     from panoramic_da3 import run_da3 as run
     from panoramic_da3.components.SplatProcessor import utils
     hfov = _options["hfov"] or VIEW_HFOV
@@ -95,19 +63,16 @@ def _drop_mask(panos, hfov):
 
 def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1,
               step_degrees=VIEW_STEP_DEGREES, keep_rate_threshold=KEEP_RATE_THRESHOLD,
-              conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False):
-    """One real pairwise DA3 test between two already-downloaded panos.
-    Returns None if either pano fails the keep-rate health check, else
-    (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views),
-    plus an 8th per_pano_confidence dict when return_confidence is True --
-    see panoramic_da3.run_da3's own docstring for what it covers."""
+              conf_lower_percentile=CONF_LOWER_PERCENTILE):
+    """One pairwise DA3 run on two downloaded panos: None if either keeps too few views,
+    else (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views)."""
     test_dir = os.path.join(views_base, f"t{test_id}")
     os.makedirs(test_dir, exist_ok=True)
     id_a, id_b = os.path.basename(path_a), os.path.basename(path_b)
     _, res, pts, cols, per_pano_pts, per_pano_cols = run_da3(
         path_a, [path_b], cfg, test_dir,
         da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
-        conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
+        conf_lower_percentile=conf_lower_percentile,
     )
     ka, ta = res.pano_keep_counts.get(id_a, (0, 1))
     kb, tb = res.pano_keep_counts.get(id_b, (0, 1))
@@ -116,45 +81,28 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
     pose_a = (res.pano_poses[id_a]["center"], res.pano_poses[id_a]["rotation"])
     pose_b = (res.pano_poses[id_b]["center"], res.pano_poses[id_b]["rotation"])
     per_pano_views = {id_a: (ka, ta), id_b: (kb, tb)}
-    out = (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views)
-    return out + (res.pano_point_confidence,) if return_confidence else out
+    return pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views
 
 
 def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=VIEW_STEP_DEGREES,
-              conf_lower_percentile=CONF_LOWER_PERCENTILE, return_confidence=False):
-    """Run DA3 on this pano ALONE (no partner) to get a solo consistency
-    score and a real solo point cloud -- so a dot that never pairs with
-    any real neighbor can still contribute its own solo reconstruction
-    instead of nothing (see walk_graph.py's ensure_piece).
+              conf_lower_percentile=CONF_LOWER_PERCENTILE):
+    """DA3 on one pano alone: (score, pose, pts, cols, n_kept, n_total).
 
-    Returns (score, pose, pts, cols, n_kept, n_total):
-      - score: how many of this pano's own views survived DA3's
-        consensus filter. Validated against real data (the solo-score
-        experiment, README Dev notes): pairwise success rate
-        rose monotonically with the weaker candidate's score, 33% at
-        score 6 up to 100% at score 13+.
-      - pose: (center, rotation), or None if DA3 produced no pose at
-        all for this pano (rare).
-      - pts, cols: this pano's own backprojected points/colors.
-      - n_kept, n_total: view counts surviving DA3's filter.
-
-    A 7th value, this pano's own per-point confidence array, is appended
-    when return_confidence is True -- index-aligned with pts/cols."""
+    score is how many of its views passed DA3's consensus filter (it predicts pairing
+    success); pose is (center, rotation), or None if DA3 gave it none.
+    """
     rate_dir = os.path.join(views_base, f"r{rate_id}")
     os.makedirs(rate_dir, exist_ok=True)
     pano_id = os.path.basename(path)
     filtered_views, res, _, _, per_pano_pts, per_pano_cols = run_da3(
         path, [], cfg, rate_dir, da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
-        conf_lower_percentile=conf_lower_percentile, return_confidence=return_confidence,
+        conf_lower_percentile=conf_lower_percentile,
     )
     score = len(filtered_views)
     n_kept, n_total = res.pano_keep_counts.get(pano_id, (score, score))
-    conf = res.pano_point_confidence.get(pano_id, np.zeros((0,), dtype=np.float32))
     if pano_id not in res.pano_poses:
-        out = (score, None, np.zeros((0, 3)), np.zeros((0, 3)), n_kept, n_total)
-        return out + (conf,) if return_confidence else out
+        return score, None, np.zeros((0, 3)), np.zeros((0, 3)), n_kept, n_total
     pose = (res.pano_poses[pano_id]["center"], res.pano_poses[pano_id]["rotation"])
     pts = per_pano_pts.get(pano_id, np.zeros((0, 3)))
     cols = per_pano_cols.get(pano_id, np.zeros((0, 3)))
-    out = (score, pose, pts, cols, n_kept, n_total)
-    return out + (conf,) if return_confidence else out
+    return score, pose, pts, cols, n_kept, n_total

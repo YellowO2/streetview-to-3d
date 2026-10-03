@@ -1,18 +1,7 @@
-"""The one way anything here gets a GPU, and the one DA3 model.
+"""The one way anything gets a GPU (`run`, the only @spaces.GPU function), and the DA3 model.
 
-ZeroGPU attaches a GPU only inside a function decorated with @spaces.GPU.
-There is exactly one, `run`, like DA3's own official Space: a task is a
-plain function handed to it, and the window it asks for is the task's own
-estimate. The street reconstruction goes through it.
-
-On a Space, DA3 is built at startup and placed on cuda, as HF's ZeroGPU docs
-ask: ZeroGPU then moves it onto the GPU for each call, quickly. Built inside
-a call instead, it loaded from disk every time (17-28 s of the window),
-because each call runs in a fresh worker and nothing it loads survives.
-
-`spaces` must be imported before anything initialises CUDA, or it refuses
-to load. The package's __init__ imports this module first for that
-reason.
+On a Space, DA3 is built at startup so ZeroGPU only moves it per call (built inside a call it
+reloaded every time). `spaces` must be imported before CUDA initialises: the package imports this first.
 """
 import os
 import sys
@@ -63,11 +52,8 @@ def get_da3(repo=None):
 
 
 if ON_SPACES:
-    # depth_anything_3 imports pycolmap for an export format we never use,
-    # and pycolmap's native init calls CUDA directly -- outside a GPU call,
-    # past ZeroGPU's emulation, it segfaults. A placeholder satisfies the
-    # import without ever loading it. (Same fix the old 3DGS app used.)
+    # depth_anything_3 imports pycolmap (unused), whose CUDA init segfaults outside a GPU call
     sys.modules.setdefault("pycolmap", types.ModuleType("pycolmap"))
     get_da3()
     from streetview_to_3d.services.segment import get_segmenter
-    get_segmenter()  # the car/person masker and the water one, small, same treatment as DA3
+    get_segmenter()  # the maskers, built at startup like DA3

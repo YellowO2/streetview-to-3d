@@ -1,26 +1,7 @@
-"""What a reconstructed area is, on disk and in memory.
+"""What a reconstructed area is, on disk (one scene.json beside the clouds) and in memory.
 
-One scene.json beside the clouds holds everything that is not geometry.
-
-A NODE is a place we have a photograph of. It exists as soon as the street
-graph is built, before any reconstruction: its Pano is what Street View
-told us about that spot. Reconstruction then fills in the rest
--- the node's own points, where DA3 put the camera, and once solved, where
-that ply belongs in the world.
-
-    node with no ply       we know where the street is, DA3 got nothing.
-                           Still shapes the road lines and the ground.
-    node with a ply        a full participant.
-
-Points belong to nodes, never to groups of them: DA3 reconstructs one or
-two panoramas at a time and a node's points enter the result exactly once,
-so one panorama is the smallest thing ever independently produced.
-
-A PIECE is not stored, because it is not a choice. Joining a node to a
-piece composes a rigid transform into that piece's frame, so the nodes
-sharing a DA3 frame are exactly the nodes joined by edges -- a connected
-component of `edges`, and nothing else. Cutting an edge splits a piece;
-bridging adds one and merges two. `Scene.pieces` derives them on demand.
+A node is a place we have a photograph of; its points come from one panorama.
+A piece is the nodes sharing one DA3 frame: a connected component of `edges`, derived, never stored.
 """
 import json
 import os
@@ -30,18 +11,32 @@ from dataclasses import asdict, dataclass, field
 FILENAME = "scene.json"
 
 
+def node_key(source, pano_id):
+    return f"{source}:{pano_id}"
+
+
+class DisjointSet:
+    """Union-find over items 0..n-1."""
+
+    def __init__(self, n):
+        self.parent = list(range(n))
+
+    def find(self, i):
+        while self.parent[i] != i:
+            self.parent[i] = self.parent[self.parent[i]]
+            i = self.parent[i]
+        return i
+
+    def union(self, a, b):
+        self.parent[self.find(a)] = self.find(b)
+
+
 @dataclass
 class Pano:
-    """What the source told us about one panorama. No reconstruction here.
+    """What the source told us about one panorama.
 
-    heading/pitch/roll are radians -- the source's own absolute measurement
-    of which way the camera faced, unlike Node.rotation, which is DA3's and
-    only means anything against the other nodes of the same piece.
-
-    views_kept of views_total is DA3's solo score for this panorama: how
-    many of its own views passed the consensus filter. Measured against
-    real pairings (see the README), a score of 6 predicted 33% pairwise
-    success and 13 predicted 100%.
+    heading/pitch/roll are the source's absolute radians (Node.rotation is DA3's, per piece);
+    views_kept of views_total is how many of its views passed DA3's consensus filter.
     """
     source: str
     id: str
@@ -57,14 +52,7 @@ class Pano:
 
     @property
     def key(self):
-        return f"{self.source}:{self.id}"
-
-    @property
-    def confidence(self):
-        """Fraction of this panorama's views DA3 kept, or None if unknown."""
-        if not self.views_total:
-            return None
-        return self.views_kept / self.views_total
+        return node_key(self.source, self.id)
 
 
 @dataclass
@@ -83,22 +71,12 @@ class Node:
 
 @dataclass
 class Edge:
-    """A link DA3 reconstructed, between two nodes, by their index.
-
-    keep_a/keep_b are (views kept, views total) for each end IN THE JOINT
-    test -- how well the two panoramas agreed with each other, as opposed
-    to how coherent either was alone.
-    """
+    """A link DA3 reconstructed between two nodes (by index); keep_a/keep_b are
+    each end's (views kept, views total) in the joint run."""
     a: int
     b: int
     keep_a: list[int] | None = None
     keep_b: list[int] | None = None
-
-    @property
-    def confidence(self):
-        """The weaker end's keep rate -- a link is only as good as that."""
-        rates = [k[0] / k[1] for k in (self.keep_a, self.keep_b) if k and k[1]]
-        return min(rates) if rates else None
 
 
 @dataclass
@@ -126,35 +104,16 @@ class Scene:
     def origin(self):
         return self.center[0], self.center[1]
 
-    def pieces(self, min_confidence=None):
-        """[[node index, ...], ...] -- the nodes sharing one DA3 frame.
-
-        A connected component of the edges, so a piece is derived rather
-        than stored. min_confidence ignores links DA3 was less sure of
-        than that, which breaks a piece wherever its confidence ran out.
-        """
-        parent = list(range(len(self.nodes)))
-
-        def find(i):
-            while parent[i] != i:
-                parent[i] = parent[parent[i]]
-                i = parent[i]
-            return i
-
+    def pieces(self):
+        """[[node index, ...], ...]: the nodes sharing one DA3 frame."""
+        sets = DisjointSet(len(self.nodes))
         for e in self.edges:
-            if min_confidence is not None and (e.confidence or 0) < min_confidence:
-                continue
-            a, b = find(e.a), find(e.b)
-            if a != b:
-                parent[a] = b
-
+            sets.union(e.a, e.b)
         groups = {}
         for i, n in enumerate(self.nodes):
-            # membership is having a DA3 pose, not points: a node whose
-            # points were already laid down by another run still stands in
-            # this piece's frame and still constrains its fit
+            # membership is having a DA3 pose, not points
             if n.position is not None:
-                groups.setdefault(find(i), []).append(i)
+                groups.setdefault(sets.find(i), []).append(i)
         return list(groups.values())
 
     def save(self, directory):

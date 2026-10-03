@@ -1,4 +1,4 @@
-"""Google Street View fetch/download logic for the single-pano flow in app.py."""
+"""Google Street View: pano metadata and image downloads, cached under PANOS_DIR."""
 import asyncio
 import os
 
@@ -8,16 +8,13 @@ from PIL import UnidentifiedImageError
 from streetlevel import streetview
 
 from streetview_to_3d.paths import PANOS_DIR
+from streetview_to_3d.scene import node_key
 from streetview_to_3d.services.http_headers import BROWSER_HEADERS
 
-# zoom=4 → ~6656×3328 px per pano, ~91 tiles. zoom=5 → ~13312×6656 px, ~338 tiles.
-# Zoom 4 is high enough for SHARP (the actual 3DGS appearance source).
+# ~6656x3328 px: the default, for callers that need the photo's detail (the HF app's splat tab).
 _DOWNLOAD_ZOOM = 4
 
-# DA3 only (depth/pose, never SHARP appearance): DA3 internally caps each
-# view slice at 504px regardless of input size, and a slice is pano_w/4.
-# zoom=2 -> 2048px pano -> 512px slice, just above that cap -- measured
-# directly, not estimated. Higher zoom here is wasted download+compute.
+# 2048 px wide: DA3 caps each view at 504 px and a view is a quarter of the pano, so more is wasted.
 DA3_ONLY_ZOOM = 2
 
 
@@ -25,8 +22,7 @@ async def download_panorama_image(pano, img_path: str, zoom: int = _DOWNLOAD_ZOO
     """Download a panorama image with retry logic."""
     for attempt in range(4):
         try:
-            # TCPConnector limit caps concurrent tile connections so we don't burst
-            # hundreds of requests at once and trigger Google's 403 rate limiter.
+            # capped so a burst of tile requests doesn't trip Google's 403 rate limiter
             connector = TCPConnector(limit=10)
             async with ClientSession(headers=BROWSER_HEADERS, connector=connector) as dl_session:
                 await streetview.download_panorama_async(pano, img_path, session=dl_session, zoom=zoom)
@@ -57,16 +53,21 @@ def format_date(d):
     return s
 
 
+def google_node(pano_id, lat, lon, heading=None, **extra):
+    """The node dict the map, the selection and the candidates all use for one Google pano."""
+    return {"key": node_key("google", pano_id), "source": "google", "id": pano_id,
+            "lat": lat, "lon": lon, "heading": heading, **extra}
+
+
 def pano_to_meta(pano):
-    """Shared metadata shape for a resolved StreetViewPanorama, however it was found."""
+    """Metadata for a resolved StreetViewPanorama, however it was found."""
     neighbors = []
     for item in pano.links or pano.neighbors:
         n = item.pano if hasattr(item, "pano") else item
         if n and n.lat is not None:
             neighbors.append({"id": n.id, "lat": n.lat, "lon": n.lon})
 
-    # every date is its own capture -- a different drive, so its own position
-    # and heading, metres and tens of degrees off the newest one's
+    # every date is its own drive: its own position and heading
     dates = [{"id": p.id, "label": format_date(p.date), "lat": p.lat, "lon": p.lon,
               "heading": p.heading, "pitch": p.pitch, "roll": p.roll}
              for p in [pano, *(pano.historical or [])]]
@@ -86,7 +87,7 @@ def pano_to_meta(pano):
 
 
 async def fetch_pano_by_id(pano_id):
-    """Fetch pano metadata for a specific panorama ID (e.g. a historical capture)."""
+    """Metadata for one panorama ID (e.g. a historical capture)."""
     async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
         pano = await streetview.find_panorama_by_id_async(pano_id, session=session)
         if not pano:
@@ -109,9 +110,8 @@ async def fetch_panos_by_id(pano_ids, concurrency=16):
     return await asyncio.gather(*(one(i) for i in pano_ids))
 
 
-# Zoom baked into the cache filename -- a low-res (DA3-only) and high-res
-# (SHARP appearance) request for the same pano must not collide.
 def _cache_path(pano_id, zoom):
+    """Zoom is in the name, so two resolutions of one pano don't collide."""
     return os.path.join(PANOS_DIR, f"pano_{pano_id}_z{zoom}.jpg")
 
 
@@ -127,3 +127,8 @@ async def download_pano_by_id(pano_id, zoom: int = _DOWNLOAD_ZOOM):
         else:
             await download_panorama_image(pano, img_path, zoom=zoom)
         return img_path
+
+
+def fetch_da3_pano(pano_id):
+    """download_pano_by_id at DA3's resolution, blocking: the cached image's path, or None."""
+    return run_async(download_pano_by_id(pano_id, zoom=DA3_ONLY_ZOOM))

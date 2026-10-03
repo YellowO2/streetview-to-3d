@@ -1,13 +1,6 @@
-"""
-Gradio interface for Street Builder: reconstruct a walkable street corridor
-into a 3D point cloud from Google Street View panoramas.
+"""Street Builder's Gradio app: Street View panoramas to a 3D scene. Run: python app.py"""
 
-Run locally:  python app.py
-HF Spaces:    set as app.py, add `spaces` to requirements, enable ZeroGPU.
-"""
-
-# The package first: importing it imports `spaces` before anything touches
-# CUDA, which ZeroGPU requires (see streetview_to_3d/gpu.py).
+# the package first: it imports `spaces` before anything touches CUDA (streetview_to_3d/gpu.py)
 from streetview_to_3d.paths import DATA_DIR
 from streetview_to_3d.ui.tab import build_main_tab
 from streetview_to_3d.ui.map_selection.tab import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
@@ -26,11 +19,5 @@ if __name__ == "__main__":
         theme=gr.themes.Default(),
         css=".no-pad { padding-left: 0 !important; padding-right: 0 !important; } " + BRIDGE_CSS,
         head=BRIDGE_HEAD_SCRIPT,
-        # Explicitly off: the startup log showed "with SSR (Node proxy ->
-        # Python :7861)" -- an extra Node.js hop HF Spaces enables by
-        # default -- right before the Space got stuck permanently on
-        # "restarting" despite the Python server itself logging a
-        # successful start. Forcing plain client-side rendering removes
-        # that layer as a suspect.
-        ssr_mode=False,
+        ssr_mode=False,  # HF's default SSR Node proxy was the suspect when the Space hung restarting
     )
