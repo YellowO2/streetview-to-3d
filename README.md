@@ -53,6 +53,7 @@ streetview_to_3d/
   reconstruct/  2. GPU (walk_graph, pieces, build, runner)
   postprocess/  3. pipeline.py → place, clean/, fill/, world/, seams
   visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/
+  gallery/      5. sharing: upload to the public gallery, the gallery page
   ui/           Gradio
 ```
 

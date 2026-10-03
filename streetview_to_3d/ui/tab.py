@@ -1,4 +1,5 @@
-"""The main tab: the map section, then two buttons -- prepare, then reconstruct and place."""
+"""The main tab: the map section, then two buttons -- prepare, then reconstruct and place
+(and, where set up, publish to the gallery)."""
 import os
 import zipfile
 
@@ -7,6 +8,7 @@ import gradio as gr
 from streetview_to_3d.common import scene as scene_mod
 from streetview_to_3d.ui import viewers
 from streetview_to_3d.common.paths import new_run_dir
+from streetview_to_3d.gallery import publish as gallery
 from streetview_to_3d.postprocess import pipeline, seams
 from streetview_to_3d.postprocess.world import life, water
 from streetview_to_3d.reconstruct import build as street_main
@@ -69,12 +71,14 @@ def _zip(run_dir):
 
 
 def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
-                       mask_classes="", fill=True, conf_floor=0, effort=DEFAULT_EFFORT):
+                       mask_classes="", fill=True, conf_floor=0, effort=DEFAULT_EFFORT,
+                       share=False):
     """Button 2: reconstruct (GPU), then place and fill (CPU), in one click.
 
     The rest are hidden per-run overrides for the API (0/blank: defaults): keep_pct of
     each view's pixels, gpu_seconds (else sized from effort), view_hfov, da3_model, masker,
     comma-separated mask_classes, fill, conf_floor. See reconstruct.runner.WalkSettings.
+    share: also publish the scene to the public gallery (gallery.publish).
     """
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -102,6 +106,12 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
     yield (gr.HTML(viewers.build_viewer(scene_url=scene_url), visible=True),
            gr.DownloadButton(value=_zip(output_dir), visible=True),
            "<p>Scene ready.</p>")
+    if share and gallery.enabled():
+        try:
+            url = gallery.link(gallery.publish(output_dir, log=lambda m: print(m, flush=True)))
+            yield gr.skip(), gr.skip(), f'<p>Scene ready. <a href="{url}" target="_blank">Share link</a></p>'
+        except Exception as e:
+            print(f"gallery: not published: {e}", flush=True)
 
 
 def build_main_tab():
@@ -124,6 +134,10 @@ def build_main_tab():
     mask_classes_input = gr.Textbox(value="", visible=False)
     fill_input = gr.Checkbox(value=True, visible=False)
     conf_floor_input = gr.Number(value=0, minimum=0, visible=False)
+
+    # shown where the gallery is set up (gallery.publish.TOKEN_ENV)
+    share_input = gr.Checkbox(value=True, visible=gallery.enabled(),
+                              label="Add the scene to the public gallery (anyone can view it)")
 
     pathfind_status = gr.HTML()
     pathfind_prep_state = gr.State(None)
@@ -148,7 +162,7 @@ def build_main_tab():
 
     pathfind_run_btn.click(
         fn=handle_reconstruct,
-        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input, da3_model_input, masker_input, mask_classes_input, fill_input, conf_floor_input, effort_input],
+        inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input, da3_model_input, masker_input, mask_classes_input, fill_input, conf_floor_input, effort_input, share_input],
         outputs=[reconstruct_view, download_btn, pathfind_status],
         show_progress="hidden",
         show_progress_on=[reconstruct_view],

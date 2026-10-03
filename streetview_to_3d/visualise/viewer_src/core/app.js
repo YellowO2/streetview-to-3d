@@ -373,12 +373,15 @@ clearTimeout(window.viewerBootTimer);
 ui.settings();
 ui.styles(config.style || 'paint');
 refresh();
-if (config.sceneUrl) {
-  const base = config.sceneUrl.slice(0, config.sceneUrl.lastIndexOf('/') + 1);
+// ?scene=<scene.json url>&name=<title> opens a hosted scene (the gallery's links)
+const query = new URLSearchParams(document.location?.search);
+const sceneUrl = query.get('scene') || config.sceneUrl;
+if (sceneUrl) {
+  const base = sceneUrl.slice(0, sceneUrl.lastIndexOf('/') + 1);
   load({
-    source: config.sceneUrl,
+    source: sceneUrl,
     resolve: (path) => base + path.split('/').map(encodeURIComponent).join('/'),
-    name: 'Scene',
+    name: query.get('name') || 'Scene',
   });
 } else if (config.splatUrl) load({ source: config.splatUrl, name: 'Splat', splat: true });
 else if (config.plyUrl) load({ source: config.plyUrl, name: 'Scene point cloud' });

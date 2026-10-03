@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Street View to 3D · gallery</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+        color: #e6edf2;
+        background: #11171e;
+      }
+      body {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 32px 16px;
+      }
+      a {
+        color: #c2e6ad;
+      }
+      .muted {
+        color: #9badbb;
+      }
+      ul {
+        list-style: none;
+        padding: 0;
+      }
+      li a {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 14px;
+        margin: 8px 0;
+        background: #19222c;
+        border: 1px solid #303c48;
+        border-radius: 10px;
+        text-decoration: none;
+      }
+      li a:hover {
+        border-color: #c2e6ad;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Street View to 3D</h1>
+    <p class="muted">
+      Streets people have reconstructed. Click one to fly through it, or
+      <a href="https://huggingface.co/spaces/potato-bug/street-view-to-3d">make your own</a>.
+    </p>
+    <ul id="scenes">
+      <li class="muted">Loading…</li>
+    </ul>
+    <script type="module">
+      // the public dataset gallery/publish.py uploads to
+      const DATA =
+        'https://huggingface.co/datasets/potato-bug/street-view-to-3d-scenes/resolve/main/';
+      const list = document.getElementById('scenes');
+      try {
+        const { scenes } = await (await fetch(DATA + 'index.json', { cache: 'no-cache' })).json();
+        list.replaceChildren(
+          ...scenes.reverse().map((s) => {
+            const a = document.createElement('a');
+            a.href = `viewer.html?${new URLSearchParams({
+              scene: `${DATA}scenes/${s.id}/scene.json`,
+              name: s.place,
+            })}`;
+            const name = document.createElement('span');
+            name.textContent = s.place;
+            const about = document.createElement('span');
+            about.className = 'muted';
+            about.textContent = `${s.panos.length} panoramas · ${Math.round(s.bytes / 1e6)} MB · ${s.date}`;
+            a.append(name, about);
+            const li = document.createElement('li');
+            li.append(a);
+            return li;
+          }),
+        );
+        if (!scenes.length) list.innerHTML = '<li class="muted">Nothing here yet.</li>';
+      } catch {
+        list.innerHTML = '<li class="muted">Could not load the gallery.</li>';
+      }
+    </script>
+  </body>
+</html>
