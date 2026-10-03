@@ -29,7 +29,6 @@ export function createStyleControls(actions) {
     const original = current === 'original';
     $('style-controls').hidden = original;
     $('style-pixels-label').hidden = current !== 'dither';
-    // the characters typed right of the style's menu, only for Characters
     $('style-characters').hidden = $('style-character-size-label').hidden =
       current !== 'characters';
     $('style-characters').disabled = blocked || !loaded;

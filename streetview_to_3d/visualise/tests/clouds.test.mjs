@@ -1,7 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { cloudField, createClouds, inside } from '@viewer/effects/clouds';
+import { cloudRows, createClouds, inside } from '@viewer/effects/clouds';
+
+const cloudField = (coverage) => {
+  const rows = cloudRows(coverage);
+  for (;;) {
+    const { done, value } = rows.next();
+    if (done) return value;
+  }
+};
 
 test('clouds are shaped by noise: a flat base, a field round each surface, the same every time', () => {
   const a = cloudField(0.45);

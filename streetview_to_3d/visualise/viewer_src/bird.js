@@ -2,17 +2,17 @@ import { createBirdPlume } from '@viewer/bird-plume';
 import { birdPaint, birdDabs, DAB } from '@viewer/bird-paint';
 import { FLIGHT } from '@viewer/flight-motion';
 import * as THREE from 'three';
+import { fibonacciSphere } from '@viewer/effects/util';
 
-// A faint white bird of dabs (bird-paint.js), as many as fit its shape SPACE
-// of a dab apart, as the DA3 points are; articulated shoulders, delayed
-// feather/tail motion. Its wingtips lay its trail (bird-plume.js).
-const SPACE = 0.4; // dabs this much of one apart, overlapping as the DA3 points do
+// Fly mode's faint white bird of dabs (bird-paint.js) with articulated wings and a
+// lagging tail; its wingtips lay the trail (bird-plume.js).
+const SPACE = 0.4; // dab spacing, of a dab: overlapping like DA3 points
 export function createBird() {
   const bird = new THREE.Group();
   bird.name = 'White particle bird';
   const clouds = [];
   const { material } = birdPaint();
-  // the dabs' spacing in the bird's own units, its scale undone
+  // dab spacing in the bird's local units
   const step = (DAB * SPACE) / FLIGHT.birdScale;
   function points(parent, vertices) {
     const g = new THREE.BufferGeometry();
@@ -24,30 +24,25 @@ export function createBird() {
   }
   const hash = (i, j) => Math.abs(Math.sin(i * 12.9898 + j * 78.233) * 43758.5453) % 1;
   function body(center, scale) {
-    // as many as fit its surface (Thomsen's ellipsoid area)
+    // dab count from the ellipsoid's area (Thomsen's approximation)
     const [a, b, c] = scale,
       p = 1.6075,
       area = 4 * Math.PI * (((a * b) ** p + (a * c) ** p + (b * c) ** p) / 3) ** (1 / p),
       count = Math.max(4, Math.round(area / step ** 2));
-    const positions = [];
-    for (let i = 0; i < count; i++) {
-      const y = 1 - (2 * (i + 0.5)) / count,
-        r = Math.sqrt(1 - y * y),
-        theta = i * 2.39996323;
-      positions.push(
-        center[0] + Math.cos(theta) * r * a,
+    points(
+      bird,
+      fibonacciSphere(count).flatMap(([x, y, z]) => [
+        center[0] + x * a,
         center[1] + y * b,
-        center[2] + Math.sin(theta) * r * c,
-      );
-    }
-    points(bird, positions);
+        center[2] + z * c,
+      ]),
+    );
   }
   body([0, 0, 0], [0.16, 0.17, 0.43]);
   body([0, 0.13, -0.4], [0.135, 0.145, 0.18]);
   body([0, -0.08, -0.25], [0.13, 0.09, 0.19]);
-  // feathers, each a pivot at its base, as a fan (overlapping): their dabs
-  // on one grid over the fan, step apart (each a little off its cell's
-  // centre), each moving with the feather it falls on (nearest its middle)
+  // a fan of overlapping feathers, each pivoting at its base; dabs on one jittered grid
+  // over the fan, each assigned to the feather whose centreline is nearest
   function fan(parent, specs) {
     const feathers = specs.map(({ base, tip, width }) => {
       const pivot = new THREE.Group();
@@ -108,7 +103,7 @@ export function createBird() {
       width: 0.06,
     })),
   );
-  // the trail from each wing's outermost feather's tip
+  // trail brushes: each wing's outermost feather
   const brushes = feathers.filter(({ t }) => t === 1).map(({ pivot }) => pivot);
   const plume = createBirdPlume(bird, brushes);
   let phase = 0,

@@ -1,26 +1,16 @@
-import * as THREE from 'three';
-
-// Knobs for tuning a look by eye: each a uniform ({ value }), shared by
-// whatever shaders take them. A page opened with ?tune shows them in a panel,
-// top right, a slider each (numbers) or a colour picker (colours); "Copy"
-// puts their values on the clipboard, to set as the defaults in the code.
+// Uniforms for tuning a look by eye. With ?tune in the URL each gets a slider in a panel;
+// "Copy" puts the values on the clipboard to paste back as defaults.
 let panels = 0;
 
-// numbers: { name: [value, lowest, highest] }, colours: { name: '#hex' } ->
-// { name: uniform } (a colour's a THREE.Color)
-export function tunable(title, numbers, colours = {}) {
-  const knobs = {
-    ...Object.fromEntries(Object.entries(numbers).map(([k, [v]]) => [k, { value: v }])),
-    ...Object.fromEntries(
-      Object.entries(colours).map(([k, hex]) => [k, { value: new THREE.Color(hex) }]),
-    ),
-  };
+// numbers: { name: [value, min, max] } -> { name: { value } }
+export function tunable(title, numbers) {
+  const knobs = Object.fromEntries(Object.entries(numbers).map(([k, [v]]) => [k, { value: v }]));
   if (/[?&]tune\b/.test(globalThis.location?.search || '') && globalThis.document)
-    panel(title, numbers, colours, knobs);
+    panel(title, numbers, knobs);
   return knobs;
 }
 
-function panel(title, numbers, colours, knobs) {
+function panel(title, numbers, knobs) {
   const box = document.createElement('div');
   box.style.cssText =
     `position:fixed;top:${80 + 40 * panels++}px;right:12px;z-index:50;background:#1b232cee;` +
@@ -39,24 +29,11 @@ function panel(title, numbers, colours, knobs) {
     };
     box.append(row);
   }
-  for (const [k, hex] of Object.entries(colours)) {
-    const row = document.createElement('label');
-    row.style.cssText =
-      'display:flex;justify-content:space-between;align-items:center;margin-top:4px';
-    row.innerHTML = `<span>${k}</span><input type="color" value="${hex}">`;
-    row.children[1].oninput = (e) => knobs[k].value.set(e.target.value);
-    box.append(row);
-  }
   const copy = document.createElement('button');
   copy.textContent = 'Copy';
   copy.style.marginTop = '6px';
   copy.onclick = () => {
-    const values = Object.fromEntries(
-      Object.entries(knobs).map(([k, u]) => [
-        k,
-        u.value.isColor ? '#' + u.value.getHexString() : u.value,
-      ]),
-    );
+    const values = Object.fromEntries(Object.entries(knobs).map(([k, u]) => [k, u.value]));
     navigator.clipboard?.writeText(JSON.stringify(values, null, 1));
   };
   box.append(copy);

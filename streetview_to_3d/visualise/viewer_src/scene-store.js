@@ -24,12 +24,12 @@ import { blockPoints, buildingPoints } from '@viewer/effects/blocks';
 import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
-export function matrixRows(m) {
+function matrixRows(m) {
   return Array.from({ length: 4 }, (_, r) =>
     Array.from({ length: 4 }, (_, c) => m.elements[c * 4 + r]),
   );
 }
-export function exportPlacement(original, correction) {
+function exportPlacement(original, correction) {
   return matrixRows(
     flip
       .clone()
@@ -47,7 +47,7 @@ export function dispose(group) {
     else if (o.isMesh) {
       o.geometry.dispose();
       o.material.dispose();
-      if (o.isReflector) o.dispose(); // its picture
+      if (o.isReflector) o.dispose(); // its mirror render target
     }
   });
 }
@@ -56,10 +56,10 @@ loader.setCustomPropertyNameMapping({
   gap: ['gap'],
   kind: ['kind'],
   near: ['near'],
-  sway: ['sway'], // a node's: how much each point sways in the wind (fill: a tree's)
+  sway: ['sway'], // per-point wind sway (fill: trees)
 });
-// land.ply's triangles as the land's points (effects/land.js); gapOf(x, z): the world's points' spacing there.
-export function parseLand(buffer, gapOf) {
+// land.ply triangles as the land's dabs (effects/land.js); gapOf(x, z): point spacing there
+function parseLand(buffer, gapOf) {
   const geometry = loader.parse(buffer);
   if (!geometry.getAttribute('position')?.count || !geometry.index) {
     geometry.dispose();
@@ -70,16 +70,14 @@ export function parseLand(buffer, gapOf) {
   land.userData.surroundings = LAND;
   return land;
 }
-// blocks.ply, the buildings DA3 never reaches, built of points (effects/blocks.js).
-export function parseBlocks(buffer) {
+// blocks.ply, the far buildings DA3 never reaches, as dabs (effects/blocks.js)
+function parseBlocks(buffer) {
   const blocks = blockPoints(parseSurface(buffer, flip, `${BLOCKS}.ply`));
   blocks.userData.surroundings = BLOCKS;
   return blocks;
 }
-// A surface stored as triangles (roads.ply) drawn as the rest of
-// the world is: points (effects/scatter.js), in bands by their spacing
-// (terrainBands).
-export function surfacePoints(buffer, key) {
+// a triangle surface (roads.ply) scattered with points (effects/scatter.js), in spacing bands
+function surfacePoints(buffer, key) {
   const triangles = parseSurface(buffer, flip, `${key}.ply`);
   const geometry = scatter(triangles);
   triangles.dispose();
@@ -113,29 +111,24 @@ export function parsePoints(buffer, transform) {
     throw e;
   }
 }
-// postprocess/terrain.py spaces its points further apart the further they
-// are from the scene, out to 2 km: drawn at one size they would be dust far
-// out. Each carries its spacing (the ply's "gap", terrain.point_gap), so
-// they are grouped by it, each group drawn its own size in metres
-// (userData.pointSize), just over that spacing -- one number, the spacing.
-// Points with none (an older scene) are spaced by SPACING, the same rule
-// from the nearest camera.
-const TILE_M = 200,
-  TILE = 40;
+// Terrain points get sparser away from the scene (terrain.point_gap), so they are grouped into
+// bands by spacing ("gap", or SPACING for older plys), each drawn just over its spacing (userData.pointSize).
+const TILE_M = 200, // smallest band tile (m)
+  TILE = 40; // band tile size, in spacings
 const nearest = (x, z, places) => Math.min(...places.map(([a, b]) => Math.hypot(x - a, z - b)));
 const POINT_M = 0.1,
   RATE0 = 0.005,
   RATE = 0.018,
   RAMP_M = 100,
-  OVER_M = 0.025; // drawn this much over its spacing
+  OVER_M = 0.025; // point size over its spacing (m)
 const pointGap = (e) =>
   e < RAMP_M
     ? POINT_M + RATE0 * e + ((RATE - RATE0) * e * e) / (2 * RAMP_M)
     : POINT_M + RATE0 * RAMP_M + ((RATE - RATE0) * RAMP_M) / 2 + RATE * (e - RAMP_M);
 const gapAt = (x, z, cams) => pointGap(nearest(x, z, cams));
-export const SPACING = { terrain: gapAt, buildings: gapAt };
-// Each placed node's camera, seen from above, in the viewer's frame.
-export function cameraPlaces(data) {
+const SPACING = { terrain: gapAt, buildings: gapAt };
+// each placed node's camera position (x, z) in the viewer frame
+function cameraPlaces(data) {
   return data.nodes
     .filter((n) => n.transform && n.position)
     .map((n) => {
@@ -150,10 +143,9 @@ export function terrainBands(points, spacing = SPACING.terrain, cams = [[0, 0]])
   const p = geometry.getAttribute('position'),
     c = geometry.getAttribute('color'),
     gaps = geometry.getAttribute('gap'),
-    // PLYLoader adds it, empty or all 0, when a ply has none
+    // PLYLoader adds an empty or all-zero gap when the ply has none
     own = gaps?.count === p.count && gaps.array.some((v) => v > 0) ? gaps : null;
-  // a band in tiles, TILE of its spacing across (TILE_M at least), so what is
-  // out of view is skipped (three.js leaves out what its bounding sphere shows is)
+  // split each band into tiles so off-screen parts are frustum culled
   const members = new Map();
   for (let i = 0; i < p.count; i++) {
     const g = level(own ? own.getX(i) : spacing(p.getX(i), p.getZ(i), cams));
@@ -182,11 +174,9 @@ export function terrainBands(points, spacing = SPACING.terrain, cams = [[0, 0]])
   points.material.dispose();
   return bands;
 }
-// A Gaussian splat (.spz). Spark is imported only when one is opened, so a
-// page showing point clouds never downloads it.
-export async function parseSplat(buffer) {
-  // Spark decodes in a worker, which Chrome will not start for a page opened
-  // straight from disk -- it then fails with an unhelpful data-URL error.
+// A Gaussian splat (.spz); Spark is imported only when one is opened.
+async function parseSplat(buffer) {
+  // Spark decodes in a worker, which Chrome won't start for a file:// page
   if (location.protocol === 'file:')
     throw Error(
       'Splats need the viewer served over http. In its folder run "python3 -m http.server", then open http://localhost:8000/viewer.html.',
@@ -198,18 +188,17 @@ export async function parseSplat(buffer) {
     mesh.dispose();
     throw Error('Splat file has no splats.');
   }
-  mesh.quaternion.set(1, 0, 0, 0); // the same Y-down to Y-up turn `flip` gives points
+  mesh.quaternion.set(1, 0, 0, 0); // Y-down to Y-up, as `flip` does for points
   mesh.userData.splat = true;
   return mesh;
 }
-export async function readBuffer(source) {
+async function readBuffer(source) {
   if (typeof source !== 'string') return source.arrayBuffer();
   const response = await fetch(source);
   if (!response.ok) throw Error(`Download failed (${response.status}).`);
   return response.arrayBuffer();
 }
-// A load is staged off-screen; failures and superseded requests cannot destroy
-// the currently installed scene. UI decides when to commit the result.
+// Loads a scene off-screen; failures and superseded loads never touch the installed scene.
 export async function loadAsset(source, resolve, progress, cancelled, { splat = false } = {}) {
   const group = new THREE.Group();
   let data = null,
@@ -240,7 +229,7 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
         group.add(points);
         await new Promise((r) => setTimeout(r, 0));
       }
-      // in the world already, so only with a placed scene
+      // surroundings are in world coordinates: placed scenes only
       for (const key of placement === 'world' ? SURROUNDINGS : []) {
         if (!data[key]) continue;
         progress(`Loading the ${key}…`);
@@ -250,8 +239,7 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           return null;
         }
         const points = parsePoints(buffer);
-        // the buildings DA3 reaches drawn as the rest are, where
-        // their ply says which way each faces (an older one's: points)
+        // buildings with normals are drawn as dabs (older plys: plain points)
         if (points.geometry.getAttribute('normal')?.count) {
           const built = buildingPoints(points.geometry);
           built.userData.surroundings = key;
@@ -294,7 +282,6 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           return null;
         }
         const cams = cameraPlaces(data);
-        // points spaced as the world's are where they are, mirroring it
         for (const water of waterSurfaces(JSON.parse(new TextDecoder().decode(buffer)), (e, n) =>
           gapAt(e, -n, cams),
         )) {
@@ -426,7 +413,7 @@ export class SceneStore {
   }
   box(members = null, visibleOnly = false) {
     const box = new THREE.Box3();
-    // points only: a splat has no bounds to read (see app.js's splat view)
+    // points only: a splat has no bounds (see app.js SPLAT_RADIUS)
     const objects = members
       ? members.map((i) => this.nodes.get(i)).filter(Boolean)
       : (this.group?.children || []).filter((o) => o.isPoints && !o.userData.surroundings);
@@ -453,6 +440,6 @@ export class SceneStore {
     scenePieces(this.data)[0].forEach(
       (i) => (this.data.nodes[i].transform = rows.map((r) => [...r])),
     );
-    this.placement = 'world'; // The prepared GPS placement becomes the reset baseline.
+    this.placement = 'world'; // the GPS placement becomes the reset baseline
   }
 }

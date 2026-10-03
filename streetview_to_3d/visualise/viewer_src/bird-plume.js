@@ -1,13 +1,10 @@
 import * as THREE from 'three';
 import { birdPaint, birdDabs, DAB } from '@viewer/bird-paint';
 
-// The bird's trail: while the bird flies (faster than MOVING; none hovering,
-// however it flaps), each brush (a wingtip) lays a dab of the bird's paint
-// every STEP of a dab it moves, on its path, left there in the world -- so
-// close they overlap into one smooth streak, fading behind it
-// (bird-paint.js); a fixed pool, the oldest laid again first.
-const STEP = 0.15, // a dab every this much of one moved
-  MOVING = 0.4, // m/s: the bird this fast or more lays its trail
+// The bird's trail: while it flies, each wingtip lays overlapping world-fixed dabs that fade
+// (bird-paint.js), from a fixed pool reused oldest first.
+const STEP = 0.15, // dab spacing along the path, of a dab
+  MOVING = 0.4, // m/s: slowest speed that lays a trail
   POOL = 4096;
 
 export function createBirdPlume(bird, brushes) {
@@ -22,7 +19,7 @@ export function createBirdPlume(bird, brushes) {
     g.setAttribute(name, new THREE.BufferAttribute(array, size).setUsage(THREE.DynamicDrawUsage));
   const trail = birdDabs(g, material, POOL);
   trail.name = 'Bird trail';
-  // laid in the world: none of the bird's own place
+  // positions are in world space: ignore the bird's transform
   trail.matrixAutoUpdate = false;
   trail.matrixWorldAutoUpdate = false;
   bird.add(trail);

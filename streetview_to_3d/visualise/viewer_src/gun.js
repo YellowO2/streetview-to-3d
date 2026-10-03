@@ -1,43 +1,38 @@
 import * as THREE from 'three';
 import { carve } from '@viewer/effects/shot';
+import { DISC, fibonacciSphere } from '@viewer/effects/util';
 
-// The gun (Shoot): held at the eye's lower right, a model of points as the
-// bird is (MODEL: a body, a barrel, a grip, a sight, a ring of light at the
-// muzzle); each shot a ball of glowing points from its muzzle toward where
-// the eye looks (AIM_M ahead), flying straight on, shooting away every point
-// it passes through (effects/shot.js), through all of them, till it is gone
-// (LIFE_S) or off the grid the shots are kept on. The longer the button is
-// held before it is let go, the bigger the shot: a click RADIUS, held
-// CHARGE_S or more BIG; its hole as big as it.
-export const RADIUS = 1, // m: a shot this big, its hole as big
-  BIG = 4, // ... held, up to this big
-  CHARGE_S = 4, // ... held this long
+// Shoot mode's gun: a point model at the eye's lower right firing glowing balls that carve
+// holes (effects/shot.js). Holding the button longer fires a bigger ball, up to BIG.
+export const RADIUS = 1, // m: a click's shot and hole radius
+  BIG = 4, // m: fully charged radius
+  CHARGE_S = 4, // hold time to full charge
   SPEED = 30, // m/s
-  LIFE_S = 3,
-  MUZZLE = 1.6, // m: with no gun held, leaving this far ahead of the eye
-  AIM_M = 30, // the eye's aim: a shot from the muzzle meets its line this far ahead
+  AIM_M = 30; // shots from the muzzle cross the eye's line this far ahead
+const LIFE_S = 3,
+  MUZZLE = 1.6, // m: start ahead of the eye when no gun is held
   COOLDOWN_S = 0.15,
-  SHELLS = [1, 0.66, 0.33], // its points on these shells (of RADIUS)
-  SPACING = 0.12, // m apart on each
+  SHELLS = [1, 0.66, 0.33], // ball point shells, of RADIUS
+  SPACING = 0.12, // m between points on a shell
   POOL = 8;
-const BALL = { size: 0.35, colour: 0x9ff3ff, opacity: 0.55 }, // a ball's points: glowing, adding up where they overlap
-  HELD = new THREE.Vector3(0.16, -0.17, -0.42), // the gun from the eye: right, down, ahead (m)
-  STEP = 0.007, // its points this far apart
-  DOT = 0.011; // and this big
+const BALL = { size: 0.35, colour: 0x9ff3ff, opacity: 0.55 }, // additive glow
+  HELD = new THREE.Vector3(0.16, -0.17, -0.42), // gun offset from the eye: right, down, ahead (m)
+  STEP = 0.007, // model point spacing (m)
+  DOT = 0.011; // model point size (m)
 const DARK = [0.18, 0.2, 0.23],
   LIGHT = [0.55, 0.58, 0.62],
   GLOW = [0.55, 0.95, 1];
-// its parts, in its own frame (x right, y up, -z ahead; m): boxes [centre, size, colour], tubes [from z, to z, radius, colour]
+// parts (x right, y up, -z ahead; m): boxes [centre, size, colour], tubes [from z, to z, radius, colour]
 const BOXES = [
     [[0, 0, 0], [0.06, 0.08, 0.24], DARK], // body
     [[0, -0.095, 0.07], [0.045, 0.12, 0.06], DARK], // grip
     [[0, 0.05, -0.02], [0.02, 0.02, 0.09], LIGHT], // sight
-    [[0.031, 0, -0.02], [0.002, 0.012, 0.18], GLOW], // a strip of light along its side
+    [[0.031, 0, -0.02], [0.002, 0.012, 0.18], GLOW], // light strip
   ],
   TUBES = [[-0.12, -0.4, 0.022, LIGHT]], // barrel
   RING = { z: -0.4, radius: 0.03, colour: GLOW }; // the muzzle
 
-// points over a box's faces, a tube's side and a ring
+// the model's points over box faces, tube sides and the muzzle ring
 function model() {
   const pos = [],
     col = [];
@@ -78,13 +73,12 @@ function model() {
   return g;
 }
 
-// a points material whose points are round (soft: to their edge, as a glow)
+// round points; soft fades them to the edge
 function round(material, soft) {
   material.onBeforeCompile = (shader) => {
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <opaque_fragment>',
-      `float r = dot(gl_PointCoord * 2. - 1., gl_PointCoord * 2. - 1.);
-      if (r > 1.) discard;
+      `${DISC}
       ${soft ? 'diffuseColor.a *= 1. - smoothstep(0., 1., r);' : ''}
       #include <opaque_fragment>`,
     );
@@ -109,25 +103,19 @@ export function createGun(scene) {
   for (const shell of SHELLS) {
     const r = RADIUS * shell,
       count = Math.max(8, Math.round((4 * Math.PI * r * r) / SPACING ** 2));
-    for (let i = 0; i < count; i++) {
-      const y = 1 - (2 * (i + 0.5)) / count,
-        ring = Math.sqrt(1 - y * y),
-        theta = i * 2.39996323;
-      positions.push(Math.cos(theta) * ring * r, y * r, Math.sin(theta) * ring * r);
-    }
+    for (const p of fibonacciSphere(count)) positions.push(...p.map((x) => x * r));
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   const shots = Array.from({ length: POOL }, () => {
     const ball = new THREE.Points(geometry, ballMaterial);
-    ball.userData.styleAnimated = true; // not the world's: the demos and shots leave it be
+    ball.userData.styleAnimated = true; // not a world point: no demos or shots
     ball.frustumCulled = false;
     ball.name = 'Shot';
     ball.visible = false;
     scene.add(ball);
     return { ball, way: new THREE.Vector3(), age: 0, from: new THREE.Vector3(), radius: RADIUS };
   });
-  // the gun held
   const held = new THREE.Points(
     model(),
     round(new THREE.PointsMaterial({ size: DOT, vertexColors: true }), false),
@@ -141,11 +129,11 @@ export function createGun(scene) {
     aim = new THREE.Vector3();
   let next = 0,
     wait = 0,
-    holding = -1; // the button held this long (s); -1: not held
+    holding = -1; // seconds the button has been held; -1 when up
   const gun = {
     shots,
     held,
-    // held at the eye (camera), or put away (on false)
+    // show the gun at the camera, or hide it
     hold(camera, on) {
       held.visible = on;
       if (!on) return;
@@ -153,18 +141,17 @@ export function createGun(scene) {
       held.position.copy(HELD).applyQuaternion(camera.quaternion).add(camera.position);
       held.updateMatrixWorld();
     },
-    // the button down: held, the shot will be the bigger
     press() {
       holding = 0;
     },
-    // the button let go: a shot as big as it was held for, from the eye (origin) along way
+    // fire a shot sized by how long the button was held
     release(origin, way) {
       if (holding < 0) return false;
       const radius = RADIUS + (BIG - RADIUS) * Math.min(1, holding / CHARGE_S);
       holding = -1;
       return gun.fire(origin, way, radius);
     },
-    // a shot radius big from the eye (origin) along way (a unit vector): from the muzzle when held, toward the eye's aim
+    // fire from the eye (origin) along unit way: from the muzzle toward the aim point when held
     fire(origin, way, radius = RADIUS) {
       if (wait > 0) return false;
       wait = COOLDOWN_S;

@@ -1,23 +1,12 @@
 import * as THREE from 'three';
 import { marks, pointsOf } from '@viewer/effects/blocks';
 
-// What moves in the world (life.json, postprocess/life.py: cars, birds,
-// boats) built and drawn as the buildings are (blocks.js): each thing's
-// surfaces triangles in its own frame (a model: x ahead, y up, z right),
-// laid with dabs by the buildings' own marks -- a jittered grid, strokes
-// along its creases -- and drawn by their own shader, lit, varied and
-// scattered as a building's dab is, its own way carried with it as it moves
-// (pointsOf's grain), so nothing shimmers. Their colours are life.json's,
-// never made up here.
-//
-// A fleet is many of one model in one cloud of points, each placed every
-// frame on the CPU (put): where it is, which way it faces, how much of it
-// there is (shown: it shrinks away and grows back), and, for one that bends
-// (a bird's wings), each dab moved in its own frame first.
+// Moving things from life.json (cars, birds, boats, ducks, cats): triangle models (x ahead, y up,
+// z right) dabbed and drawn like the buildings (blocks.js), with per-dab seeds that move with them.
+// A fleet is many copies of one model in one THREE.Points, placed on the CPU every frame.
 
-// A model's surfaces: tri/quad by corners, flat polygons by a plane's
-// corners ([u, v] -> [x, y, z]), each what it is (an index into the
-// colours it is drawn in); dabs() lays them, gap apart, as the buildings'.
+// Model builder: tri/quad by corners, box by extents, flat polygons via corner([u, v]) -> [x, y, z];
+// w is the part index into the fleet's colours. dabs() lays the dabs gap apart.
 export function model(gap) {
   const pos = [],
     what = [];
@@ -29,6 +18,28 @@ export function model(gap) {
     tri(a, b, c, w);
     tri(a, c, d, w);
   };
+  // the five sides of an axis-aligned box, plus its bottom if foot
+  const box = ([x0, x1], [y0, y1], [z0, z1], w, foot = false) => {
+    const c = [
+      [x0, y0, z0],
+      [x1, y0, z0],
+      [x1, y1, z0],
+      [x0, y1, z0],
+      [x0, y0, z1],
+      [x1, y0, z1],
+      [x1, y1, z1],
+      [x0, y1, z1],
+    ];
+    const faces = [
+      [0, 1, 2, 3],
+      [5, 4, 7, 6],
+      [4, 0, 3, 7],
+      [1, 5, 6, 2],
+      [3, 2, 6, 7],
+    ];
+    if (foot) faces.push([4, 5, 1, 0]);
+    for (const [a, b, cc, d] of faces) quad(c[a], c[b], c[cc], c[d], w);
+  };
   // a polygon ([u, v], ...) with holes, laid on a plane (corner)
   const flat = (polygon, corner, w, holes = []) => {
     const v = (p) => new THREE.Vector2(...p);
@@ -39,11 +50,11 @@ export function model(gap) {
     ))
       tri(corner(all[a]), corner(all[b]), corner(all[c]), w);
   };
-  // its dabs: marks' { centre, facing, tint, dab }, each one's what in what
+  // marks' { centre, facing, tint, dab } plus each dab's part in what
   const dabs = () => {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    // what each is, carried through marks as a colour: what / 16
+    // part index carried through marks as a colour: w / 16
     g.setAttribute(
       'color',
       new THREE.Float32BufferAttribute(
@@ -60,10 +71,10 @@ export function model(gap) {
     );
     return made;
   };
-  return { tri, quad, flat, dabs };
+  return { tri, quad, box, flat, dabs };
 }
 
-// a polygon ([u, v], ...) cut to u >= at (keep > 0) or u <= at (keep < 0) along axis (0: u, 1: v)
+// polygon ([u, v], ...) clipped to coordinate axis >= at (keep > 0) or <= at (keep < 0)
 export function cut(polygon, at, keep, axis = 0) {
   const out = [];
   polygon.forEach((p, i) => {
@@ -79,7 +90,7 @@ export function cut(polygon, at, keep, axis = 0) {
   return out;
 }
 
-// a random number generator, the same each time for the same seed
+// seeded random number generator (mulberry32)
 export function random(seed) {
   return () => {
     seed = (seed + 0x6d2b79f5) | 0;
@@ -91,16 +102,14 @@ export function random(seed) {
 
 const live = new Set();
 
-// Every scene's moving things moved on dt seconds (controller.js, as the water's motion).
+// advance every live fleet by dt seconds (controller.js)
 export function tickMoving(dt) {
   for (const tick of live) tick(Math.min(dt, 0.1));
 }
 
-// count of a model's dabs (shape: model().dabs()) as one THREE.Points, the
-// k-th's in colours(k) (an [r, g, b] for each what); tick(dt) moves them
-// each frame (tickMoving) until the points are disposed. put(k, here,
-// ahead, up, right, shown, bend) places the k-th: bend(i, p, n), if given,
-// moves its i-th dab's place and facing (in its own frame) first.
+// count copies of shape (model().dabs()) as one THREE.Points; colours(k) gives copy k's [r, g, b] per part.
+// tick(dt) runs each frame until disposed. put(k, here, ahead, up, right, shown, bend) places copy k,
+// scaled by shown; bend(i, p, n) may first move dab i's local position and facing.
 export function fleet(shape, count, colours, rand, tick) {
   const per = shape.dab.length,
     n = per * count;
@@ -110,7 +119,7 @@ export function fleet(shape, count, colours, rand, tick) {
     tint: new Float32Array(3 * n),
     dab: new Float32Array(n),
     near: null,
-    grain: new Float32Array(n).map(() => rand() * 100), // each dab's own way, kept as it moves
+    grain: new Float32Array(n).map(() => rand() * 100), // per-dab seed that moves with it
   };
   for (let k = 0; k < count; k++) {
     const colour = colours(k);

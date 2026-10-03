@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { createStyles } from '@viewer/effects/controller';
+import { SUN } from '@viewer/effects/util';
+
 export function createViewport(host) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#11171e');
   const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 10000);
   const renderer = new THREE.WebGLRenderer({ antialias: true });
-  // drawn at most 1.5 pixels a screen point: the paint style's softness hides it, and a
-  // Retina screen's 2 shades 1.8 times the pixels
+  // pixel ratio capped at 1.5: the paint style hides it, and 2x costs 1.8x the pixels
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const canvas = renderer.domElement;
@@ -15,7 +16,7 @@ export function createViewport(host) {
   host.prepend(canvas);
   scene.add(new THREE.HemisphereLight(0xe7f1ff, 0x63714c, 2.6));
   const sun = new THREE.DirectionalLight(0xffefd5, 2.2);
-  sun.position.set(3, 5, 4);
+  sun.position.set(...SUN);
   scene.add(sun);
   const styles = createStyles(scene, camera, renderer);
   const resize = () => {

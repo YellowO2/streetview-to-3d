@@ -1,13 +1,12 @@
-// Interaction state is independent of scene geometry and DOM panels.
+// Interaction state, independent of scene geometry and the DOM.
 // Mode changes never clear selection, visibility or edit history.
 export class ViewerState {
   mode = 'inspect';
-  gun = false; // in Fly, shooting (Shoot) rather than the bird
+  gun = false; // Fly with the gun (Shoot) instead of the bird
   selected = null;
   selectionKind = 'piece';
   hidden = new Set();
   groups = [];
-  tool = 'translate';
   select(members, kind = 'piece') {
     this.selectionKind = kind;
     this.selected = members;
@@ -37,6 +36,5 @@ export class ViewerState {
     this.selectionKind = 'piece';
     this.hidden.clear();
     this.groups = [];
-    this.tool = 'translate';
   }
 }

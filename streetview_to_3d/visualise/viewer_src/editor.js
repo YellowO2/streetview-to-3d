@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
-// A drag is one transaction: preview many times, commit once, or cancel.
-// Only this controller can disable orbit for a piece manipulation.
+// Translate gizmo for the selected pieces. A drag is one transaction: preview, then commit or cancel.
+// Only this controller disables orbit during a manipulation.
 export function createEditor(scene, camera, canvas, navigation, store, state, changed, failed) {
   const pivot = new THREE.Object3D();
   scene.add(pivot);
@@ -28,9 +28,8 @@ export function createEditor(scene, camera, canvas, navigation, store, state, ch
     store.box(state.selected, true).getCenter(pivot.position);
     pivot.quaternion.identity();
     pivot.updateMatrixWorld(true);
-    control.setMode(state.tool);
-    control.showX = control.showZ = state.tool === 'translate';
-    control.showY = true;
+    control.setMode('translate');
+    control.showX = control.showY = control.showZ = true;
     if (control.object !== pivot) control.attach(pivot);
   };
   const cancel = () => {

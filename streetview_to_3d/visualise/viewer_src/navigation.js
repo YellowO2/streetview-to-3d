@@ -6,8 +6,8 @@ import { createBird } from '@viewer/bird';
 import { createGun } from '@viewer/gun';
 import { clearShots } from '@viewer/effects/shot';
 
-// Owns camera input, never selection or piece transforms. Escape/unlock returns
-// to Inspect through the supplied callback, without clearing scene state.
+// Camera input: orbit (Inspect) and pointer-lock flight as the bird or with the gun (Shoot).
+// Escape/unlock returns to Inspect through onRelease without touching scene state.
 export function createNavigation(scene, camera, canvas, onRelease, onError) {
   const orbit = new OrbitControls(camera, canvas);
   orbit.enableDamping = true;
@@ -20,8 +20,8 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
   look.pointerSpeed = 0.65;
   const { bird, animate, resetPlume } = createBird();
   scene.add(bird);
-  const gun = createGun(scene); // Shoot: flying as the bird does, but from the eye, shooting
-  const steer = { yaw: 0, pitch: 0, roll: 0 }; // the bird's way (steerBird)
+  const gun = createGun(scene); // Shoot: fly from the eye with the gun instead of the bird
+  const steer = { yaw: 0, pitch: 0, roll: 0 }; // bird orientation (steerBird)
   const keys = new Set(),
     forward = new THREE.Vector3(),
     right = new THREE.Vector3(),
@@ -69,7 +69,7 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
     onRelease();
     onError('Mouse capture was blocked. Fly works in a regular browser that allows pointer lock.');
   });
-  // a shot on letting go, the bigger the longer held (gun.js)
+  // fire on release, bigger the longer held (gun.js)
   document.addEventListener('mousedown', (e) => {
     if (!flying || !shooting || !captured() || e.button !== 0) return;
     gun.press();
@@ -82,12 +82,12 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
   addEventListener('keydown', (e) => {
     if (!flying || !captured() || e.target.matches('input,textarea,select')) return;
     if (e.code === 'KeyH') {
-      // the keys' bar out of the way (the mouse is captured: no button to click), H again to bring it back
+      // toggle the key hints bar (the mouse is captured, so no button to click)
       document.getElementById('flight')?.classList.toggle('dismissed');
       return;
     }
     if (shooting && e.code === 'KeyR') {
-      // the world whole again
+      // repair all holes
       clearShots();
       gun.reset();
       return;
@@ -115,12 +115,6 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
   return {
     orbit,
     stop,
-    get flying() {
-      return flying;
-    },
-    get shooting() {
-      return flying && shooting;
-    },
     configure(r) {
       radius = Math.max(r, 0.001);
       bird.scale.setScalar(FLIGHT.birdScale);
@@ -131,11 +125,11 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
       speed = s;
       chase = c;
     },
-    // fly as the bird, or (gun) shoot from the eye
+    // fly as the bird, or shoot from the eye (withGun)
     start(withGun = false) {
       if (flying) {
         if (shooting !== withGun) {
-          // straight from one to the other: the bird left where the eye is
+          // switching while flying: the bird takes over where the eye is
           shooting = withGun;
           bird.position.copy(camera.position).sub(chaseOffset());
           resetPlume();
@@ -163,8 +157,7 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
       flying = true;
       look.lock();
     },
-    // Stand at `position` looking at `target` -- inside a splat, which is
-    // seen from where its panorama was taken rather than from outside.
+    // stand at position looking at target (a splat is viewed from its panorama's spot)
     place(position, target) {
       stop();
       orbit.enableDamping = false;
@@ -213,7 +206,7 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
       move.normalize().multiplyScalar(FLIGHT.speed * speed * (boost ? FLIGHT.boost : 1));
       advanceFlight(bird.position, velocity, move, dt);
       if (shooting)
-        camera.position.copy(bird.position); // the eye, no bird
+        camera.position.copy(bird.position); // first person, no bird
       else {
         steerBird(bird.quaternion, velocity, smoothHeading, steer, dt);
         animate(dt, moving);
@@ -221,7 +214,7 @@ export function createNavigation(scene, camera, canvas, onRelease, onError) {
         camera.position.lerp(cameraTarget, 1 - Math.exp(-12 * dt));
       }
       camera.quaternion.copy(smoothHeading);
-      gun.hold(camera, shooting); // in the eye's hand, as it now is
+      gun.hold(camera, shooting);
     },
   };
 }

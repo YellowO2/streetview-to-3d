@@ -36,9 +36,9 @@ export function createEnvironment(scene) {
   sky.renderOrder = -100;
   scene.add(sky);
   sky.visible = false;
-  const clouds = createClouds(scene); // in the world, not on the dome: they drift past
+  const clouds = createClouds(scene); // in the world, not on the dome
   return {
-    // plainSky: a placed scene is open, so the plain view gets the blue sky;
+    // plainSky: Photoreal shows the blue sky (a placed scene is open)
     update(style, camera, enabled = true, plainSky = false, time = 0) {
       sky.visible = style === 'original' ? plainSky : enabled;
       skyMaterial.uniforms.blue.value = style === 'original' ? 1 : 0;

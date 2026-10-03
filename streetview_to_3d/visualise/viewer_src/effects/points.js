@@ -1,50 +1,51 @@
 import { Vector3 } from 'three';
-import { demo, DEMO } from '@viewer/effects/demo';
-import { shot, SHOT } from '@viewer/effects/shot';
-import { glyphs, GLYPH, GLYPH_GROW } from '@viewer/effects/glyphs';
-import { THIN } from '@viewer/effects/thin';
+import {
+  worldUniforms,
+  WORLD_VERTEX,
+  WORLD_FRAGMENT,
+  cutPoint,
+} from '@viewer/effects/world-points';
 
-// Patch the existing material once; never replace geometry or alter exported positions.
-// A node's trees sway in the wind (its ply's sway, 0-255: how much each point
-// moves, a crown's most, a trunk's not at all -- fill): one gust travelling
-// across the scene, a smaller quicker one on it, along WIND, at most SWAY_M.
-const SWAY_M = 0.12,
-  WIND = [0.8, 0.6];
+// Patches a point material once for the styles' float, scan, density and wind sway;
+// geometry and exported positions are never touched.
+const SWAY_M = 0.12, // most a tree point moves in the wind
+  WIND = [0.8, 0.6]; // wind direction (x, z)
 const patched = new WeakMap();
+
+// the uniforms the styles drive (controller.js); shared by blocks.js so points near DA3 move alike
+export const styleUniforms = () => ({
+  styleDensity: { value: 1 },
+  stylePointScale: { value: 1 },
+  styleRound: { value: 0 },
+  styleTime: { value: 0 },
+  styleFloat: { value: 0 },
+  styleScan: { value: 0 },
+  styleLook: { value: 1 },
+  styleCenter: { value: new Vector3() },
+});
+
 export function pointMotion(object) {
   const material = object.material;
   if (patched.has(material)) return patched.get(material);
   const stableSeed = !!object.geometry.getAttribute('styleSeed');
-  const swaying = !!object.geometry.getAttribute('sway');
-  const uniforms = {
-    styleDensity: { value: 1 },
-    stylePointScale: { value: 1 },
-    styleRound: { value: 0 },
-    styleTime: { value: 0 },
-    styleFloat: { value: 0 },
-    styleScan: { value: 0 },
-    styleRadius: { value: 1 },
-    styleLook: { value: 1 },
-    styleCenter: { value: new Vector3() },
-  };
-  // points with their own motion (userData.ownMotion: the water's) are left as they
-  // are -- no floating, no swelling: the style's settings for them touch nothing
+  const swaying = !!object.geometry.getAttribute('sway'); // 0-255 per point (fill)
+  const uniforms = styleUniforms();
+  // points with their own motion (water) are left alone
   if (object.userData.ownMotion) {
     patched.set(material, uniforms);
     return uniforms;
   }
-  // the demos move the world's points, the gun shoots them away (shot.js) and the Characters style
-  // cuts them as characters (glyphs.js) -- not the bird flying through it, the gun's shots or the gun
+  // world points take the demos, shots and characters; the bird, gun and shots don't
   const demoed = !object.userData.styleAnimated;
   const before = material.onBeforeCompile,
     key = material.customProgramCacheKey.bind(material);
   const originalKey = key();
   material.onBeforeCompile = (shader, renderer) => {
     before.call(material, shader, renderer);
-    Object.assign(shader.uniforms, uniforms, demoed ? { ...demo, ...shot, ...glyphs } : {});
+    Object.assign(shader.uniforms, uniforms, demoed ? worldUniforms : {});
     shader.vertexShader =
       `
-      ${demoed ? DEMO + SHOT + GLYPH_GROW + THIN : ''}
+      ${demoed ? WORLD_VERTEX : ''}
       ${stableSeed ? 'attribute float styleSeed;' : ''}
       ${swaying ? 'attribute float sway;' : ''}
       uniform float styleTime, styleFloat, styleLook, styleDensity, stylePointScale;
@@ -87,8 +88,8 @@ export function pointMotion(object) {
     shader.vertexShader = shader.vertexShader.replace(
       '#include <logdepthbuf_vertex>',
       `
-      gl_PointSize *= stylePointScale * (1.0 + sin(styleTime*.8+phase)*.14*styleFloat)${demoed ? ' * glyphGrow(phase / 6.2831853)' : ''};
-      ${demoed ? 'gl_PointSize *= thin(gl_PointSize, phase / 6.2831853); // far off, fewer (thin.js)' : ''}
+      gl_PointSize *= stylePointScale * (1.0 + sin(styleTime*.8+phase)*.14*styleFloat);
+      ${demoed ? 'gl_PointSize = worldSize(gl_PointSize, phase / 6.2831853, phase / 6.2831853);' : ''}
       if (phase / 6.2831853 >= styleDensity || demoIn < .5 || gl_PointSize == 0.) { gl_Position = vec4(2.,2.,2.,1.); gl_PointSize = 0.; }
       #include <logdepthbuf_vertex>
     `,
@@ -97,16 +98,14 @@ export function pointMotion(object) {
       `
       varying vec3 stylePosition;
       varying float styleGlyph;
-      uniform float styleTime, styleRadius, styleLook, styleScan, styleRound;
-      ${demoed ? GLYPH : ''}
+      uniform float styleTime, styleLook, styleScan, styleRound;
+      ${demoed ? WORLD_FRAGMENT : ''}
     ` + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <clipping_planes_fragment>',
       `
       #include <clipping_planes_fragment>
-      float styleShade = 1.;
-      ${demoed ? 'if (glyphOn > .5) { styleShade = glyphAt(gl_PointCoord, styleGlyph); if (styleShade == 0.) discard; } else' : ''}
-      if (styleRound > .5 && length(gl_PointCoord - .5) > .5) discard;
+      ${cutPoint(demoed && 'styleGlyph', 'styleRound > .5 && length(gl_PointCoord - .5) > .5')}
     `,
     );
     shader.fragmentShader = shader.fragmentShader.replace(
@@ -114,7 +113,7 @@ export function pointMotion(object) {
       `
       float wave = pow(.5+.5*sin(length(stylePosition.xz)/styleLook*16.0-styleTime*.8),18.0)*styleScan;
       outgoingLight = mix(outgoingLight, vec3(.65,.86,.76), wave*.25);
-      outgoingLight *= styleShade; // a character's rim (glyphs.js)
+      outgoingLight *= pointShade;
       #include <opaque_fragment>
     `,
     );

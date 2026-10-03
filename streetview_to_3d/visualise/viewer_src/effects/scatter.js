@@ -1,23 +1,15 @@
-// The world is drawn as points; what is far off is only stored as triangles
-// (roads.ply: postprocess/terrain.py), so they are scattered with points
-// as they load. Each corner says how far apart its
-// points go (the ply's "gap", terrain.point_gap); a triangle takes its
-// closest corner's, rounded up to one of GAPS, and its points lie on a grid
-// that far apart, fixed in the world -- the ground's on east/north, a
-// slope's along it and up -- each jittered a little (JITTER, as the
-// postprocess's own points are), so triangles side by side join without a
-// seam. A point takes its colour from its triangle's corners. (blocks.ply's
-// facade and glass, read here too, are for effects/blocks.js.)
-
+// Triangle surfaces (roads.ply) scattered with points on a world-fixed jittered grid, spaced by
+// the smallest corner's gap rounded up to GAPS, so neighbouring triangles join without seams.
 import * as THREE from 'three';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+import { hash } from '@viewer/effects/util';
 
-// the spacings points are drawn at, each a quarter over the last
+// allowed point spacings (m), each 1.25x the last
 export const GAPS = Array.from({ length: 28 }, (_, k) => 0.05 * 1.25 ** k);
 export const JITTER = 0.3, // of the spacing, either way
-  FLAT = 0.7; // a triangle facing up this much is gridded on the ground, else along and up
+  FLAT = 0.7; // normal.y above this: gridded east/north, else along-slope/up
 
-// the smallest of GAPS at least gap
+// index of the smallest of GAPS at least gap
 export function level(gap) {
   let k = 0;
   while (k < GAPS.length - 1 && GAPS[k] < gap * 0.999) k++;
@@ -32,7 +24,7 @@ loader.setCustomPropertyNameMapping({
   gap: ['gap'],
 });
 
-// A surface's ply (a buffer) as triangles in the viewer's frame (flip: y up, z south).
+// A surface ply (also blocks.ply's facade and glass) as triangles in the viewer frame (flip: y up, z south).
 export function parseSurface(buffer, flip, name) {
   const geometry = loader.parse(buffer);
   if (!geometry.getAttribute('position')?.count || !geometry.index) {
@@ -47,13 +39,7 @@ export function parseSurface(buffer, flip, name) {
   return geometry;
 }
 
-const hash = (i, j, k) => {
-  const s = Math.sin(i * 12.9898 + j * 78.233 + k * 37.719) * 43758.5453;
-  return s - Math.floor(s);
-};
-
-// Points over every triangle of geometry (parseSurface): a BufferGeometry of
-// position, color and gap (each point's spacing, one of GAPS).
+// Points over every triangle (parseSurface): a BufferGeometry of position, color and gap.
 export function scatter(geometry) {
   const p = geometry.getAttribute('position').array,
     col = geometry.getAttribute('color')?.array,
@@ -89,7 +75,7 @@ export function scatter(geometry) {
     const len = Math.hypot(nx, ny, nz);
     if (len < 1e-9) continue;
     const step = GAPS[level(own ? Math.min(own[a], own[b], own[c]) : 1)];
-    // the grid's two ways: east and north, or along the slope and up
+    // grid axes: east/north, or along-slope/up
     const flat = Math.abs(ny) >= FLAT * len;
     const h = Math.hypot(nx, nz) || 1,
       hx = flat ? 1 : -nz / h,
@@ -108,7 +94,7 @@ export function scatter(geometry) {
       hi1 = Math.ceil(Math.max(A[1], B[1], C[1]) / step + JITTER);
     for (let i = lo0; i <= hi0; i++)
       for (let j = lo1; j <= hi1; j++) {
-        // the jitter a grid point's own: the same in every triangle it falls near
+        // jitter depends only on the grid point, so it matches in neighbouring triangles
         const x = (i + (hash(i, j, k) - 0.5) * 2 * JITTER) * step,
           y = (j + (hash(j, i, k + 51) - 0.5) * 2 * JITTER) * step;
         const wb = ((x - A[0]) * (C[1] - A[1]) - (C[0] - A[0]) * (y - A[1])) / det,

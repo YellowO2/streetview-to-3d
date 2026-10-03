@@ -1,27 +1,16 @@
 import * as THREE from 'three';
 import { covering, marks, pointsOf } from '@viewer/effects/blocks';
 
-// The land (land.ply, postprocess/terrain.py: triangles, its colours the
-// satellite's and the panos') as points, as the buildings are (blocks.js):
-// on a grid fixed in the world, as far apart as land.ply's gap has them --
-// the world's points' spacing, closing to DA3's as they turn into its
-// points (postprocess/terrain) -- or, a scene without it, as the world's
-// points are there (gapOf, never under MIN_GAP), finer on a slope and the points as much bigger; each as big as
-// covers what JITTER moves them apart (blocks.covering), so nothing under
-// the land ever shows between them -- their spacing (SPACE) the one thing
-// to choose: closer, smaller points, more of them. Lit as the land faces
-// there, hazed as everything is, and turning into DA3's points by
-// land.ply's near (postprocess/seams.toward).
-export const MIN_GAP = 0.3;
-const SPACE = 1, // its points this much of the world's spacing apart: closer than a building's
-  JITTER = 0.1; // each off its grid's place at most this much of its spacing: a third of a building's
+// The land (land.ply triangles) drawn as dabs like the buildings (blocks.js), spaced by its gap
+// (or gapOf), each just big enough to leave no gaps (blocks.covering), blending into DA3 by `near`.
+export const MIN_GAP = 0.3; // m: smallest spacing when the ply has no gap
+const SPACE = 1, // dab spacing, of the gap
+  JITTER = 0.1; // of the spacing, a third of a building's
 
-// The land's triangles (the viewer's frame), each corner its facing (up),
-// colour and spacing (the ply's own gap, or gapOf(x, z): the world's points'
-// there, never under MIN_GAP).
+// Adds upward normals, a gap per corner (the ply's, or gapOf(x, z)) and a default colour.
 function prepare(geometry, gapOf) {
   geometry.computeVertexNormals();
-  // a triangle wound either way: every normal up
+  // triangles may be wound either way: flip normals up
   const nor = geometry.getAttribute('normal');
   for (let i = 0; i < nor.count; i++)
     if (nor.getY(i) < 0) nor.setXYZ(i, -nor.getX(i), -nor.getY(i), -nor.getZ(i));
@@ -39,8 +28,7 @@ function prepare(geometry, gapOf) {
   return geometry;
 }
 
-// The land's triangles (the viewer's frame) as its points; gapOf(x, z): the
-// world's points' spacing there.
+// land.ply triangles (viewer frame) as drawn dabs; gapOf(x, z): point spacing there
 export function landPoints(geometry, gapOf) {
   const made = marks(prepare(geometry, gapOf), {
     edges: false,

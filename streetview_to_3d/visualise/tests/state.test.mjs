@@ -22,12 +22,10 @@ test('mode switches preserve selected piece, visibility and grouping', () => {
   s.regroup(scenePieces(data, 0.76));
   s.select(s.groups[0]);
   s.hidden.add(3);
-  s.tool = 'rotate';
   for (const mode of ['edit', 'fly', 'inspect', 'edit']) {
     s.mode = mode;
     assert.deepEqual(s.selected, [0, 1]);
     assert(s.hidden.has(3));
-    assert.equal(s.tool, 'rotate');
   }
 });
 test('regroup preserves selection anchor and explicit hidden nodes', () => {

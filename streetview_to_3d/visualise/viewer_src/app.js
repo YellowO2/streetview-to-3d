@@ -9,6 +9,12 @@ import { createNavigation } from '@viewer/navigation';
 import { createEditor } from '@viewer/editor';
 import { createUI } from '@viewer/ui';
 
+const SPLAT_RADIUS = 20; // view radius for a splat, which has no bounds
+const PLACED_POINT_M = 0.1; // DA3 point size in a placed (metric) scene
+// distance haze: the far land and buildings fade into the sky colour
+const HAZE = 0xc9dbe6,
+  HAZE_M = [250, 900]; // clear to, gone by (inside the 1 km land edge, terrain.RADIUS_M)
+
 const state = new ViewerState(),
   store = new SceneStore();
 const config = JSON.parse(document.getElementById('viewer-config').textContent);
@@ -75,14 +81,12 @@ try {
 const { scene, camera, renderer, canvas, highlight } = view;
 const navigation = createNavigation(scene, camera, canvas, () => setMode('inspect'), ui.notify);
 const editor = createEditor(scene, camera, canvas, navigation, store, state, refresh, ui.notify);
-// A splat is seen from inside, from where its panorama was taken (the
-// origin), and has no bounds to size the view from; this stands in.
-const SPLAT_RADIUS = 20;
 let busy = false,
   version = 0,
   radius = 5,
   pointMultiplier = 1,
-  points = 0;
+  points = 0,
+  showBuildings = true;
 function attempt(fn) {
   try {
     fn();
@@ -100,7 +104,7 @@ function refresh() {
   ui.render(store, state, { busy, dragging: editor.dragging, points });
 }
 function setMode(mode) {
-  // Shoot: flying, from the eye, with the gun
+  // Shoot is Fly with the gun
   const gun = mode === 'shoot';
   if (gun) mode = 'fly';
   if (
@@ -129,14 +133,11 @@ function configure() {
     ? SPLAT_RADIUS
     : Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 0.001);
   navigation.configure(radius);
-  // as far out as closeness allows: depth precision a kilometre away (the
-  // terrain's) goes with the near plane, and at 1 cm its points flickered
+  // near plane as far out as possible: at 1 cm the kilometre-away terrain flickered
   camera.near = Math.min(0.2, Math.max(radius * 0.002, 0.00001));
   camera.far = radius * 1000;
   camera.updateProjectionMatrix();
-  // haze, as games have it: the far land and buildings fade into the sky's
-  // colour, so their plainness never shows and distance reads
-  // ... gone by just inside the land's edge, however far it reaches (a smaller world's sooner)
+  // fully hazed just inside the land's edge, however far it reaches
   let land = null;
   store.group?.traverse((o) => {
     if (o.userData.surroundings === LAND) land = o;
@@ -149,27 +150,20 @@ function configure() {
   setPointSize();
   setBuildings();
 }
-// the map's buildings (near DA3, buildings.ply; far, blocks.ply) shown or not -- DA3's own are its points
-let showBuildings = true;
+// show or hide the map's buildings (buildings.ply near DA3, blocks.ply far); DA3's own stay
 function setBuildings() {
   store.group?.traverse((o) => {
     if (o.userData.surroundings === 'buildings' || o.userData.surroundings === BLOCKS)
       o.visible = showBuildings;
   });
 }
-const PLACED_POINT_M = 0.1;
-const HAZE = 0xc9dbe6,
-  HAZE_M = [250, 900]; // clear to, gone by (the land's edge at 1 km, terrain.RADIUS_M, never shows)
 function setPointSize() {
-  // the scene's own points at one size; the map's (terrain, buildings) at
-  // their spacing's, but never smaller than the scene's, so where they meet
-  // they look alike
-  // a placed scene is in metres: one size for all, whatever its extent
-  // (0.2% of it drew NTU's 108 m at 22 cm, Stockholm's 33 m at 7 cm)
+  // DA3 points share one size (fixed in metres when placed); map points use their spacing,
+  // never smaller than DA3's so they match where they meet
   const own = store.placement === 'world' ? PLACED_POINT_M : radius * 0.002;
   store.group?.traverse((o) => {
     if (o.userData.pointStyle)
-      o.material.uniforms.pointM.value = own * pointMultiplier; // strokes near DA3
+      o.material.uniforms.pointM.value = own * pointMultiplier; // dabs near DA3
     else if (o.isPoints)
       o.material.size = Math.max(o.userData.pointSize ?? 0, own) * pointMultiplier;
   });

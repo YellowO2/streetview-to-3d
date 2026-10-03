@@ -1,92 +1,56 @@
 import * as THREE from 'three';
 import { haze, HAZED } from '@viewer/effects/haze';
-import { SUN } from '@viewer/effects/water';
 import { FLAT, GAPS, JITTER, level } from '@viewer/effects/scatter';
 import { tunable } from '@viewer/effects/tune-panel';
-import { demo, DEMO } from '@viewer/effects/demo';
-import { shot, SHOT } from '@viewer/effects/shot';
-import { glyphs, GLYPH, GLYPH_GROW } from '@viewer/effects/glyphs';
-import { THIN } from '@viewer/effects/thin';
+import { styleUniforms } from '@viewer/effects/points';
+import {
+  worldUniforms,
+  WORLD_VERTEX,
+  WORLD_FRAGMENT,
+  cutPoint,
+} from '@viewer/effects/world-points';
+import { SUN, f, v3, hash } from '@viewer/effects/util';
 
-// The buildings built of points and nothing else, as a painter builds them of
-// dabs: no surface under them, where the points end the building ends. Each
-// one the GPU's own point, round and facing the eye as DA3's are. Their colours are the buildings' own, never made up
-// here: this only draws them -- dabs, light, haze.
-//
-// The far buildings (blocks.ply, postprocess/buildings.solid: triangles) are
-// laid with points as they load (marks):
-// - their walls and roofs: on a grid fixed on each (jittered as the world's
-//   points are, JITTER; a wall's on its facade, metres along it and up from its
-//   foot, a roof's on the ground or, steep, along it and up), SPACE of the
-//   building's points' spacing apart (its gap);
-// - their structure: along every edge where faces meet at a crease or a face
-//   ends (corners, eaves, ridges, gables; not its foot), smaller (EDGE_DAB);
-// - their windows: nothing of their own -- part of the wall, they are the
-//   wall's points that fall on them, in the windows' colour its facade gives
-//   (blocks.ply's glass), where points are close enough to tell them (two to
-//   a bay and a floor).
-// The buildings DA3 reaches (buildings.ply, postprocess/buildings.points) are
-// points already, met to DA3's -- moved onto its walls, left out where it has
-// them, pulled toward it and its colour beside it.
-//
-// Each dab ROUND of its spacing across, lit: a face toward the sun warm and
-// lighter, away from it cool and darker (light); a little lighter or darker
-// its own way (vary), its edge uneven. Which lies over which is each dab's
-// own, fixed in the world (lifted off its face by its own share of LAYER),
-// never how it is seen, so nothing flickers. Scattered as a floating point
-// is, but still (scatter): each a little in front of or behind its face
-// (SCATTER of its spacing at most, a spacing counted no more than SCATTER_M,
-// so far off big dabs scatter as little as near ones), bigger or smaller,
-// its own way, fixed -- along its face only its grid's JITTER moves it.
-//
-// Near DA3's own points (buildings.ply's and land.ply's near: within
-// postprocess/seams.BLEND_M, their colour already mixed toward DA3's there), a dab
-// turns into one of them as it comes up to them: facing the eye, DA3's
-// points' size, floating and pulsing as they do (points.js), lit as they
-// are -- not at all.
+// Far buildings, land and moving things drawn as lit round dabs; colours come from the data.
+// Near DA3 (`near` 1) a dab turns into a DA3 point: eye-facing, its size and float, unlit.
 
-export const KNOBS = {
-  size: [1.1, 0.5, 2.5], // a dab's size, of what it was made at
-  scatter: [0.5, 0, 1], // each dab off its place, bigger or smaller: still, as a point floats
-  light: [0.5, 0, 1], // how far apart in the sun and in the shade
-  vary: [0.11, 0, 0.4], // each dab, how much lighter or darker
+const KNOBS = {
+  size: [1.1, 0.5, 2.5], // dab size, of its built size
+  scatter: [0.5, 0, 1], // fixed per-dab offset and size jitter
+  light: [0.5, 0, 1], // sunlit vs shaded contrast
+  vary: [0.11, 0, 0.4], // per-dab lightness variation
 };
-const SPACE = 1.2, // the far buildings' points this much of their spacing apart
-  ROUND = 1.6, // a dab this across, of its spacing
-  EDGE_DAB = 0.9, // an edge's dab, of its spacing
-  LAYER = 0.04, // a dab lifted off its face up to this much of its spacing
-  SCATTER = 0.35, // a dab off its face at most this much of its spacing
-  SCATTER_M = 0.4, // its spacing counted as no more than this: far off, sparse dabs scatter as near ones
-  SWELL = 0.15, // bigger or smaller by at most this much
-  ROUGH = 0.3, // a dab's edge in by at most this much of its reach, squared
-  CREASE = Math.cos((30 * Math.PI) / 180); // faces meeting at more than 30 degrees: an edge
+const SPACE = 1.2, // far-building dab spacing, of the point gap
+  ROUND = 1.6, // dab diameter, of its spacing
+  EDGE_DAB = 0.9, // edge dab, of its spacing
+  LAYER = 0.04, // most a dab lifts off its face, of its spacing (fixed draw order, no flicker)
+  SCATTER = 0.35, // most a dab sits off its face, of its spacing
+  SCATTER_M = 0.4, // spacing cap for scatter, so big far dabs scatter no more than near ones
+  SWELL = 0.15, // most a dab grows or shrinks
+  ROUGH = 0.3, // edge roughness, of its radius squared
+  CREASE = Math.cos((30 * Math.PI) / 180); // faces meeting at over 30 degrees make an edge
 const NO_FACADE = -1000;
-// a facade's rhythm, when blocks.ply gives none (postprocess/buildings.facade_layout)
-export const FLOOR_M = 3.2,
+// facade rhythm when blocks.ply gives none (postprocess/buildings.facade_layout)
+const FLOOR_M = 3.2,
   BAY_M = 3.0,
-  WINDOW_U = [0.3, 0.7], // a window, of a bay
+  WINDOW_U = [0.3, 0.7], // window span, of a bay
   WINDOW_V = [0.3, 0.8]; // and of a floor
-const SUNLIT = [1.12, 1.02, 0.86], // the sun's warmth on a face
-  SHADED = [0.5, 0.56, 0.78]; // the shade's cool, the sky's blue in it
-const EDGE = 1; // postprocess/buildings.Blocks.kind's
+const SUNLIT = [1.12, 1.02, 0.86],
+  SHADED = [0.5, 0.56, 0.78];
+const EDGE = 1; // postprocess/buildings.Blocks kind for an edge point
 
 const knobs = tunable('Buildings', KNOBS);
-const f = (x) => x.toFixed(4);
-const v3 = (v) => `vec3(${v.map(f).join(', ')})`;
 const sun = new THREE.Vector3(...SUN).normalize().toArray();
 
 const vertexShader = `
   #include <fog_pars_vertex>
-  ${GLYPH_GROW}
-  ${THIN}
-  ${DEMO}
-  ${SHOT}
+  ${WORLD_VERTEX}
   uniform float ${Object.keys(KNOBS).join(', ')}, halfHeight;
-  uniform float pointM, styleTime, styleFloat, styleLook, stylePointScale; // DA3's points' look (points.js)
+  uniform float pointM, styleTime, styleFloat, styleLook, stylePointScale; // DA3's point look (points.js)
   attribute vec3 facing, tint;
-  attribute float dab, near; // its size (m); how near DA3's points: 1 drawn as they are
+  attribute float dab, near; // size (m); 1 = drawn as a DA3 point
   #ifdef OWN_SEED
-  attribute float grain; // its own way, carried as it moves (traffic.js: a car's)
+  attribute float grain; // per-dab seed that moves with it (traffic.js)
   #endif
   varying vec3 colour, world;
   varying float seed;
@@ -99,22 +63,19 @@ const vertexShader = `
     seed = fract(sin(dot(centre, vec3(12.9898, 78.233, 37.719))) * 43758.5453) * 100.;
     #endif
     vec3 eye = cameraPosition - centre;
-    // a face's side toward the eye: its outside, the buildings being closed
+    // the face's side toward the eye: buildings are closed
     vec3 n = dot(facing, eye) < 0. ? -facing : facing;
-    float t = near; // turning into DA3's points: still scatter giving way to their float
-    // scattered, still: off its place, bigger or smaller, its own way
+    float t = near;
     vec4 r = vec4(h1(seed * 5.3), h1(seed * 6.7), h1(seed * 8.9), h1(seed * 10.1)) * 2. - 1.;
     float spacing = dab / ${f(ROUND)};
-    float loose = scatter * min(1., ${f(SCATTER_M)} / spacing) * (1. - t); // the same metres however big
+    float loose = scatter * min(1., ${f(SCATTER_M)} / spacing) * (1. - t);
     vec3 off = n * r.x * ${f(SCATTER)} * spacing * loose;
-    // near DA3, floating and pulsing as its points do
     float phase = h1(seed * 11.3) * 6.2832;
     vec3 drift = vec3(sin(styleTime * .55 + phase) * .45, sin(styleTime * .8 + phase) * .65,
       cos(styleTime * .5 + phase) * .45) * styleLook * .004 * styleFloat * t;
     world = centre + off + drift + n * h1(seed * 7.1) * ${f(LAYER)} * spacing * (1. - t);
     float d = mix(dab * size * (1. + r.z * ${f(SWELL)} * loose),
       pointM * stylePointScale * (1. + sin(styleTime * .8 + phase) * .14 * styleFloat), t);
-    // the demos: moved whole, as a point is (demo.js); shot away whole (shot.js)
     float demoIn;
     world += demoed(centre, h1(seed * 13.7), demoIn) - centre;
     if (shotAway(centre)) demoIn = 0.;
@@ -122,11 +83,9 @@ const vertexShader = `
     gl_Position = demoIn < .5 ? vec4(2., 2., 2., 1.) : projectionMatrix * mv;
     vec4 mvPosition = mv;
     #include <fog_vertex>
-    gl_PointSize = demoIn < .5 ? 0. : d * projectionMatrix[1][1] * halfHeight / -mv.z * glyphGrow(seed * .01);
-    gl_PointSize *= thin(gl_PointSize, fract(seed * .37)); // far off, fewer (thin.js)
-    if (gl_PointSize == 0.) gl_Position = vec4(2., 2., 2., 1.); // shot away, far off and not drawn, or not one of the characters
-    // its colour, its face lit or in shade, a little lighter or darker its own way --
-    // near DA3, as DA3's points are: as they are
+    gl_PointSize = demoIn < .5 ? 0. : worldSize(d * projectionMatrix[1][1] * halfHeight / -mv.z, seed * .01, fract(seed * .37));
+    if (gl_PointSize == 0.) gl_Position = vec4(2., 2., 2., 1.);
+    // lit by face toward the sun, varied per dab; near DA3, unlit
     float sunlit = smoothstep(-.05, .25, dot(n, ${v3(sun)}));
     colour = tint * mix(vec3(1.), mix(${v3(SHADED)}, ${v3(SUNLIT)}, sunlit), light * (1. - t))
       * (1. + (h1(seed * 3.3) - .5) * 2. * vary * (1. - t));
@@ -138,42 +97,26 @@ const fragmentShader = `
   varying vec3 colour, world;
   varying float seed;
   ${HAZED}
-  ${GLYPH}
+  ${WORLD_FRAGMENT}
   void main() {
-    // round, facing the eye as DA3's points do, its edge uneven -- or its character (glyphs.js)
     float u = gl_PointCoord.x * 2. - 1., v = 1. - gl_PointCoord.y * 2.;
-    float shade = 1.;
-    if (glyphOn > .5) {
-      shade = glyphAt(gl_PointCoord, seed * .01);
-      if (shade == 0.) discard;
-    } else if (u * u + v * v > 1. - ${f(ROUGH)} * vnoise(vec2(u * 3. + seed * 17., v * 2.))) discard;
-    gl_FragColor = vec4(hazed(colour * shade, length(world - cameraPosition), haze), 1.);
+    ${cutPoint('seed * .01', `u * u + v * v > 1. - ${f(ROUGH)} * vnoise(vec2(u * 3. + seed * 17., v * 2.))`)}
+    gl_FragColor = vec4(hazed(colour * pointShade, length(world - cameraPosition), haze), 1.);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>
   }`;
 
-// (a, b, c): where (x, y) is in a triangle on its own two ways (uv, det), if in it
+// barycentric weights of (x, y) in a 2D triangle, or null if outside
 function within({ uv: [ua, ub, uc], det }, x, y) {
   const wb = ((x - ua[0]) * (uc[1] - ua[1]) - (uc[0] - ua[0]) * (y - ua[1])) / det,
     wc = ((ub[0] - ua[0]) * (y - ua[1]) - (x - ua[0]) * (ub[1] - ua[1])) / det;
   return wb >= -1e-6 && wc >= -1e-6 && wb + wc <= 1 + 1e-6 ? [1 - wb - wc, wb, wc] : null;
 }
 
-const hash = (i, j, k) => {
-  const s = Math.sin(i * 12.9898 + j * 78.233 + k * 37.719) * 43758.5453;
-  return s - Math.floor(s);
-};
-
-// The points laid over the buildings' triangles (parseSurface: the viewer's
-// frame): { centre, facing, tint, dab, near } per point (dab: its size,
-// metres; near: how near DA3's, from its corners', if they have it).
-// The land's (land.js) as a building's, but: no edges; each triangle spaced
-// by its closest corner's gap (finer on a slope) rounded up to one of GAPS,
-// so triangles side by side share a grid (levels); each dab facing as the land does there, its
-// corners' normals between them (smooth); space: its points this much of
-// its spacing apart; jitter: each off its grid's place by at most this much
-// of it; round: a dab this across, of its spacing.
+// Dabs over triangles (viewer frame): { centre, facing, tint, dab (size, m), near }.
+// edges: add crease strokes; levels: snap each triangle's gap to GAPS so neighbours share a grid
+// (the land); smooth: interpolate corner normals; space, jitter, round: of the spacing.
 export function marks(
   geometry,
   {
@@ -222,10 +165,7 @@ export function marks(
     const facingAt = (w) =>
       corners ? new THREE.Vector3(...at(...corners, ...w)).normalize().toArray() : n.toArray();
     const wall = facade && [a, b, c].every((i) => facade.getY(i) > NO_FACADE / 2);
-    // the grid's two ways on the face; on a slope, a way of the map's (east
-    // and north, or up) stretched over it (stretch), its dabs as much bigger
-    // so they meet as on the flat -- the land's grid finer there too, half
-    // of it each (levels), so a hill is no blotchier than the flat
+    // grid axes: facade, ground (east/north) or along-slope/up; dabs stretched to cover slopes
     let uv,
       stretch = 1;
     if (wall) {
@@ -250,7 +190,7 @@ export function marks(
     const k = Math.round(s * 1000) + (wall ? 3 : Math.abs(n.y) >= FLAT ? 1 : 2) * 97;
     const tint = [C(a), C(b), C(c)],
       glass = glassOf && [a, b, c].map((i) => [glassOf.getX(i), glassOf.getY(i), glassOf.getZ(i)]);
-    // only the cells whose point, however it is jittered, can fall in it
+    // only cells whose jittered point can land in the triangle
     const from = (lo) => Math.ceil(lo / s - 0.5 - jitter - 1e-9),
       to = (hi) => Math.floor(hi / s - 0.5 + jitter + 1e-9);
     const lo0 = from(Math.min(ua[0], ub[0], uc[0])),
@@ -258,7 +198,7 @@ export function marks(
       lo1 = from(Math.min(ua[1], ub[1], uc[1])),
       hi1 = to(Math.max(ua[1], ub[1], uc[1]));
     const inside = (x, y) => within({ uv: [ua, ub, uc], det }, x, y);
-    // a wall's point falling on a window, where points are close enough to tell them
+    // wall dabs on a window take the glass colour, if dabs are dense enough to show windows
     const bay = layout && layout.getX(a) > 0 ? layout.getX(a) : BAY_M,
       floor = layout && layout.getY(a) > 0 ? layout.getY(a) : FLOOR_M;
     const windows = wall && glass && s * 2 <= Math.min(bay, floor);
@@ -283,7 +223,7 @@ export function marks(
           nearOf ? w[0] * nearOf.getX(a) + w[1] * nearOf.getX(b) + w[2] * nearOf.getX(c) : 0,
         );
       }
-    // its edges, for the structure's points
+    // collect edges for crease strokes
     if (!structure) continue;
     for (const [u, v, o] of [
       [a, b, c],
@@ -298,8 +238,8 @@ export function marks(
   }
   for (const { u, v, o, faces, s, tint } of edges.values()) {
     const [U, W] = [V(u), V(v)];
-    if (faces.length === 2 && Math.abs(faces[0].dot(faces[1])) > CREASE) continue; // flat across it
-    if (faces.length === 1 && Math.abs(U.y - W.y) < 0.05 && V(o).y > U.y + 0.05) continue; // its foot
+    if (faces.length === 2 && Math.abs(faces[0].dot(faces[1])) > CREASE) continue; // not a crease
+    if (faces.length === 1 && Math.abs(U.y - W.y) < 0.05 && V(o).y > U.y + 0.05) continue; // building foot
     const len = U.distanceTo(W);
     if (len < 1e-3) continue;
     const k = Math.max(1, Math.round(len / (s * EDGE_DAB)));
@@ -316,27 +256,22 @@ export function marks(
   return out;
 }
 
-// How big a dab must be (of its spacing, across) so that dabs on a grid,
-// each off its place by up to jitter of the spacing, leave nothing between
-// them: the furthest a spot can be from every dab (four, each moved away
-// from it to its cell's far corner) over the least a dab is drawn of its
-// size -- its edge in its roughest (ROUGH), swelled smaller its most (SWELL,
-// as loose as scatter has them) -- at the size knob's own.
+// Dab diameter (of its spacing) that leaves no gaps on a grid jittered by jitter,
+// allowing for the roughest edge (ROUGH) and smallest swell (SWELL) at default knobs.
 export function covering(jitter) {
   const furthest = Math.SQRT1_2 * (1 + 2 * jitter),
     least = Math.sqrt(1 - ROUGH) * (1 - SWELL * KNOBS.scatter[0]);
   return (2 * furthest) / (least * KNOBS.size[0]);
 }
 
-// The buildings' triangles (parseSurface: the viewer's frame) as their points, drawn.
+// blocks.ply triangles (viewer frame) as drawn dabs
 export function blockPoints(geometry) {
   const made = marks(geometry);
   geometry.dispose();
   return pointsOf(made);
 }
 
-// The buildings DA3 reaches (buildings.ply: points, each its facing, kind --
-// an edge's smaller -- and how near DA3's), drawn.
+// buildings.ply points (with normal, kind and near) as drawn dabs
 export function buildingPoints(geometry) {
   const p = geometry.getAttribute('position'),
     gapOf = geometry.getAttribute('gap'),
@@ -359,24 +294,8 @@ export function buildingPoints(geometry) {
   return pointsOf(made);
 }
 
-// the uniforms DA3's points move by (points.js), so points near them move alike
-const pointStyle = () => ({
-  styleDensity: { value: 1 },
-  stylePointScale: { value: 1 },
-  styleRound: { value: 0 },
-  styleTime: { value: 0 },
-  styleFloat: { value: 0 },
-  styleScan: { value: 0 },
-  styleRadius: { value: 1 },
-  styleLook: { value: 1 },
-  styleCenter: { value: new THREE.Vector3() },
-});
-
-// points ({ centre, facing, tint, dab, near?, grain? }) as the GPU's points: a few
-// bytes each (its facing, colour and nearness as bytes); fog: the scene's
-// haze over them, gone by its far edge (the land's, land.js). grain: each
-// one's own way (scatter, size, shade), for points that move (traffic.js);
-// else its place in the world.
+// Dabs ({ centre, facing, tint, dab, near?, grain? }) as a THREE.Points with packed attributes.
+// fog: apply the scene fog (the land). grain: per-dab seeds for moving things; else seeded by position.
 export function pointsOf(made, { fog = false } = {}) {
   const count = made.dab.length;
   const g = new THREE.BufferGeometry();
@@ -389,7 +308,7 @@ export function pointsOf(made, { fog = false } = {}) {
       facing[3 * i + d] = Math.round(made.facing[3 * i + d] * 127);
       tint[3 * i + d] = Math.round(Math.min(Math.max(made.tint[3 * i + d], 0), 1) * 255);
     }
-    near[i] = Math.round((made.near ? made.near[i] : 0) * 255); // far off: none near DA3
+    near[i] = Math.round((made.near ? made.near[i] : 0) * 255);
   }
   g.setAttribute('facing', new THREE.BufferAttribute(facing, 3, true));
   g.setAttribute('tint', new THREE.BufferAttribute(tint, 3, true));
@@ -400,16 +319,14 @@ export function pointsOf(made, { fog = false } = {}) {
   const points = new THREE.Points(
     g,
     new THREE.ShaderMaterial({
-      // DA3's points' look, set as theirs are (app.js setPointSize; controller.js, as points.js has them)
+      // pointM and style* are set as for DA3's points (app.js setPointSize, controller.js)
       uniforms: {
         ...knobs,
         haze,
         halfHeight,
         pointM: { value: 0.1 },
-        ...pointStyle(),
-        ...demo,
-        ...shot,
-        ...glyphs,
+        ...styleUniforms(),
+        ...worldUniforms,
         ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
       },
       fog,
@@ -424,6 +341,6 @@ export function pointsOf(made, { fog = false } = {}) {
     halfHeight.value = size.y / 2;
   };
   points.frustumCulled = false;
-  points.userData.pointStyle = true; // moved as DA3's points are (controller.js)
+  points.userData.pointStyle = true; // styled like DA3's points (controller.js)
   return points;
 }

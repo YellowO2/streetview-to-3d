@@ -1,24 +1,15 @@
 import * as THREE from 'three';
 import { haze, HAZED } from '@viewer/effects/haze';
+import { DISC, f, v3 } from '@viewer/effects/util';
 
-// The bird's paint (bird.js; its trail, bird-plume.js): points as the world's
-// are -- the DA3 points' size, styled as they are (effects/points.js) --
-// faint and white as a breath of wind: each dab soft to its edge, as a
-// cloud's, and ALPHA see-through, whichever way it turns; hazed far off as
-// the land is.
-//
-// A trail's dab also its time laid (born): its trail one smooth streak of
-// them, overlapping, all fading alike as they age, drifting a little on the
-// wind.
-export const DAB = 0.1; // a dab this big: as the DA3 points (app.js PLACED_POINT_M)
-export const LIFE_S = 1.6; // a trail's dab gone after this long
-const WHITE = [0.97, 0.97, 0.96],
-  ALPHA = 0.2, // a dab of the bird
-  TRAIL = 0.035, // a trail's dab, at its newest: many overlap in its streak
-  DRIFT = [0.09, 0.02, -0.035]; // m/s: a trail carried on the clouds' wind (clouds.js WIND), rising
-
-const f = (x) => x.toFixed(4);
-const v3 = (v) => `vec3(${v.map(f).join(', ')})`;
+// Paint for the bird (bird.js) and its trail (bird-plume.js): faint white soft dabs, hazed far off.
+// Trail dabs carry the time they were laid (born) and fade and drift as they age.
+export const DAB = 0.1; // dab size (m), as DA3 points (app.js PLACED_POINT_M)
+const LIFE_S = 1.6, // trail dab lifetime
+  WHITE = [0.97, 0.97, 0.96],
+  ALPHA = 0.2, // bird dab opacity
+  TRAIL = 0.035, // newest trail dab opacity: many overlap
+  DRIFT = [0.09, 0.02, -0.035]; // m/s: trail drift, along the clouds' wind (clouds.js WIND), rising
 
 export function birdPaint({ trail = false } = {}) {
   const material = new THREE.PointsMaterial({ size: DAB, transparent: true, depthWrite: false });
@@ -55,9 +46,7 @@ export function birdPaint({ trail = false } = {}) {
       shader.fragmentShader.replace(
         '#include <opaque_fragment>',
         `outgoingLight = hazed(${v3(WHITE)}, length(paintWorld - cameraPosition), haze);
-          // soft to its edge
-          float r = dot(gl_PointCoord * 2. - 1., gl_PointCoord * 2. - 1.);
-          if (r > 1.) discard;
+          ${DISC}
           diffuseColor.a = paintAlpha * (1. - smoothstep(.15, 1., r));
           #include <opaque_fragment>`,
       );
@@ -66,7 +55,7 @@ export function birdPaint({ trail = false } = {}) {
   return { material, uniforms };
 }
 
-// a Points of the bird's paint, styled as the world's points are
+// a THREE.Points of bird paint with stable per-dab seeds for the style's float
 export function birdDabs(geometry, material, count) {
   geometry.setAttribute(
     'styleSeed',

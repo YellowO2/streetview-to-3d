@@ -1,25 +1,17 @@
 import * as THREE from 'three';
 import { fleet, model, random } from '@viewer/effects/moving';
 
-// A boat or two cruising the water near the scene (life.json's boats,
-// postprocess/life.py), built and drawn as the buildings are (moving.js),
-// its real size: a small motorboat, 5 m long -- its hull narrowing to its
-// bow, its sheer rising toward it, its stem raked, a deck, a console
-// amidships with a windscreen.
-//
-// Each goes round its course (one closed, kept off the shore) at a gentle
-// SPEED, its heading easing round the bends (TURN), rocking a little on the
-// water -- rolling, pitching, rising and falling, each in its own time. One
-// to a course, at most MAX_BOATS.
+// Boats (life.json): 5 m motorboats built of dabs (moving.js), one per closed course,
+// cruising and gently rocking.
 const MAX_BOATS = 3,
   SPEED = 3, // m/s
-  LOOK_M = 4, // its heading from the course this far behind and ahead
-  TURN = 1.5, // how fast its heading eases onto the course's, per second
-  GAP = 0.1,
+  LOOK_M = 4, // heading sampled this far behind and ahead
+  TURN = 1.5, // heading easing rate (1/s)
+  GAP = 0.1, // dab spacing (m)
   ROLL = 0.035, // radians
-  PITCH = 0.02,
+  PITCH = 0.02, // radians
   HEAVE = 0.05; // m
-// its hull's half-beam (m) along it, stern to bow
+// hull half-beam (m) along its length, stern to bow
 const PLAN = [
   [-2.4, 0.9],
   [-1.0, 1.0],
@@ -28,19 +20,19 @@ const PLAN = [
   [2.2, 0.25],
   [2.5, 0],
 ];
-const sheer = (x) => 0.55 + 0.32 * Math.max(0, (x + 0.5) / 3) ** 2, // its top edge, rising to its bow
-  KEEL = -0.1, // a little under the water, so no gap shows at its line
-  RAKE = 0.4, // its stem leaning forward: at the water its bow this much further back
+const sheer = (x) => 0.55 + 0.32 * Math.max(0, (x + 0.5) / 3) ** 2, // gunwale height, rising to the bow
+  KEEL = -0.1, // slightly under water so no gap shows at the waterline
+  RAKE = 0.4, // stem rake: bow this much further back at the waterline
   DECK = 0.5;
-// where a point of its plan meets the water: drawn back toward the stern near its bow
+// waterline x for plan x: pulled back near the raked bow
 const foot = (x) => x - RAKE * Math.max(0, (x - 1.6) / 0.9);
-// what each surface is: life.json's boat colours
+// part indices into life.json's boat colours
 const HULL = 0,
   DECK_W = 1,
   CABIN = 2,
   GLASS = 3;
 
-// a boat's dabs, in its own frame (x ahead, y up, z right): model().dabs()'s
+// a boat's dabs in its local frame (x ahead, y up, z right)
 export function boatDabs() {
   const { quad, flat, dabs } = model(GAP);
   for (const side of [-1, 1])
@@ -55,7 +47,7 @@ export function boatDabs() {
       );
     });
   const [sx, sw] = PLAN[0];
-  quad([sx, KEEL, -sw], [sx, KEEL, sw], [sx, sheer(sx), sw], [sx, sheer(sx), -sw], HULL); // its transom
+  quad([sx, KEEL, -sw], [sx, KEEL, sw], [sx, sheer(sx), sw], [sx, sheer(sx), -sw], HULL); // transom
   flat(
     [
       ...PLAN.map(([x, w]) => [x, w]),
@@ -66,7 +58,7 @@ export function boatDabs() {
     (p) => [p[0], DECK, p[1]],
     DECK_W,
   );
-  // the console: a box amidships, its windscreen leaning back over its front
+  // console amidships with a raked windscreen
   const [x0, x1, w, top] = [-0.5, 0.5, 0.5, 1.15];
   for (const side of [-1, 1])
     quad(
@@ -83,7 +75,7 @@ export function boatDabs() {
   return dabs();
 }
 
-// a course ([[e, n], ...], closed) in the viewer's frame at level: { points, at, length }
+// closed course ([[e, n], ...]) in the viewer frame at level: { points, at, length }
 function course({ level, points }) {
   const p = points.map(([e, n]) => new THREE.Vector3(e, level, -n));
   p.push(p[0].clone());
@@ -92,7 +84,7 @@ function course({ level, points }) {
   return { points: p, at, length: at[at.length - 1] };
 }
 
-// where along a course (metres, round and round) is
+// position s metres along a course (wrapping) into out
 function along(c, s, out) {
   s = ((s % c.length) + c.length) % c.length;
   let i = 1;
@@ -101,7 +93,7 @@ function along(c, s, out) {
   return out.lerpVectors(c.points[i - 1], c.points[i], t);
 }
 
-// life.json's boats, drawn: a THREE.Points, cruising each tickMoving (null if none)
+// life.json's boats as a THREE.Points, cruising each tickMoving (null if none)
 export function boatPoints(data) {
   const courses = data.courses
     .filter((c) => c.points.length >= 3)
@@ -113,7 +105,7 @@ export function boatPoints(data) {
     course: c,
     s: rand() * c.length,
     way: rand() < 0.5 ? 1 : -1,
-    off: rand() * 10, // its own time
+    off: rand() * 10, // rocking phase
     heading: null,
   }));
   const { hull, deck, cabin, glass } = data.colours;
@@ -140,7 +132,7 @@ export function boatPoints(data) {
         ahead.sub(behind).setY(0).normalize();
         if (!boat.heading) boat.heading = ahead.clone();
         else boat.heading.lerp(ahead, 1 - Math.exp(-TURN * dt)).normalize();
-        // rocking on the water: rolled, pitched, risen, each in its own time
+        // rock: roll, pitch and heave at different rates
         const o = boat.off;
         level.crossVectors(boat.heading, Y);
         up.copy(Y)

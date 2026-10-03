@@ -1,4 +1,4 @@
-// Scene.py compatibility and GPS math. No DOM or renderer dependencies.
+// scene.json parsing, validation and GPS placement math; no DOM or renderer.
 export function scenePieces(data, threshold = 0) {
   const parent = data.nodes.map((_, i) => i);
   function find(i) {
@@ -22,19 +22,13 @@ export function scenePieces(data, threshold = 0) {
   });
   return [...groups.values()];
 }
-// What surrounds the scene, each one .ply already in the world
-// (postprocess/terrain.py): loaded with it, not part of it.
-export const SURROUNDINGS = ['terrain', 'buildings'];
-// The land under them: a triangle .ply, drawn solid (postprocess/terrain.py).
-export const LAND = 'land';
-// Its roads past where they are points (in terrain): a triangle .ply, solid.
-export const ROADS = 'roads';
-// Its water: flat outlines, each at a level (postprocess/water.py).
-export const WATER = 'water';
-// Its far buildings, solid: a triangle .ply (postprocess/buildings.py's solid).
-export const BLOCKS = 'blocks';
-// What moves round it: its cars' roads, its birds, its boats' courses (postprocess/life.py).
-export const LIFE = 'life';
+// scene.json keys for the map around a placed scene (postprocess/)
+export const SURROUNDINGS = ['terrain', 'buildings']; // point plys in world coordinates
+export const LAND = 'land'; // triangle ply
+export const ROADS = 'roads'; // triangle ply, roads beyond the terrain points
+export const WATER = 'water'; // json: flat outlines at levels
+export const BLOCKS = 'blocks'; // triangle ply, far buildings
+export const LIFE = 'life'; // json: cars, birds, boats, ducks, cats
 export function relativePath(path) {
   if (
     typeof path !== 'string' ||

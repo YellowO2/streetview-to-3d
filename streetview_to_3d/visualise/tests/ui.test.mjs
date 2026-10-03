@@ -44,11 +44,6 @@ test('user flow: select, switch modes, open settings, regroup, hide and restore'
       state.hidden.clear();
       render();
     },
-    group: () => {},
-    tool: (t) => {
-      state.tool = t;
-      render();
-    },
     history: noop,
     reset: noop,
     gps: noop,
@@ -61,8 +56,6 @@ test('user flow: select, switch modes, open settings, regroup, hide and restore'
   ui = createUI(actions);
   render();
   const $ = (id) => document.getElementById(id);
-  for (const id of ['focus', 'clear-selection', 'move', 'rotate', 'apply', 'confidence'])
-    assert.equal($(id), null);
   document.querySelector('.piece-select').click();
   assert.equal($('selection-title').textContent, 'Piece 1');
   $('view-settings').open = true;

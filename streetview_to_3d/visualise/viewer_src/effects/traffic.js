@@ -1,65 +1,45 @@
 import * as THREE from 'three';
 import { cut, fleet, model, random } from '@viewer/effects/moving';
 
-// Cars driving the map's roads (life.json's cars, postprocess/life.py),
-// built and drawn as the buildings are (moving.js).
-//
-// A car is a small hatchback, its real size: its side's outline (bonnet,
-// sloped windscreen, roof, rear window, boot) carried across its width, the
-// cabin above its waist narrower than the body below; glass in its windows
-// either side of a pillar, its windscreen and rear window; wheels; head and
-// tail lights. Its dabs reach past its faces as a building's do, so the
-// faces sit that much inside its size (BODY_W, CABIN_W).
-//
-// A road is a stretch between junctions or ends; two meet where their ends
-// are within JOIN_M, and stretches meeting only each other are one street.
-// A street has one car on it at a time, and the whole a car per CAR_EVERY_M
-// of road (MAX_CARS at most): a quiet place. A car keeps to its
-// side of the road (life.json's side) at its road's own unhurried speed,
-// in its lane's middle, unless a wall is nearer than that (the road's room):
-// then as far over as its width leaves it. At the end of one road it turns
-// onto another there, any but the one it came by, on its own street or one
-// no car is on. Where there is none (the reach's edge, a tunnel's mouth, a
-// junction of busy streets) it drives on, shrinking away over FADE_S, and
-// comes back in at an end of a street no car is on, growing as it comes:
-// cars come and go. Its heading eases round a turn (TURN), so it never
-// jumps across.
-const CAR_EVERY_M = 250, // a car per this much road, all told
+// Cars (life.json) driving the map's roads: small hatchbacks built of dabs (moving.js).
+// One car per street, on its side of the road; at a road's end it turns onto a free road,
+// or with none shrinks away over FADE_S and reappears at a free street's end.
+const CAR_EVERY_M = 250, // one car per this much road
   MAX_CARS = 4,
-  JOIN_M = 1,
-  LOOK_M = 2, // its heading from the road this far behind and ahead
-  TURN = 4, // how fast its heading eases onto the road's, per second
-  FADE_S = 1.5, // a car leaving or coming shrinks away or grows over this long
-  GAP = 0.1, // its dabs' spacing, as a building's gap
-  CLEAR = 0.15; // kept off a wall, past its side
-// how fast on a road this wide (m): unhurried, 20-30 km/h
+  JOIN_M = 1, // road ends this close meet
+  LOOK_M = 2, // heading sampled this far behind and ahead
+  TURN = 4, // heading easing rate (1/s)
+  FADE_S = 1.5, // shrink/grow time when leaving or arriving
+  GAP = 0.1, // dab spacing (m)
+  CLEAR = 0.15; // m kept from a wall
+// m/s for a road this wide (m): 20-30 km/h
 const speedOf = (width) => Math.min(8.5, Math.max(5.5, 4.5 + 0.3 * width));
 
-// its side's outline (metres: x ahead, y up): about 3.7 m long and 1.45 m
-// tall to its dabs' edge
+// side outline (m: x ahead, y up), about 3.7 m long and 1.45 m tall to the dabs' edge;
+// faces sit inside the size since dabs reach past them
 const FOOT_R = [-1.72, 0.3],
   FOOT_F = [1.72, 0.3],
   NOSE = [1.76, 0.6],
-  HOOD = [0.98, 0.78], // the bonnet's end: its waist, in front
+  HOOD = [0.98, 0.78], // bonnet end: front of the waist
   ROOF_F = [0.32, 1.32],
   ROOF_R = [-0.88, 1.36],
-  WAIST_R = [-1.45, 0.84], // the rear window's foot: its waist, behind
+  WAIST_R = [-1.45, 0.84], // rear window foot: back of the waist
   TAIL = [-1.72, 0.78];
-const BODY_W = 1.5, // about 1.7 m to its dabs' edge: half a lane
+const BODY_W = 1.5, // about 1.7 m to the dabs' edge: half a lane
   CABIN_W = 1.3,
-  FRAME = 0.08, // round each side window
-  PILLAR = -0.22, // between the side windows, along it
-  WHEELS = [-1.15, 1.15], // their axles, along it
+  FRAME = 0.08, // around each side window
+  PILLAR = -0.22, // between the side windows (x)
+  WHEELS = [-1.15, 1.15], // axle x
   WHEEL_R = 0.29,
-  LAMP = [0.06, 0.34]; // a lamp between these in from each side
-// what each surface is: life.json's car colours
+  LAMP = [0.06, 0.34]; // lamp extent, in from each side
+// part indices into life.json's car colours
 const BODY = 0,
   GLASS = 1,
   TYRE = 2,
   HEAD = 3,
   TAIL_LAMP = 4;
 
-// a convex polygon ([x, y], ... anticlockwise) moved in by d all round
+// convex polygon ([x, y], ... anticlockwise) inset by d
 function inset(polygon, d) {
   const lines = polygon.map((p, i) => {
     const q = polygon[(i + 1) % polygon.length];
@@ -69,18 +49,18 @@ function inset(polygon, d) {
   });
   return lines.map((a, i) => {
     const b = lines[(i + lines.length - 1) % lines.length];
-    // where the line before meets this one
+    // intersection with the previous edge
     const det = b[2] * a[3] - b[3] * a[2];
     const t = ((a[0] - b[0]) * a[3] - (a[1] - b[1]) * a[2]) / det;
     return [b[0] + b[2] * t, b[1] + b[3] * t];
   });
 }
 
-// A car's dabs, in its own frame (x ahead, y up, z right): model().dabs()'s.
+// a car's dabs in its local frame (x ahead, y up, z right)
 export function carDabs() {
   const { quad, flat, dabs } = model(GAP);
   const at = (z) => (p) => [...p, z];
-  // a strip across from one point of the outline to the next, half wide each side
+  // a strip across the car between two outline points
   const across = (p, q, half, w) =>
     quad([...p, -half], [...q, -half], [...q, half], [...p, half], w);
   const body = [FOOT_R, FOOT_F, NOSE, HOOD, WAIST_R, TAIL],
@@ -91,10 +71,10 @@ export function carDabs() {
     flat(body, at((side * BODY_W) / 2), BODY);
     flat(cabin, at((side * CABIN_W) / 2), BODY, windows);
     for (const pane of windows) flat(pane, at((side * CABIN_W) / 2), GLASS);
-    // the waist's ledge, where the cabin narrows
+    // ledge where the cabin narrows
     const [inner, outer] = [(side * CABIN_W) / 2, (side * BODY_W) / 2];
     quad([...HOOD, inner], [...HOOD, outer], [...WAIST_R, outer], [...WAIST_R, inner], BODY);
-    // the wheels, a little proud of the body
+    // wheels, slightly proud of the body
     for (const axle of WHEELS) {
       const rim = Array.from({ length: 14 }, (_, k) => [
         axle + WHEEL_R * Math.cos((k / 14) * 2 * Math.PI),
@@ -102,12 +82,12 @@ export function carDabs() {
       ]);
       flat(rim, at(side * (BODY_W / 2 + 0.03)), TYRE);
     }
-    // the lamps, a little proud of its nose and tail
+    // lamps, slightly proud of nose and tail
     const [l0, l1] = [side * (BODY_W / 2 - LAMP[1]), side * (BODY_W / 2 - LAMP[0])];
     quad([1.78, 0.47, l0], [1.78, 0.47, l1], [1.78, 0.57, l1], [1.78, 0.57, l0], HEAD);
     quad([-1.74, 0.6, l0], [-1.74, 0.6, l1], [-1.74, 0.74, l1], [-1.74, 0.74, l0], TAIL_LAMP);
   }
-  // its skin round the outline, not its underside
+  // skin around the outline, no underside
   across(FOOT_F, NOSE, BODY_W / 2, BODY);
   across(NOSE, HOOD, BODY_W / 2, BODY);
   across(HOOD, ROOF_F, CABIN_W / 2, GLASS);
@@ -118,10 +98,8 @@ export function carDabs() {
   return dabs();
 }
 
-// life.json's car roads in the viewer's frame (east, height, -north): each
-// { points: [Vector3], at: [metres along], room: [m], length, width, speed,
-// lane, ends: [[{ road, end }] at its start, ... at its end], street: the
-// first road of the ones it runs on into without a junction }
+// life.json's car roads in the viewer frame: { points, at (m along), room (m to a wall), length,
+// width, speed, lane, ends: [[{ road, end }] at start, ... at end], street (its street's first road) }
 export function network(data) {
   const roads = data.roads
     .filter((r) => r.points.length >= 2)
@@ -170,8 +148,8 @@ export function network(data) {
   return roads;
 }
 
-// where along road (metres) is -- past an end, on along its last stretch --
-// and which way it runs there (unit, its own way); its room there (m)
+// position s metres along road into out (extrapolated past the ends), its direction into ahead;
+// returns the room there (m)
 function along(road, s, out, ahead) {
   let i = 1;
   while (i < road.at.length - 1 && road.at[i] < s) i++;
@@ -188,7 +166,7 @@ function along(road, s, out, ahead) {
   return road.room[i - 1] * (1 - u) + road.room[i] * u;
 }
 
-// life.json's cars as its cars, drawn: a THREE.Points, driving each tickMoving
+// life.json's cars as a THREE.Points, driven each tickMoving
 export function trafficPoints(data) {
   const roads = network(data);
   const total = roads.reduce((sum, r) => sum + r.length, 0);
@@ -196,24 +174,24 @@ export function trafficPoints(data) {
   const streets = [...new Set(roads.map((r) => r.street))];
   const count = Math.min(MAX_CARS, streets.length, Math.max(1, Math.round(total / CAR_EVERY_M)));
   const shape = carDabs();
-  const half = BODY_W / 2 + (GAP * 1.6) / 2; // to its dabs' edge
+  const half = BODY_W / 2 + (GAP * 1.6) / 2; // half width to the dabs' edge
   const { body, glass, tyre, head, tail } = data.colours;
-  // each car a colour of its own while they last
+  // distinct colours while they last
   const order = body.map((_, i) => i);
   for (let i = order.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
     [order[i], order[j]] = [order[j], order[i]];
   }
-  // which street each car is on (null: gone, waiting to come back)
+  // street -> the car on it
   const taken = new Map();
   const free = (street) => !taken.has(street);
-  // each street its car to start with, a few streets at random if they are many
+  // start on random streets
   for (let i = streets.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
     [streets[i], streets[j]] = [streets[j], streets[i]];
   }
   const cars = streets.slice(0, count).map((street, c) => {
-    // a road of it by its length, a place on it, a way along it
+    // random road (weighted by length), place and direction
     const mine = roads.map((r, i) => i).filter((i) => roads[i].street === street);
     let pick = rand() * mine.reduce((sum, i) => sum + roads[i].length, 0),
       k = 0;
@@ -224,18 +202,18 @@ export function trafficPoints(data) {
       way: rand() < 0.5 ? 1 : -1,
       colour: body[order[c % order.length]],
       heading: null,
-      shown: 1, // how much of it there is: 0 gone, 1 all of it
+      shown: 1, // 0 gone, 1 fully shown
       leaving: false,
       street,
     };
     taken.set(street, car);
     return car;
   });
-  // where cars come in: the ends no other road meets, else any road's start
+  // entry points: dead ends
   const entries = roads.flatMap((r, road) =>
     [0, 1].filter((end) => !r.ends[end].length).map((end) => ({ road, end })),
   );
-  // back in at an end of a street no car is on; none yet, it waits
+  // re-enter at a free street's dead end (else any free road's start); none free: wait
   const comeIn = (car) => {
     const open = entries.filter((e) => free(roads[e.road].street));
     const at = open.length
@@ -270,10 +248,10 @@ export function trafficPoints(data) {
       cars.forEach((car, c) => {
         let road = roads[car.road];
         car.s += car.way * road.speed * dt;
-        // off its road's end: onto another there, or away
+        // past the road's end: onto a connecting road, or leave
         if (!car.leaving && (car.s < 0 || car.s > road.length)) {
           const end = car.s > road.length ? 1 : 0;
-          // on along its street, or onto one no car is on
+          // same street, or a free one
           const next = road.ends[end].filter(
             (o) => roads[o.road].street === car.street || free(roads[o.road].street),
           );
@@ -299,13 +277,13 @@ export function trafficPoints(data) {
         }
         const room = along(road, car.s, here, ahead);
         if (car.way < 0) ahead.negate();
-        // its heading easing onto the road's
+        // ease the heading onto the road's
         if (!car.heading || car.heading.dot(ahead) < -0.5) car.heading = ahead.clone();
         else car.heading.lerp(ahead, 1 - Math.exp(-TURN * dt)).normalize();
         const h = car.heading;
         right.crossVectors(h, Y).normalize();
         up.crossVectors(right, h).normalize();
-        // in its lane's middle, or as far over as the nearest wall leaves it
+        // lane centre, or as far over as the nearest wall allows
         const over = Math.max(0, Math.min(road.lane, room - half - CLEAR));
         here.addScaledVector(right, (data.side === 'left' ? -1 : 1) * over);
         put(c, here, h, up, right, car.shown);

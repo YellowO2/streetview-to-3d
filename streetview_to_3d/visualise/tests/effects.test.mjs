@@ -137,8 +137,7 @@ test('every kind of point can be cut as a character, its own the same wherever i
   g.setIndex([0, 1, 2]);
   const blocks = blockPoints(g.clone());
   assert.match(blocks.material.fragmentShader, /glyphAt\(gl_PointCoord/);
-  assert.match(blocks.material.vertexShader, /glyphGrow\(seed/); // bigger and fewer, as characters
-  assert.match(blocks.material.vertexShader, /thin\(gl_PointSize/); // far off, fewer
+  assert.match(blocks.material.vertexShader, /worldSize\(d \*/); // characters bigger and fewer; far off, fewer
   assert.equal(blocks.material.uniforms.glyphOn, glyphs.glyphOn);
   const cloud = new THREE.Points(g.clone(), new THREE.PointsMaterial());
   pointMotion(cloud);
@@ -149,7 +148,7 @@ test('every kind of point can be cut as a character, its own the same wherever i
   };
   cloud.material.onBeforeCompile(shader);
   assert.match(shader.fragmentShader, /glyphAt\(gl_PointCoord, styleGlyph\)/);
-  assert.match(shader.vertexShader, /glyphGrow\(phase/);
-  assert.match(shader.vertexShader, /thin\(gl_PointSize/);
+  assert.match(shader.vertexShader, /float worldSize[^}]*glyphGrow[^}]*thin\(/);
+  assert.match(shader.vertexShader, /worldSize\(gl_PointSize/);
   assert.equal(shader.uniforms.glyphOn, glyphs.glyphOn);
 });

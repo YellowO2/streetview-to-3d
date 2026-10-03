@@ -11,8 +11,11 @@ import { createDitherPass, ditherCellSize } from '@viewer/effects/dither';
 import { createEnvironment } from '@viewer/effects/environment';
 import { pointMotion } from '@viewer/effects/points';
 import { setGlyphs } from '@viewer/effects/glyphs';
-
 import { STYLE_DEFAULTS, normalizeStyle } from '@viewer/effects/presets';
+
+// Style pipeline: sky and clouds, per-frame point uniforms, demos, and the postprocess passes.
+// A placed scene is in metres, so the float and scan scale is fixed (the small Stockholm scene's radius).
+const LOOK_M = 33;
 
 export function createStyles(scene, camera, renderer) {
   const environment = createEnvironment(scene);
@@ -22,14 +25,9 @@ export function createStyles(scene, camera, renderer) {
     composer,
     anime,
     dither;
-  // Soft paint's look, and the Characters style's: its points as characters (glyphs.js)
+  // Characters is painted like Soft paint
   const painted = () => style === 'paint' || style === 'characters';
-  // A placed scene is in metres, so the look (float, scan) is one
-  // fixed size, the small Stockholm scene's radius, whatever
-  // the scene's extent.
-  const LOOK_M = 33;
   let asset = null,
-    radius = 1,
     look = 1,
     time = 0,
     entries = [];
@@ -46,7 +44,7 @@ export function createStyles(scene, camera, renderer) {
     composer.addPass(dither);
     composer.addPass(new OutputPass());
   }
-  // the scene's own points' middle, at their bottom
+  // the scene's own points' centre, at their bottom
   function foot() {
     const box = asset?.box();
     if (!box || box.isEmpty()) return null;
@@ -68,7 +66,6 @@ export function createStyles(scene, camera, renderer) {
       uniforms.styleDensity.value = settings.density / 100;
       uniforms.stylePointScale.value = painted() ? 1.2 : 1;
       uniforms.styleRound.value = painted() ? 1 : 0;
-      uniforms.styleRadius.value = radius;
       uniforms.styleLook.value = look;
       uniforms.styleCenter.value.copy(center);
       uniforms.styleTime.value = time;
@@ -92,16 +89,14 @@ export function createStyles(scene, camera, renderer) {
     },
     configure(store, r) {
       asset = store;
-      radius = r;
       look = store.placement === 'world' ? LOOK_M : r;
       const box = store.box();
       box.isEmpty() ? center.set(0, 0, 0) : box.getCenter(center);
       entries = [];
       stopDemo();
-      placeShots(foot() ?? new THREE.Vector3()); // the world whole, shots kept round it
+      placeShots(foot() ?? new THREE.Vector3());
       store.group?.traverse((object) => {
         if (object.userData.pointStyle) {
-          // the buildings' strokes: those near DA3 drawn as its points are
           entries.push({ uniforms: object.material.uniforms, animated: false });
         } else if (object.isPoints) {
           entries.push({ uniforms: pointMotion(object), animated: false });
@@ -119,7 +114,7 @@ export function createStyles(scene, camera, renderer) {
       });
       updateMotion(false);
     },
-    // a demo (demo.js) round the scene's foot
+    // play a demo (demo.js) around the scene's foot
     demo(name) {
       const at = foot();
       if (at) playDemo(name, at);
@@ -147,8 +142,7 @@ export function createStyles(scene, camera, renderer) {
       anime.enabled = painted();
       dither.enabled = style === 'dither';
       const depth = composer.readBuffer.depthTexture;
-      // Spark blends transparent Gaussians without reliable surface depth.
-      // Grade its colour normally; do not interpret the background's depth as a splat surface.
+      // splats have no reliable surface depth: grade colour without the depth mask
       const useDepth = asset.splat ? 0 : 1;
       anime.uniforms.tDepth.value = dither.uniforms.tDepth.value = depth;
       anime.uniforms.useDepth.value = dither.uniforms.useDepth.value = useDepth;
