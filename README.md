@@ -14,13 +14,16 @@ short_description: Reconstructs a street corridor into a 3D point cloud
 
 # Street View to 3D
 
-Reconstructs a stretch of street into one placed 3D point cloud, from Google Street View panoramas. Try it in the **Street → point cloud** tab of the [Hugging Face Space](https://huggingface.co/spaces/potato-bug/street-view-to-3d).
+Reconstructs a stretch of street as 3D point cloud from Google Street View panoramas. Try it on the [Hugging Face Space](https://huggingface.co/spaces/potato-bug/street-view-to-3d).
+
+https://github.com/user-attachments/assets/db1c7f82-ee53-4376-a78a-ec393c426604
 
 For a single panorama as a Gaussian splat, see [panoramic-to-3dgs](https://github.com/YellowO2/panoramic-to-3dgs).
 
 ## Run locally
 
 Requires an NVIDIA GPU and Python 3.12.
+
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
@@ -33,20 +36,12 @@ python app.py
 cd streetview_to_3d/visualise && python3 -m http.server 8000
 ```
 
-## Procedural surroundings
-
-The usual scene build adds OSM-based facade geometry, blue window glass, raised
-pavements, lane markings, mapped crossings and street furniture. See
-[the detail workflow](streetview_to_3d/postprocess/BUILDING_DETAILS.md) for rebuilding
-existing scenes and the spacing defaults.
-
 ## Acknowledgments
 
 - [osm_building_grammar](https://github.com/p-schulz/osm_building_grammar), vendored facade geometry core (Apache 2.0)
 - [Depth-Anything-3](https://github.com/ByteDance-Seed/Depth-Anything-3) (Apache 2.0)
 - [streetlevel](https://github.com/sk-zk/streetlevel), for Street View coverage and downloads
-- Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL)
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT.
