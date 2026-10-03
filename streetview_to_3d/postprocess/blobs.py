@@ -3,11 +3,13 @@ touching nothing else (the remains of a half-masked lamp, a speck of sky).
 First every point further than FAR_M from its own pano: DA3 at that
 distance is guesswork, and a sky it did not mask comes out as a far plane
 around the scene (1.9% of Stockholm's points) -- the map's land and
-buildings stand there instead. Then, past SURE_M, every point no other
-pano's points confirm (none within AGREE_M of it): a real wall comes out
-where each pano that sees it puts it, a wall one pano made up only in its
-own (Himi: walls far off, misplaced) -- where only one pano saw anything,
-its points past SURE_M go, as they would under a shorter cut.
+buildings stand there instead. Then, past SURE_M, every point no pano near
+it confirms (another pano within SURE_M of it, its points within AGREE_M of
+it): near, a pano sees a wall where it is; far, two panos side by side guess
+it alike, and as wrong -- across a river both put the far bank where it is
+not (Himi, Toyama's riverside). Along a street the next pano stands by what
+this one saw far off, and keeps it; across water none does, and the map's
+land and buildings stand there instead.
 
 Every node's points, in the world, go into VOXEL_M cells; cells within
 LINK_M of each other are joined, and a joined group under MIN_CELLS cells
@@ -33,7 +35,7 @@ from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
 
 VOXEL_M, LINK_M, MIN_CELLS = 0.1, 0.25, 300
 FAR_M = 25.0   # past this DA3 is guesswork: gone
-SURE_M, AGREE_M = 12.0, 0.3   # past this from its pano, a point stays only if another pano's are this near it
+SURE_M, AGREE_M = 12.0, 0.3   # past this from its pano, a point stays only if a pano this near it has points this near it
 EVERY = 2                     # another pano's points: every this many of them, enough to confirm by
 
 
@@ -49,19 +51,18 @@ def loose_bits(points):
 
 def confirmed(clouds, panos):
     """For each cloud (world points, (n, 3)) whose pano (panos, (3,) or
-    None) is known, True on its points another pano's points have one of
-    within AGREE_M -- only clouds whose panos could see the same place
-    (2 FAR_M apart or less) asked."""
+    None) is known, True on its points another pano near (within SURE_M of
+    the point) has one of its own points within AGREE_M of."""
     trees = [cKDTree(c[::EVERY]) if len(c) else None for c in clouds]
     out = [np.zeros(len(c), bool) for c in clouds]
     for k, (c, pk) in enumerate(zip(clouds, panos)):
         if pk is None or not len(c):
             continue
         for j, (t, pj) in enumerate(zip(trees, panos)):
-            if j == k or t is None or pj is None or np.linalg.norm(pj - pk) > 2 * FAR_M:
+            if j == k or t is None or pj is None or np.linalg.norm(pj - pk) > FAR_M + SURE_M:
                 continue
-            todo = ~out[k]
-            if todo.any():
+            todo = np.flatnonzero(~out[k] & (np.linalg.norm(c - pj, axis=1) <= SURE_M))   # what j sees near
+            if len(todo):
                 out[k][todo] = np.isfinite(t.query(c[todo], distance_upper_bound=AGREE_M, workers=-1)[0])
     return out
 

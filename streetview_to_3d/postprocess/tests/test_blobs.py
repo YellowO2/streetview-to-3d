@@ -16,15 +16,16 @@ def test_floating_ball_removed_wall_and_what_touches_it_kept():
     assert not loose[len(wall) + len(ball):].any()
 
 
-def test_a_far_wall_stays_only_if_another_pano_puts_it_there_too():
+def test_a_far_wall_stays_only_if_a_pano_near_it_puts_it_there_too():
     g = np.arange(0, 4, 0.05)
     wall = lambda x: np.c_[np.full(g.size ** 2, x), np.repeat(g, g.size), np.tile(g, g.size)]   # a wall x m east
     real = wall(15.0)
-    a = np.concatenate([real, wall(16.0)])          # A sees the real wall, and makes one up a metre behind it
-    b = real + 0.05                                 # B, 10 m along, sees the real one (a little off)
-    sure = blobs.confirmed([a, b], [np.zeros(3), np.array([0.0, 0.0, 10.0])])
-    assert sure[0][:len(real)].all()                # the real wall: both put it there
+    a = np.concatenate([real, wall(16.0)])          # A, 15 m off, sees the real wall, and makes one up behind it
+    near = real + 0.05                              # B, 8 m from the wall, sees the real one (a little off)
+    sure = blobs.confirmed([a, near], [np.zeros(3), np.array([8.0, 2.0, 2.0])])
+    assert sure[0][:len(real)].all()                # the real wall: B near it puts it there too
     assert not sure[0][len(real):].any()            # the made-up one: A's alone
-    assert sure[1].all()
-    # a pano too far off to have seen the same place is not asked
-    assert not blobs.confirmed([a, b], [np.zeros(3), np.array([0.0, 0.0, 100.0])])[0].any()
+    # across a river: C beside A, as far off, guesses the same made-up wall -- no pano near it, no confirming
+    c = wall(16.0) + 0.02
+    sure = blobs.confirmed([a, c], [np.zeros(3), np.array([0.0, 0.0, 3.0])])
+    assert not sure[0].any() and not sure[1].any()
