@@ -45,7 +45,7 @@ def place_name(lat, lon):
         request = urllib.request.Request(url, headers={"User-Agent": "streetview-to-3d gallery"})
         address = json.load(urllib.request.urlopen(request, timeout=10)).get("address", {})
         parts = [next((address[k] for k in keys if k in address), None)
-                 for keys in (("suburb", "village", "hamlet", "town", "city", "municipality"),
+                 for keys in (("city", "town", "village", "hamlet", "suburb", "municipality"),
                               ("state", "province", "county"), ("country",))]
         name = ", ".join(dict.fromkeys(p for p in parts if p))
         if name:

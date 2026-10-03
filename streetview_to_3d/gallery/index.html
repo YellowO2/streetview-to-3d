@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Street View to 3D · gallery</title>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.19.0/dist/maplibre-gl.css" />
     <style>
       :root {
         color-scheme: dark;
@@ -11,12 +12,13 @@
           14px/1.5 system-ui,
           sans-serif;
         color: #e6edf2;
-        background: #11171e;
+        background: #05080c;
       }
-      body {
-        max-width: 760px;
-        margin: 0 auto;
-        padding: 32px 16px;
+      html,
+      body,
+      #globe {
+        height: 100%;
+        margin: 0;
       }
       a {
         color: #c2e6ad;
@@ -24,63 +26,160 @@
       .muted {
         color: #9badbb;
       }
-      ul {
-        list-style: none;
-        padding: 0;
-      }
-      li a {
-        display: flex;
-        justify-content: space-between;
-        gap: 16px;
-        padding: 12px 14px;
-        margin: 8px 0;
-        background: #19222c;
+      #panel {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        width: 260px;
+        max-height: calc(100% - 24px);
+        overflow-y: auto;
+        padding: 16px;
+        background: #19222cee;
         border: 1px solid #303c48;
         border-radius: 10px;
-        text-decoration: none;
       }
-      li a:hover {
-        border-color: #c2e6ad;
+      #panel h1 {
+        margin: 0;
+        font-size: 18px;
+      }
+      #scenes {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      #scenes button {
+        width: 100%;
+        padding: 8px 0;
+        font: inherit;
+        color: inherit;
+        text-align: left;
+        background: none;
+        border: 0;
+        border-top: 1px solid #303c48;
+        cursor: pointer;
+      }
+      #scenes button:hover {
+        color: #c2e6ad;
+      }
+      .maplibregl-popup-content {
+        color: #e6edf2;
+        background: #19222c;
+        border-radius: 10px;
+      }
+      .maplibregl-popup-tip {
+        border-top-color: #19222c !important;
+        border-bottom-color: #19222c !important;
       }
     </style>
   </head>
   <body>
-    <h1>Street View to 3D</h1>
-    <p class="muted">
-      Streets people have reconstructed. Click one to fly through it, or
-      <a href="https://huggingface.co/spaces/potato-bug/street-view-to-3d">make your own</a>.
-    </p>
-    <ul id="scenes">
-      <li class="muted">Loading…</li>
-    </ul>
+    <div id="globe"></div>
+    <div id="panel">
+      <h1>Street View to 3D</h1>
+      <p class="muted">
+        Streets people have reconstructed. Pick one to fly through it, or
+        <a href="https://huggingface.co/spaces/potato-bug/street-view-to-3d">make your own</a>.
+      </p>
+      <ul id="scenes">
+        <li class="muted">Loading…</li>
+      </ul>
+    </div>
+    <script src="https://unpkg.com/maplibre-gl@5.19.0/dist/maplibre-gl.js"></script>
     <script type="module">
       // the public dataset gallery/publish.py uploads to
       const DATA =
         'https://huggingface.co/datasets/potato-bug/street-view-to-3d-scenes/resolve/main/';
+      const NEAR = 13; // zoom a picked scene is flown to
+      const map = new maplibregl.Map({
+        container: 'globe',
+        zoom: 1.5,
+        center: [100, 30],
+        style: {
+          version: 8,
+          projection: { type: 'globe' },
+          sources: {
+            satellite: {
+              type: 'raster',
+              tiles: [
+                'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg',
+              ],
+              tileSize: 256,
+              maxzoom: 14,
+              attribution:
+                '<a href="https://s2maps.eu">Sentinel-2 cloudless</a> by EOX (CC BY-NC-SA 4.0)',
+            },
+          },
+          layers: [{ id: 'satellite', type: 'raster', source: 'satellite' }],
+          sky: { 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] },
+        },
+      });
+
+      const text = (tag, content, className) => {
+        const e = document.createElement(tag);
+        e.textContent = content;
+        if (className) e.className = className;
+        return e;
+      };
+      // a scene's card: its name, what it holds and the link that opens it in the viewer
+      function card(s) {
+        const open = text('a', 'Fly through →');
+        open.href = `viewer.html?${new URLSearchParams({
+          scene: `${DATA}scenes/${s.id}/scene.json`,
+          name: s.place,
+        })}`;
+        const about = `${s.panos.length} panoramas · ${Math.round(s.bytes / 1e6)} MB · ${s.date}`;
+        const div = document.createElement('div');
+        div.append(text('strong', s.place), text('div', about, 'muted'), open);
+        return div;
+      }
+      const popup = new maplibregl.Popup({ offset: 12 });
+      function pick(s) {
+        map.flyTo({ center: [s.lon, s.lat], zoom: Math.max(map.getZoom(), NEAR) });
+        popup.setLngLat([s.lon, s.lat]).setDOMContent(card(s)).addTo(map);
+      }
+
       const list = document.getElementById('scenes');
       try {
         const { scenes } = await (await fetch(DATA + 'index.json', { cache: 'no-cache' })).json();
+        scenes.reverse(); // newest first
         list.replaceChildren(
-          ...scenes.reverse().map((s) => {
-            const a = document.createElement('a');
-            a.href = `viewer.html?${new URLSearchParams({
-              scene: `${DATA}scenes/${s.id}/scene.json`,
-              name: s.place,
-            })}`;
-            const name = document.createElement('span');
-            name.textContent = s.place;
-            const about = document.createElement('span');
-            about.className = 'muted';
-            about.textContent = `${s.panos.length} panoramas · ${Math.round(s.bytes / 1e6)} MB · ${s.date}`;
-            a.append(name, about);
+          ...scenes.map((s) => {
+            const button = text('button', s.place);
+            button.onclick = () => pick(s);
             const li = document.createElement('li');
-            li.append(a);
+            li.append(button);
             return li;
           }),
         );
-        if (!scenes.length) list.innerHTML = '<li class="muted">Nothing here yet.</li>';
+        if (!scenes.length) list.replaceChildren(text('li', 'Nothing here yet.', 'muted'));
+        if (!map.loaded()) await map.once('load');
+        map.addSource('scenes', {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: scenes.map((s, i) => ({
+              type: 'Feature',
+              properties: { i },
+              geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+            })),
+          },
+        });
+        map.addLayer({
+          id: 'scenes',
+          type: 'circle',
+          source: 'scenes',
+          paint: {
+            'circle-radius': 7,
+            'circle-color': '#c2e6ad',
+            'circle-stroke-color': '#17201a',
+            'circle-stroke-width': 2,
+          },
+        });
+        map.on('click', 'scenes', (e) => pick(scenes[e.features[0].properties.i]));
+        map.on('mouseenter', 'scenes', () => (map.getCanvas().style.cursor = 'pointer'));
+        map.on('mouseleave', 'scenes', () => (map.getCanvas().style.cursor = ''));
       } catch {
-        list.innerHTML = '<li class="muted">Could not load the gallery.</li>';
+        list.replaceChildren(text('li', 'Could not load the gallery.', 'muted'));
       }
     </script>
   </body>
