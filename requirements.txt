@@ -1,3 +1,4 @@
+# What the HF Space installs: pyproject.toml's dependencies, less gradio (the Space's SDK provides it).
 spaces
 
 aiohttp
@@ -5,16 +6,13 @@ numpy
 scipy
 shapely
 mapbox-vector-tile
-
-# depth_anything_3 imports these but does not declare them (checked against
-# its pyproject: addict in model/da3.py and utils/registry.py, tqdm in
-# model/utils/gs_renderer.py -- both on the import path of its own api).
-addict
-tqdm
 opencv-python
 pillow
 huggingface_hub
-pyyaml
+
+# depth_anything_3 imports these without declaring them
+addict
+tqdm
 
 streetlevel @ git+https://github.com/YellowO2/streetlevel.git
 torchvision

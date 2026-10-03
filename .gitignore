@@ -1,9 +1,10 @@
 .venv
-data
+/data
 *.egg-info
-build
+/build
 __pycache__
+.pytest_cache
 .DS_Store
-models
-references
+/models
+/references
 .claude

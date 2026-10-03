@@ -36,6 +36,13 @@ python app.py
 cd streetview_to_3d/visualise && python3 -m http.server 8000
 ```
 
+## Tests
+
+```bash
+pip install pytest && python -m pytest streetview_to_3d
+cd streetview_to_3d/visualise && npm install && npm test
+```
+
 ## Acknowledgments
 
 - [osm_building_grammar](https://github.com/p-schulz/osm_building_grammar), vendored facade geometry core (Apache 2.0)

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "streetview-to-3d"
 version = "0.1.0"
 description = "Reconstruct a street from Street View panoramas into a placed 3D point cloud"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "numpy",
     "scipy",
@@ -19,12 +19,16 @@ dependencies = [
     "gradio",
     "spaces",
     "transformers",  # the car/person segmenter (services.segment)
+    "torchvision",   # its SegFormer image processor
     # depth_anything_3 imports these without declaring them
     "addict",
     "tqdm",
     "streetlevel @ git+https://github.com/YellowO2/streetlevel.git",
     "panoramic-da3 @ git+https://github.com/YellowO2/panoramic-da3.git",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest"]
 
 [tool.setuptools.packages.find]
 where = ["."]
