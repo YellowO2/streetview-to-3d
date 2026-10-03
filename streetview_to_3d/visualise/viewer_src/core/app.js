@@ -8,6 +8,7 @@ import { createViewport } from '@viewer/core/viewport';
 import { createNavigation } from '@viewer/flight/navigation';
 import { createEditor } from '@viewer/core/editor';
 import { createUI } from '@viewer/ui/shell';
+import { exportPly } from '@viewer/core/export';
 
 const SPLAT_RADIUS = 20; // view radius for a splat, which has no bounds
 const PLACED_POINT_M = 0.1; // DA3 point size in a placed (metric) scene
@@ -66,6 +67,12 @@ const ui = createUI(
     buildings: (on) => {
       showBuildings = on;
       setBuildings();
+    },
+    export: (parts) => {
+      if (!store.group || store.splat || busy) return;
+      if (!parts.length) return ui.notify('Choose something to export.');
+      const name = store.name.replace(/[^\w.-]+/g, '_') || 'scene';
+      download(exportPly(store.group, parts, store.data?.center), `${name}.ply`);
     },
   },
   { editable },
@@ -251,6 +258,16 @@ async function load({ source, resolve, name, splat = false }) {
     }
   }
 }
+function download(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
 async function save() {
   if (!editable || store.placement !== 'world' || editor.dragging || busy) return;
   const blob = new Blob([JSON.stringify(store.exported(), null, 2) + '\n'], {
@@ -273,14 +290,7 @@ async function save() {
     }
     return;
   }
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'scene.json';
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  download(blob, 'scene.json');
   store.markExportRequested();
   refresh();
   ui.notify(

@@ -7,7 +7,7 @@ change point positions or scene.json.
 
 - core/: app.js wires everything; viewport.js (renderer, camera, styles), scene-store.js and
   scene-format.js (loading, scene.json), files.js (dropped files), state.js (modes,
-  selection, undo), editor.js (move gizmo), start-view.js.
+  selection, undo), editor.js (move gizmo), start-view.js, export.js (the scene as one PLY).
 - flight/: navigation.js (orbit/fly), flight-motion.js, the chase bird (bird.js, bird-paint.js,
   bird-plume.js), gun.js and the holes it shoots (shot.js).
 - style/: presets.js, controller.js (per-frame uniforms, demos, postprocess chain), points.js

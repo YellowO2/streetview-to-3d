@@ -51,6 +51,12 @@ const knobs = {
   ),
 };
 
+// the water's own colour (linear) this many metres from shore, without its reflection
+export function waterColour(shore, target = new THREE.Color()) {
+  const t = Math.min(Math.max(shore / KNOBS.deepM, 0), 1);
+  return target.lerpColors(knobs.shallow.value, knobs.deep.value, t * t * (3 - 2 * t));
+}
+
 // metres from shore at (east, north), bilinear on the shore grid
 function shoreAt(shore, e, n) {
   if (!shore) return KNOBS.deepM;

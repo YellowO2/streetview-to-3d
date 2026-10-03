@@ -43,6 +43,15 @@
       <button id="toggle-settings" class="quiet" aria-pressed="false" aria-controls="view-panel">
         Settings
       </button>
+      <button
+        id="toggle-export"
+        class="quiet"
+        aria-pressed="false"
+        aria-controls="export-panel"
+        disabled
+      >
+        Export
+      </button>
       <button id="recenter" disabled title="Fit the entire scene (F)">
         <svg
           viewBox="0 0 24 24"
@@ -116,6 +125,23 @@
               ><input id="show-buildings" type="checkbox" checked /> Show buildings</label
             >
           </details>
+        </div>
+        <div id="export-panel" class="view-panel" aria-label="Export" hidden>
+          <h3>Export</h3>
+          <label class="check"
+            ><input id="export-street" type="checkbox" checked /> Street points</label
+          >
+          <label class="check"
+            ><input id="export-ground" type="checkbox" checked /> Ground and water</label
+          >
+          <label class="check"
+            ><input id="export-buildings" type="checkbox" checked /> Map buildings</label
+          >
+          <button id="export-ply">Download .ply</button>
+          <p class="muted">
+            Coloured points in metres, Z up, centred on the scene. Opens in Blender, CloudCompare
+            and MeshLab.
+          </p>
         </div>
         <div id="empty">
           <h1>Street View in 3D</h1>

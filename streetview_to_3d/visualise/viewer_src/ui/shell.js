@@ -28,10 +28,19 @@ export function createUI(actions, { editable = true } = {}) {
     $('folder').value = '';
     actions.files(files);
   };
-  bind('toggle-settings', () => {
-    $('view-panel').hidden = !$('view-panel').hidden;
-    $('toggle-settings').setAttribute('aria-pressed', String(!$('view-panel').hidden));
-  });
+  // Settings and Export share the corner: opening one closes the other
+  const panels = { 'toggle-settings': 'view-panel', 'toggle-export': 'export-panel' };
+  for (const [button, panel] of Object.entries(panels))
+    bind(button, () => {
+      const open = $(panel).hidden;
+      for (const [b, p] of Object.entries(panels)) {
+        $(p).hidden = !(open && p === panel);
+        $(b).setAttribute('aria-pressed', String(!$(p).hidden));
+      }
+    });
+  bind('export-ply', () =>
+    actions.export(['street', 'ground', 'buildings'].filter((p) => $(`export-${p}`).checked)),
+  );
   bind('dismiss-notice', () => ($('notice').hidden = true));
   function settings() {
     const point = 2 ** Number($('point-size').value),
@@ -83,6 +92,8 @@ export function createUI(actions, { editable = true } = {}) {
       }
       $('recenter').disabled = blocked || !store.group;
       for (const id of ['open-folder', 'toggle-settings']) $(id).disabled = blocked;
+      $('toggle-export').disabled = blocked || !store.group || !!store.splat;
+      if ($('toggle-export').disabled) $('export-panel').hidden = true;
       for (const input of document.querySelectorAll('#view-panel input')) input.disabled = blocked;
       styles.render(store, blocked);
       manager?.render(store, state, { busy, dragging });
