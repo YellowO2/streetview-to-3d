@@ -29,7 +29,7 @@ test('assembled app: load, GPS prepare, regroup, select, adjust, undo, mode swit
     addEventListener: win.addEventListener.bind(win),
     confirm: () => true,
   });
-  await import('@viewer/app');
+  await import('@viewer/core/app');
   const $ = (id) => document.getElementById(id);
   assert($('status').hidden);
   assert($('editing').hidden);

@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ViewerState } from '@viewer/state';
-import { scenePieces, placementMode, validateScene } from '@viewer/scene-format';
-import { resolveEntries } from '@viewer/files';
+import { ViewerState } from '@viewer/core/state';
+import { scenePieces, placementMode, validateScene } from '@viewer/core/scene-format';
+import { resolveEntries } from '@viewer/core/files';
 const data = {
   center: [1, 103],
   nodes: Array.from({ length: 4 }, (_, i) => ({

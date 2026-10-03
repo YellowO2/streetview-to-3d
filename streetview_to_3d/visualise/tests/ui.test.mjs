@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { viewerTemplate } from './fixture.mjs';
 import { JSDOM } from 'jsdom';
-import { createUI } from '@viewer/ui';
-import { ViewerState } from '@viewer/state';
+import { createUI } from '@viewer/ui/shell';
+import { ViewerState } from '@viewer/core/state';
 test('user flow: select, switch modes, open settings, regroup, hide and restore', () => {
   const dom = new JSDOM(viewerTemplate());
   globalThis.document = dom.window.document;

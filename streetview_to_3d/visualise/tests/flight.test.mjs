@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { advanceFlight, FLIGHT, steerBird } from '@viewer/flight-motion';
-import { createBird } from '@viewer/bird';
+import { advanceFlight, FLIGHT, steerBird } from '@viewer/flight/flight-motion';
+import { createBird } from '@viewer/flight/bird';
 test('flight acceleration and braking are consistent across frame rates', () => {
   const results = [30, 60, 144].map((fps) => {
     const p = new THREE.Vector3(),

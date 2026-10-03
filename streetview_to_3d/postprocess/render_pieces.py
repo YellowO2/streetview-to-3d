@@ -7,7 +7,7 @@ import os
 
 import numpy as np
 
-from streetview_to_3d import scene as scene_mod
+from streetview_to_3d.common import scene as scene_mod
 from streetview_to_3d.postprocess.ply_io import read_node, write_ply
 
 

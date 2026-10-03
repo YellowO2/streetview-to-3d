@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { panoramaStart } from '@viewer/start-view';
+import { panoramaStart } from '@viewer/core/start-view';
 
 test('starts one metre above the nearest panorama after point-cloud placement', () => {
   const result = panoramaStart({

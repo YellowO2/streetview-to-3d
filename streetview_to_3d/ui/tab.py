@@ -4,13 +4,14 @@ import zipfile
 
 import gradio as gr
 
-from streetview_to_3d import scene as scene_mod
+from streetview_to_3d.common import scene as scene_mod
 from streetview_to_3d.ui import viewers
-from streetview_to_3d.paths import new_run_dir
-from streetview_to_3d.postprocess import life, pipeline, seams, water
+from streetview_to_3d.common.paths import new_run_dir
+from streetview_to_3d.postprocess import pipeline, seams
+from streetview_to_3d.postprocess.world import life, water
 from streetview_to_3d.reconstruct import build as street_main
-from streetview_to_3d.services import mask_api
-from streetview_to_3d.services.pipeline_runner import (
+from streetview_to_3d.models import mask_api
+from streetview_to_3d.reconstruct.runner import (
     DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, WalkSettings, estimate_gpu_seconds,
 )
 from streetview_to_3d.ui.map_selection.tab import build_map_section, corridor_edges, nodes_by_key
@@ -73,7 +74,7 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
 
     The rest are hidden per-run overrides for the API (0/blank: defaults): keep_pct of
     each view's pixels, gpu_seconds (else sized from effort), view_hfov, da3_model, masker,
-    comma-separated mask_classes, fill, conf_floor. See pipeline_runner.WalkSettings.
+    comma-separated mask_classes, fill, conf_floor. See reconstruct.runner.WalkSettings.
     """
     if not prep:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -141,7 +142,7 @@ def build_main_tab():
         show_progress_on=[pathfind_status],
     )
 
-    # The masker alone on one pano, API only (see services.mask_api).
+    # The masker alone on one pano, API only (see models.mask_api).
     gr.api(mask_api.mask_pano, api_name="mask_pano")
     gr.api(mask_api.depth_pano, api_name="depth_pano")
 

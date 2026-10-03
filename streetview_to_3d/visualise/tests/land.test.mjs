@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { landPoints, MIN_GAP } from '@viewer/effects/land';
-import { covering } from '@viewer/effects/blocks';
-import { GAPS, level } from '@viewer/effects/scatter';
+import { landPoints, MIN_GAP } from '@viewer/world/land';
+import { covering } from '@viewer/world/blocks';
+import { GAPS, level } from '@viewer/world/scatter';
 
 // 100 m square in the viewer's frame (y up), two triangles, wound downwards
 function field() {

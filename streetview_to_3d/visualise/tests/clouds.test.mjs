@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { cloudRows, createClouds, inside } from '@viewer/effects/clouds';
+import { cloudRows, createClouds, inside } from '@viewer/world/clouds';
 
 const cloudField = (coverage) => {
   const rows = cloudRows(coverage);

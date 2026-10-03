@@ -1,4 +1,4 @@
 """Street View panoramas along a street, reconstructed into one
 placed 3D point cloud."""
 # First, so `spaces` is imported before anything initialises CUDA.
-from streetview_to_3d import gpu  # noqa: F401
+from streetview_to_3d.models import gpu  # noqa: F401

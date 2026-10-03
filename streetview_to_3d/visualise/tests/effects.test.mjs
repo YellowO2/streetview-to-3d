@@ -1,12 +1,12 @@
-import { ditherCellSize } from '@viewer/effects/dither';
+import { ditherCellSize } from '@viewer/style/dither';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { JSDOM } from 'jsdom';
 import { viewerTemplate } from './fixture.mjs';
-import { createStyleControls } from '@viewer/effects/ui';
-import { createEnvironment } from '@viewer/effects/environment';
-import { pointMotion } from '@viewer/effects/points';
+import { createStyleControls } from '@viewer/ui/style-controls';
+import { createEnvironment } from '@viewer/world/environment';
+import { pointMotion } from '@viewer/style/points';
 
 test('style controls retain per-preset settings and expose only supported splat controls', () => {
   const dom = new JSDOM(viewerTemplate());
@@ -104,7 +104,7 @@ test('dither density is bounded across viewport sizes and pixel ratios', () => {
 });
 
 test('bird materials compose with shared point styling and stable particle density', async () => {
-  const { createBird } = await import('@viewer/bird');
+  const { createBird } = await import('@viewer/flight/bird');
   const model = createBird();
   let cloud;
   model.bird.traverse((o) => {
@@ -129,8 +129,8 @@ test('bird materials compose with shared point styling and stable particle densi
 });
 
 test('every kind of point can be cut as a character, its own the same wherever it is drawn', async () => {
-  const { GLYPH, glyphs } = await import('@viewer/effects/glyphs');
-  const { blockPoints } = await import('@viewer/effects/blocks');
+  const { GLYPH, glyphs } = await import('@viewer/style/glyphs');
+  const { blockPoints } = await import('@viewer/world/blocks');
   assert.match(GLYPH, /float glyphAt/);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 9, 9, 0, 9], 3));

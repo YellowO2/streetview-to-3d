@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { birdDabs, birdPoints, KINDS, wingAngle } from '@viewer/effects/birds';
-import { boatDabs, boatPoints } from '@viewer/effects/boats';
-import { tickMoving } from '@viewer/effects/moving';
-import { duckDabs, duckPoints } from '@viewer/effects/ducks';
-import { catDabs, catPoints } from '@viewer/effects/cats';
+import { flockDabs, birdPoints, KINDS, wingAngle } from '@viewer/life/flock';
+import { boatDabs, boatPoints } from '@viewer/life/boats';
+import { tickMoving } from '@viewer/life/moving';
+import { duckDabs, duckPoints } from '@viewer/life/ducks';
+import { catDabs, catPoints } from '@viewer/life/cats';
 
 const extent = (made, d) => {
   const v = Array.from({ length: made.dab.length }, (_, i) => made.centre[3 * i + d]);
@@ -22,7 +22,7 @@ const birds = {
 };
 
 test('a bird its real size: a pigeon 0.66 m across its wings, a gull 1.25, a swallow 0.32', () => {
-  const [pigeon, gull, swallow] = ['pigeon', 'gull', 'swallow'].map((k) => birdDabs(KINDS[k]));
+  const [pigeon, gull, swallow] = ['pigeon', 'gull', 'swallow'].map((k) => flockDabs(KINDS[k]));
   assert(Math.abs(spread(pigeon, 2) - 0.66) < 0.06 && Math.abs(spread(gull, 2) - 1.25) < 0.1);
   assert(Math.abs(spread(swallow, 2) - 0.32) < 0.05);
   assert(

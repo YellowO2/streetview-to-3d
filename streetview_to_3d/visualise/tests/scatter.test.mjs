@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { GAPS, level, parseSurface, scatter } from '@viewer/effects/scatter';
+import { GAPS, level, parseSurface, scatter } from '@viewer/world/scatter';
 
 // A surface as parseSurface gives it: triangles, a colour and gap per corner.
 function surface(corners, faces, gap) {

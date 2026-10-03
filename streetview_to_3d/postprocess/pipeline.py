@@ -11,10 +11,10 @@ import argparse
 import os
 import time
 
-from streetview_to_3d import fill as fill_mod
-from streetview_to_3d.postprocess import clean as clean_mod
-from streetview_to_3d.postprocess import terrain
-from streetview_to_3d.postprocess.blobs import drop_blobs
+from streetview_to_3d.postprocess import fill as fill_mod
+from streetview_to_3d.postprocess.clean import clean as clean_mod
+from streetview_to_3d.postprocess.world import terrain
+from streetview_to_3d.postprocess.clean.blobs import drop_blobs
 from streetview_to_3d.postprocess.render_pieces import render
 from streetview_to_3d.postprocess.place import place
 

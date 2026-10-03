@@ -9,11 +9,11 @@ import json
 
 import gradio as gr
 
-from streetview_to_3d.services.geo import extract_lat_lon
-from streetview_to_3d.build_street_graph.fetch_nodes import corridor_points
-from streetview_to_3d.services.pipeline_runner import estimate_gpu_seconds, estimate_other_seconds
-from streetview_to_3d.services.streetview_fetch import fetch_pano_by_id, google_node, run_async
-from streetview_to_3d.ui.map_selection import candidates as candidates_mod
+from streetview_to_3d.common.geo import extract_lat_lon
+from streetview_to_3d.panos.fetch_nodes import corridor_points
+from streetview_to_3d.reconstruct.runner import estimate_gpu_seconds, estimate_other_seconds
+from streetview_to_3d.common.streetview_fetch import fetch_pano_by_id, google_node, run_async
+from streetview_to_3d.panos import candidates as candidates_mod
 from streetview_to_3d.ui.map_selection import map_ui
 
 BRIDGE_ELEM_ID = "map_bridge"

@@ -1,7 +1,7 @@
 """The walk: from N date graphs, the most complete corridor in the fewest DA3 pieces.
 
 No GPU or downloads here: it calls test_edge/rate_pano callbacks, and runs inside the
-caller's one @spaces.GPU call (pipeline_runner) because each next test depends on the last.
+caller's one @spaces.GPU call (runner.py) because each next test depends on the last.
 """
 import os
 import time
@@ -9,7 +9,7 @@ from collections import deque
 
 import numpy as np
 
-from streetview_to_3d.services.geo import haversine_m
+from streetview_to_3d.common.geo import haversine_m
 
 
 def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: list[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray]:
@@ -122,8 +122,8 @@ def run_pathfind_reconstruction(
     Phase 2 (set_cover): greedy set cover over every piece from every date.
 
     date_graphs: [{"date", "dot_candidates": {dot: [(key, path, lat, lon)]}}], downloaded.
-    test_edge(path_a, path_b, test_id) -> da3_ops.test_edge's tuple, or None.
-    rate_pano(path) -> da3_ops.rate_pano's tuple.
+    test_edge(path_a, path_b, test_id) -> models.da3.test_edge's tuple, or None.
+    rate_pano(path) -> models.da3.rate_pano's tuple.
 
     Returns [(clouds, path_edges, date, frame_poses)], one per chosen piece, each in its
     own DA3 frame. frame_poses: {key: (center, rotation, path, lat, lon, n_views_kept,

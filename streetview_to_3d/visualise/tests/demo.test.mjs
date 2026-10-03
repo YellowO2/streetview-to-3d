@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { demo, DEMOS, playDemo, tickDemo } from '@viewer/effects/demo';
-import { pointMotion } from '@viewer/effects/points';
-import { blockPoints } from '@viewer/effects/blocks';
-import { landPoints } from '@viewer/effects/land';
-import { waterSurfaces } from '@viewer/effects/water';
+import { demo, DEMOS, playDemo, tickDemo } from '@viewer/style/demo';
+import { pointMotion } from '@viewer/style/points';
+import { blockPoints } from '@viewer/world/blocks';
+import { landPoints } from '@viewer/world/land';
+import { waterSurfaces } from '@viewer/world/water';
 
 const points = () => {
   const shader = {

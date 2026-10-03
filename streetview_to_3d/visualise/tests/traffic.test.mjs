@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { carDabs, network, trafficPoints } from '@viewer/effects/traffic';
-import { tickMoving } from '@viewer/effects/moving';
+import { carDabs, network, trafficPoints } from '@viewer/life/traffic';
+import { tickMoving } from '@viewer/life/moving';
 
 const colours = {
   body: [[0.8, 0.1, 0.1]],

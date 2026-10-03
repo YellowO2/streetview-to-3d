@@ -6,9 +6,9 @@ import asyncio
 import os
 import time
 
-from streetview_to_3d.services.pipeline_runner import WalkSettings, run_walk_gpu, save_pointcloud
-from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, fetch_da3_pano, run_async
-from streetview_to_3d.build_street_graph.build_graph import build_corridor_graphs
+from streetview_to_3d.reconstruct.runner import WalkSettings, run_walk_gpu, save_pointcloud
+from streetview_to_3d.common.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, fetch_da3_pano, run_async
+from streetview_to_3d.panos.build_graph import build_corridor_graphs
 
 # Panos downloaded at once: fast enough that the ZeroGPU token (wall-clock) doesn't expire
 # before the GPU call, bounded so Google's rate limiter isn't tripped.
@@ -118,7 +118,7 @@ def run_prepared_pathfind(prep: dict, output_dir, settings=WalkSettings()):
 def open_scene(prep, output_dir):
     """A scene with one node per dot that has a candidate (its best-ranked pano), saved
     before the GPU runs; reconstruction fills in the rest."""
-    from streetview_to_3d import scene as scene_mod
+    from streetview_to_3d.common import scene as scene_mod
     best, elevations = {}, prep.get("elevations") or []
     for key, c in prep["catalog"].items():
         best.setdefault(c["dot"], (key, c))
@@ -144,7 +144,7 @@ def _keep_labels(pano, output_dir):
     """Copy the pano's class map (segment.pano_labels) into the scene, if the run made one."""
     import glob
     import shutil
-    from streetview_to_3d.services.segment import labels_path
+    from streetview_to_3d.models.segment import labels_path
     if pano.source != "google":
         return
     path = fetch_da3_pano(pano.id)
@@ -161,7 +161,7 @@ def _save_joined_pieces(pieces, output_dir, catalog) -> list[str]:
     Patches overlap, so two pieces can hold the same place: the bigger keeps it and the
     other's pano there is dropped with its links (keeping both glued two frames together).
     """
-    from streetview_to_3d import scene as scene_mod
+    from streetview_to_3d.common import scene as scene_mod
     from streetview_to_3d.reconstruct.pieces import _piece_edges
     sc = scene_mod.Scene.load(output_dir)
     node_of_dot = {catalog[n.key]["dot"]: i

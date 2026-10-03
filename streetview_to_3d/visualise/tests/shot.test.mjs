@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { shot, placeShots, clearShots, carve, CELL_M, SIZE } from '@viewer/effects/shot';
-import { createGun, RADIUS, SPEED, AIM_M, BIG, CHARGE_S } from '@viewer/gun';
-import { pointMotion } from '@viewer/effects/points';
-import { blockPoints } from '@viewer/effects/blocks';
-import { landPoints } from '@viewer/effects/land';
+import { shot, placeShots, clearShots, carve, CELL_M, SIZE } from '@viewer/flight/shot';
+import { createGun, RADIUS, SPEED, AIM_M, BIG, CHARGE_S } from '@viewer/flight/gun';
+import { pointMotion } from '@viewer/style/points';
+import { blockPoints } from '@viewer/world/blocks';
+import { landPoints } from '@viewer/world/land';
 
 const cell = (p) => {
   const c = p.clone().sub(shot.shotCorner.value).divideScalar(CELL_M).floor();

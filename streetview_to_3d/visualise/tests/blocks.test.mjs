@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { marks, blockPoints, buildingPoints } from '@viewer/effects/blocks';
+import { marks, blockPoints, buildingPoints } from '@viewer/world/blocks';
 
 // a wall length (12) m along, 9 m up, facing south (two triangles, its facade and windows' colour given),
 // and a flat roof 12 x 6 m on it; each spaced 0.5 m

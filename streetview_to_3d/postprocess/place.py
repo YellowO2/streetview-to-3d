@@ -8,9 +8,9 @@ import sys
 
 import numpy as np
 
-from streetview_to_3d import scene as scene_mod
-from streetview_to_3d.config import DA3_UNITS_TO_METRES
-from streetview_to_3d.services.geo import latlon_to_local_m
+from streetview_to_3d.common import scene as scene_mod
+from streetview_to_3d.models.da3 import DA3_UNITS_TO_METRES
+from streetview_to_3d.common.geo import latlon_to_local_m
 
 CAM_H = 2.45             # camera height above the ground
 SIGMA_M = 0.5            # how far a GPS point is trusted
@@ -94,7 +94,7 @@ def piece_scale(nodes, origin):
 
 
 def scene_scale(sc, groups):
-    """(metres per DA3 unit, reason): the median piece_scale, else config.DA3_UNITS_TO_METRES."""
+    """(metres per DA3 unit, reason): the median piece_scale, else models.da3.DA3_UNITS_TO_METRES."""
     fitted = [f for m in groups if (f := piece_scale([sc.nodes[k] for k in m], sc.origin)) is not None]
     if not fitted:
         return DA3_UNITS_TO_METRES, "fixed: no piece spans enough to fit one"

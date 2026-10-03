@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { SceneStore, parsePoints, loadAsset, terrainBands } from '@viewer/scene-store';
+import { SceneStore, parsePoints, loadAsset, terrainBands } from '@viewer/core/scene-store';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const T = [
   [1.2, 0, 0.3, 10],

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { waterSurfaces, waterGrid } from '@viewer/effects/water';
-import { pointMotion } from '@viewer/effects/points';
-import { GAPS, level } from '@viewer/effects/scatter';
+import { waterSurfaces, waterGrid } from '@viewer/world/water';
+import { pointMotion } from '@viewer/style/points';
+import { GAPS, level } from '@viewer/world/scatter';
 
 // a pond 100 m square with an island 20 m square in it, 2 m up
 const pond = {

@@ -1,7 +1,7 @@
 """Street Builder's Gradio app: Street View panoramas to a 3D scene. Run: python app.py"""
 
-# the package first: it imports `spaces` before anything touches CUDA (streetview_to_3d/gpu.py)
-from streetview_to_3d.paths import DATA_DIR
+# the package first: it imports `spaces` before anything touches CUDA (streetview_to_3d/models/gpu.py)
+from streetview_to_3d.common.paths import DATA_DIR
 from streetview_to_3d.ui.tab import build_main_tab
 from streetview_to_3d.ui.map_selection.tab import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
 

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=62.3"]  # 62.3: recursive ** in package-data
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -11,14 +11,14 @@ dependencies = [
     "numpy",
     "scipy",
     "shapely",
-    "mapbox-vector-tile",  # OpenFreeMap's tiles, when Overpass gives no answer (postprocess/openfreemap.py)
+    "mapbox-vector-tile",  # OpenFreeMap's tiles, when Overpass gives no answer (postprocess/world/openfreemap.py)
     "opencv-python",
     "aiohttp",
     "pillow",
     "huggingface_hub",
     "gradio",
     "spaces",
-    "transformers",  # the car/person segmenter (services.segment)
+    "transformers",  # the car/person segmenter (models.segment)
     "torchvision",   # its SegFormer image processor
     # depth_anything_3 imports these without declaring them
     "addict",
@@ -36,6 +36,6 @@ include = ["streetview_to_3d*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-"streetview_to_3d.visualise" = ["viewer.html", "viewer_src/*"]
+"streetview_to_3d.visualise" = ["viewer.html", "viewer_src/**/*"]
 
-"streetview_to_3d.postprocess._vendor.osm_building_grammar" = ["LICENSE", "PROVENANCE.md"]
+"streetview_to_3d.postprocess.world._vendor.osm_building_grammar" = ["LICENSE", "PROVENANCE.md"]
