@@ -43,6 +43,19 @@ pip install pytest && python -m pytest streetview_to_3d
 cd streetview_to_3d/visualise && npm install && npm test
 ```
 
+## Layout
+
+```
+streetview_to_3d/
+  common/       scene, paths, geo, http, streetview_fetch
+  models/       da3, gpu, segment, mask_api
+  panos/        1. which panoramas (candidates, nodes, dates, graph)
+  reconstruct/  2. GPU (walk_graph, pieces, build, runner)
+  postprocess/  3. pipeline.py → place, clean/, fill/, world/, seams
+  visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/
+  ui/           Gradio
+```
+
 ## Acknowledgments
 
 - [osm_building_grammar](https://github.com/p-schulz/osm_building_grammar), vendored facade geometry core (Apache 2.0)
