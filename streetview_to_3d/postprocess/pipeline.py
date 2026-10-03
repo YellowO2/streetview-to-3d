@@ -1,16 +1,6 @@
-"""Everything after the GPU, as one call.
-
-A reconstruction leaves a scene whose nodes each hold their own points, in
-whatever frame DA3 built them. This places every piece by its panoramas'
-GPS, elevation and orientation (place.py), writing each node's own
-transform back into the scene, removes floating bits (blobs.py) and
-loose sheets (clean.py), fills
-the gaps (streetview_to_3d.fill: one ground, its colour)
-into the node .plys, then lays the land, buildings and roads around it
-(terrain.py, from public maps; the viewer draws the sky) -- scene.json
-plus the .plys it names are the whole result. A viewer reads transform to
-place each node, so nothing merges the points into one extra file by
-default.
+"""Everything after the GPU, as one call: place, remove floating bits and
+loose sheets, fill, then lay the map around the scene. scene.json and the
+.plys it names are the result.
 
     python -m streetview_to_3d.postprocess.pipeline --dir data/runs/<run id>
     python -m streetview_to_3d.postprocess.pipeline --dir data/runs/<run id> --merge out.ply
@@ -30,12 +20,10 @@ from streetview_to_3d.postprocess.place import place
 
 
 def process(run_dir, log=print, merge_ply=None, fill=True, clean=True):
-    """Place a reconstruction, remove its floating bits, fill it,
-    then lay its terrain (fill=False: placed only, DA3's points untouched).
-    merge_ply: also write one combined .ply there, for local inspection
-    outside the viewer -- not needed by the Space, which reads
-    scene.json's per-node transforms directly. clean=False: the loose
-    sheets (clean.py) left in."""
+    """Place, clean, fill and lay the terrain for run_dir.
+
+    fill=False: place only. clean=False: keep loose sheets. merge_ply: also
+    write one combined .ply for local inspection."""
     run_dir = os.path.expanduser(run_dir)
     t = time.monotonic()
     place(run_dir, log=log)

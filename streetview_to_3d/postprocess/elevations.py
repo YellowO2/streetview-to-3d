@@ -1,44 +1,29 @@
-"""Google's elevation of every Street View pano around the scene, not only
-the scene's own: more places where the land's height is known (terrain.py
-lays the ground on them, from_panos).
-
-Google's coverage tiles (zoom TILE_ZOOM, the ones the map picker reads) list
-each pano with its elevation -- no pano asked one by one: Lund's 1585
-within 300 m in 0.5 s. Only the car's (and Google's own walked) panos: no
-user photospheres.
-
-Not all of them are the ground: a pano on a bridge stands over it, one in
-a tunnel under it (Lake Como's lakeside road: 66 m under the hill). So
-those on OSM's bridges and in its tunnels are left out (on_ground), the
-rest thinned to one per CELL_M square (the median of its panos'
-elevation), a square more than OUTLIER_M off the slope of its neighbours
-(within NEIGHBOUR_M) left out -- an unmapped bridge's, an underpass's.
-"""
+"""Google elevations of the Street View panos around the scene (for terrain.from_panos): off
+bridges and tunnels, one per CELL_M square, outliers against their neighbours dropped."""
 import math
 
 import numpy as np
 
 TILE_ZOOM = 17
 REACH_M = 300.0         # panos this far past the scene's cameras
+M_PER_LAT = 111320.0
 CELL_M = 25.0
 NEIGHBOUR_M, OUTLIER_M = 80.0, 2.5
-OFF_GROUND_M = 15.0     # a pano this near a bridge's or a tunnel's way is on it (Lake Como's: 9-10 m off the line)
+OFF_GROUND_M = 15.0     # a pano this near a bridge or tunnel way is on it
 
 
-def around(lats, lons, reach_m=REACH_M, m_per_lat=111320.0):
-    """(lat, lon, elevation) arrays of the panos within reach_m of the box
-    round (lats, lons); empty if the tiles cannot be had."""
+def around(lats, lons):
+    """(lat, lon, elevation) arrays of the panos within REACH_M of the box round (lats, lons)."""
     import aiohttp
     from streetlevel import streetview
+    from streetview_to_3d.postprocess.openfreemap import tile_xy
     from streetview_to_3d.services.http_headers import BROWSER_HEADERS
     from streetview_to_3d.services.streetview_fetch import run_async
     lat0 = float(np.mean(lats))
-    dlat, dlon = reach_m / m_per_lat, reach_m / (m_per_lat * math.cos(math.radians(lat0)))
+    dlat, dlon = REACH_M / M_PER_LAT, REACH_M / (M_PER_LAT * math.cos(math.radians(lat0)))
     s, w, n, e = min(lats) - dlat, min(lons) - dlon, max(lats) + dlat, max(lons) + dlon
-    z = 2 ** TILE_ZOOM
-    tx = lambda lon: int((lon + 180) / 360 * z)
-    ty = lambda lat: int((1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * z)
-    cells = [(x, y) for x in range(tx(w), tx(e) + 1) for y in range(ty(n), ty(s) + 1)]
+    xs, ys = tile_xy(np.array([n, s]), np.array([w, e]), TILE_ZOOM)
+    cells = [(x, y) for x in range(int(xs[0]), int(xs[1]) + 1) for y in range(int(ys[0]), int(ys[1]) + 1)]
 
     async def fetch():
         async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:
@@ -57,8 +42,7 @@ def around(lats, lons, reach_m=REACH_M, m_per_lat=111320.0):
 
 
 def on_ground(xy, elements, to_xy):
-    """Whether each east/north xy (n, 2) is off OSM's bridges, tunnels and
-    raised or sunken roads (elements: osm.fetch's; to_xy their geometry's)."""
+    """Whether each east/north xy (n, 2) is clear of OSM's bridges, tunnels and other non-ground roads."""
     import shapely
     off = [shapely.LineString(to_xy(e["geometry"])).buffer(OFF_GROUND_M)
            for e in elements if e.get("type") == "way" and "highway" in e.get("tags", {})
@@ -74,10 +58,8 @@ def _raised(tags):
 
 
 def thinned(xy, elevation):
-    """(xy (m, 2), elevation (m,)): xy's (east/north (n, 2)) elevations,
-    one per CELL_M square (its panos' middle, their median), less the
-    squares more than OUTLIER_M off the plane through their neighbours'
-    within NEIGHBOUR_M (a bridge's, a tunnel's)."""
+    """(xy (m, 2), elevation (m,)): one mean point and median elevation per CELL_M square,
+    without squares more than OUTLIER_M off the plane of their neighbours within NEIGHBOUR_M."""
     from scipy.spatial import cKDTree
     if not len(xy):
         return np.zeros((0, 2)), np.zeros(0)

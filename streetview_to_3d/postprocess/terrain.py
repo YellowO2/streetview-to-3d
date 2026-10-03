@@ -1,69 +1,7 @@
-"""The land, buildings and roads around the scene, from free global maps.
-
-DA3 reaches a few tens of metres; hills and mountains
-further out come from AWS Terrain Tiles (terrarium PNGs, no key, ~30 m
-data, mostly SRTM -- the ground, big buildings at most a blur), coloured
-from Google's satellite tiles (GOOGLE_URL, the panos' own source: ~0.5 m
-at its finest), each corner of the land read at the zoom whose pixel is as
-wide as its corners are apart (google_colours: its lower zooms are the
-finer ones averaged, so a far corner is its patch's colour, not a car's),
-roofs at ROOF_ZOOM; where Google has none, EOX's Sentinel-2 cloudless
-mosaic (no key, 10 m, CC BY-NC-SA: credit "Sentinel-2 cloudless by EOX",
-not for sale) -- at 10 m a house is a pixel or two, and Matsumoto
-Castle's roof came out the green of the trees round it. The land is a surface, as
-a game has it: triangles, fine near the scene and coarser with distance;
-roads and buildings on it are points, spaced the same way:
-
-1. the land's corners out to RADIUS_M (past it the viewer's haze has
-   hidden everything), further apart the further from the nearest
-   camera (LAND_EVERY x gap_at), joined into triangles;
-   where the scene has its own ground (the fill's, seams.SceneGround),
-   just beneath it (UNDER_M) -- one shared ground, the scene's no longer
-   seen through, the land never over it -- and around it meeting that
-   ground and taking its colour at its edge (seams.py)
-2. height read off the tiles, the sea (the tiles also carry the sea bed)
-   laid flat at sea level, shifted onto Google's datum (the median of the
-   panos' elevation minus the map's); near the panos -- the scene's and
-   every other around (elevations.py) -- not the map at all but their own
-   elevation, spread between them (from_panos). 30 m SRTM is the top of
-   whatever stands there, trees and buildings included, and old: on NTU
-   it was off by -4..+2.5 m along the route, where Google's matched DA3's
-   own slope; by Singapore's river it read -19..+20 m within 50 m of
-   ground at 8 m -- no nudge of it mends that, only leaving it
-3. coloured from the satellite, lifted a little (it is dark from above),
-   with a light slope shading so relief reads; plain if the imagery
-   cannot be had
-4. OpenStreetMap's buildings (buildings.py) and roads (roads.py) on it
-   (osm.py); the roads, like the ground, not where the scene is; the
-   buildings fitted onto DA3's walls, what DA3 has of them left to it; a
-   landmark mapped in parts (a spire, a dome) as its parts, each roof as
-   OSM shapes it (roofs.py) and coloured as the satellite sees it.
-   Roads and bridges are points within NEAR_M of a camera, and stored
-   as triangles further off (drawn as points all the same); a building
-   DA3 reaches (buildings.reached) points, to meet DA3's own, every
-   other stored solid, as triangles (the viewer builds it of brush
-   strokes: effects/blocks.js)
-5. near the cameras (PAINT_M), all of it -- land, roads, walls -- coloured
-   from the scene's own panos as the fill colours its ground (_paint), so
-   it matches DA3 where they meet; the maps' colours are only for what no
-   pano sees -- and for buildings DA3 never reaches (buildings.reached):
-   nothing of DA3's for them to meet
-6. water (water.py), each body at its level, drawn by the viewer as
-   points mirroring the world over the land; the land goes on under it as its bed,
-   carved down from the shore and ever more the sky's pale blue the deeper, the shore
-   wherever it crosses the water
-
-Written to land.ply beside scene.json (its "land", triangles), the roads
-near the scene and bridges to terrain.ply (its "terrain"), the roads
-further out to roads.ply (its "roads", triangles), the buildings DA3
-reaches, spaced the same way, to buildings.ply (its "buildings"), the
-rest solid to blocks.ply (its "blocks"), all already in the world frame, and the water to water.json (its "water").
-The land is drawn as a surface, the ground everything stands on, painted
-in patches as dabs of paint (effects/land.js); the solid buildings built
-of brush strokes (effects/blocks.js); all else as points: the viewer
-scatters points over the far roads' triangles as it loads them
-(effects/scatter.js), each triangle's corners saying how far apart; it draws every point as big as it is spaced (the ply's "gap":
-point_gap; scene-store.js, terrainBands).
+"""The land, buildings, roads, water and life around the scene, from free global maps (AWS
+Terrain Tiles, Google and Sentinel-2 imagery, OSM), coloured from the panos near the cameras.
+Writes land.ply, terrain.ply, roads.ply, buildings.ply, blocks.ply, water.json and life.json.
+Sentinel-2 credit: "Sentinel-2 cloudless by EOX".
 
     python -m streetview_to_3d.postprocess.terrain SCENE_DIR
 """
@@ -80,7 +18,8 @@ from PIL import Image
 from streetview_to_3d import scene as scene_mod
 from streetview_to_3d.paths import DATA_DIR
 from streetview_to_3d.postprocess import buildings, elevations, life, osm, roads, seams, water
-from streetview_to_3d.postprocess.ply_io import write_mesh, write_ply
+from streetview_to_3d.postprocess.ply_io import read_node, write_mesh, write_ply
+from streetview_to_3d.postprocess.seams import ramp
 
 FILENAME = "terrain.ply"
 ROADS_FILENAME = "roads.ply"
@@ -88,51 +27,49 @@ LAND_FILENAME = "land.ply"
 BUILDINGS_FILENAME = "buildings.ply"
 BLOCKS_FILENAME = "blocks.ply"
 HEIGHT_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
-HEIGHT_ZOOM = 13          # ~19 m a pixel at the equator, finer than the data
+HEIGHT_ZOOM = 13          # ~19 m a pixel at the equator
 COLOUR_URL = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/{z}/{y}/{x}.jpg"
-COLOUR_ZOOM = 14          # ~10 m a pixel, the imagery's own
+COLOUR_ZOOM = 14          # ~10 m a pixel
 GOOGLE_URL = "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
-GOOGLE_ZOOMS = (11, 18)   # the land read between these: ~75 m a pixel to ~0.6 m (at the equator)
+GOOGLE_ZOOMS = (11, 18)   # land colour zoom range: ~75 m to ~0.6 m a pixel
 ROOF_ZOOM = 18
 EQUATOR_M = 156543.03     # a zoom 0 pixel's width at the equator
-ROOF_INSET_M, ROOF_STEP_M = 1.0, 1.0   # a roof sampled this far in from its edge, this far apart
-TILE_THREADS = 8          # tiles fetched at once, ahead of reading them (TileMap.fetch)
-RADIUS_M = 1000.0                          # the land's reach: the viewer's haze is whole by then
-OSM_M, ROADS_M = RADIUS_M, 700.0           # OSM's reach: its water the land's, its roads only where a point wide (~600 m)
-BUILDINGS_M = 800.0                        # buildings this far: past it the haze has all but hidden them
-NEAR_M = 50.0                              # roads, bridges: points this near a camera, triangles past
-PAINT_M = 30.0                            # map points this near a camera are coloured from the panos
-TINT_M, MEET_M = 8.0, 10.0                # the ground's seam with the scene (seams.py): bands
-BRIDGE_CLEAR_M = {"road": 4.5, "water": 2.5}     # a bridge's deck at least this over each (the land fits under it)
-ROAD_MEET_M, ROAD_MEET_MAX_M = 40.0, 10.0  # roads, bridges: the scene's road's height where they touch it, their
-                                           # own this far out (unless 10 m apart: not the same road)
-UNDER_M = 0.1                             # the land under the scene's ground: this far beneath it
-LAND_GAP_M = 0.3                          # the land's points no closer than this (the viewer's land.MIN_GAP)
-TINT = 0.8                                # how far the map takes the scene's colour at its edge
-GAP0_M, GAP_PER = 0.05, 0.018              # the land's corners: LAND_EVERY x gap_at apart
-POINT_M = 0.10                             # roads' and buildings' points: as DA3's are drawn at the scene's edge,
-RATE0, RATE, RAMP_M = 0.005, 0.018, 100.0  # coarse spacing beyond the detailed neighbourhood
+ROOF_INSET_M, ROOF_STEP_M = 1.0, 1.0   # satellite roof sampling: inset from the edge, spacing
+TILE_THREADS = 8
+RADIUS_M = 1000.0                          # the land's reach (the viewer's haze is total by then)
+OSM_M, ROADS_M = RADIUS_M, 700.0           # OSM reach for buildings/water and for main roads
+BUILDINGS_M = 800.0                        # buildings this near the centre are kept
+NEAR_M = 50.0                              # roads and bridges are points this near a camera, meshes past
+PAINT_M = 30.0                             # map points this near a camera are coloured from the panos
+TINT_M, MEET_M = 8.0, 10.0                 # seam bands for colour and height (seams.py)
+BRIDGE_CLEAR_M = {"road": 4.5, "water": 2.5}     # min deck clearance over each
+ROAD_MEET_M, ROAD_MEET_MAX_M = 40.0, 10.0  # roads ease to the scene's road height over this; not if this far apart
+UNDER_M = 0.1                              # land kept this far under the scene's ground
+LAND_GAP_M = 0.3                           # min land point spacing (the viewer's land.MIN_GAP)
+TINT = 0.8                                 # how far the map takes the scene's colour at its edge
+GAP0_M, GAP_PER = 0.05, 0.018              # gap_at: spacing at a camera, growth per metre
+POINT_M = 0.10                             # point spacing at the scene's edge
+RATE0, RATE, RAMP_M = 0.005, 0.018, 100.0  # world_gap growth rates and the distance it eases between them
 DETAIL_RATE, DETAIL_END_M, DETAIL_BLEND_M = .007, 250.0, 150.0
-BLOCK_RATE = 0.005                         # a solid building's strokes at most this of its distance apart: as fine on screen far off
-SAND, SAND_MIX = (0.76, 0.70, 0.55), 0.7     # the shore's sand (water.sand), how far it covers the satellite's
-LAND_EVERY = 2            # the land's triangles this many times the points' spacing: a surface has no gaps
+BLOCK_RATE = 0.005                         # solid building spacing at most this share of its distance
+SAND, SAND_MIX = (0.76, 0.70, 0.55), 0.7   # shore sand colour, its max cover
+LAND_EVERY = 2                             # land triangles this many times the point spacing
 M_PER_LAT = 111320.0
 PLAIN = np.array([0.50, 0.55, 0.45])
-LIFT = 0.75               # colour ** LIFT: brighter shadows, same hues
-SEA_M = 0.5               # map height at or under this is sea
-PANOS_K, PANOS_SOFT_M = 8, 10.0           # panos the ground is spread from; softening near one
-PANOS_FROM_M, PANOS_TO_M = 30.0, 150.0    # the panos' ground fades into the map between these from the nearest
+LIFT = 0.75                                # colour ** LIFT brightens Sentinel-2's dark shadows
+SEA_M = 0.5                                # map height at or under this is sea
+PANOS_K, PANOS_SOFT_M = 8, 10.0            # panos the ground is interpolated from; distance softening
+PANOS_FROM_M, PANOS_TO_M = 30.0, 150.0     # pano ground fades into the map between these distances
 
-
-TILES_DIR = os.path.join(DATA_DIR, "tiles")     # every tile ever downloaded, kept: a rebuild asks for none
+TILES_DIR = os.path.join(DATA_DIR, "tiles")     # downloaded tiles, kept forever
 TILE_TRIES = 3
 
 
 class TileMap:
-    """A web-mercator tile map read at any (lat, lon), bilinear; each tile
-    downloaded once, ever (TILES_DIR), tried TILE_TRIES times. decode turns
-    a tile's pixels (0-255, in mode) into its values; a map that leaves out
-    empty tiles (a 404) gives missing there."""
+    """A web-mercator tile map read bilinearly at any (lat, lon), tiles cached in TILES_DIR.
+
+    decode turns a tile's pixels (0-255, in mode) into values; a 404 tile
+    reads as missing (or raises if missing is None)."""
 
     def __init__(self, url, zoom, decode, mode="RGB", missing=None, headers=None):
         self.url, self.zoom, self.decode, self.tiles = url, zoom, decode, {}
@@ -184,8 +121,7 @@ class TileMap:
                 (1 - np.log(np.tan(np.radians(lat)) + 1 / np.cos(np.radians(lat))) / math.pi) / 2 * n)
 
     def fetch(self, lat, lon, near=0):
-        """Download (TILE_THREADS at once) every tile within near pixels of
-        any of (lat, lon), so reading them later asks for none."""
+        """Prefetch every tile within near pixels of the points, TILE_THREADS at once."""
         from concurrent.futures import ThreadPoolExecutor
         x, y = self._xy(np.asarray(lat), np.asarray(lon))
         tiles = {(int(a // 256), int(b // 256)) for dx in (-near, near) for dy in (-near, near)
@@ -195,7 +131,7 @@ class TileMap:
         return len(tiles)
 
     def __call__(self, lat, lon):
-        if not np.size(lat):                # nothing asked (no roads near, say): nothing, shaped as the map's values
+        if not np.size(lat):                # empty, shaped as the map's values
             return self.decode(np.zeros((0, 3) if self.mode == "RGB" else (0,), float))
         px, py = self._xy(lat, lon)
         px, py = px - 0.5, py - 0.5
@@ -243,17 +179,12 @@ def google_colours(lat, lon, spacing):
 
 
 def gap_at(cam_d):
-    """How far apart map points are cam_d metres from the nearest camera:
-    GAP0_M there (DA3's own are ~4 cm apart), GAP_PER of the distance more
-    further out -- one even growth from the scene outwards. Measured from
-    the centre with a 50 cm floor instead, the land was coarse right at the
-    scene's edge."""
+    """Map point spacing cam_d metres from the nearest camera: GAP0_M plus GAP_PER per metre."""
     return GAP0_M + GAP_PER * np.asarray(cam_d)
 
 
 def world_gap(d):
-    """The world's points' spacing d metres off: POINT_M, RATE0 more a
-    metre, easing to RATE by RAMP_M (the viewer's own, scene-store.js pointGap)."""
+    """Point spacing d metres off: POINT_M plus RATE0 per metre, easing to RATE by RAMP_M (as scene-store.js pointGap)."""
     e = np.maximum(np.asarray(d, float), 0)
     near = POINT_M + RATE0 * e + (RATE - RATE0) * e ** 2 / (2 * RAMP_M)
     far = POINT_M + RATE0 * RAMP_M + (RATE - RATE0) * RAMP_M / 2 + RATE * (e - RAMP_M)
@@ -261,23 +192,17 @@ def world_gap(d):
 
 
 def point_gap(edge_d):
-    """Saved spacing from the reconstructed edge: 0.8 m at 100 m, 1.5 m
-    at 200 m, easing into the coarser outer map between 250 and 400 m.
-    The viewer draws each point as big as this spacing.
-    """
+    """Point spacing edge_d metres from the scene's edge: DETAIL_RATE growth, easing into world_gap
+    past DETAIL_END_M. The viewer draws each point this big."""
     e = np.maximum(np.asarray(edge_d, float), 0)
     coarse = world_gap(e)
-    t = np.clip((e - DETAIL_END_M) / DETAIL_BLEND_M, 0, 1)
-    blend = t * t * (3 - 2 * t)
+    blend = ramp((e - DETAIL_END_M) / DETAIL_BLEND_M)
     return (POINT_M + DETAIL_RATE * e) * (1 - blend) + coarse * blend
 
 
 def sample_points(radius_m, cams, every=1):
-    """(east, north) within radius_m of the centre, every x gap_at their
-    distance to the nearest camera (cams, (n, 2)) apart: nested grids, each
-    twice the last's spacing, each laid only where the gap wanted is
-    between its spacing and twice that -- and shaken a little, so no grid
-    shows."""
+    """(east, north) points within radius_m, every x gap_at(distance to the nearest camera) apart:
+    nested jittered grids, each twice the last's spacing, each used where its spacing fits."""
     from scipy.spatial import cKDTree
     tree, rng, out = cKDTree(cams), np.random.default_rng(0), []
     lo_c, hi_c = cams.min(0), cams.max(0)
@@ -304,12 +229,8 @@ def _merged(a, b):
 
 
 def from_panos(at, elevation):
-    """f(east/north (n, 2)) -> (height, weight): the ground the panos at
-    (m, 2) stand on, their Google elevation (right where the map is not --
-    it matched DA3's own slope to 0.1 m where SRTM was twice as steep,
-    NTU) spread between them by inverse distance; and how much it holds
-    there, fully within PANOS_FROM_M of the nearest, fading to nothing at
-    PANOS_TO_M, where the map stands."""
+    """f(east/north (n, 2)) -> (height, weight): pano elevations (at (m, 2)) spread by inverse distance,
+    weight 1 within PANOS_FROM_M of the nearest, fading to 0 at PANOS_TO_M."""
     from scipy.spatial import cKDTree
     if not len(at):
         return lambda xy: (np.zeros(len(xy)), np.zeros(len(xy)))
@@ -321,31 +242,26 @@ def from_panos(at, elevation):
         d, i = d.reshape(len(xy), k), i.reshape(len(xy), k)
         w = 1 / (d ** 2 + PANOS_SOFT_M ** 2)
         spread = (w * elevation[i]).sum(1) / w.sum(1)
-        t = np.clip((d[:, 0] - PANOS_FROM_M) / (PANOS_TO_M - PANOS_FROM_M), 0, 1)
-        return spread, 1 - t * t * (3 - 2 * t)
+        return spread, 1 - ramp((d[:, 0] - PANOS_FROM_M) / (PANOS_TO_M - PANOS_FROM_M))
     return f
 
 
-SCENE_EVERY = 4                            # the scene's points looked at: every this many-th
+SCENE_EVERY = 4                            # scene points subsampled to every this many-th
 
 
 def scene_points(sc, scene_dir, every=SCENE_EVERY):
-    """(points, colours): every node's cloud, placed in the world (every
-    n-th point)."""
-    from streetview_to_3d.postprocess.ply_io import read_ply
+    """(points, colours) of every placed node's cloud in the world, every every-th point."""
     pts, cols = [np.zeros((0, 3))], [np.zeros((0, 3))]
     for nd in sc.nodes:
         if nd.ply and nd.transform:
-            p, c = read_ply(os.path.join(scene_dir, nd.ply))
-            T = np.asarray(nd.transform, float)
-            pts.append(p[::every] @ T[:3, :3].T + T[:3, 3])
-            cols.append((c if c is not None else np.full((len(p), 3), 0.5))[::every])
+            p, c, world = read_node(scene_dir, nd, every)
+            pts.append(world)
+            cols.append(c if c is not None else np.full((len(p), 3), 0.5))
     return np.concatenate(pts), np.concatenate(cols)
 
 
 def build(scene_dir, log=print):
-    """Write scene_dir/FILENAME around the placed (and filled) scene's
-    cameras."""
+    """Build the map around the placed (and filled) scene at scene_dir."""
     from scipy.spatial import cKDTree
     sc = scene_mod.Scene.load(scene_dir)
     lat0, lon0 = sc.origin
@@ -360,23 +276,20 @@ def build(scene_dir, log=print):
     cam_xz = np.array([(np.asarray(n.transform)[:3, :3] @ n.position + np.asarray(n.transform)[:3, 3])[[0, 2]]
                        for n in cams])
 
-    # the ground: Google's own elevation where it has panos -- the scene's and
-    # every other's around -- and the map, shifted onto Google's datum, past them
+    # ground: Google's pano elevations near panos, the height map shifted onto Google's datum elsewhere
     heights = height_map()
     known = [n for n in sc.nodes if n.pano.elevation is not None]
     anchors = np.array([((n.pano.lon - lon0) * m_per_lon, (n.pano.lat - lat0) * M_PER_LAT)
                         for n in known]).reshape(-1, 2)
     own_el = np.array([n.pano.elevation for n in known])
-    # OpenStreetMap's buildings, roads and water, in one request
     try:
         elements = osm.fetch(lat0, lon0, OSM_M, ROADS_M, M_PER_LAT, m_per_lon, scene_dir,
-                             water_m=OSM_M, cams=to_ll(cam_xz))
-    except (OSError, ValueError) as e:    # the land stands without them
+                             water_m=OSM_M, cams=to_ll(cam_xz), log=log)
+    except (OSError, ValueError) as e:
         log(f"terrain: no OpenStreetMap ({e!r})")
         elements = []
 
-    # ... and every other pano's around (elevations.py: Google's coverage tiles, thinned;
-    # one on OSM's bridges or in its tunnels left out), where the scene's own are not
+    # other panos' elevations around (elevations.py), where the scene's own are not
     try:
         la, lo, el = elevations.around(*to_ll(cam_xz))
         xy = np.c_[(lo - lon0) * m_per_lon, (la - lat0) * M_PER_LAT]
@@ -398,36 +311,30 @@ def build(scene_dir, log=print):
         h, w = panos_ground(xy)
         return (np.where(raw <= SEA_M, 0.0, raw) + shift) * (1 - w) + h * w
 
-    # water: each body at its level over the land, which goes on under it (water.py);
-    # its outline OSM's where OSM has one
-    radius = RADIUS_M
     jrc = water.jrc(to_ll, heights)
-    wet = water.Water(radius, to_ll, heights, shift, (anchors, own_el), jrc,
+    wet = water.Water(RADIUS_M, to_ll, heights, shift, (anchors, own_el), jrc,
                       osm=(water.outline(elements, to_xy, OSM_M,
-                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir), jrc),
+                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir, log=log), jrc),
                            OSM_M) if elements else None)
 
     # the scene always wins: the map only around it, faded in at its edge
     scene, scene_cols = scene_points(sc, scene_dir)
     scene_tree = cKDTree(scene) if len(scene) else None
-    scene_ground = seams.SceneGround.load(scene_dir)          # its ground, as the fill found it
+    scene_ground = seams.SceneGround.load(scene_dir)
     near = scene_ground.at
     cam_tree = cKDTree(cam_xz)
-    # points spaced from the scene's edge: its 1 m squares holding a few points
+    # points spaced from the scene's edge: 1 m squares holding at least 3 of its points
     cell, n = np.unique(np.floor(scene[:, [0, 2]]), axis=0, return_counts=True) if len(scene) else (cam_xz, None)
     edge_tree = cKDTree(cell[n >= 3] + 0.5 if n is not None and (n >= 3).any() else cam_xz)
     gap = lambda xy: point_gap(edge_tree.query(xy, workers=-1)[0])
-    # the roads a game map keeps, one surface; they decide their own height
-    # (the ground smoothed) and the land fits itself to them (roads.py)
+    # roads decide their own height (smoothed ground); the land fits to them
     net = roads.Network(elements, to_xy, lambda xy: cam_tree.query(xy)[0].min() < roads.DETAIL_M)
-    # ... and the scene's own road, where they touch it, its height (DA3's
-    # ground there), easing back to theirs over ROAD_MEET_M: aligned where they meet
     road_raw = net.heights(ground, (-ROADS_M - 50, -ROADS_M - 50), (ROADS_M + 50, ROADS_M + 50))
 
     def to_scene(xy, h):
         d, g, _ = near(xy)
         return seams.meet(h, g, d, ROAD_MEET_M, ROAD_MEET_MAX_M)
-    # OpenStreetMap's buildings, onto the scene's walls first: the land fits itself to them
+    # buildings, fitted onto the scene's walls
     outlines = [o for o in buildings.outlines(elements, to_xy)
                 if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]
     n_fitted = n_trimmed = 0
@@ -436,10 +343,9 @@ def build(scene_dir, log=print):
         scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
         outlines, n_fitted, n_trimmed = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
                                                                roads.coverage(roads.lines(elements, to_xy)))
-    # the land: a surface, triangles between points LAND_EVERY times the gap apart,
-    # and corners along the roads' edges, so a triangle never spans one
-    en = sample_points(radius, cam_xz, LAND_EVERY)
-    # bridges whole, their decks clear of the roads and water they cross; the land fits under them
+    # land corners, plus corners along road edges so no triangle spans one
+    en = sample_points(RADIUS_M, cam_xz, LAND_EVERY)
+    # bridge decks clear the roads and water they cross
     import shapely
 
     def crossed(road_h):
@@ -450,9 +356,7 @@ def build(scene_dir, log=print):
             level = wet._at(wet.level, xy, -np.inf)
             return np.where(wet.inside(xy), np.maximum(out, level + BRIDGE_CLEAR_M["water"]), out)
         return low
-    # the scene's road is the roads its panos stand on (on a bridge over one,
-    # or under it, by their height) and those joining them near it: only
-    # these meet it; a road passing by, over or under keeps its own height
+    # only the roads the panos stand on, and those joining them, meet the scene's road height
     found = roads.bridges(elements, to_xy)
     ids = roads.standing(elements, to_xy, cam_xz, ground(cam_xz),
                          roads.decks(found, road_raw, crossed(road_raw)))
@@ -466,33 +370,30 @@ def build(scene_dir, log=print):
             h[on] = to_scene(xy[on], h[on])
         return h
     over = roads.decks(found, road_h, crossed(road_h), to_scene, ids)
-    # where cars drive (life.py): the car roads near the scene, at their height
+    # car roads near the scene (life.py)
     cars = {e["id"] for e in elements if e.get("tags", {}).get("highway") in life.CARS}
     stretches = life.roads(elements, to_xy, road_h, [d for d in over if d.ids & cars],
                            lambda xy: cam_tree.query(xy)[0] < life.REACH_M, [o[0] for o in outlines],
                            scene_ground)
     edges = np.concatenate([net.edges(), roads.deck_edges(over)])
     walls, owner = buildings.corners(outlines, lambda xy: LAND_EVERY * gap_at(cam_tree.query(xy)[0]))
-    inside = np.linalg.norm(walls, axis=1) < radius
-    edges = edges[np.linalg.norm(edges, axis=1) < radius]
+    inside = np.linalg.norm(walls, axis=1) < RADIUS_M
+    edges = edges[np.linalg.norm(edges, axis=1) < RADIUS_M]
     owner = np.r_[np.full(len(en) + len(edges), -1), owner[inside]]
     en = np.concatenate([en, edges, walls[inside]])
-    # the land fills exactly where the scene has no ground of its own
+    # the land meets the scene's ground at its edge
     dist, edge_h, edge_c = near(en)
     under = dist == 0
     lat, lon = to_ll(en)
     raw = heights(lat, lon)
     h = seams.meet(ground(en, raw), edge_h, dist, MEET_M)
     h = roads.under_decks(over, en, net.adapt(en, h, road_h))
-    # under the scene's own ground too, just beneath it: one shared ground,
-    # so the scene's is not seen through, the land never over it
+    # under the scene's ground, keep the land just beneath it
     h = np.where(under, np.minimum(h, edge_h - UNDER_M), h)
-    # the land round a building DA3 has ground beside made DA3's ground (buildings.onto_scene),
-    # then every building stood where the land meets it, the land cut down round it (buildings.settle)
+    # land raised to DA3's ground beside buildings, then cut to each building's foot
     h = buildings.onto_scene(outlines, en, h, owner, scene_ground, under)
     h = buildings.settle(outlines, en, h, owner)
-    # the shore shaped as a game's (water.py): the land eases into the water,
-    # a quay by a road stands; under it the land goes on as the water's bed
+    # shape the shore; no bank by roads (quays)
     lines = roads.lines(elements, to_xy)
     h = wet.carve(en, h, roads.near(lines, water.QUAY_M))
     from scipy.interpolate import LinearNDInterpolator
@@ -502,7 +403,7 @@ def build(scene_dir, log=print):
     at = LinearNDInterpolator(tri, h)
 
     def surface(xy):
-        """The land as it is at last (the map's ground past its edge): buildings stand on it."""
+        """Final land height (the map's ground past the mesh)."""
         v = at(xy)
         return np.where(np.isfinite(v), v, ground(xy))
     seen = np.zeros(len(en), bool)
@@ -511,8 +412,7 @@ def build(scene_dir, log=print):
     en, h, dist, edge_c, lat, lon = (a[seen] for a in (en, h, dist, edge_c, lat, lon))
     land = np.stack([en[:, 0], -h, en[:, 1]], 1)
 
-    # its colour as it is (unlit: the viewer lights it, effects/land.js), and the
-    # satellite's as the panos see it (seams.unhazed: learnt where both see the scene's ground)
+    # unlit land colour; satellite colours corrected to the panos' look (seams.unhazed)
     try:
         unhazed = seams.unhazed(scene_ground, lambda xy: google_colours(*to_ll(xy), np.full(len(xy), seams.CELL_M)))
     except OSError as e:
@@ -523,21 +423,21 @@ def build(scene_dir, log=print):
         cols = google_colours(lat, lon, LAND_EVERY * gap_at(cam_tree.query(en, workers=-1)[0]))
         source = "Google's satellite"
         gone = np.isnan(cols[:, 0])
-        if gone.any():                    # where Google has none, Sentinel-2's, lifted (it is dark from above)
+        if gone.any():                    # Sentinel-2 where Google has none
             cols[gone] = colours(lat[gone], lon[gone]) ** LIFT
             source += f", Sentinel-2's for {gone.mean():.0%}"
         cols = unhazed(cols)
-    except OSError as e:                  # the land still stands without its colour
+    except OSError as e:
         log(f"terrain: no satellite colour ({e!r}), plain")
         colours = None
         cols = np.tile(PLAIN, (len(en), 1))
         source = "plain"
     cols = cols + (np.array(SAND) - cols) * (SAND_MIX * wet.sand(en, h))[:, None]
-    cols = cols + (np.array(water.BED) - cols) * wet.bed(en, h)[:, None]     # under the water, the sky's pale blue
+    cols = cols + (np.array(water.BED) - cols) * wet.bed(en, h)[:, None]
     land_cols = seams.tint(cols, edge_c, dist, 0.0, TINT_M, TINT)
     pts, cols = np.zeros((0, 3)), np.zeros((0, 3))
 
-    # OpenStreetMap's buildings and roads, on this ground
+    # buildings and roads on this ground
     panos = None
     n_buildings = n_seen = n_roads = 0
     bp = bc = b_normal = np.zeros((0, 3))
@@ -546,14 +446,14 @@ def build(scene_dir, log=print):
     solid, solid_base = [], np.zeros((0, 3))
     n_cut = n_sat = 0
     if outlines:
-        try:                                # roofs as the satellite sees them: Google's, sharp
+        try:                                # roof colours from Google's satellite
             roof_at = google_map(ROOF_ZOOM)
             roof_at.fetch(*to_ll(np.concatenate([o[0] for o in outlines])))
             n_sat = buildings.satellite_roofs(outlines, lambda en: unhazed(roof_at(*to_ll(en))),
                                               ROOF_INSET_M, ROOF_STEP_M, lively=False)
         except OSError as e:
             log(f"terrain: no Google roofs ({e!r}), Sentinel-2's")
-        try:                                # ... else Sentinel-2's, for those still without
+        try:                                # ... else Sentinel-2's
             n_sat += (buildings.satellite_roofs(outlines, lambda en: unhazed(colours(*to_ll(en)) ** LIFT))
                       if colours else 0)
         except OSError as e:
@@ -561,29 +461,28 @@ def build(scene_dir, log=print):
         try:
             panos = panos or _panos(sc, scene_dir)
             pal = buildings.palette(panos[1])
-        except (OSError, ValueError) as e:  # a pastel palette stands
+        except (OSError, ValueError) as e:
             log(f"terrain: no palette from the panos ({e!r})")
             panos, pal = ([], []), (np.array(buildings.PASTEL), np.full(len(buildings.PASTEL), 1 / 8))
         base = buildings.colours(outlines, pal)
         n_buildings = len(outlines)
-        may = np.flatnonzero(buildings.reachable(outlines, scene))      # the rest are solid: no points
+        may = np.flatnonzero(buildings.reachable(outlines, scene))      # the rest are solid
         blocks = buildings.points([outlines[i] for i in may], gap, surface, base[may])
         blocks.which = may[blocks.which]
         reached = buildings.reached(blocks, scene_tree, len(outlines))
         if panos[0]:
-            # a building the panos see enough of: their colour, softened as the palette's is (in
-            # shade or far off they see it dark), over the palette's
+            # buildings the panos see enough of take their colour, softened
             own = buildings.pano_colours(blocks.pts, blocks.which, len(outlines), *panos, scene)
             seen = ~np.isnan(own[:, 0]) & reached
             base[seen] = np.array([buildings.soften(c) for c in own[seen]]).reshape(-1, 3)
-            recolour = seen[blocks.which] & ~blocks.own               # a roof:colour stands
+            recolour = seen[blocks.which] & ~blocks.own               # tagged roof colours stay
             blocks.cols[recolour] = base[blocks.which[recolour]]
             n_seen = int(seen.sum())
-        # one DA3 never reaches solid, not points -- coloured by the panos all the same
+        # buildings DA3 never reaches become solid meshes
         solid, solid_base = [o for o, r in zip(outlines, reached) if not r], base[~reached]
         blocks.take(reached[blocks.which])
-        # what DA3 already has of a building is left to it; the rest meets it
-        roofs_near = np.full(len(blocks.pts), np.inf)                 # only roofs are judged by it
+        # leave to DA3 what it already has of each building
+        roofs_near = np.full(len(blocks.pts), np.inf)                 # only roofs use it
         roof = blocks.edge == buildings.ROOF
         if scene_tree is not None and roof.any():
             roofs_near[roof] = scene_tree.query(blocks.pts[roof], distance_upper_bound=1.0, workers=-1)[0]
@@ -591,34 +490,32 @@ def build(scene_dir, log=print):
         buildings.windows(blocks, outlines, surface)
         bp, bc, b_roof, b_gap = blocks.pts, blocks.cols, blocks.edge == buildings.ROOF, blocks.gap
         b_normal, b_kind = blocks.normal, blocks.kind
-        b_alone = ~reached[blocks.which]                                # no DA3 near: no pano paint
+        b_alone = ~reached[blocks.which]                                # no DA3 near: not pano-painted
     road_mesh = None
     if net.shapes:
         near_cams = shapely.union_all(shapely.buffer(shapely.points(cam_xz), NEAR_M, quad_segs=16))
         road_mesh = roads.surface(net, road_h,
-                                  shapely.difference(shapely.box(-radius, -radius, radius, radius), near_cams))
+                                  shapely.difference(shapely.box(-RADIUS_M, -RADIUS_M, RADIUS_M, RADIUS_M), near_cams))
         rp, rc = roads.points(net, gap, road_h, lambda xy: cam_tree.query(xy)[0] < NEAR_M)
         keep = ~scene_ground.covers(rp[:, [0, 2]])
-        keep &= ~wet.inside(rp[:, [0, 2]])                              # no road in the water
+        keep &= ~wet.inside(rp[:, [0, 2]])
         rp = rp[keep]
         pts, cols = np.concatenate([pts, rp]), np.concatenate([cols, rc[keep]])
         n_roads = len(net.strips) + len(net.fills)
-    # bridges, end to end over whatever they cross; DA3's own where it has them
-    # bridges (their decks, made before the land)
+    # bridges: points near the cameras, meshes further off
     n_bridges = len(over)
     if over:
-        # near the cameras points, as the roads; further, a surface with the far roads
         close = np.array([cam_tree.query(b.xy)[0].min() < NEAR_M for b in over], bool)
         road_mesh = _merged(road_mesh, roads.bridge_surface([b for b, c in zip(over, close) if not c]))
         over = [b for b, c in zip(over, close) if c]
     if over:
         bp_, bc_ = roads.bridge_points(over, gap)
         d, g, _ = near(bp_[:, [0, 2]])
-        keep = d > 0                                     # the scene's footprint: its own bridge
+        keep = d > 0                                     # the scene's own bridge wins
         bp_, bc_ = bp_[keep], bc_[keep]
         pts, cols = np.concatenate([pts, bp_]), np.concatenate([cols, bc_])
 
-    # near the cameras, everything coloured from the panos as the fill's ground is
+    # near the cameras, colour everything from the panos
     n_painted = 0
     try:
         panos = panos or _panos(sc, scene_dir)
@@ -626,20 +523,19 @@ def build(scene_dir, log=print):
         land_cols, k = _paint(panos, land, land_cols, scene)
         bc, m = _paint(panos, bp, bc, scene, skip=b_roof | b_alone)
         n_painted = n + k + m
-    except (OSError, ValueError) as e:    # the maps' colours stand
+    except (OSError, ValueError) as e:
         log(f"terrain: no pano paint ({e!r})")
-    # everything where it stands: what comes up to DA3's points turns into them (seams.toward)
+    # map points approaching DA3's turn into them (seams.toward)
     land_cols, land_near, _ = seams.toward(land, land_cols, None, scene_tree, scene_cols, SCENE_EVERY)
     cols, _, keep = seams.toward(pts, cols, gap(pts[:, [0, 2]]), scene_tree, scene_cols, SCENE_EVERY)
     pts, cols = pts[keep], cols[keep]
-    # its points spaced as the world's are from the cameras, no closer than LAND_GAP_M -- but
-    # past the scene's ground, as they turn into DA3's, as close as DA3's (POINT_M) by how near
+    # land spacing as world_gap (at least LAND_GAP_M), tightening toward POINT_M near DA3 off the scene's ground
     land_gap = np.maximum(LAND_GAP_M, world_gap(cam_tree.query(en, workers=-1)[0]))
     out = dist > 0
     land_gap[out] += (POINT_M - land_gap[out]) * land_near[out]
     write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces, gap=land_gap, near=land_near)
     sc.roads = None
-    # tunnels: a mouth where each leaves the ground's roads, at their height
+    # tunnel portals
     mouths = roads.portals(elements, to_xy, road_h)
     road_mesh = _merged(road_mesh, mouths)
     if road_mesh is not None and len(road_mesh[2]):
@@ -654,7 +550,7 @@ def build(scene_dir, log=print):
     sc.water = water.save(scene_dir, wet) if surfaces else None
     try:
         side = life.side(known[0].pano.id) if known else "right"
-    except (OSError, ValueError) as e:      # cars keep right, as most of the world's do
+    except (OSError, ValueError) as e:
         log(f"terrain: no country for the cars' side ({e!r})")
         side = "right"
     sc.life = life.save(scene_dir, cars=life.cars(stretches, side),
@@ -669,8 +565,7 @@ def build(scene_dir, log=print):
         sc.buildings = BUILDINGS_FILENAME
     sc.blocks = None
     if solid:
-        # a building's points all alike: spaced as its nearest point is, but no
-        # coarser far off than BLOCK_RATE (the map's points are: a storey apart by 400 m)
+        # one spacing per solid building: its nearest point's, at most BLOCK_RATE of its distance
         def block_gap(xy):
             d = edge_tree.query(xy)[0]
             return np.minimum(point_gap(d), POINT_M + BLOCK_RATE * d).min()
@@ -680,7 +575,7 @@ def build(scene_dir, log=print):
         sc.blocks = BLOCKS_FILENAME
     sc.save(scene_dir)
     fix = np.abs(fixes - shift)
-    log(f"terrain: land {len(land)} vertices, {len(faces)} triangles to {radius:.0f} m, "
+    log(f"terrain: land {len(land)} vertices, {len(faces)} triangles to {RADIUS_M:.0f} m, "
         f"{len(pts)} road points, {len(road_mesh[2]) if road_mesh else 0} road triangles, {len(bp)} building points, {n_painted} of them "
         f"painted from the panos ({len(surfaces)} water surfaces ({wet.source}), {source} colour, "
         f"{n_buildings} buildings ({len(solid)} solid) -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
@@ -694,8 +589,7 @@ def build(scene_dir, log=print):
 
 
 def _panos(sc, scene_dir):
-    """(cameras, photos) of the scene's own panos, as the fill has them:
-    photos[k] is (image, class map, mask of what may not colour) or None."""
+    """(cameras, photos) of the scene's panos; photos[k] is (image, class map, drop mask) or None."""
     from streetview_to_3d.fill import _photo
     from streetview_to_3d.fill.paint import Camera, blurred
     from streetview_to_3d.services.segment import pano_mask
@@ -708,11 +602,8 @@ def _panos(sc, scene_dir):
 
 
 def _paint(panos, pts, cols, scene, skip=None):
-    """cols, those of pts within PAINT_M of a camera re-coloured from the
-    panos exactly as the fill colours its ground (fill.paint: the nearest
-    camera that sees a point cleanly, patch by patch, the scene's points
-    what stands in front), but not those marked skip (roofs: a pano sees
-    their edge against the sky); how many were."""
+    """(cols, count): pts within PAINT_M of a camera recoloured from the panos as the fill does
+    (fill.paint), except those marked skip (roofs)."""
     from streetview_to_3d.fill.paint import paint
     cams, photos = panos
     if not cams or not len(pts):

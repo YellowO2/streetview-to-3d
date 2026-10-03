@@ -1,44 +1,24 @@
-"""The roads around the scene, from OpenStreetMap, laid on the terrain.
-
-OSM draws a road as its centreline, so each is given a width -- its own
-"width" tag, else "lanes" x LANE_M, else a guess by kind (WIDTH_M) -- and
-those a simple game map keeps -- car roads, pedestrian streets, squares
--- become one surface (Network): each spot one thing, crossings joined.
-Only what lies on the open ground (_on_ground): no corridors, metro
-passages or walkways. As a game lays roads, the road decides its height
-(Network.heights, the ground smoothed) and the land fits itself to the
-road (Network.adapt). Laid LIFT_M above that: near the scene as points
-(points), spaced as the other map points are there, so the panos can
-colour them and they meet DA3's; further out as a flat surface (surface).
-Coloured by its "surface" tag (SURFACE), else asphalt for a road and
-paving for a path.
-
-Bridges (bridges, bridge_points) are laid apart: each whole (OSM's pieces
-joined), not on the ground but from the road at one end to the road at
-the other, arched a little (ARCH_PER of their length, ARCH_MAX at most),
-clearing what they cross, smooth, with a DECK_M edge down each
-side, so seen from low they are a deck, not a sheet. Tunnels are not
-drawn.
-
-Called by terrain.build: the points join terrain.ply, the surface is
-roads.ply.
-"""
+"""OSM roads around the scene, laid on the terrain: one surface (Network) whose height the land
+follows, points near the scene and a mesh further out; bridges as separate decks (Deck), tunnels
+as portals."""
 import numpy as np
 
-from .geometry import sample_quad
+from .geometry import hash01, sample_quads
+from .osm import tag_number
+from .seams import ramp
 
 LANE_M = 3.2
 WIDTH_M = {"motorway": 14, "trunk": 12, "primary": 10, "secondary": 9, "tertiary": 8,
            "motorway_link": 6, "trunk_link": 6, "primary_link": 6, "secondary_link": 6,
            "tertiary_link": 6, "residential": 6, "unclassified": 6, "living_street": 5,
            "service": 4, "pedestrian": 4, "track": 3}
-NARROW_M = 2.0            # footways, paths, cycleways, steps, anything else
+NARROW_M = 2.0            # footways, paths and anything not in WIDTH_M
 SKIP = ("proposed", "construction", "raceway", "bus_stop", "platform", "elevator", "corridor")
 LIFT_M = 0.15
-DETAIL_M = 100.0      # sidewalks, kerbs, paint and crossings only on a way this near a camera (Network)
-ARCH_PER, ARCH_MAX, DECK_M = 0.03, 2.0, 1.0
-LAYER_M, GRADE = 5.0, 0.06      # a bridge on a higher layer this much higher per layer; rising no steeper
-SIDE = np.array([0.60, 0.60, 0.58]) * 0.85      # a bridge's edge: concrete, in shade
+DETAIL_M = 100.0      # sidewalks, kerbs, paint and crossings only on ways this near a camera
+ARCH_PER, ARCH_MAX, DECK_M = 0.03, 2.0, 1.0     # bridge arch (share of length, max m); deck edge depth
+LAYER_M, GRADE = 5.0, 0.06      # extra deck height per bridge layer; max deck slope
+SIDE = np.array([0.60, 0.60, 0.58]) * 0.85      # bridge edge colour
 SURFACE = {"asphalt": (0.33, 0.33, 0.35), "concrete": (0.60, 0.60, 0.58), "paving_stones": (0.58, 0.51, 0.45),
            "sett": (0.50, 0.47, 0.44), "tiles": (0.63, 0.54, 0.47), "wood": (0.50, 0.38, 0.26),
            "gravel": (0.58, 0.55, 0.49), "fine_gravel": (0.62, 0.58, 0.50), "compacted": (0.58, 0.54, 0.46),
@@ -48,22 +28,18 @@ PATHS = ("footway", "path", "pedestrian", "steps", "cycleway", "bridleway")
 KEPT = ("motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential", "road",
         "living_street", "pedestrian", "motorway_link", "trunk_link", "primary_link", "secondary_link",
         "tertiary_link")
-STRIP_M = 2.5         # a road's surface: corners this far apart along it, as fine as the land near it
-PROFILE_M, PROFILE_CELL_M = 12.0, 2.0     # roads' heights: the ground smoothed this much, on this grid
-SINK_M, SHOULDER_M = 0.25, 4.0            # the land under a road this far beneath it, easing back over this
-MATCH_M = 6.0         # a pano stands on a road whose side is this near it at most: Google's GPS is metres off
-ON_DECK_M = 2.5       # ... on a bridge over it if no more than this under the deck (a road under a bridge is
-                      # BRIDGE_CLEAR_M 4.5 m down at least)
+STRIP_M = 2.5         # mesh corner spacing along roads
+PROFILE_M, PROFILE_CELL_M = 12.0, 2.0     # road heights: ground smoothed over this, on this grid
+SINK_M, SHOULDER_M = 0.25, 4.0            # land sunk this far under a road, easing back over this
+MATCH_M = 6.0         # a pano stands on a road whose side is within this (GPS is metres off)
+ON_DECK_M = 2.5       # ... or on a bridge if no more than this under its deck
 
 
 def _width(tags):
     for key, per in (("width", 1.0), ("lanes", LANE_M)):
-        try:
-            v = float(str(tags[key]).split()[0].replace(",", "."))
-            if v > 0:
-                return v * per
-        except (KeyError, ValueError):
-            pass
+        v = tag_number(tags, key)
+        if v is not None and v > 0:
+            return v * per
     return WIDTH_M.get(tags["highway"], NARROW_M)
 
 
@@ -75,9 +51,7 @@ def _colour(tags):
 
 
 def _on_ground(tags):
-    """Whether a way lies on the open ground: not a tunnel or bridge, not
-    indoors (a station's, a mall's corridors), not on another level (layer:
-    a metro passage below, a deck or walkway above)."""
+    """Whether a way is on open ground: no tunnel, bridge, indoor way or non-zero layer."""
     if tags.get("tunnel", "no") != "no" or tags.get("bridge", "no") != "no" or tags.get("indoor", "no") != "no":
         return False
     try:
@@ -92,9 +66,7 @@ def _area(e):
 
 
 def _ways(elements, to_xy):
-    """(centreline (n, 2) east/north metres, width m, colour, tags) of the
-    roads among osm.fetch's elements that lie on the ground (_on_ground),
-    squares (_area) not."""
+    """(centreline (n, 2) east/north, width m, colour, tags) of the ground-level roads, squares excluded."""
     for e in elements:
         tags = e.get("tags", {})
         if e["type"] != "way" or "highway" not in tags or tags["highway"] in SKIP:
@@ -105,8 +77,7 @@ def _ways(elements, to_xy):
 
 
 def lines(elements, to_xy):
-    """[(centreline (n, 2) east/north metres, width m, colour)] of the roads
-    on the ground (_ways)."""
+    """[(centreline, width, colour)] of the ground-level roads."""
     return [(xy, w, c) for xy, w, c, _ in _ways(elements, to_xy)]
 
 
@@ -118,11 +89,8 @@ PAVING_JOINT = (.43, .42, .39)
 
 
 def _positive(tags, key, default):
-    try:
-        value = float(str(tags[key]).split()[0].replace(",", "."))
-        return value if np.isfinite(value) and value > 0 else default
-    except (KeyError, ValueError, IndexError):
-        return default
+    value = tag_number(tags, key)
+    return value if value is not None and np.isfinite(value) and value > 0 else default
 
 
 def _sidewalks(xy, width, tags):
@@ -135,7 +103,7 @@ def _sidewalks(xy, width, tags):
             continue
         w = min(6.0, _positive(tags, f"sidewalk:{side}:width",
                             _positive(tags, "sidewalk:both:width", 1.8)))
-        # Difference of one-sided buffers keeps turns joined without overlapping the road.
+        # one-sided buffers keep turns joined without overlapping the road
         outer = line.buffer(sign * (width / 2 + w), single_sided=True, join_style="mitre")
         inner = line.buffer(sign * width / 2, single_sided=True, join_style="mitre")
         yield shapely.difference(outer, inner), line.offset_curve(sign * (width / 2 + w / 2)), w
@@ -164,22 +132,17 @@ def _surface_colours(xy, colour):
     """Quiet, deterministic variation without high-contrast noise."""
     colour = np.asarray(colour)
     cell = np.floor(xy / .8)
-    n = np.sin(cell[:, 0] * 12.9898 + cell[:, 1] * 78.233) * 43758.5453
-    n -= np.floor(n)
+    n = hash01(cell[:, 0], cell[:, 1])
     return np.clip(colour * (1 + (n[:, None] - .5) * .055), 0, 1)
 
 
 class Network:
-    """The roads a simple game map keeps, as one surface: car roads and
-    pedestrian streets (KEPT), squares (area=yes), and explicitly tagged
-    sidewalks. Each spot belongs to one surface: paint, carriageway,
-    pedestrian street, square, then pavement. Pavements never cover roads.
+    """Kept roads (KEPT), squares and tagged sidewalks as one surface.
 
-    shapes: {colour: its surface}; strips, fills: what points are laid over
-    (points) before they are kept to shapes. Sidewalks, kerbs, paving,
-    paint and crossings only on a way detail(xy) says is near (DETAIL_M of
-    a camera): past it the carriageway alone -- they were half of Lund's
-    roads' time and are not seen from there."""
+    Each spot belongs to one layer: paint, carriageway, pedestrian street,
+    square, then pavement. shapes: {colour: surface}; strips and fills are
+    where points are laid before being clipped to shapes. Sidewalks, kerbs,
+    paint and crossings only where detail(xy) is true (near a camera)."""
 
     def __init__(self, elements, to_xy, detail=None):
         detail = detail or (lambda xy: True)
@@ -190,7 +153,7 @@ class Network:
         self.elements, self.to_xy = elements, to_xy
         self.street_lines = [(xy, w, tags) for xy, w, _, tags in _ways(elements, to_xy)
                              if tags["highway"] in KEPT and tags["highway"] not in PATHS]
-        # Junctions from shared OSM nodes: paint stops before a crossing or side street.
+        # junctions from shared OSM nodes: paint stops short of them
         from collections import Counter
         degree, node_xy = Counter(), {}
         for e in elements:
@@ -236,7 +199,7 @@ class Network:
             layers[1 if tags["highway"] in PATHS else 0].append(
                 (shapely.LineString(xy).buffer(w / 2, quad_segs=2, cap_style="flat"), c))
             self.strips.append((xy, w, c))
-        # Explicit crossing nodes become broad zebra bars, aligned to their road.
+        # marked crossing nodes become zebra bars aligned to their road
         for e in elements:
             tags = e.get("tags", {})
             if e.get("type") != "node" or tags.get("highway") != "crossing":
@@ -283,10 +246,10 @@ class Network:
             curb = shapely.difference(pavement, pavement.buffer(-.18, join_style="mitre"))
             self.shapes[PAVEMENT] = shapely.difference(pavement, curb)
             self.shapes[KERB] = curb
-            # Same fill candidates cover both colours, with each clipped to its own final shape.
+            # the same strips and fills serve both colours, each clipped to its own shape
             self.fills += [(xy, np.array(KERB)) for xy, c in list(self.fills) if tuple(c) == PAVEMENT]
             self.strips += [(xy, w, np.array(KERB)) for xy, w, c in list(self.strips) if tuple(c) == PAVEMENT]
-        # Real polygon seams survive triangle scattering, unlike tiny vertex noise.
+        # paving joints as real polygons, so they survive triangle scattering
         paving = self.shapes.get(PAVEMENT, shapely.Polygon())
         if not paving.is_empty:
             lo_x, lo_y, hi_x, hi_y = paving.bounds
@@ -314,12 +277,8 @@ class Network:
             if not self.all.is_empty else np.zeros((0, 2))
 
     def heights(self, ground, lo, hi):
-        """f(east/north (n, 2)) -> the roads' own height: the ground under
-        them (ground(xy)), smoothed over PROFILE_M along and across them --
-        a road rises and falls smoothly, not with every bump of a 30 m
-        height map that has the buildings and trees in it -- and one height
-        field for all, so roads meet at a junction. Within lo..hi (the
-        area, east/north)."""
+        """f(east/north (n, 2)) -> road height: ground(xy) under the roads smoothed over
+        PROFILE_M, one field for all so junctions meet. Covers lo..hi."""
         import shapely
         from scipy.ndimage import gaussian_filter, map_coordinates
         c = PROFILE_CELL_M
@@ -333,7 +292,7 @@ class Network:
         total = gaussian_filter(total.reshape(shape), sigma)
         count = gaussian_filter(count.reshape(shape), sigma)
         field = np.where(count > 1e-3, total / np.maximum(count, 1e-9), np.nan)
-        value, known = np.nan_to_num(field), np.isfinite(field).astype(float)    # once, not every call
+        value, known = np.nan_to_num(field), np.isfinite(field).astype(float)
 
         def f(xy):
             if not len(xy):
@@ -344,9 +303,7 @@ class Network:
         return f
 
     def adapt(self, xy, h, road_h):
-        """The land's heights h at east/north points xy made to fit the
-        roads, as a game's terrain is: under a road SINK_M beneath it, and
-        from its edge over SHOULDER_M easing back to the land's own."""
+        """Land heights h at xy fitted to the roads: SINK_M under them, easing back over SHOULDER_M."""
         import shapely
         from scipy.spatial import cKDTree
         edge = self.edges(1.0)
@@ -357,8 +314,7 @@ class Network:
         near = np.flatnonzero(d < SHOULDER_M)
         if not len(near):
             return h
-        t = np.clip(d[near] / SHOULDER_M, 0, 1)
-        w = 1 - t * t * (3 - 2 * t)
+        w = 1 - ramp(d[near] / SHOULDER_M)
         h = h.copy()
         h[near] += (road_h(xy[near]) - SINK_M - h[near]) * w
         return h
@@ -372,11 +328,10 @@ def _layer(tags):
 
 
 def bridges(elements, to_xy):
-    """[(centreline (n, 2), width, colour, layer, OSM way ids)]: the bridges a game map
-    keeps (KEPT), each whole -- OSM breaks a long one into ways end to end
-    (a bridge, a viaduct in pieces), and a piece is not a bridge: drawn as
-    one, each came down to the ground at every join. Joined where exactly
-    two meet (line_merge), each takes the widest of its pieces."""
+    """[(centreline (n, 2), width, colour, layer, OSM way ids)] of the kept bridges.
+
+    OSM splits a long bridge into ways; they are merged end to end and take
+    the widest piece's width."""
     import shapely
     ways = []
     for e in elements:
@@ -403,14 +358,11 @@ def bridges(elements, to_xy):
 
 
 class Deck:
-    """A bridge's deck (bridges): its centreline every metre (xy, at metres
-    along) and height there (h) -- from the road's height at one end to the
-    other's (ground), arched a little, but at least under(xy) over its span
-    (the lowest it may be there: clear of a road, the water), LAYER_M more
-    a layer up, rising to that and back no steeper than GRADE: one smooth
-    deck; where it touches the scene, the scene's own (pull(xy, h) -> h).
-    The land fits under it (under_decks), as under a road. ids: its OSM
-    ways."""
+    """A bridge deck: centreline every metre (xy, at) and its height h.
+
+    Runs from the road height at one end to the other (ground), slightly
+    arched, at least under(xy) plus LAYER_M per layer, no steeper than GRADE;
+    pull(xy, h) snaps it to the scene where they touch. ids: its OSM ways."""
 
     def __init__(self, bridge, ground, under, pull=None):
         from scipy.ndimage import gaussian_filter1d
@@ -425,7 +377,7 @@ class Deck:
         h = h0 + (h1 - h0) * t + min(ARCH_PER * self.length, ARCH_MAX) * 4 * t * (1 - t)
         h = np.maximum(h, under(self.xy) + LAYER_M * max(layer - 1, 0.0))
         h[0], h[-1] = h0, h1
-        for order in (slice(None), slice(None, None, -1)):         # no steeper than GRADE from either end
+        for order in (slice(None), slice(None, None, -1)):         # limit slope from both ends
             hh = h[order]
             for i in range(1, len(hh)):
                 hh[i] = min(hh[i], hh[i - 1] + GRADE * 1.0)
@@ -449,15 +401,13 @@ class Deck:
 
 
 def decks(bridges, ground, under, pull=None, pulled=None):
-    """Each bridge a Deck, pulled onto the scene (pull) only if one of its
-    OSM ways is in pulled (every one, with pulled None)."""
+    """Each bridge as a Deck; pulled onto the scene only if one of its ways is in pulled (or pulled is None)."""
     return [Deck(b, ground, under, pull if pulled is None or b[4] & pulled else None) for b in bridges
             if np.linalg.norm(np.diff(b[0], axis=0), axis=1).sum() >= 1]
 
 
 def _kept(elements, to_xy):
-    """[(OSM id, centreline (n, 2), width, node ids, is a bridge)]: the
-    ways a game map keeps (KEPT) on the ground, and its bridges."""
+    """[(OSM id, centreline (n, 2), width, node ids, is a bridge)] of kept ground ways and bridges."""
     out = []
     for e in elements:
         tags = e.get("tags", {})
@@ -470,12 +420,10 @@ def _kept(elements, to_xy):
 
 
 def standing(elements, to_xy, cams, cam_h, decks_):
-    """The OSM ids of the roads the panos stand on (east/north cams, their
-    heights cam_h): each pano's roads, those whose side is within MATCH_M
-    of it -- where a bridge (decks_) passes over one, the bridge if the
-    pano is up on its deck (within ON_DECK_M under it), else the roads
-    below. Only these, and those joining them (joined), meet the scene's
-    road: a road passing near it, over it or under it is another road."""
+    """OSM ids of the roads the panos (east/north cams, heights cam_h) stand on.
+
+    A road counts if its side is within MATCH_M; under a bridge, the bridge
+    wins when the pano is within ON_DECK_M of its deck."""
     import shapely
     ways = _kept(elements, to_xy)
     if not ways or not len(cams):
@@ -504,9 +452,7 @@ def standing(elements, to_xy, cams, cam_h, decks_):
 
 
 def joined(elements, to_xy, ids, near):
-    """ids and the roads on the ground joining them, again and again, at
-    a node near the scene (near(east/north (n, 2)) -> bool): a side street
-    meets the scene's road as the road it joins does, not a step lower."""
+    """ids plus every ground road transitively joined to them at a node where near(xy) is true."""
     from collections import defaultdict
     ways = _kept(elements, to_xy)
     at = defaultdict(list)
@@ -527,8 +473,7 @@ def joined(elements, to_xy, ids, near):
 
 
 def region(elements, to_xy, ids, pad_m):
-    """The ground roads among ids, each pad_m wider each side, as one
-    prepared shape (empty if none)."""
+    """The ground roads among ids, widened by pad_m each side, as one prepared shape."""
     import shapely
     shapes = [shapely.LineString(w[1]).buffer(w[2] / 2 + pad_m, quad_segs=2)
               for w in _kept(elements, to_xy) if w[0] in ids and not w[4]]
@@ -538,7 +483,7 @@ def region(elements, to_xy, ids, pad_m):
 
 
 def deck_edges(decks_, step_m=STRIP_M):
-    """(n, 2): points along every deck's outline, step_m apart."""
+    """(n, 2) points along every deck's outline, step_m apart."""
     import shapely
     if not decks_:
         return np.zeros((0, 2))
@@ -547,10 +492,7 @@ def deck_edges(decks_, step_m=STRIP_M):
 
 
 def under_decks(decks_, xy, h):
-    """The land's heights h at east/north points xy, fitted under the
-    bridges: never above SINK_M beneath a deck over it, and beside one
-    no higher than easing up from that over SHOULDER_M -- the height map
-    has the bridge in it (it sees tops), so the land bulged over it."""
+    """Land heights h at xy kept SINK_M under any deck above, easing back over SHOULDER_M."""
     from scipy.spatial import cKDTree
     if not decks_:
         return h
@@ -562,28 +504,24 @@ def under_decks(decks_, xy, h):
     near = near[dist[near] < half[k[near]] + SHOULDER_M]
     if not len(near):
         return h
-    out = np.clip((dist[near] - half[k[near]]) / SHOULDER_M, 0, 1)      # 0 under the deck, 1 at its shoulder's edge
+    out = (dist[near] - half[k[near]]) / SHOULDER_M      # 0 under the deck, 1 at the shoulder's edge
     top = height[k[near]] - SINK_M
     h = h.copy()
-    h[near] = np.minimum(h[near], top + (h[near] - top) * out * out * (3 - 2 * out))
+    h[near] = np.minimum(h[near], top + (h[near] - top) * ramp(out))
     return h
 
 
-PORTAL_H, PORTAL_SIDE_M = 5.0, 0.5         # a tunnel's opening: this high, this much wider than its road each side
-FRAME_M, LINTEL_M, MOUTH_M = 1.2, 1.5, 3.0  # its frame's pillars and top; how far its dark goes in
+PORTAL_H, PORTAL_SIDE_M = 5.0, 0.5         # tunnel opening height; extra width each side of the road
+FRAME_M, LINTEL_M, MOUTH_M = 1.2, 1.5, 3.0  # frame pillar width, lintel height, dark interior depth
 DARK = np.array([0.06, 0.06, 0.07])
-PORTAL_MEET_M = 1.0   # a tunnel's end this near a drawn road's end is where it comes out
+PORTAL_MEET_M = 1.0   # a tunnel end this near a drawn road end gets a portal
 
 
 def portals(elements, to_xy, height):
-    """(points (n, 3) world, colours (n, 3), triangles (m, 3)): a mouth
-    where each tunnel (KEPT, tunnel=*) comes out onto a road drawn (_kept:
-    the ground's, or a bridge's -- Lake Como's lakeside road goes from one
-    straight into the next) -- its end within PORTAL_MEET_M of one of
-    theirs (by position: the tiles' ways have no nodes) -- facing out along
-    it: a concrete frame (SIDE) round a dark
-    opening its road's width, PORTAL_H high, dark MOUTH_M in; at the road's
-    height there (height(east/north (n, 2)))."""
+    """(points, colours, triangles) of a portal wherever a kept tunnel meets a drawn road.
+
+    Ends are matched by position (PORTAL_MEET_M; tile ways have no nodes). A
+    concrete frame round a dark opening, at height(xy) of the road there."""
     from scipy.spatial import cKDTree
     ends = [w[1][k] for w in _kept(elements, to_xy) for k in (0, -1)]
     if not ends:
@@ -625,14 +563,13 @@ def portals(elements, to_xy, height):
 
 
 def bridge_surface(decks_):
-    """(points (n, 3) world, colours (n, 3), triangles (m, 3)): each deck,
-    and its edge DECK_M down each side."""
+    """(points, colours, triangles) of each deck and its DECK_M edge down each side."""
     pts, cols, faces, n = [], [], [], 0
     for deck in decks_:
         centre, h, side = deck.sample(STRIP_M)
         width, colour = deck.width, deck.colour
         k = len(centre)
-        rows = []            # each a line of corners along the bridge: deck left, right; the sides' top and bottom
+        rows = []            # corner lines: deck left, right; then each side's top and bottom
         for edge in (-width / 2, width / 2):
             rows.append((centre + edge * side, h, colour))
         for edge in (-width / 2, width / 2):
@@ -651,8 +588,7 @@ def bridge_surface(decks_):
 
 
 def bridge_points(decks_, step):
-    """(points (n, 3) world, colours (n, 3)): each deck and its edge down
-    each side, step(xy) apart."""
+    """(points, colours) of each deck and its side edges, step(xy) apart."""
     pts, cols = [], []
     for deck in decks_:
         s = float(step(deck.xy.mean(0)[None])[0])
@@ -675,8 +611,7 @@ def bridge_points(decks_, step):
 
 
 def coverage(roads, step_m=0.5):
-    """f(outline (n, 2)) -> the share of its edges lying on a road (within
-    the road's half width, less half a metre: a pavement edge is not in it)."""
+    """f(outline (n, 2)) -> share of its edges on a road (within half width less 0.5 m)."""
     from scipy.spatial import cKDTree
     pts, half = [], []
     for xy, width, _ in roads:
@@ -716,11 +651,11 @@ def near(roads, margin_m, step_m=1.0):
     return f
 
 
-BELOW_M = 0.05        # the surface this far under the points, so where both are, the points show
+BELOW_M = 0.05        # the mesh sits this far under the points so the points show
 
 
 def _curb_faces(net, ground, where):
-    """Visible vertical edge of raised pavements; clipped before segmentizing."""
+    """Vertical kerb faces along raised pavements within where."""
     import shapely
     pavement = shapely.union_all([net.shapes.get(PAVEMENT, shapely.Polygon()),
                                   net.shapes.get(KERB, shapely.Polygon()), net.shapes.get(PAVING_JOINT, shapely.Polygon())])
@@ -729,7 +664,7 @@ def _curb_faces(net, ground, where):
         if part.geom_type not in ("LineString", "LinearRing"):
             continue
         xy = shapely.get_coordinates(part)
-        foot = ground(xy) + LIFT_M                                   # the whole line's at once
+        foot = ground(xy) + LIFT_M
         for k in range(len(xy) - 1):
             en, bottom = xy[k:k + 2], foot[k:k + 2]
             yield np.r_[np.c_[en[:, 0], -bottom, en[:, 1]],
@@ -737,9 +672,7 @@ def _curb_faces(net, ground, where):
 
 
 def surface(net, ground, away):
-    """(points (n, 3) world, colours (n, 3), triangles (m, 3)): the
-    Network's surface on the ground (the land's own height: ground), LIFT_M
-    up, where away (a shapely geometry: what is not near the scene)."""
+    """(points, colours, triangles) of the Network's surface LIFT_M over ground(xy), within away."""
     import shapely
     pts, cols, faces, n = [], [], [], 0
     for colour, shape in net.shapes.items():
@@ -772,12 +705,9 @@ def surface(net, ground, away):
 
 
 def points(net, step, ground, where):
-    """(points (n, 3) world, colours (n, 3)): the Network's surface as
-    points, LIFT_M over the ground, only where(xy) (near the scene).
+    """(points, colours) of the Network's surface LIFT_M over ground(xy), where(xy) only.
 
-    step(xy): point spacing at east/north points; ground(xy): height of the
-    ground there. Laid along each way and over each outline, then each kept
-    only where its colour's surface is (Network: one thing a spot)."""
+    Spaced step(xy) apart; each point kept only inside its colour's shape."""
     import shapely
     xys, cols = [], []
     for xy, width, colour in net.strips:
@@ -836,7 +766,7 @@ def points(net, step, ground, where):
         if not where(centre[None])[0]:
             continue
         s = max(.08, float(step(centre[None])[0]))
-        samples = sample_quad(q, s)
+        samples = sample_quads(q[None], s)[0]
         detail_pts.append(samples)
         detail_cols.append(np.tile(colour, (len(samples), 1)))
     if detail_pts:

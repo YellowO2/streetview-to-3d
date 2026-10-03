@@ -1,8 +1,4 @@
-"""Build a cloud from a scene that has already been solved.
-
-Every node carries its own transform, so this is a matrix multiply against
-clouds already on disk with nothing re-solved. Run postprocess.pipeline
-first if the nodes have no transform yet.
+"""Merge a placed scene's nodes into one world-frame .ply, for inspection.
 
     python -m streetview_to_3d.postprocess.render_pieces --dir data/runs/<run id> --out scene.ply
 """
@@ -12,7 +8,7 @@ import os
 import numpy as np
 
 from streetview_to_3d import scene as scene_mod
-from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
+from streetview_to_3d.postprocess.ply_io import read_node, write_ply
 
 
 def render(directory, out, log=print):
@@ -27,9 +23,8 @@ def render(directory, out, log=print):
 
     pts, cols = [], []
     for n in ready:
-        p, c = read_ply(os.path.join(directory, n.ply))
-        T = np.array(n.transform)
-        pts.append(p @ T[:3, :3].T + T[:3, 3])
+        _, c, w = read_node(directory, n)
+        pts.append(w)
         cols.append(c)
     pts, cols = np.concatenate(pts), np.concatenate(cols)
     write_ply(os.path.expanduser(out), pts, cols)

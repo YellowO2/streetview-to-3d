@@ -1,19 +1,9 @@
-"""Surface sampling shared by procedural buildings and streets."""
+"""Small geometry helpers shared by buildings, roads and street details."""
 import numpy as np
 
 
-def sample_quad(quad, step):
-    """Grid a parallelogram without subdividing the base wall or roof."""
-    a, b, _, d = quad
-    u, v = b - a, d - a
-    nu, nv = max(1, int(np.ceil(np.linalg.norm(u) / step))), max(1, int(np.ceil(np.linalg.norm(v) / step)))
-    U, V = np.meshgrid((np.arange(nu) + .5) / nu, (np.arange(nv) + .5) / nv)
-    return a + U.ravel()[:, None] * u + V.ravel()[:, None] * v
-
-
 def sample_quads(quads, step):
-    """sample_quad over many parallelograms (m, 4, 3) at once: (points, the
-    quad each is on), each quad's points in the same order sample_quad has."""
+    """Grid points over parallelograms (m, 4, 3), about step apart: (points, the quad each is on)."""
     a, u, v = quads[:, 0], quads[:, 1] - quads[:, 0], quads[:, 3] - quads[:, 0]
     nu = np.maximum(1, np.ceil(np.linalg.norm(u, axis=1) / step)).astype(int)
     nv = np.maximum(1, np.ceil(np.linalg.norm(v, axis=1) / step)).astype(int)
@@ -23,3 +13,14 @@ def sample_quads(quads, step):
     U = ((k % nu[which]) + .5) / nu[which]
     V = ((k // nu[which]) + .5) / nv[which]
     return a[which] + U[:, None] * u[which] + V[:, None] * v[which], which
+
+
+def turning(xy):
+    """Twice the signed area of closed ring xy: positive counter-clockwise."""
+    return float(np.sum(xy[:-1, 0] * xy[1:, 1] - xy[1:, 0] * xy[:-1, 1]))
+
+
+def hash01(x, y):
+    """Deterministic pseudo-random 0-1 per (x, y)."""
+    n = np.sin(x * 12.9898 + y * 78.233) * 43758.5453
+    return n - np.floor(n)

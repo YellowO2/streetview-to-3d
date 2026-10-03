@@ -1,36 +1,15 @@
-"""Buildings as the place builds them: what a building looks like from
-what OpenStreetMap says of it -- its kind first, where it stands for the
-rest. Most outlines say nothing (Matsumoto, Tokyo, New York: nine in ten
-are just building=yes; Stockholm's old town, where they say most, three
-in four say more), so where it stands decides those:
-
-  - its region (region: the world in a few boxes) shapes an untagged
-    roof (ROOFS: a small building's and a big one's, at its pitch) and
-    its facade's rhythm (FACADES: facade_geometry.profile_for)
-  - a small one (under SMALL_M2) of guessed height a house's (HOUSE_M),
-    not a block's
-  - a landmark its kind says (landmark) drawn as one, out of building
-    parts standing on its foot, so roofs, points and colours stay the
-    building code's own:
-      castle (a Japanese one: historic=castle and castle_type=shiro, or
-      in Japan): a stone base and tiers, each smaller, each roofed
-      pagoda: tiers, a spire on top
-      temple, shrine: one great roof, hipped or gabled
-      church: a steep roof, a tower at its west end with a spire (an
-      onion if Orthodox, low if southern)
-      mosque: a dome in its middle, a minaret at a corner
-
-All of it a likeness, not a survey: a building's own tags (roof:shape,
-height, parts) always stand. East/north metres, heights above its foot.
-"""
+"""How a building looks from what OSM says of it and where it stands: regional roofs and facades
+for untagged buildings, small guessed ones as houses, and landmarks built from parts."""
 import math
 
 import numpy as np
 from shapely.geometry import Polygon
 
+from streetview_to_3d.postprocess.geometry import turning
+from streetview_to_3d.postprocess.osm import building_kind
 from streetview_to_3d.postprocess.roofs import Roof
 
-# (region, lat from, to, lon from, to): the first that holds a place
+# (region, lat from, to, lon from, to): the first match wins
 REGIONS = [
     ("korea", 33.0, 38.7, 124.5, 129.6),
     ("japan", 24.0, 46.0, 122.9, 146.0),
@@ -44,19 +23,19 @@ REGIONS = [
     ("latin_america", -56.0, 24.0, -118.0, -34.0),
 ]
 EAST_ASIA = ("japan", "korea", "east_asia")
-# an untagged roof by region: (a small building's, a big one's), its pitch in degrees
+# untagged roof by region: (small building's, big building's, pitch in degrees)
 ROOFS = {
     "japan": ("hipped", "flat", 25), "korea": ("hipped", "flat", 25), "east_asia": ("hipped", "flat", 25),
     "southeast_asia": ("hipped", "flat", 25), "europe_south": ("hipped", "hipped", 20),
     "europe_north": ("gabled", "flat", 38), "north_america": ("gabled", "flat", 30),
 }
 OTHER_ROOF = ("flat", "flat", 30)
-SMALL_M2, SMALL_LEVELS = 150.0, 3     # a small building: under this, no more storeys than this
-HOUSE_M = 7.0                         # a small one's guessed height
+SMALL_M2, SMALL_LEVELS = 150.0, 3     # a small building: under this area, at most this many storeys
+HOUSE_M = 7.0                         # guessed height of a small building
 FLAT_KINDS = {"industrial", "warehouse", "retail", "commercial", "office", "supermarket", "garage",
               "garages", "carport", "parking", "service", "roof", "construction", "greenhouse"}
-# a facade's rhythm by region and kind (facade_geometry.Profile's fields after its name):
-# bay, window width, window of a floor, frame depth, balconies, ledge depth, pilasters
+# facade_geometry.Profile fields by (region, kind):
+# bay, window width, window share of a floor, frame depth, balconies, ledge depth, pilasters
 FACADES = {
     ("east_asia", "house"): (1.8, 1.6, .5, .12, False, .25, False),     # a ken apart, wide low windows
     ("east_asia", "apartments"): (3.0, 1.7, .6, .18, True, .3, False),  # a balcony every flat, no ornament
@@ -64,25 +43,24 @@ FACADES = {
 # landmarks
 STONE = (0.56, 0.54, 0.5)
 PLASTER = (0.93, 0.92, 0.88)
-CASTLE_BASE, CASTLE_TIER_M, CASTLE_SHRINK = 0.22, 4.5, 0.12  # its base, of its height; a tier; each smaller
+CASTLE_BASE, CASTLE_TIER_M, CASTLE_SHRINK = 0.22, 4.5, 0.12  # base share of height; tier height; shrink per tier
 PAGODA_TIER_M, PAGODA_SHRINK = 3.2, 0.11
-TIER_WALL = 0.55              # of a tier, its walls; its roof runs on into the next one's
+TIER_WALL = 0.55              # wall share of a tier; its roof runs into the next
 TIER_PITCH, TOP_PITCH = 28, 35
-SPIRE_MIN_M = 0.7             # a pagoda's spire's radius at least (a roof needs a square metre)
-TEMPLE_ROOF = 0.45            # of its height, a temple's roof
-CHURCH_PITCH, CHURCH_WALL_M = 45, 10.0   # a guessed nave's walls this tall
-TOWER_SIDE, TOWER_MIN_M, TOWER_MAX_M = 0.35, 4.0, 10.0  # of the nave's width
-SPIRE = {"north": ("pyramidal", 2.5), "south": ("pyramidal", 0.6), "orthodox": ("onion", 1.2)}  # of the side
-DOME, MINARET_M, MINARET_TOP = 0.32, 1.6, 3.0  # of its width, a dome across; a minaret's radius; its cone
-# windows by kind (building, else building:part): none on what has none, few on a hall -- one
-# tall row a storey (FEW_ROW_M at most), FEW_BAY_M apart -- the rest a window a bay, a row a floor
+SPIRE_MIN_M = 0.7             # min pagoda spire radius
+TEMPLE_ROOF = 0.45            # temple roof share of its height
+CHURCH_PITCH, CHURCH_WALL_M = 45, 10.0   # roof pitch; wall height of a guessed nave
+TOWER_SIDE, TOWER_MIN_M, TOWER_MAX_M = 0.35, 4.0, 10.0  # tower side as share of nave width, limits
+SPIRE = {"north": ("pyramidal", 2.5), "south": ("pyramidal", 0.6), "orthodox": ("onion", 1.2)}  # height per side
+DOME, MINARET_M, MINARET_TOP = 0.32, 1.6, 3.0  # dome radius share of width; minaret radius; cone height ratio
+# windows by kind: none, few (halls: tall rows at most FEW_ROW_M, FEW_BAY_M apart) or many
 NO_WINDOWS = {"shed", "garage", "garages", "carport", "roof", "hut", "greenhouse", "storage_tank", "silo",
               "bunker", "ruins", "container", "transformer_tower", "water_tower", "service", "construction",
               "bridge", "base", "spire", "dome", "minaret"}
 FEW_WINDOWS = {"church", "cathedral", "chapel", "mosque", "temple", "shrine", "industrial", "warehouse",
                "manufacture", "barn", "stable", "cowshed", "farm_auxiliary", "sports_hall", "hangar", "tier",
                "tower"}
-FEW_BAY_M, FEW_ROW_M = 5.0, 6.0   # a hall's windows this far apart; a row at most this tall
+FEW_BAY_M, FEW_ROW_M = 5.0, 6.0
 
 
 def region(lat, lon):
@@ -93,15 +71,14 @@ def region(lat, lon):
 
 
 def facade(tags, kind):
-    """Its region's facade rhythm for kind ("house", "apartments", ...),
-    or None: the building code's own."""
+    """The region's facade profile for kind ("house", "apartments"), or None."""
     r = tags.get("style:region")
     return FACADES.get(("east_asia" if r in EAST_ASIA else r, kind))
 
 
 def windows(tags):
     """"none", "few" or "many": how many windows a building of these tags has."""
-    kind = tags.get("building", tags.get("building:part", "yes"))
+    kind = building_kind(tags)
     if kind in NO_WINDOWS:
         return "none"
     if kind in FEW_WINDOWS or tags.get("amenity") == "place_of_worship":
@@ -143,7 +120,7 @@ def _rect(centre, u, v, long_, short):
     """A closed counter-clockwise rectangle."""
     c = [centre + s * u * long_ / 2 + t * v * short / 2 for s, t in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
     ring = np.array(c + c[:1])
-    if (ring[:-1, 0] * ring[1:, 1] - ring[1:, 0] * ring[:-1, 1]).sum() < 0:
+    if turning(ring) < 0:
         ring = ring[::-1]
     return ring
 
@@ -162,8 +139,7 @@ def _pitched(xy, shape, pitch, cap):
 
 
 def _part(form_cls, xy, top, base, roof, colour, tags, under, seed):
-    """One more part (the building code's outline tuple), standing on
-    under's (a Form's) foot, else its own."""
+    """A part as an outline tuple, standing on under's foot (a Form) if given."""
     roof.height = min(roof.height, max(top - base, 0.0))
     form = form_cls(roof, base, True, None if colour is None else np.array(colour), tags=tags,
                     seed=seed, stand_on=under)
@@ -171,20 +147,17 @@ def _part(form_cls, xy, top, base, roof, colour, tags, under, seed):
 
 
 def _tiers(xy, h, form, n, tier_m, shrink, base_frac, spire, form_cls):
-    """A stone base (base_frac of it, if any) and n tiers, each shrink
-    smaller than the first, each roofed, its roof running on into the
-    next one's walls; a spire on top if spire. All stand on the lowest
-    part's foot."""
+    """A stone base (base_frac of the height) and n roofed tiers, each shrink smaller; a spire if asked."""
     centre, u, v, long_, short = _box(xy)
     base_m = base_frac * n * tier_m / (1 - base_frac)
-    if form.tags.get("height"):                     # its own height: the tiers fill it
+    if form.tags.get("height"):                     # tagged height: tiers fill it
         base_m = base_frac * h
         tier_m = (h - base_m) / n
     out = []
     if base_m:
         out.append(_part(form_cls, xy, base_m, 0.0, Roof(xy, "flat"), STONE, {"building:part": "base"},
                          None, form.seed))
-    z, first = base_m, 0.92 if base_m else 1.0     # the walls set back from the stone's edge
+    z, first = base_m, 0.92 if base_m else 1.0     # walls set back from the stone's edge
     for i in range(n):
         s = first * (1 - shrink * i)
         ring = _rect(centre, u, v, long_ * s, short * s)
@@ -205,13 +178,13 @@ def _church(xy, h, guessed, form, place, form_cls):
     centre, u, v, long_, short = _box(xy)
     if not form.tags.get("roof:shape"):
         form.roof = _pitched(xy, "gabled", CHURCH_PITCH, 1e9)
-        if guessed:                                  # its nave's walls, not a barn's
+        if guessed:
             h = max(h, form.base_m + form.roof.height + CHURCH_WALL_M)
         form.roof.height = min(form.roof.height, h - form.base_m)
     side = float(np.clip(TOWER_SIDE * short * 2, TOWER_MIN_M, min(TOWER_MAX_M, short)))
-    if short > 0.9 * long_ and abs(u[0]) < abs(v[0]):  # near square: along east-west
+    if short > 0.9 * long_ and abs(u[0]) < abs(v[0]):  # near square: run east-west
         u, v, long_, short = v, u, short, long_
-    west = -1 if u[0] > 0 else 1                     # the long axis's west end: a tower faces west
+    west = -1 if u[0] > 0 else 1                     # tower at the west end
     at = centre + west * u * (long_ / 2 - side / 2)
     ring = _rect(at, u, v, side, side)
     orthodox = "orthodox" in str(form.tags.get("denomination", ""))
@@ -242,14 +215,12 @@ def _mosque(xy, h, guessed, form, form_cls):
 
 
 def apply(outlines, place, form_cls):
-    """outlines (buildings.outlines') as the place builds: untagged roofs
-    and heights by region, landmarks drawn as theirs. form_cls:
-    buildings.Form. Returns the new outlines."""
+    """outlines (buildings.outlines') with regional roofs and heights and landmarks built; form_cls: buildings.Form."""
     shape_small, shape_big, pitch = ROOFS.get(place, OTHER_ROOF)
     out = []
     for xy, h, guessed, form in outlines:
         form.tags["style:region"] = place
-        kind = form.tags.get("building", form.tags.get("building:part", "yes"))
+        kind = building_kind(form.tags)
         what = None if form.part else landmark(form.tags, place)
         if what in ("castle", "pagoda"):
             levels = form.tags.get("building:levels")

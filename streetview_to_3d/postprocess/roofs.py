@@ -1,23 +1,6 @@
-"""A building's roof as OpenStreetMap shapes it ("roof:shape"), over its
-outline, as points (surface) or triangles (triangles).
-
-Two kinds, from any outline:
-
-  - rising to one point (RADIAL: pyramidal, cone, dome, onion): the
-    outline drawn again smaller and higher, ring above ring, to its
-    middle -- spires and domes
-  - one height over the whole outline (FIELD), across the outline's
-    long axis (its smallest box round it): gabled (and saltbox,
-    half-hipped), round, gambrel; from every edge: hipped, mansard; one
-    slope down towards roof:direction (else across the short side):
-    skillion
-
-roof:orientation=across turns a ridge across the short side. A roof
-without roof:height (or roof:levels) rises at SLOPE_DEG, a spire at 45
-degrees, a dome as a half ball; any other shape is flat. Walls reach up
-to it where it meets them (rise: a gable's triangle, a skillion's high
-side). East/north metres, heights above the top of the walls.
-"""
+"""A building's roof from OSM's roof:shape, as points (surface) or triangles (triangles):
+RADIAL shapes rise in shrinking rings, FIELD shapes are one height field. East/north metres,
+heights above the wall tops."""
 import numpy as np
 import shapely
 from shapely.geometry import Polygon
@@ -36,8 +19,7 @@ RINGS = 8                 # a dome's or onion's rings, as triangles
 
 
 def _profile(shape, u):
-    """(height, size) of a RADIAL roof's ring u of the way up (0-1), both
-    0-1: size 1 is the outline, 0 its middle."""
+    """(height, size), both 0-1, of a RADIAL roof's ring u of the way up; size 1 is the outline."""
     if shape == "dome":
         return np.sin(u * np.pi / 2), np.cos(u * np.pi / 2)
     if shape == "onion":
@@ -46,8 +28,7 @@ def _profile(shape, u):
 
 
 def _direction(text):
-    """roof:direction, the way the roof faces (down its slope), in degrees
-    from north, or None."""
+    """roof:direction (the downslope way) in degrees from north, or None."""
     t = str(text).strip().upper()
     if t in COMPASS:
         return COMPASS[t]
@@ -64,8 +45,7 @@ def _cut(poly):
 
 
 def along(ring, step):
-    """Points every step (about) round the closed ring (n, 2), its corners
-    included."""
+    """Points about step apart round the closed ring (n, 2), corners included."""
     out = []
     for a, c in zip(ring[:-1], ring[1:]):
         n = max(1, int(np.ceil(np.linalg.norm(c - a) / step)))
@@ -74,9 +54,7 @@ def along(ring, step):
 
 
 class Roof:
-    """The roof over outline xy (n, 2, closed): shape, height (None:
-    guessed, see default), direction (roof:direction's text), across
-    (roof:orientation=across)."""
+    """The roof over closed outline xy: shape, height (None: default()), direction text, across."""
 
     def __init__(self, xy, shape, height=None, direction=None, across=False):
         self.xy, self.args = xy, (shape, direction, across)
@@ -86,7 +64,7 @@ class Roof:
         if self.shape == "flat":
             self.height = 0.0
             return
-        with np.errstate(invalid="ignore"):                  # GEOS warns on a few thin outlines
+        with np.errstate(invalid="ignore"):                  # GEOS warns on some thin outlines
             box = np.asarray(self.poly.minimum_rotated_rectangle.exterior.coords)[:4]
         if len(box) < 4 or not np.isfinite(box).all():
             (x0, y0), (x1, y1) = xy.min(0), xy.max(0)
@@ -108,14 +86,13 @@ class Roof:
         self.height = self.default() if height is None else float(height)
 
     def on(self, xy):
-        """The same roof, as high, over another outline (the building moved
-        or cut)."""
+        """The same roof, same height, over another outline."""
         return Roof(xy, *self.args[:1], self.height, *self.args[1:])
 
     def default(self):
         """A roof:height for a roof that has none."""
         if self.shape in RADIAL:
-            return self.radius                                # a spire at 45 degrees, a dome a half ball
+            return self.radius                                # 45-degree spire, half-ball dome
         if self.shape == "skillion":
             return np.tan(np.radians(SLOPE_DEG)) * (self.lo_hi[1] - self.lo_hi[0])
         return np.tan(np.radians(SLOPE_DEG)) * self.half
@@ -138,8 +115,7 @@ class Roof:
         return 1 - a
 
     def knots(self):
-        """Where an ACROSS roof bends, as offsets from its middle line
-        across the ridge (metres): flat in between."""
+        """Offsets (m) across the ridge where an ACROSS roof bends."""
         a = {"gambrel": [0, .6], "round": np.linspace(0, 1, 7)[:-1]}.get(self.shape, [0])
         return np.unique(np.r_[a, -np.asarray(a)]) * self.half
 
@@ -148,7 +124,6 @@ class Roof:
 
     def _strips(self):
         """The outline cut along the ridge's knots, each piece flat."""
-        from shapely.affinity import rotate
         from shapely.geometry import LineString
         from shapely.ops import split
         pieces = [self.poly]
@@ -170,21 +145,18 @@ class Roof:
         return np.unique(np.r_[0.0, t[(t > 0) & (t < 1)], 1.0])
 
     def rise(self, en):
-        """How far over the walls' top the roof stands at east/north points
-        on its outline: what a wall there reaches up to."""
+        """Roof height over the wall tops at outline points: how far a wall there reaches up."""
         if self.shape in FIELD and self.height > 0 and self.shape not in FROM_EDGES:
             return self.height * self._field(en)
         return np.zeros(len(en))
 
     def surface(self, step):
-        """(points (m, 3) east, north, up over the walls' top; their
-        normals (m, 3), the same way round, facing out), about step
-        apart."""
+        """(points (m, 3) east/north/up, outward normals (m, 3)), about step apart."""
         if self.shape in RADIAL and self.height > 0:
             return self._rings(step)
         lo, hi = self.xy.min(0), self.xy.max(0)
         slope = self.height / max(self.half, 1e-6) if self.shape in FIELD and self.height > 0 else 0.0
-        s = step / max(1.0, min(3.0, np.hypot(1, slope)))    # a steep roof as dense along its slope
+        s = step / max(1.0, min(3.0, np.hypot(1, slope)))    # denser on steep roofs
         gx, gy = np.meshgrid(np.arange(lo[0], hi[0], s) + s / 2, np.arange(lo[1], hi[1], s) + s / 2)
         en = np.stack([gx.ravel(), gy.ravel()], 1)
         en = np.concatenate([en[shapely.contains_xy(self.poly, *en.T)], self.xy[:-1]])
@@ -197,10 +169,7 @@ class Roof:
         return np.c_[en, z], n / np.linalg.norm(n, axis=1, keepdims=True)
 
     def triangles(self, step):
-        """(m, 3, 3) the roof's triangles, corners east, north, up over the
-        walls' top, none longer than about step on a sloping roof: the
-        outline cut into triangles (flat), cut finer and raised (FIELD), or
-        its rings joined (RADIAL)."""
+        """(m, 3, 3) roof triangles (east, north, up), sides about step at most on sloped FROM_EDGES roofs."""
         if self.shape in RADIAL and self.height > 0:
             zn, size = _profile(self.shape, np.linspace(0, 1, 2 if self.shape in ("pyramidal", "cone") else RINGS + 1))
             rings = [np.c_[self.middle + (self.xy - self.middle) * sz, np.full(len(self.xy), z * self.height)]
@@ -216,7 +185,8 @@ class Roof:
         if self.shape == "flat" or self.height <= 0:
             return np.concatenate([tris, np.zeros((*tris.shape[:2], 1))], 2)
         step = max(step, self.half / 2)
-        for _ in range(30 if self.shape in FROM_EDGES else 0):   # the rest are flat between their knots                     # the longest side halved, until none is over step
+        # halve the longest side until none is over step; other shapes are flat between their knots
+        for _ in range(30 if self.shape in FROM_EDGES else 0):
             side = np.linalg.norm(tris - np.roll(tris, -1, 1), axis=2)
             k, big = side.argmax(1), side.max(1) > step
             if not big.any():

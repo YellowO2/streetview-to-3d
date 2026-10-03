@@ -1,47 +1,8 @@
-"""What moves in the world around a scene, for the viewer to move
-(effects/traffic.js, birds.js, boats.js): its cars' roads, its birds, its
-boats' courses. A quiet place: a car on a street at a time, a few birds, a
-boat or two.
+"""What moves around a scene, for the viewer to animate: cars on OSM car roads (moved onto the
+scene's own road, clear of walls, on the country's side), birds, boats along nearby shores,
+ducks and cats.
 
-Cars. The car roads (CARS) on the ground and over its bridges within
-REACH_M of the cameras: further off, nobody watches a car. Through the
-scene too, on its own road at its own ground's height (terrain's road_h
-meets it there), in their lanes beside whatever DA3 parked at its kerb. There OSM's line
-can lie metres to one side of the road DA3 has (at Lake Como, along its
-pavement), so where the scene's own ground (seams.SceneGround) says what
-is road, each point of the line is moved across onto the middle of that
-road, its room the road's half-width (onto_road), easing back onto OSM's
-line over EASE_M past it.
-A car never drives into a building: OSM's widths are guesses, and its
-buildings (as fitted onto DA3's walls) can stand nearer a road's line than
-its lane. Each point keeps how much room it has to the nearest wall
-(room: half the road's width at most); a car keeps to its lane only as far
-as that lets it, and where a car's width does not fit (CLEAR_M) the road
-is cut. The ground's roads are split where they cross, so a car can turn
-there; a bridge joins only at its ends, as a road under it is no junction.
-Their height is the road's own (terrain's road_h; a bridge's deck). Cars
-keep to the side the country drives on (its panos' country code: LEFT).
-
-Birds. The kinds that pass over the scene (its middle, its ground's height)
-now and then, a small group at a time: gulls and swallows where there is
-water within GULLS_M of the cameras, pigeons and swallows elsewhere.
-
-Boats. On each water near the scene (within BOATS_M of its middle, at
-least BOAT_WATER_M2 of it), a course round it SHORE_M off its shore: a
-river's up one side and down the other, a lake's round it.
-
-Ducks. A few on the water nearest the scene (within DUCKS_M of its middle):
-a home DUCK_SHORE_M in from the shore where it comes nearest, clear of the
-scene's own ground (DUCK_CLEAR_M: not under a bridge it stands on), and how
-far they paddle round it (clear of both).
-
-Cats. One or two on the scene's own ground -- a pavement, a verge: off the
-car roads and what its panos call road, CAT_EDGE_M in from its edge,
-CAT_NEAR_M of a camera -- each with
-a few spots near together it sits at and strolls between, at the ground's
-height there.
-
-Written to life.json beside scene.json (its "life"), east/north metres:
+Written to life.json beside scene.json (east/north metres):
     {"cars": {"side": "left" | "right",
               "colours": {"body": [[r, g, b], ...], "glass": .., "tyre": .., "head": .., "tail": ..},
               "roads": [{"width": m, "points": [[e, n, h], ...], "room": [m, ...]}, ...]},
@@ -54,9 +15,7 @@ Written to life.json beside scene.json (its "life"), east/north metres:
                "homes": [{"level": m, "at": [e, n], "reach": m}, ...]},
      "cats": {"colours": [{"body": .., "tail": ..}, ...],
               "cats": [{"spots": [[e, n, h], ...]}, ...]}}
-each car road a stretch between junctions or ends, its points STEP_M apart;
-two roads meet where an end of one is within JOIN_M of an end of the other
-(traffic.js); a course closed, its last point its first's neighbour.
+Car road points are STEP_M apart; room is the clearance to the nearest wall.
 """
 import json
 import os
@@ -67,14 +26,13 @@ from .roads import KEPT, PATHS, _area, _on_ground, _width
 
 FILENAME = "life.json"
 CARS = tuple(k for k in KEPT if k not in PATHS)
-REACH_M = 100.0
+REACH_M = 100.0           # car roads this near a camera
 STEP_M = 4.0
-MIN_M = 20.0              # a stretch shorter than this is left out
-JOIN_M = 1.0
-CLEAR_M = 1.1             # a road this near a wall is too narrow for a car (half its width and some)
-ACROSS_M = 8.0            # the scene's road looked for this far either side of OSM's line
-ROAD_MIN_M, EASE_M = 3.0, 20.0   # a road narrower than this is none; moved back onto OSM's over this
-# the countries that drive on the left (ISO 3166-1 alpha-2)
+MIN_M = 20.0              # shorter stretches are dropped
+CLEAR_M = 1.1             # min clearance to a wall for a car
+ACROSS_M = 8.0            # the scene's road is searched this far either side of OSM's line
+ROAD_MIN_M, EASE_M = 3.0, 20.0   # min scene road width; ease back onto OSM's line over this
+# countries driving on the left (ISO 3166-1 alpha-2)
 LEFT = {"GB", "IE", "IM", "JE", "GG", "MT", "CY", "JP", "SG", "MY", "BN", "HK", "MO", "TH", "ID", "TL",
         "IN", "LK", "BD", "BT", "NP", "PK", "MV", "AU", "NZ", "PG", "FJ", "WS", "TO", "SB", "KI", "TV",
         "NR", "CK", "NU", "ZA", "NA", "BW", "ZW", "ZM", "MW", "MZ", "TZ", "KE", "UG", "LS", "SZ", "MU",
@@ -82,13 +40,12 @@ LEFT = {"GB", "IE", "IM", "JE", "GG", "MT", "CY", "JP", "SG", "MY", "BN", "HK", 
         "BM", "FK", "AI", "MS", "TC", "SH"}
 GULLS_M = 200.0
 DUCKS_M, DUCK_SHORE_M, DUCK_REACH_M, DUCK_CLEAR_M = 150.0, 10.0, 8.0, 5.0
-CAT_NEAR_M = (2.0, 15.0)      # a cat's spots between these from the nearest camera
-CAT_EDGE_M, CAT_ROAD_M = 1.0, 1.5   # ... this far in from the ground's edge, and past a car road's side
+CAT_NEAR_M = (2.0, 15.0)      # cat spots between these distances from the nearest camera
+CAT_EDGE_M, CAT_ROAD_M = 1.0, 1.5   # ... this far in from the ground's edge and past a car road's side
 CAT_SPOT_M, CAT_SPOTS, CATS_APART_M = 6.0, 8, 10.0
 BOATS_M, SHORE_M = 300.0, 12.0
 BOAT_WATER_M2 = 3000.0
-# the colours cars come in, each car its own while they last (traffic.js);
-# their glass, tyres and lights
+# car body colours; glass, tyres and lights
 BODY = [(0.88, 0.88, 0.86), (0.08, 0.08, 0.09), (0.68, 0.69, 0.70), (0.32, 0.33, 0.35),
         (0.55, 0.09, 0.08), (0.12, 0.20, 0.40), (0.18, 0.30, 0.22), (0.72, 0.66, 0.55),
         (0.42, 0.58, 0.72)]
@@ -127,13 +84,11 @@ def side(pano_id):
 
 
 def roads(elements, to_xy, height, decks, keep, walls=(), ground=None):
-    """[(width m, (n, 3) east/north/height every STEP_M, room (n,) m)]: the
-    car roads (elements: osm.fetch's; to_xy their geometry's), on the ground
-    at height(xy) -- onto the scene's own road where its ground (a
-    seams.SceneGround) has one -- and over decks (roads.Deck, those of car
-    roads), kept only where keep(xy) (n, 2) is true and CLEAR_M clear of
-    walls (buildings' outlines, (m, 2) each); room: how far the nearest wall
-    is, half the width at most (the scene's road's, on it)."""
+    """[(width m, (n, 3) east/north/height every STEP_M, room (n,) m)] of the car roads and decks.
+
+    At height(xy), moved onto the scene's road where ground (seams.SceneGround)
+    has one, kept where keep(xy) and CLEAR_M from walls; room: clearance to
+    the nearest wall, at most half the width."""
     import shapely
     wall = shapely.union_all([shapely.make_valid(shapely.Polygon(w)) for w in walls if len(w) >= 3])
     shapely.prepare(wall)
@@ -165,12 +120,8 @@ def roads(elements, to_xy, height, decks, keep, walls=(), ground=None):
 
 
 def onto_road(xy, ground):
-    """(xy moved, half-width (n,)): a line's points (n, 2), STEP_M apart,
-    each moved across onto the middle of the road the scene's ground
-    (seams.SceneGround) has there -- the run of it its panos call road
-    nearest the line, ROAD_MIN_M wide at least, within ACROSS_M -- easing
-    back onto the line over EASE_M where it has none; the road's half-width
-    where it has one (NaN elsewhere)."""
+    """(xy moved, half-width (n,), NaN off road): each point moved sideways onto the middle of the
+    scene ground's nearest road run (ROAD_MIN_M wide, within ACROSS_M), easing back over EASE_M."""
     from .seams import CELL_M
     n = len(xy)
     ahead = np.gradient(xy, axis=0) if n > 1 else np.array([[1.0, 0.0]])
@@ -189,12 +140,12 @@ def onto_road(xy, ground):
     have = np.flatnonzero(np.isfinite(move))
     if not len(have):
         return xy, half
-    # where it has no road, back onto the line over EASE_M from the nearest that has
+    # without road, ease back onto the line from the nearest point that has one
     at = _along(xy)
     nearest = have[np.abs(at[:, None] - at[have][None, :]).argmin(1)]
     eased = move[nearest] * np.clip(1 - np.abs(at - at[nearest]) / EASE_M, 0, 1)
     moved = np.where(np.isfinite(move), move, eased)
-    moved = np.convolve(np.r_[moved[0], moved, moved[-1]], np.ones(3) / 3, "valid")   # no jolt point to point
+    moved = np.convolve(np.r_[moved[0], moved, moved[-1]], np.ones(3) / 3, "valid")   # smooth jolts
     return xy + side * moved[:, None], half
 
 
@@ -223,9 +174,7 @@ def _water(surfaces):
 
 
 def birds(surfaces, cams, ground_h):
-    """life.json's birds: gulls and swallows if any of surfaces
-    (water.Water's) lies within GULLS_M of cams (east/north (n, 2)), else
-    pigeons and swallows, over the cameras' middle at ground_h."""
+    """life.json's birds over the cameras' middle: gulls if water is within GULLS_M, else pigeons; and swallows."""
     import shapely
     near = shapely.MultiPoint(cams).buffer(GULLS_M)
     gulls = any(w.intersects(near) for _, w in _water(surfaces))
@@ -235,8 +184,7 @@ def birds(surfaces, cams, ground_h):
 
 
 def boats(surfaces, cams):
-    """life.json's boats' courses: round each water within BOATS_M of the
-    cams' (east/north (n, 2)) middle, SHORE_M off its shore, at its level."""
+    """life.json's boat courses SHORE_M off the shore of each water within BOATS_M of the cameras' middle."""
     import shapely
     reach = shapely.Point(np.mean(cams, axis=0)).buffer(BOATS_M)
     courses = []
@@ -249,9 +197,7 @@ def boats(surfaces, cams):
 
 
 def ducks(surfaces, cams, ground=None):
-    """life.json's ducks: a home on the water nearest the cams' (east/north
-    (n, 2)) middle, DUCK_SHORE_M in from its shore and DUCK_CLEAR_M off the
-    scene's ground (a seams.SceneGround), if within DUCKS_M."""
+    """life.json's ducks: one home DUCK_SHORE_M in from the nearest shore within DUCKS_M, clear of the scene's ground."""
     import shapely
     middle = np.mean(cams, axis=0)
     homes = []
@@ -259,7 +205,7 @@ def ducks(surfaces, cams, ground=None):
         inner = w.buffer(-DUCK_SHORE_M)
         if inner.is_empty:
             continue
-        # its edge, every 2 m: DUCK_SHORE_M from the shore
+        # candidate spots every 2 m along the inset shore
         at = shapely.get_coordinates(shapely.segmentize(inner.boundary, 2.0))
         off = ground.at(at)[0] if ground is not None else np.full(len(at), np.inf)
         at, off = at[off >= DUCK_CLEAR_M], off[off >= DUCK_CLEAR_M]
@@ -275,9 +221,7 @@ def ducks(surfaces, cams, ground=None):
 
 
 def cats(ground, stretches, cams, seed=0):
-    """life.json's cats: one or two, each spots on the scene's own ground
-    (seams.SceneGround) off the car roads (roads()'s stretches) near the
-    cams (east/north (n, 2)), CATS_APART_M apart."""
+    """life.json's cats: up to two, with spots on the scene's non-road ground near the cameras."""
     import shapely
     from scipy.ndimage import distance_transform_edt
     from scipy.spatial import cKDTree
@@ -285,7 +229,7 @@ def cats(ground, stretches, cams, seed=0):
     have = np.isfinite(ground.height)
     if not have.any():
         return {"colours": [_rgb(c) for c in CATS], "cats": []}
-    deep = distance_transform_edt(have) * CELL_M                 # how far in from the ground's edge
+    deep = distance_transform_edt(have) * CELL_M                 # distance in from the ground's edge
     i, j = np.nonzero(deep >= CAT_EDGE_M)
     xy = (np.c_[i, j] + ground.lo + 0.5) * CELL_M
     d = cKDTree(cams).query(xy)[0]
@@ -305,7 +249,7 @@ def cats(ground, stretches, cams, seed=0):
         home = xy[rng.choice(np.flatnonzero(far))]
         near = np.flatnonzero(np.hypot(*(xy - home).T) <= CAT_SPOT_M)
         pick = rng.choice(near, min(CAT_SPOTS, len(near)), replace=False)
-        pick = pick[np.argsort(np.hypot(*(xy[pick] - home).T))]          # its home first
+        pick = pick[np.argsort(np.hypot(*(xy[pick] - home).T))]          # home first
         out.append({"spots": np.round(np.c_[xy[pick], h[pick]], 2).tolist()})
     return {"colours": [_rgb(c) for c in CATS], "cats": out}
 
@@ -323,8 +267,7 @@ def _rgb(colours):
 
 
 def save(scene_dir, **parts):
-    """Write FILENAME (see the module) of its parts -- cars (cars()), birds,
-    boats, ducks, cats; its name."""
+    """Write life.json from its parts; returns its name."""
     with open(os.path.join(scene_dir, FILENAME), "w") as f:
         json.dump(parts, f, separators=(",", ":"))
     return FILENAME

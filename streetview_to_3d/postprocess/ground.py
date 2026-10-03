@@ -1,27 +1,5 @@
-"""The ground detector: which points of a cloud are the ground, slopes included.
-
-One detector for every cloud (Google's depth, DA3's points), so every step
-that needs "the ground" agrees on what it is. A point is ground when:
-
-1. it faces up: its surface within UP_DEG of level (normals given, or
-   found from the point's neighbours)
-2. it is the lowest up-facing surface in its spot: per CELL_M square seen
-   from above, only up-facing points within LOWEST_M of the lowest one --
-   car roofs, awnings and tables stand above the ground, not on it
-3. it connects to where the cameras stand: starting from the squares right
-   under each camera, the ground spreads square by square into neighbours
-   whose height changes by at most STEP_M. A slope, ramp or kerb changes
-   gradually and connects; a planter, roof or wall top jumps and does not.
-
-There is deliberately no "so far below the camera" rule beyond the start:
-going uphill the ground rises toward camera height, and a fixed rule would
-stop counting it as ground a few metres out.
-
-GroundMap turns several clouds' ground into ONE ground: each square takes
-the ground of the clouds there, the one whose camera is nearest (it sees
-that spot best) most, blended across where cameras meet, lightly smoothed, and can be laid out as an even grid -- no stacked floors
-where clouds disagree by a few cm.
-"""
+"""Ground detection for a cloud (up-facing, lowest in its square, connected to a camera through
+small steps), and GroundMap: one blended height map from several clouds' ground."""
 from collections import deque
 
 import numpy as np
@@ -34,7 +12,13 @@ LOWEST_M = 0.3
 STEP_M = 0.35
 SEED_M = 2.0              # squares this close (sideways) to a camera start the spread
 SEED_BELOW = (1.0, 4.0)   # ...if their ground is this far below that camera
-BLEND_M = 2.0             # blend: a camera this much further than the nearest counts 1/e as much
+BLEND_M = 2.0             # a camera this much further than the nearest counts 1/e as much
+
+
+def square_keys(xz, cell):
+    """One int64 key per point's cell x cell square; neighbours differ by (dx << 21) + dz."""
+    c = np.floor(xz / cell).astype(np.int64) + 2 ** 20
+    return (c[:, 0] << 21) | c[:, 1]
 
 
 def normals_from_neighbours(x, k=12):
@@ -46,14 +30,13 @@ def normals_from_neighbours(x, k=12):
 
 
 def ground(x, cams, normals=None, seed_m=SEED_M):
-    """Boolean mask over x (world metres, y down): which points are ground.
-    cams: one camera position, or several (N x 3), to start from. seed_m:
-    how far out from a camera the spread may start (DA3 sees nothing within
-    ~4 m of its own camera, so it needs more than Google's depth does)."""
+    """Which points of x (world metres, y down) are ground.
+
+    cams: one or more (N, 3) camera positions to spread from; seed_m: how far
+    out from a camera the spread may start."""
     n = normals_from_neighbours(x) if normals is None else normals
     idx = np.flatnonzero(np.abs(n[:, 1]) > np.cos(np.radians(UP_DEG)))
-    c = np.floor(x[idx][:, [0, 2]] / CELL_M).astype(np.int64)
-    key = (c[:, 0] + 2 ** 20) << 21 | (c[:, 1] + 2 ** 20)
+    key = square_keys(x[idx][:, [0, 2]], CELL_M)
     uk, inv = np.unique(key, return_inverse=True)
     low = np.full(len(uk), -np.inf)
     np.maximum.at(low, inv, x[idx, 1])                  # y is down: the largest y is the lowest
@@ -89,12 +72,8 @@ def ground(x, cams, normals=None, seed_m=SEED_M):
 
 
 def blend(dist, nearest):
-    """How much a source dist from its camera counts where the nearest
-    camera is `nearest` away: 1 for the nearest, 1/e one BLEND_M further,
-    0 for one that cannot see it (inf). The one smoothing across panos --
-    the ground's height (GroundMap) and its colour (fill.paint) alike: deep
-    in one camera's patch it is that pano's, where two meet it fades from
-    one to the other over a few metres."""
+    """Weight of a camera dist away where the nearest is `nearest` away: 1 for the nearest,
+    1/e one BLEND_M further, 0 for inf. Used for both ground height and colour."""
     near = np.where(np.isfinite(nearest), nearest, 0.0)
     return np.where(np.isfinite(dist), np.exp(-(np.where(np.isfinite(dist), dist, 0.0) - near) / BLEND_M), 0.0)
 
@@ -102,13 +81,9 @@ def blend(dist, nearest):
 class GroundMap:
     """One ground height per cell x cell square (world metres, y down).
 
-    xs[k] are cloud k's ground points and cams[k] its camera; each square
-    takes each cloud's median height in it, mixed by blend (the nearest
-    camera, which sees that spot best, most) -- so where two cameras'
-    squares meet, and their clouds differ by a few cm, the ground ramps
-    from one to the other over a few metres rather than stepping. `height` is that, lightly smoothed (smooth_m),
-    ignoring empty squares; `owner` the nearest camera's cloud.
-    """
+    xs[k] are cloud k's ground points, cams[k] its camera. Each square mixes
+    the clouds' median heights by blend; `height` is that smoothed over
+    smooth_m, `owner` the nearest camera's cloud."""
 
     def __init__(self, xs, cams, cell, smooth_m):
         who = np.concatenate([np.full(len(x), k) for k, x in enumerate(xs)])
@@ -153,8 +128,7 @@ class GroundMap:
         return np.where(den > 1e-3, num / np.maximum(den, 1e-9), np.nan)
 
     def spread(self):
-        """height carried into empty squares nearby, wider and wider, so a
-        hole can be laid out on it."""
+        """Carry height into nearby empty squares, wider each pass, so holes can be filled."""
         h = self.height.copy()
         known = np.isfinite(h)
         for s in (1, 2, 4, 8):
@@ -166,8 +140,7 @@ class GroundMap:
         self.height = h
 
     def at(self, xz):
-        """(heights at xz, which had any): bilinear on height, empty
-        corners left out."""
+        """(heights at xz, which had any): bilinear, ignoring empty corners."""
         g = (xz - self.lo) / self.cell - .5
         i0 = np.clip(np.floor(g).astype(int), 0, self.dims - 2)
         f = g - i0
@@ -184,8 +157,7 @@ class GroundMap:
         return np.where(ok, val / np.maximum(wsum, 1e-12), np.nan), ok
 
     def grid(self, squares, step):
-        """(points, owner cloud of each) laid out every `step` metres over
-        the squares marked True, on height."""
+        """(points, owner cloud of each) every step metres over the marked squares, on height."""
         per = int(round(self.cell / step))
         sq = np.argwhere(squares)
         off = (np.arange(per) + .5) * step

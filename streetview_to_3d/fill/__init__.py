@@ -1,27 +1,6 @@
-"""Finish a placed scene: one ground, and its colour.
-
-Runs once, right after placement (postprocess.pipeline), on the scene in
-place. DA3's shape is never changed; each piece is at most lifted or
-lowered, whole, to meet the others' road, and its ground points replaced.
-
-    level.py       each piece's up/down shift, so their roads meet
-
-    one_ground.py  every cloud's ground becomes one smooth surface, its
-                   holes and the blind disc under each camera included
-    paint.py       colour for it, patch by patch from the nearest
-                   pano that sees it cleanly; what none can, the colour
-                   of the nearest point one did.
-                   DA3 keeps its own colours
-
-and each of DA3's points how much it sways in the wind (the ply's sway):
-what its pano calls vegetation, the more the higher over the ground, fully
-SWAY_M up -- a trunk stands, a crown moves (the viewer: effects/points.js).
-
-Points belong to nodes (see scene.py), so every added point is written into
-the node whose pano coloured it -- in that node's own frame, like the rest
-of its cloud -- and the viewer needs nothing new. The ground is kept on its
-own too (postprocess.seams.SceneGround, ground.npz): where the scene's
-ground is, for the map to meet -- found here once, never guessed again.
+"""Finish a placed scene in place: level the pieces (level.py), lay one ground under them
+(one_ground.py) and colour it from the panos (paint.py). Added ground goes into the node whose
+pano painted it and is also saved as seams.SceneGround; DA3's points gain a sway value.
 
     python -m streetview_to_3d.fill SCENE_DIR [OUT_DIR]
 """
@@ -36,28 +15,24 @@ from streetview_to_3d.fill import level
 from streetview_to_3d.fill.one_ground import grounds, one_ground
 from streetview_to_3d.postprocess.seams import SceneGround
 from streetview_to_3d.fill.paint import Camera, blurred, paint
-from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
+from streetview_to_3d.postprocess.ply_io import read_node, write_ply
 from streetview_to_3d.services.segment import pano_mask
 
-SWAY_M = 6.0      # a tree's points sway fully this far over the ground, not at all on it
+SWAY_M = 6.0      # vegetation sways fully at this height over the ground
 
 
 def _photo(pano, scene_dir):
-    """(image path, class map) of a pano, or None: the same download the
-    reconstruction used (cached) and the class map the scene keeps for it
-    (made here on the CPU if it has none)."""
+    """(image path, class map) of a Google pano, or None; both cached."""
     from streetview_to_3d.services.segment import labels_path, pano_labels
-    from streetview_to_3d.services.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
+    from streetview_to_3d.services.streetview_fetch import fetch_da3_pano
     if pano.source != "google":
         return None
-    path = run_async(download_pano_by_id(pano.id, zoom=DA3_ONLY_ZOOM))
+    path = fetch_da3_pano(pano.id)
     return (path, pano_labels(path, device="cpu", saved=labels_path(scene_dir, pano.id))) if path else None
 
 
 def _classed(points, camera, photo, classes, unknown):
-    """Which of a node's own points its pano's class map calls one of
-    classes, each looked up where it came from; unknown for all of them
-    without a class map."""
+    """Which of a node's points its pano's class map labels one of classes (unknown without a map)."""
     from streetview_to_3d.fill.paint import _at
     from streetview_to_3d.services.segment import LABEL_IDS
     if photo is None:
@@ -73,9 +48,7 @@ def _walkable(points, camera, photo):
 
 
 def run(scene_dir, log=print):
-    """Fill the placed scene at scene_dir in place. (Google's depth maps --
-    their ground and their walls above DA3's reach -- once filled in too;
-    the terrain's land and OSM buildings do that now, without a download.)"""
+    """Fill the placed scene at scene_dir in place."""
     t0 = time.monotonic()
     sc = scene_mod.Scene.load(scene_dir)
     nodes = [n for n in sc.nodes if n.ply and n.transform]
@@ -83,9 +56,8 @@ def run(scene_dir, log=print):
         return
     clouds, colours = [], []
     for n in nodes:
-        p, c = read_ply(os.path.join(scene_dir, n.ply))
-        T = np.asarray(n.transform, float)
-        clouds.append(p @ T[:3, :3].T + T[:3, 3])
+        p, c, world = read_node(scene_dir, n)
+        clouds.append(world)
         colours.append(c if c is not None else np.full((len(p), 3), 0.5))
     cameras = [Camera(n) for n in nodes]
     cams = np.array([c.centre for c in cameras])
@@ -102,31 +74,28 @@ def run(scene_dir, log=print):
     da3 = np.concatenate(clouds)
     t1 = time.monotonic()
 
-    added = ground
-    col, who = paint(added, da3, cameras,
+    col, who = paint(ground, da3, cameras,
                      [ph and (ph[0], pano_mask(ph[1]) | blurred(ph[0])) for ph in photos])
-    # no camera may colour it (the spot under a camera, masked spots, or out
-    # of every camera's view): the colour of the nearest painted point --
-    # the ground is laid whole, a dropped point is a hole in the road
+    # points no camera can colour take the nearest painted point's colour: dropping them would leave holes
     painted, fallback = who >= 0, who < 0
     if painted.any() and fallback.any():
-        _, nb = cKDTree(added[painted]).query(added[fallback])
+        _, nb = cKDTree(ground[painted]).query(ground[fallback])
         src = np.flatnonzero(painted)[nb]
         col[fallback], who[fallback] = col[src], who[src]
     ok = who >= 0
-    # which of it is road: as the pano that painted each point calls it (cars keep to it: life.py)
-    road = np.zeros(len(added), bool)
+    # road as the painting pano labels it (life.py keeps cars to it)
+    road = np.zeros(len(ground), bool)
     for k in range(len(nodes)):
         mine = ok & (who == k)
         if mine.any():
-            road[mine] = _classed(added[mine], cameras[k], photos[k], ("road",), False)
-    scene_ground = SceneGround.from_points(added[ok], col[ok], road[ok])
+            road[mine] = _classed(ground[mine], cameras[k], photos[k], ("road",), False)
+    scene_ground = SceneGround.from_points(ground[ok], col[ok], road[ok])
     scene_ground.save(scene_dir)
 
     for k, n in enumerate(nodes):
         mine = ok & (who == k)
-        x = np.concatenate([clouds[k], added[mine]])
-        # a tree's points sway, the more the higher over the ground (world: y down)
+        x = np.concatenate([clouds[k], ground[mine]])
+        # vegetation sways more the higher it is over the ground (world: y down)
         tree = _classed(clouds[k], cameras[k], photos[k], ("vegetation",), False)
         over = -clouds[k][:, 1] - scene_ground.at(clouds[k][:, [0, 2]])[1]
         sway = np.r_[tree * np.clip(np.nan_to_num(over) / SWAY_M, 0, 1), np.zeros(int(mine.sum()))]

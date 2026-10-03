@@ -1,8 +1,5 @@
-"""Chunky street furniture shared by point and triangle exports.
-
-Mapped objects use OSM positions. Inferred lamps only occupy tagged lit
-pavements, with mapped lamps suppressing nearby inferred duplicates.
-"""
+"""Street furniture (lamps, signals, benches, bins) as boxes for road points and meshes; lamps
+also inferred along lit sidewalks."""
 import numpy as np
 
 METAL = (.24, .28, .29)
@@ -46,18 +43,18 @@ def _objects(net):
         direction = np.array([1., 0.])
         if net.street_lines:
             nearest = int(tree.nearest(shapely.Point(xy)))
-            road, width, _ = net.street_lines[nearest]
+            _, width, _ = net.street_lines[nearest]
             line = lines[nearest]
             at = line.project(shapely.Point(xy))
             a, b = np.array(line.interpolate(max(0,at-.5)).coords[0]), np.array(line.interpolate(min(line.length,at+.5)).coords[0])
             direction = (b-a) / max(np.linalg.norm(b-a),1e-9)
             if kind == 'traffic_signals' and line.distance(shapely.Point(xy)) < width / 2:
-                # OSM often puts a signal control node on the centreline.
+                # a signal node on the centreline: move it to the road's side
                 xy = np.array(line.interpolate(at).coords[0]) + np.array([-direction[1],direction[0]]) * (width/2+.45)
         if kind == 'street_lamp':
             mapped_lamps.append(xy)
         yield kind, xy, direction
-    # A lit tagged sidewalk supports a modest deterministic lamp rhythm.
+    # lamps every 28 m along lit sidewalks
     from .roads import _sidewalks, PAVEMENT, KERB, PAVING_JOINT
     pavement = shapely.union_all([net.shapes.get(c,shapely.Polygon()) for c in (PAVEMENT,KERB,PAVING_JOINT)])
     accepted = list(mapped_lamps)
@@ -93,7 +90,7 @@ def quads(net, ground):
         elif kind == 'traffic_signals':
             yield from box((-.09,.09,-.09,.09,0,3.4))
             yield from box((-.23,.23,-.22,.17,2.65,3.65),(.12,.14,.14))
-            # Static lenses; no simulated live traffic state.
+            # static lenses
             for z, colour in ((3.38,(.55,.16,.12)),(3.08,(.65,.48,.12)),(2.78,(.13,.38,.23))):
                 yield from box((-.13,.13,-.26,-.225,z,z+.2),colour)
         elif kind == 'bench':

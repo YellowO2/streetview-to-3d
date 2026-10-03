@@ -1,4 +1,6 @@
 """Reading and writing plain point-cloud .ply files."""
+import os
+
 import numpy as np
 
 
@@ -19,13 +21,17 @@ def read_ply(ply_path):
     return pts, cols
 
 
+def read_node(scene_dir, node, every=1):
+    """(points, colours or None, world points) of a placed node's .ply, every every-th point."""
+    p, c = read_ply(os.path.join(scene_dir, node.ply))
+    p, c = p[::every], None if c is None else c[::every]
+    T = np.asarray(node.transform, float)
+    return p, c, p @ T[:3, :3].T + T[:3, 3]
+
+
 def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None, sway=None):
-    """Points, and with gap (n,) how far each is from its neighbours, metres:
-    the viewer draws it that big (scene-store.js, terrainBands). A building's
-    also which way each faces (normal (n, 3)), what it is (kind (n,):
-    buildings.Blocks) and how near DA3's points it is (near (n,):
-    seams.toward). A node's how much each sways in the wind (sway (n,),
-    0-1: a tree's, fill), kept as a byte."""
+    """A point .ply with optional per-point gap (spacing, m), normal, kind (buildings.Blocks),
+    near (seams.toward) and sway (0-1, stored as a byte)."""
     n = len(pts)
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")]
     fields += [("gap", "<f4")] if gap is not None else []
@@ -58,12 +64,11 @@ def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None, sway
 
 
 def write_mesh(path, pts, cols, faces, facade=None, gap=None, near=None):
-    """A triangle mesh: pts (n, 3), cols (n, 3) 0-1, faces (m, 3) indices
-    into them, facade (n, 2) each vertex's place on its wall, metres along
-    and up, or (n, 4) with bay/floor sizes, or (n, 7) with its windows' colour too
-    (buildings.solid), or None (land); gap (n,) how
-    far apart the viewer spaces the points it draws the surface as, there,
-    or None; near (n,) how near DA3's points each is (seams.toward), or None."""
+    """A triangle mesh .ply: pts, cols (0-1), faces (m, 3).
+
+    facade: (n, 2) metres along/up its wall, (n, 4) plus bay/floor size, or
+    (n, 7) plus window colour (buildings.solid). gap: point spacing the
+    viewer scatters at; near: closeness to DA3 (seams.toward)."""
     n, m = len(pts), len(faces)
     layout = facade is not None and facade.shape[1] >= 4
     glass = facade is not None and facade.shape[1] >= 7

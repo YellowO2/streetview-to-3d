@@ -1,16 +1,5 @@
-"""Remove loose sheets from a placed scene: DA3's points far sparser than
-the densest of what is near them -- the thin waves hanging off a wall,
-which blobs.py keeps (they touch it).
-
-A point goes if its K-th nearest point is SPARSE times as far off as on
-the densest surface near it (its own cell or one beside it, CELL_M across;
-a cell's densest: its SHARE-th densest point). Surfaces uniformly sparse
-(far off, at a slant) keep all their points, their neighbours as sparse.
-A sheet only a few of the wall's own spacings off it borrows the wall's
-points as its neighbours, and stays.
-
-Across the whole scene, not per node. Points are only ever removed. After
-blobs.py, before the fill, so its ground is laid on what is left.
+"""Remove loose sheets: DA3 points whose K-th neighbour is SPARSE times farther than on the
+densest surface nearby. Runs scene-wide after blobs.py, before the fill.
 
     python -m streetview_to_3d.postprocess.clean SCENE_DIR
 """
@@ -21,7 +10,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from streetview_to_3d import scene as scene_mod
-from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
+from streetview_to_3d.postprocess.ply_io import read_node, write_ply
 
 K, SPARSE, CELL_M, SHARE = 8, 2.5, 0.5, 0.2
 
@@ -32,7 +21,7 @@ def sparse(points):
         return np.zeros(len(points), bool)
     gap = cKDTree(points).query(points, k=K + 1, workers=-1)[0][:, -1]
     # each cell's densest (its SHARE-th smallest gap), then the densest of it and its neighbours
-    X, Y = 1_000_003 * 1_000_033, 1_000_033                  # a cell's key: one number, its neighbours' a step off
+    X, Y = 1_000_003 * 1_000_033, 1_000_033                  # cell key strides: neighbours are a step off
     cell = np.floor(points / CELL_M).astype(np.int64)
     keys, which = np.unique(cell @ [X, Y, 1], return_inverse=True)
     which = which.ravel()
@@ -59,10 +48,9 @@ def clean(scene_dir, log=print):
         return
     raw, world = [], []
     for n in nodes:
-        p, c = read_ply(os.path.join(scene_dir, n.ply))
-        T = np.asarray(n.transform, float)
+        p, c, w = read_node(scene_dir, n)
         raw.append((p, c))
-        world.append(p @ T[:3, :3].T + T[:3, 3])
+        world.append(w)
     loose = sparse(np.concatenate(world))
     start = 0
     for n, (p, c) in zip(nodes, raw):

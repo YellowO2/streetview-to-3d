@@ -1,9 +1,5 @@
-"""OSM facade profiles adapted to the vendored Apache-2.0 building grammar.
-
-Upstream provides bay placement, window/sill geometry, balcony slabs and rails,
-entrances and semantic facade motifs. This adapter adds point-readable depth,
-keeps our mapped roofs, and returns coloured quads in our x-east/y-down/z-north frame.
-"""
+"""Physical facades (windows, balconies, doors, ledges) from the vendored Apache-2.0 building
+grammar, as coloured quads in the x-east/y-down/z-north frame."""
 from dataclasses import dataclass
 import re
 
@@ -13,6 +9,8 @@ from ._vendor.osm_building_grammar.config import (
     BuildingGrammarConfig, FacadeStyleConfig, RoofStyleConfig,
 )
 from ._vendor.osm_building_grammar.grammar import generate_building_spec, _oriented_box, window_offsets
+from .buildings import LEVEL_M, glass
+from .osm import building_kind
 
 
 MAX_DETAIL_GAP = 1.6
@@ -33,7 +31,7 @@ class Profile:
 
 
 def profile_for(tags, height, area):
-    kind = tags.get("building", tags.get("building:part", "yes"))
+    kind = building_kind(tags)
     material = tags.get("building:material", "").lower()
     architecture = tags.get("building:architecture", "").lower()
     year = re.match(r"\d{4}", str(tags.get("start_date", "")))
@@ -58,7 +56,8 @@ def profile_for(tags, height, area):
 
 
 def enabled(form, height, gap):
-    kind = form.tags.get("building", form.tags.get("building:part", "yes"))
+    """Whether a building gets a physical facade at point spacing gap."""
+    kind = building_kind(form.tags)
     edge_lengths = np.linalg.norm(np.diff(np.asarray(form.roof.poly.exterior.coords), axis=0), axis=1)
     return (kind in SUPPORTED and gap <= MAX_DETAIL_GAP and edge_lengths.max(initial=0) >= 3 and
             4 <= height - form.base_m - form.roof.height <= 90 and
@@ -73,11 +72,7 @@ def _faces(vertices, faces):
 
 
 def facade_quads(xy, height, form, foot, colour, planes=None):
-    """Build repeatable facade volumes without changing the existing roof or footprint.
-
-    Fitted DA3 walls and shared walls receive no guessed ornaments. Balcony faces
-    form real slabs and three-sided guards, not a window-colour pattern.
-    """
+    """(quad (4, 3) world, colour) facade volumes; walls fitted to DA3 (planes) and shared walls get none."""
     cache_key = (height, foot, tuple(colour), tuple(sorted((planes or {}).keys())))
     if cache_key in form.geometry_cache:
         yield from form.geometry_cache[cache_key]
@@ -86,7 +81,7 @@ def facade_quads(xy, height, form, foot, colour, planes=None):
     wall_height = height - form.roof.height - form.base_m
     raw_levels = _positive_number(form.tags.get("building:levels"))
     min_levels = _positive_number(form.tags.get("building:min_level")) or 0
-    levels = int(np.clip(round(raw_levels - min_levels) if raw_levels else round(wall_height / 3.2), 1, 28))
+    levels = int(np.clip(round(raw_levels - min_levels) if raw_levels else round(wall_height / LEVEL_M), 1, 28))
     floor = wall_height / levels
     style = FacadeStyleConfig(name=profile.name, wall_color=(*colour, 1.0))
     trim = np.clip(np.asarray(colour) * .78 + .2, 0, 1)
@@ -130,7 +125,6 @@ def facade_quads(xy, height, form, foot, colour, planes=None):
     config = BuildingGrammarConfig(styles=[style], roof=RoofStyleConfig(type="flat", edge_enabled=False))
     tags = dict(form.tags, height=str(wall_height), **{"building:levels": str(levels),
                 "roof:shape": "flat", "roof:height": "0", "grammar:street_facing_side": str(form.front)})
-    # Upstream remains responsible for facade modules; our original roof implementation stays authoritative.
     footprint = [(float(x), float(y), 0.0) for x, y in xy[:-1]]
     spec = generate_building_spec(footprint, tags, config, source_name="osm")
     allowed = {"window", "window_frame", "window_mullion", "window_sill", "balcony", "balcony_rail",
@@ -143,7 +137,7 @@ def facade_quads(xy, height, form, foot, colour, planes=None):
     normals = np.c_[tangents[:, 1], -tangents[:, 0]]
 
     def emit(quad, rgb):
-        # its colour as it is: the viewer lights it by which way it faces
+        # unlit colour: the viewer lights it
         q = np.asarray(quad, float).copy()
         q[:, 2] += foot + form.base_m
         rows.append((q[:, [0, 2, 1]] * [1, -1, 1], np.clip(np.asarray(rgb), 0, 1)))
@@ -153,7 +147,7 @@ def facade_quads(xy, height, form, foot, colour, planes=None):
             continue
         verts = np.asarray(mesh.vertices, float)
         mid = verts[:, :2].mean(0)
-        # Side identification by footprint projection also handles upstream naming variants.
+        # find the side by projecting onto the footprint (robust to upstream naming)
         along = np.clip(np.sum((mid - a) * tangents, axis=1), 0, lengths)
         side = int(np.argmin(np.linalg.norm(mid - (a + along[:, None] * tangents), axis=1)))
         if side in skipped or lengths[side] < 2.5:
@@ -161,10 +155,10 @@ def facade_quads(xy, height, form, foot, colour, planes=None):
         if mesh.role in ("balcony", "balcony_rail"):
             match = re.search(r"_(\d+)_(\d+)_(\d+)$", mesh.name)
             if match and int(match[3]) % 2 != form.seed % 2:
-                continue  # alternate bays instead of balconies on every window
+                continue  # balconies on alternate bays only
         rgb = np.asarray(mesh.color[:3])
         if mesh.role == "window":
-            rgb = np.asarray(colour) * .12 + [.22, .43, .64]
+            rgb = glass(colour)
         elif mesh.role in ("door", "garage_door"):
             rgb = np.asarray(colour) * .2 + [.03, .07, .1]
         if mesh.role == "awning":
@@ -172,7 +166,7 @@ def facade_quads(xy, height, form, foot, colour, planes=None):
         for quad in _faces(mesh.vertices, mesh.faces):
             emit(quad, rgb)
             if mesh.role in ("window_frame", "window_mullion", "door_frame"):
-                # Close the sides of the raised surround; upstream's front panels become volumes.
+                # close the sides of the raised surround
                 back = quad.copy()
                 back[:, :2] -= normals[side] * max(profile.frame_depth, .2)
                 for k in range(4):
@@ -188,7 +182,7 @@ def facade_quads(xy, height, form, foot, colour, planes=None):
             center = start + tangent * length / 2 + normal * depth / 2
             vertices, faces = _oriented_box(tuple(center), tuple(tangent), tuple(normal),
                                              length, depth, .24 if row < levels else .4, max(0, top - .24))
-            # The top cornice must not exceed the mapped eaves.
+            # keep the top cornice under the eaves
             vertices = [(x, y, min(z, wall_height)) for x, y, z in vertices]
             for quad in _faces(vertices, faces):
                 emit(quad, trim)
@@ -200,8 +194,7 @@ def facade_quads(xy, height, form, foot, colour, planes=None):
                                                  .38, .34, wall_height, 0)
                 for quad in _faces(vertices, faces):
                     emit(quad, trim * .94)
-    # A few roof volumes give the top silhouette something beyond a roof surface.
-    # Keep them wholly inside the mapped roof and omit stacked building parts.
+    # a chimney or roof housing, wholly inside the roof; not on parts
     if not form.part:
         from shapely.geometry import Polygon
         inset = form.roof.poly.buffer(-2)
