@@ -82,7 +82,8 @@ def _summary_markdown(state):
     return (f"**{n_spots} spots selected**  \n"
             f"This takes ~{gpu:.1f} min of GPU. HF offers 5 min/day for a free account. "
             f"You may switch to Quick ({quick:.1f} min) to save usage.  \n"
-            f"It will also take ~{other} minutes for fetching map data etc, which will not cost GPU.")
+            f"It will also take around ~{other} mins for postprocessing (aligning, fetching more map, etc), "
+            f"which will not cost GPU.")
 
 
 def _map_html(state, zoom=19):
