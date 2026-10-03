@@ -5,6 +5,8 @@ import { FLAT, GAPS, JITTER, level } from '@viewer/effects/scatter';
 import { tunable } from '@viewer/effects/tune-panel';
 import { demo, DEMO } from '@viewer/effects/demo';
 import { shot, SHOT } from '@viewer/effects/shot';
+import { glyphs, GLYPH, GLYPH_GROW } from '@viewer/effects/glyphs';
+import { THIN } from '@viewer/effects/thin';
 
 // The buildings built of points and nothing else, as a painter builds them of
 // dabs: no surface under them, where the points end the building ends. Each
@@ -75,6 +77,8 @@ const sun = new THREE.Vector3(...SUN).normalize().toArray();
 
 const vertexShader = `
   #include <fog_pars_vertex>
+  ${GLYPH_GROW}
+  ${THIN}
   ${DEMO}
   ${SHOT}
   uniform float ${Object.keys(KNOBS).join(', ')}, halfHeight;
@@ -118,7 +122,9 @@ const vertexShader = `
     gl_Position = demoIn < .5 ? vec4(2., 2., 2., 1.) : projectionMatrix * mv;
     vec4 mvPosition = mv;
     #include <fog_vertex>
-    gl_PointSize = demoIn < .5 ? 0. : d * projectionMatrix[1][1] * halfHeight / -mv.z;
+    gl_PointSize = demoIn < .5 ? 0. : d * projectionMatrix[1][1] * halfHeight / -mv.z * glyphGrow(seed * .01);
+    gl_PointSize *= thin(gl_PointSize, fract(seed * .37)); // far off, fewer (thin.js)
+    if (gl_PointSize == 0.) gl_Position = vec4(2., 2., 2., 1.); // shot away, far off and not drawn, or not one of the characters
     // its colour, its face lit or in shade, a little lighter or darker its own way --
     // near DA3, as DA3's points are: as they are
     float sunlit = smoothstep(-.05, .25, dot(n, ${v3(sun)}));
@@ -132,11 +138,16 @@ const fragmentShader = `
   varying vec3 colour, world;
   varying float seed;
   ${HAZED}
+  ${GLYPH}
   void main() {
-    // round, facing the eye as DA3's points do, its edge uneven
+    // round, facing the eye as DA3's points do, its edge uneven -- or its character (glyphs.js)
     float u = gl_PointCoord.x * 2. - 1., v = 1. - gl_PointCoord.y * 2.;
-    if (u * u + v * v > 1. - ${f(ROUGH)} * vnoise(vec2(u * 3. + seed * 17., v * 2.))) discard;
-    gl_FragColor = vec4(hazed(colour, length(world - cameraPosition), haze), 1.);
+    float shade = 1.;
+    if (glyphOn > .5) {
+      shade = glyphAt(gl_PointCoord, seed * .01);
+      if (shade == 0.) discard;
+    } else if (u * u + v * v > 1. - ${f(ROUGH)} * vnoise(vec2(u * 3. + seed * 17., v * 2.))) discard;
+    gl_FragColor = vec4(hazed(colour * shade, length(world - cameraPosition), haze), 1.);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
     #include <fog_fragment>
@@ -398,6 +409,7 @@ export function pointsOf(made, { fog = false } = {}) {
         ...pointStyle(),
         ...demo,
         ...shot,
+        ...glyphs,
         ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
       },
       fog,

@@ -43,6 +43,7 @@ export function createUI(actions, { editable = true } = {}) {
     actions.settings(point, speed, chase);
   }
   for (const id of ['point-size', 'speed', 'chase']) $(id).oninput = settings;
+  $('show-buildings').onchange = () => actions.buildings?.($('show-buildings').checked);
   return {
     notify(message) {
       $('notice-text').textContent = message;
@@ -70,7 +71,7 @@ export function createUI(actions, { editable = true } = {}) {
       $('flight-keys').textContent = state.gun
         ? 'WASD to move · Q/E down/up · click to shoot, hold for bigger · R to mend · H to hide'
         : 'WASD to fly · Q/E down/up · Shift boost · H to hide';
-      $('exit-fly').textContent = `Exit ${state.gun ? 'Shoot' : 'Fly'} · Esc`;
+      $('exit-fly').textContent = `Exit ${state.gun ? 'Edit' : 'Fly'} · Esc`;
       const pressed = {
         inspect: state.mode !== 'fly',
         fly: state.mode === 'fly' && !state.gun,

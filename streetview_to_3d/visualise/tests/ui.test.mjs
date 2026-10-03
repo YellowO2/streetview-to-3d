@@ -159,3 +159,18 @@ test('manager collapses and reopens with accessible focus restoration', () => {
   assert.equal(document.activeElement, close);
   dom.window.close();
 });
+
+test('Show buildings in the settings tells the viewer to show the map buildings or not', () => {
+  const dom = new JSDOM(viewerTemplate());
+  globalThis.document = dom.window.document;
+  const said = [];
+  createUI({ buildings: (on) => said.push(on) });
+  const box = document.getElementById('show-buildings');
+  assert(box.checked); // shown to begin with
+  box.checked = false;
+  box.dispatchEvent(new dom.window.Event('change'));
+  box.checked = true;
+  box.dispatchEvent(new dom.window.Event('change'));
+  assert.deepEqual(said, [false, true]);
+  dom.window.close();
+});

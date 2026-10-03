@@ -22,14 +22,24 @@
       <nav aria-label="Interaction mode">
         <button id="inspect" aria-pressed="true">Inspect</button
         ><button id="fly" aria-pressed="false" disabled>Fly</button
-        ><button id="shoot" aria-pressed="false" disabled>Shoot</button>
+        ><button id="shoot" aria-pressed="false" disabled>Edit</button>
       </nav>
       <select id="visual-style" aria-label="Visual style">
         <option value="paint">1 · Soft paint</option>
         <option value="dither">2 · Dither</option>
-        <option value="matrix">3 · Matrix</option>
+        <option value="characters">3 · Characters</option>
         <option value="original">4 · Photoreal</option>
       </select>
+      <input
+        id="style-characters"
+        type="text"
+        value="01"
+        maxlength="32"
+        spellcheck="false"
+        aria-label="Characters the points are drawn as"
+        title="The points drawn as these characters"
+        hidden
+      />
       <button id="toggle-settings" class="quiet" aria-pressed="false" aria-controls="view-panel">
         Settings
       </button>
@@ -59,6 +69,10 @@
             <label id="style-pixels-label"
               >Grain size <output id="style-pixels-value">3px</output>
               <input id="style-pixels" type="range" min="3" max="8" step=".5" value="3" />
+            </label>
+            <label id="style-character-size-label"
+              >Character size <output id="style-character-size-value">3×</output>
+              <input id="style-character-size" type="range" min="1" max="8" step=".5" value="3" />
             </label>
             <label class="check"
               ><input id="style-atmosphere" type="checkbox" checked />
@@ -99,6 +113,9 @@
               >Chase distance <output id="chase-value">1.0×</output
               ><input id="chase" type="range" min=".5" max="2.5" step=".1" value="1"
             /></label>
+            <label class="check"
+              ><input id="show-buildings" type="checkbox" checked /> Show buildings</label
+            >
           </details>
         </div>
         <div id="empty">

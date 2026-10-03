@@ -1,6 +1,8 @@
 import { Vector3 } from 'three';
 import { demo, DEMO } from '@viewer/effects/demo';
 import { shot, SHOT } from '@viewer/effects/shot';
+import { glyphs, GLYPH, GLYPH_GROW } from '@viewer/effects/glyphs';
+import { THIN } from '@viewer/effects/thin';
 
 // Patch the existing material once; never replace geometry or alter exported positions.
 // A node's trees sway in the wind (its ply's sway, 0-255: how much each point
@@ -31,22 +33,24 @@ export function pointMotion(object) {
     patched.set(material, uniforms);
     return uniforms;
   }
-  // the demos move the world's points and the gun shoots them away (shot.js), not the bird flying through it
+  // the demos move the world's points, the gun shoots them away (shot.js) and the Characters style
+  // cuts them as characters (glyphs.js) -- not the bird flying through it, the gun's shots or the gun
   const demoed = !object.userData.styleAnimated;
   const before = material.onBeforeCompile,
     key = material.customProgramCacheKey.bind(material);
   const originalKey = key();
   material.onBeforeCompile = (shader, renderer) => {
     before.call(material, shader, renderer);
-    Object.assign(shader.uniforms, uniforms, demoed ? { ...demo, ...shot } : {});
+    Object.assign(shader.uniforms, uniforms, demoed ? { ...demo, ...shot, ...glyphs } : {});
     shader.vertexShader =
       `
-      ${demoed ? DEMO + SHOT : ''}
+      ${demoed ? DEMO + SHOT + GLYPH_GROW + THIN : ''}
       ${stableSeed ? 'attribute float styleSeed;' : ''}
       ${swaying ? 'attribute float sway;' : ''}
       uniform float styleTime, styleFloat, styleLook, styleDensity, stylePointScale;
       uniform vec3 styleCenter;
       varying vec3 stylePosition;
+      varying float styleGlyph;
     ` + shader.vertexShader;
     shader.vertexShader = shader.vertexShader.replace(
       '#include <begin_vertex>',
@@ -57,6 +61,7 @@ export function pointMotion(object) {
       vec3 drift = vec3(sin(styleTime*.55+phase)*.45, sin(styleTime*.8+phase)*.65,
         cos(styleTime*.5+phase)*.45);
       transformed += drift * styleLook * .004 * styleFloat;
+      styleGlyph = phase / 6.2831853;
       ${
         swaying
           ? `float gust = dot(position.xz, vec2(.07, .045)) - styleTime * 1.1;
@@ -82,20 +87,25 @@ export function pointMotion(object) {
     shader.vertexShader = shader.vertexShader.replace(
       '#include <logdepthbuf_vertex>',
       `
-      gl_PointSize *= stylePointScale * (1.0 + sin(styleTime*.8+phase)*.14*styleFloat);
-      if (phase / 6.2831853 >= styleDensity || demoIn < .5) { gl_Position = vec4(2.,2.,2.,1.); gl_PointSize = 0.; }
+      gl_PointSize *= stylePointScale * (1.0 + sin(styleTime*.8+phase)*.14*styleFloat)${demoed ? ' * glyphGrow(phase / 6.2831853)' : ''};
+      ${demoed ? 'gl_PointSize *= thin(gl_PointSize, phase / 6.2831853); // far off, fewer (thin.js)' : ''}
+      if (phase / 6.2831853 >= styleDensity || demoIn < .5 || gl_PointSize == 0.) { gl_Position = vec4(2.,2.,2.,1.); gl_PointSize = 0.; }
       #include <logdepthbuf_vertex>
     `,
     );
     shader.fragmentShader =
       `
       varying vec3 stylePosition;
+      varying float styleGlyph;
       uniform float styleTime, styleRadius, styleLook, styleScan, styleRound;
+      ${demoed ? GLYPH : ''}
     ` + shader.fragmentShader;
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <clipping_planes_fragment>',
       `
       #include <clipping_planes_fragment>
+      float styleShade = 1.;
+      ${demoed ? 'if (glyphOn > .5) { styleShade = glyphAt(gl_PointCoord, styleGlyph); if (styleShade == 0.) discard; } else' : ''}
       if (styleRound > .5 && length(gl_PointCoord - .5) > .5) discard;
     `,
     );
@@ -104,12 +114,13 @@ export function pointMotion(object) {
       `
       float wave = pow(.5+.5*sin(length(stylePosition.xz)/styleLook*16.0-styleTime*.8),18.0)*styleScan;
       outgoingLight = mix(outgoingLight, vec3(.65,.86,.76), wave*.25);
+      outgoingLight *= styleShade; // a character's rim (glyphs.js)
       #include <opaque_fragment>
     `,
     );
   };
   material.customProgramCacheKey = () =>
-    originalKey + ':viewer-point-motion-v8:' + stableSeed + demoed + swaying;
+    originalKey + ':viewer-point-motion-v11:' + stableSeed + demoed + swaying;
   material.needsUpdate = true;
   patched.set(material, uniforms);
   return uniforms;

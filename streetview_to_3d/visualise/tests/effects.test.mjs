@@ -32,11 +32,17 @@ test('style controls retain per-preset settings and expose only supported splat 
   ui.select('paint');
   assert.equal($('style-strength').value, '0.37');
   assert.equal($('point-density').value, '60');
-  ui.select('matrix');
+  assert($('style-characters').hidden); // only for Characters
+  ui.select('characters');
   assert.equal($('point-density').value, '100');
-  assert.equal(calls.at(-1)[0], 'matrix');
+  assert.equal(calls.at(-1)[0], 'characters');
+  assert.equal(calls.at(-1)[1].characters, '01'); // the Matrix's, to begin with
+  assert(!$('style-characters').hidden); // right of the style's menu
+  $('style-characters').value = 'abc';
+  $('style-characters').dispatchEvent(new dom.window.Event('input'));
+  assert.equal(calls.at(-1)[1].characters, 'abc');
   ui.render({ group: {}, splat: {} }, false);
-  assert.equal(calls.at(-1)[0], 'matrix');
+  assert.equal(calls.at(-1)[0], 'characters');
   assert($('style-point-controls').hidden);
   assert(!$('style-splat-note').hidden);
   ui.render({ group: {}, splat: {} }, true);
@@ -120,4 +126,30 @@ test('bird materials compose with shared point styling and stable particle densi
   assert.equal(shader.uniforms.stylePointScale.value, 1.2);
   assert.equal(shader.uniforms.styleDensity.value, 0.9);
   model.dispose();
+});
+
+test('every kind of point can be cut as a character, its own the same wherever it is drawn', async () => {
+  const { GLYPH, glyphs } = await import('@viewer/effects/glyphs');
+  const { blockPoints } = await import('@viewer/effects/blocks');
+  assert.match(GLYPH, /float glyphAt/);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 9, 9, 0, 9], 3));
+  g.setIndex([0, 1, 2]);
+  const blocks = blockPoints(g.clone());
+  assert.match(blocks.material.fragmentShader, /glyphAt\(gl_PointCoord/);
+  assert.match(blocks.material.vertexShader, /glyphGrow\(seed/); // bigger and fewer, as characters
+  assert.match(blocks.material.vertexShader, /thin\(gl_PointSize/); // far off, fewer
+  assert.equal(blocks.material.uniforms.glyphOn, glyphs.glyphOn);
+  const cloud = new THREE.Points(g.clone(), new THREE.PointsMaterial());
+  pointMotion(cloud);
+  const shader = {
+    uniforms: {},
+    vertexShader: THREE.ShaderLib.points.vertexShader,
+    fragmentShader: THREE.ShaderLib.points.fragmentShader,
+  };
+  cloud.material.onBeforeCompile(shader);
+  assert.match(shader.fragmentShader, /glyphAt\(gl_PointCoord, styleGlyph\)/);
+  assert.match(shader.vertexShader, /glyphGrow\(phase/);
+  assert.match(shader.vertexShader, /thin\(gl_PointSize/);
+  assert.equal(shader.uniforms.glyphOn, glyphs.glyphOn);
 });

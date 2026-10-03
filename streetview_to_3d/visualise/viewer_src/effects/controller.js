@@ -6,11 +6,11 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { createMatrixPass, MATRIX_CELL_SIZE } from '@viewer/effects/matrix';
 import { createAnimePass } from '@viewer/effects/anime';
 import { createDitherPass, ditherCellSize } from '@viewer/effects/dither';
 import { createEnvironment } from '@viewer/effects/environment';
 import { pointMotion } from '@viewer/effects/points';
+import { setGlyphs } from '@viewer/effects/glyphs';
 
 import { STYLE_DEFAULTS, normalizeStyle } from '@viewer/effects/presets';
 
@@ -21,9 +21,9 @@ export function createStyles(scene, camera, renderer) {
     settings = { ...STYLE_DEFAULTS.original },
     composer,
     anime,
-    dither,
-    matrix;
-  const matrixBackground = new THREE.Color(0x15191d);
+    dither;
+  // Soft paint's look, and the Characters style's: its points as characters (glyphs.js)
+  const painted = () => style === 'paint' || style === 'characters';
   // A placed scene is in metres, so the look (float, scan) is one
   // fixed size, the small Stockholm scene's radius, whatever
   // the scene's extent.
@@ -41,11 +41,9 @@ export function createStyles(scene, camera, renderer) {
       target.depthTexture = new THREE.DepthTexture(target.width, target.height);
     anime = createAnimePass();
     dither = createDitherPass();
-    matrix = createMatrixPass();
     composer.addPass(new RenderPass(scene, camera));
     composer.addPass(anime);
     composer.addPass(dither);
-    composer.addPass(matrix);
     composer.addPass(new OutputPass());
   }
   // the scene's own points' middle, at their bottom
@@ -64,14 +62,12 @@ export function createStyles(scene, camera, renderer) {
     composer.setSize(size.x, size.y);
     anime.uniforms.texel.value.set(1 / (size.x * ratio), 1 / (size.y * ratio));
     dither.uniforms.resolution.value.set(size.x * ratio, size.y * ratio);
-    matrix.uniforms.resolution.value.set(size.x * ratio, size.y * ratio);
-    matrix.uniforms.cellSize.value = MATRIX_CELL_SIZE * ratio;
   }
   function updateMotion(editing) {
     for (const { uniforms, animated } of entries) {
       uniforms.styleDensity.value = settings.density / 100;
-      uniforms.stylePointScale.value = style === 'paint' ? 1.2 : 1;
-      uniforms.styleRound.value = style === 'paint' ? 1 : 0;
+      uniforms.stylePointScale.value = painted() ? 1.2 : 1;
+      uniforms.styleRound.value = painted() ? 1 : 0;
       uniforms.styleRadius.value = radius;
       uniforms.styleLook.value = look;
       uniforms.styleCenter.value.copy(center);
@@ -87,6 +83,7 @@ export function createStyles(scene, camera, renderer) {
       if (!(next in STYLE_DEFAULTS)) return;
       style = next;
       settings = { ...STYLE_DEFAULTS[next], ...options };
+      setGlyphs(style === 'characters' ? settings.characters : '', settings.characterSize);
       if (style !== 'original') {
         initialize();
         resize();
@@ -136,22 +133,19 @@ export function createStyles(scene, camera, renderer) {
       if (editing) stopDemo();
       else tickDemo(dt);
       environment.update(
-        style === 'paint' ? 'anime' : style,
+        painted() ? 'anime' : style,
         camera,
-        !!asset?.group && settings.atmosphere && style !== 'matrix',
+        !!asset?.group && settings.atmosphere,
         !!asset?.group && !asset.splat,
         time,
       );
-      scene.background = style === 'matrix' ? matrixBackground : originalBackground;
+      scene.background = originalBackground;
       if (style === 'original' || !asset?.group) {
         renderer.render(scene, camera);
         return;
       }
-      anime.enabled = style === 'paint';
+      anime.enabled = painted();
       dither.enabled = style === 'dither';
-      matrix.enabled = style === 'matrix';
-      matrix.uniforms.time.value = time;
-      matrix.uniforms.strength.value = settings.strength;
       const depth = composer.readBuffer.depthTexture;
       // Spark blends transparent Gaussians without reliable surface depth.
       // Grade its colour normally; do not interpret the background's depth as a splat surface.

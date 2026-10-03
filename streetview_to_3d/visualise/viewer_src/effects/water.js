@@ -3,6 +3,8 @@ import { Reflector } from 'three/addons/objects/Reflector.js';
 import { GAPS, JITTER, level } from '@viewer/effects/scatter';
 import { demo, DEMO } from '@viewer/effects/demo';
 import { shot, SHOT } from '@viewer/effects/shot';
+import { glyphs, GLYPH, GLYPH_GROW } from '@viewer/effects/glyphs';
+import { THIN } from '@viewer/effects/thin';
 
 // The scene's water (postprocess/water.py, water.json: each body a flat
 // shape at its level, and a grid of metres from dry land) as points, coloured
@@ -181,6 +183,7 @@ function pointsMaterial(mirror, matrix, halfHeight) {
       time,
       ...demo,
       ...shot,
+      ...glyphs,
       ...knobs,
       ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
     },
@@ -189,14 +192,17 @@ function pointsMaterial(mirror, matrix, halfHeight) {
       #include <fog_pars_vertex>
       ${DEMO}
       ${SHOT}
+      ${GLYPH_GROW}
+      ${THIN}
       uniform sampler2D mirror; uniform mat4 matrix; uniform float halfHeight, time;
       uniform float ${Object.keys(KNOBS).join(', ')};
       uniform vec3 ${Object.keys(COLOURS).join(', ')};
       attribute vec2 water; // metres from dry land, spacing
       varying vec3 colour;
-      varying float squash;
+      varying float squash, glyphSeed;
       void main() {
         float dab = fract(sin(dot(position.xy, vec2(12.9898, 78.233))) * 43758.5453);
+        glyphSeed = dab;
         vec4 world = modelMatrix * vec4(position, 1.);
         // its slope (east, north), the waves' summed
         vec2 p = position.xy, s = vec2(0.);
@@ -220,16 +226,23 @@ function pointsMaterial(mirror, matrix, halfHeight) {
         gl_Position = demoIn < .5 ? vec4(2., 2., 2., 1.) : projectionMatrix * mv;
         #include <fog_vertex>
         gl_PointSize = size * (1. + (fract(dab * 3.71) - .5) * 2. * spread) * water.y
-          * projectionMatrix[1][1] * halfHeight / -mv.z;
+          * projectionMatrix[1][1] * halfHeight / -mv.z * glyphGrow(dab);
+        gl_PointSize *= thin(gl_PointSize, dab); // far off, fewer (thin.js)
+        if (gl_PointSize == 0.) gl_Position = vec4(2., 2., 2., 1.); // far off and not drawn, or not one of the characters
       }`,
     fragmentShader: `
       #include <fog_pars_fragment>
       varying vec3 colour;
-      varying float squash;
+      varying float squash, glyphSeed;
+      ${GLYPH}
       void main() {
         vec2 q = gl_PointCoord - .5;
-        if (length(vec2(q.x, q.y / squash)) > .5) discard; // a flat dab, as flat as the water is seen
-        gl_FragColor = vec4(colour, 1.);
+        float shade = 1.;
+        if (glyphOn > .5) {
+          shade = glyphAt(gl_PointCoord, glyphSeed); // its character (glyphs.js)
+          if (shade == 0.) discard;
+        } else if (length(vec2(q.x, q.y / squash)) > .5) discard; // a flat dab, as flat as the water is seen
+        gl_FragColor = vec4(colour * shade, 1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
         #include <fog_fragment>

@@ -440,13 +440,17 @@ body[data-mode='fly'] canvas {
   }
 }
 
-#visual-style {
+#visual-style,
+#style-characters {
   font: inherit;
   color: inherit;
   background: var(--panel);
   border: 1px solid #455263;
   border-radius: 6px;
   padding: 7px;
+}
+#style-characters {
+  width: 7em;
 }
 #style-controls {
   padding-bottom: 16px;

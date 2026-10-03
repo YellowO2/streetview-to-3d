@@ -2,7 +2,7 @@ import { panoramaStart, START_HEIGHT } from '@viewer/start-view';
 import * as THREE from 'three';
 import { ViewerState } from '@viewer/state';
 import { SceneStore, loadAsset, dispose } from '@viewer/scene-store';
-import { scenePieces, LAND } from '@viewer/scene-format';
+import { scenePieces, LAND, BLOCKS } from '@viewer/scene-format';
 import { fileEntries, resolveEntries, droppedFiles } from '@viewer/files';
 import { createViewport } from '@viewer/viewport';
 import { createNavigation } from '@viewer/navigation';
@@ -56,6 +56,10 @@ const ui = createUI(
       pointMultiplier = point;
       navigation.settings(speed, chase);
       setPointSize();
+    },
+    buildings: (on) => {
+      showBuildings = on;
+      setBuildings();
     },
   },
   { editable },
@@ -143,6 +147,15 @@ function configure() {
     store.placement === 'world' ? new THREE.Fog(HAZE, (HAZE_M[0] * far) / HAZE_M[1], far) : null;
   view.styles.configure(store, radius);
   setPointSize();
+  setBuildings();
+}
+// the map's buildings (near DA3, buildings.ply; far, blocks.ply) shown or not -- DA3's own are its points
+let showBuildings = true;
+function setBuildings() {
+  store.group?.traverse((o) => {
+    if (o.userData.surroundings === 'buildings' || o.userData.surroundings === BLOCKS)
+      o.visible = showBuildings;
+  });
 }
 const PLACED_POINT_M = 0.1;
 const HAZE = 0xc9dbe6,

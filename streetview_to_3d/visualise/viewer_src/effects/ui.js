@@ -19,6 +19,8 @@ export function createStyleControls(actions) {
       amount: Number($('style-float').value),
       scan: $('style-scan').checked,
       atmosphere: $('style-atmosphere').checked,
+      characters: $('style-characters').value,
+      characterSize: Number($('style-character-size').value),
     };
   }
   function render() {
@@ -27,6 +29,11 @@ export function createStyleControls(actions) {
     const original = current === 'original';
     $('style-controls').hidden = original;
     $('style-pixels-label').hidden = current !== 'dither';
+    // the characters typed right of the style's menu, only for Characters
+    $('style-characters').hidden = $('style-character-size-label').hidden =
+      current !== 'characters';
+    $('style-characters').disabled = blocked || !loaded;
+    $('style-character-size-value').textContent = $('style-character-size').value + '×';
     $('style-point-controls').hidden = splat;
     $('style-splat-note').hidden = !splat;
     $('visual-style').disabled = blocked;
@@ -59,12 +66,15 @@ export function createStyleControls(actions) {
     $('style-float').value = preset.amount;
     $('style-scan').checked = preset.scan;
     $('style-atmosphere').checked = preset.atmosphere;
+    $('style-characters').value = preset.characters;
+    $('style-character-size').value = preset.characterSize;
     render();
     actions.style?.(next, preset);
   }
   $('point-density').oninput = apply;
   $('visual-style').onchange = () => select($('visual-style').value);
   for (const input of document.querySelectorAll('#style-controls input')) input.oninput = apply;
+  $('style-characters').oninput = apply;
   $('style-rise').onclick = () => actions.demo?.('rise');
   $('style-gentle').onclick = () => actions.demo?.('gentle');
   return {
