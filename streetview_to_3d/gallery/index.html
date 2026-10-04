@@ -14,7 +14,11 @@
         --line: #dcd2bc;
         --accent: #b9573a;
         font:
-          15px/1.55 'Iowan Old Style', Palatino, 'Palatino Linotype', Georgia, serif;
+          15px/1.55 'Iowan Old Style',
+          Palatino,
+          'Palatino Linotype',
+          Georgia,
+          serif;
         color: var(--ink);
         background: var(--paper);
       }
@@ -60,12 +64,20 @@
         font-weight: normal;
         font-style: italic;
       }
-      #scenes {
+      #panel h2 {
+        margin: 18px 0 4px;
+        font-size: 13px;
+        font-weight: normal;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      #panel ul {
         list-style: none;
         padding: 0;
         margin: 0;
       }
-      #scenes button {
+      #panel ul button {
         width: 100%;
         padding: 9px 0;
         font: inherit;
@@ -76,7 +88,7 @@
         border-top: 1px solid var(--line);
         cursor: pointer;
       }
-      #scenes button:hover {
+      #panel ul button:hover {
         color: var(--accent);
       }
       .maplibregl-popup-content {
@@ -100,9 +112,12 @@
         Streets people have reconstructed. Pick one to fly through it, or
         <a href="https://huggingface.co/spaces/potato-bug/street-view-to-3d">make your own</a>.
       </p>
-      <ul id="scenes">
+      <h2>Showcase</h2>
+      <ul id="showcase">
         <li class="muted">Loading…</li>
       </ul>
+      <h2 id="browse-title" hidden>Browse</h2>
+      <ul id="scenes"></ul>
     </div>
     <script src="https://unpkg.com/maplibre-gl@5.19.0/dist/maplibre-gl.js"></script>
     <script type="module">
@@ -165,20 +180,25 @@
         popup.setLngLat([s.lon, s.lat]).setDOMContent(card(s)).addTo(map);
       }
 
-      const list = document.getElementById('scenes');
+      // Showcase: the scenes the index marks so; Browse: everyone's, newest first
+      const list = document.getElementById('showcase');
       try {
         const { scenes } = await (await fetch(DATA + 'index.json', { cache: 'no-cache' })).json();
-        scenes.reverse(); // newest first
-        list.replaceChildren(
-          ...scenes.map((s) => {
-            const button = text('button', s.place);
-            button.onclick = () => pick(s);
-            const li = document.createElement('li');
-            li.append(button);
-            return li;
-          }),
-        );
-        if (!scenes.length) list.replaceChildren(text('li', 'Nothing here yet.', 'muted'));
+        scenes.reverse();
+        const listed = (which) =>
+          scenes
+            .filter((s) => !!s.showcase === which)
+            .map((s) => {
+              const button = text('button', s.place);
+              button.onclick = () => pick(s);
+              const li = document.createElement('li');
+              li.append(button);
+              return li;
+            });
+        list.replaceChildren(...listed(true));
+        document.getElementById('scenes').replaceChildren(...listed(false));
+        document.getElementById('browse-title').hidden = !listed(false).length;
+        if (!listed(true).length) list.replaceChildren(text('li', 'Nothing here yet.', 'muted'));
         if (!map.loaded()) await map.once('load');
         map.addSource('scenes', {
           type: 'geojson',
@@ -186,7 +206,7 @@
             type: 'FeatureCollection',
             features: scenes.map((s, i) => ({
               type: 'Feature',
-              properties: { i },
+              properties: { i, showcase: !!s.showcase },
               geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
             })),
           },
@@ -196,8 +216,8 @@
           type: 'circle',
           source: 'scenes',
           paint: {
-            'circle-radius': 8,
-            'circle-color': '#b9573a',
+            'circle-radius': ['case', ['get', 'showcase'], 8, 5],
+            'circle-color': ['case', ['get', 'showcase'], '#b9573a', '#857d6e'],
             'circle-stroke-color': '#f4eddd',
             'circle-stroke-width': 3,
           },
