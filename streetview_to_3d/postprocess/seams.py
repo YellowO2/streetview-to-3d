@@ -13,9 +13,13 @@ PAD_M = 50.0              # grid margin past the ground: the widest band that as
 DA3_M = 0.17              # DA3's points as drawn (the viewer's default look: 0.1 m x 1.4 x 1.2)
 GROW = 0.0154             # a map point's size grows this much per metre from DA3's points
 RATIO = 2.2               # a point's size, of its spacing: what leaves no gaps (the viewer's blocks.RATIO)
+# Where the map meets the scene's own points: its ground runs on a little way under the scene's,
+# hiding that ground's ragged rim, and goes where the scene's covers (the land and Google's tiles
+# alike); a building's point goes only where DA3 has a point right there.
+UNDER_M = 0.1             # map ground kept this far under the scene's own
+OVERLAP_M = 1.0           # ... for this far in from its edge; deeper in it is dropped
+COVER = 0.75              # a map point with a DA3 point within COVER x its spacing is DA3's
 BLEND_M = 3.0             # map points this near DA3's turn into them (toward)
-LOCAL_K = 6               # DA3's local spacing: distance to its LOCAL_K-th nearest point
-PULL_MAX_M = 1.5          # pulled: a map point moves at most this far onto DA3's surface
 GREY_C, GREY_N = 8.0, 200   # satellite tint learnt from ground under this Lab chroma, at least this many squares
 LIGHT_RANGE = (0.7, 1.6)    # lightness contrast scale limits
 BOOST_MAX, VIVID_C = 2.5, 60.0  # max chroma boost; no boost at this Lab chroma
@@ -55,22 +59,11 @@ def toward(pts, cols, tree, da3_cols):
     return cols + (da3_cols[np.minimum(k, len(da3_cols) - 1)] - cols) * near[:, None], near
 
 
-def pulled(pts, normal, near, tree):
-    """Map points moved onto DA3's surface where they near it (near: toward's): each along its
-    own normal by its offset from the LOCAL_K nearest DA3 points (their median, at most
-    PULL_MAX_M), in full on DA3 and not at all by BLEND_M, so a surface runs on from DA3's
-    without a step. tree: DA3's points."""
-    close = np.flatnonzero(near > 0)
-    if tree is None or not len(close):
-        return pts
-    d, k = tree.query(pts[close], k=LOCAL_K, distance_upper_bound=BLEND_M, workers=-1)
-    there = np.isfinite(d)
-    to = tree.data[np.minimum(k, tree.n - 1)] - pts[close][:, None]
-    off = np.where(there, (to * normal[close][:, None]).sum(2), np.nan)
-    off = np.clip(np.nanmedian(off, axis=1), -PULL_MAX_M, PULL_MAX_M)
-    out = pts.copy()
-    out[close] += normal[close] * (off * near[close])[:, None]
-    return out
+def beneath(h, ground, inside, overlap=OVERLAP_M):
+    """(h, keep) for map ground at heights h where the scene may have ground of its own (ground:
+    its height there; inside: metres in from its edge, 0 where it has none): kept UNDER_M
+    beneath it within overlap of the edge, dropped deeper in."""
+    return np.where(inside > 0, np.minimum(h, ground - UNDER_M), h), inside <= overlap
 
 
 def lab(rgb):
@@ -150,6 +143,7 @@ class SceneGround:
         have = np.isfinite(height)
         self.dist, self.nearest = (distance_transform_edt(~have, return_indices=True) if have.any()
                                    else (None, None))
+        self.depth = distance_transform_edt(have) if have.any() else None
 
     @classmethod
     def from_points(cls, pts, cols, road=None):
@@ -212,6 +206,16 @@ class SceneGround:
         ground[inside] = self.height[ni, nj]
         colour[inside] = self.colour[ni, nj]
         return dist, ground, colour
+
+    def inside(self, xy):
+        """Metres in from the edge of the scene's own ground at each east/north point; 0 off it."""
+        out = np.zeros(len(xy))
+        if self.depth is None:
+            return out
+        c = np.floor(np.asarray(xy) / CELL_M).astype(int) - self.lo
+        ok = ((c >= 0) & (c < self.height.shape)).all(1)
+        out[ok] = self.depth[tuple(c[ok].T)] * CELL_M
+        return out
 
     def covers(self, xy):
         """Whether the scene has ground of its own at each east/north point."""

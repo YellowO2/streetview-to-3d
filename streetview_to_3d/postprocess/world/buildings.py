@@ -65,7 +65,6 @@ CUT_REACH_M = 20.0            # ... out to this far
 BESIDE_M = 1.5                # DA3 ground this near a corner counts as beside it
 ON_GROUND_M = 0.05            # wall points reach this far under the ground, no lower
 CHUNK_M = 4.0                 # walls are spaced in pieces this long
-COVER = 0.75                  # an OSM point with a DA3 point within COVER x its gap is dropped
 SEAM_FADE_M = 3.0             # seam width
 SEAM_TINT, SEAM_MIN = 0.8, 20
 
@@ -915,7 +914,7 @@ def seam(blocks, da3, da3_normals, da3_cols, roofs_near):
     pulled onto the plane (at most PULL_MAX_M) and tinted toward DA3. Roof
     points go by roofs_near, their distance to DA3."""
     from scipy.spatial import cKDTree
-    from streetview_to_3d.postprocess.seams import ramp
+    from streetview_to_3d.postprocess.seams import COVER, ramp
     keep = np.ones(len(blocks.pts), bool)
     roof = blocks.edge == ROOF
     keep[roof] = roofs_near[roof] > COVER * blocks.gap[roof]

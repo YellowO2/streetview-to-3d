@@ -63,3 +63,16 @@ def test_a_scene_without_it_has_no_ground_and_nothing_is_near():
     none = seams.SceneGround.load("/nonexistent")
     dist, h, _ = none.at(np.array([[0.0, 0.0]]))
     assert np.isinf(dist[0]) and np.isnan(h[0]) and not none.covers(np.array([[0.0, 0.0]])).any()
+
+
+def test_map_ground_runs_on_a_little_under_the_scenes_own_and_goes_deeper_in():
+    # the scene's ground: a strip 6 m wide (x 0..6), 2 m up
+    g = np.arange(0.25, 6, 0.5)
+    pts = np.array([[x, -2.0, z] for x in g for z in np.arange(0.25, 20, 0.5)])
+    ground = seams.SceneGround.from_points(pts, np.full((len(pts), 3), 0.5))
+    xy = np.array([[-1.0, 10.0], [0.25, 10.0], [0.75, 10.0], [3.0, 10.0]])   # off it, at its rim, 1 m in, its middle
+    inside = ground.inside(xy)
+    assert inside[0] == 0 and 0 < inside[1] <= inside[2] <= seams.OVERLAP_M < inside[3]
+    h, keep = seams.beneath(np.full(4, 2.5), np.full(4, 2.0), inside)
+    assert list(keep) == [True, True, True, False]                  # kept near the rim, dropped deeper in
+    assert h[0] == 2.5 and np.allclose(h[1:3], 2.0 - seams.UNDER_M)  # ... just beneath the scene's

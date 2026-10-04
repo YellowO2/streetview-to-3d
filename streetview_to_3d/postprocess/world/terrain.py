@@ -40,7 +40,6 @@ PAINT_M = 30.0                             # map points this near a camera are c
 TINT_M, MEET_M = 8.0, 10.0                 # seam bands for colour and height (seams.py)
 BRIDGE_CLEAR_M = {"road": 4.5, "water": 2.5}     # min deck clearance over each
 ROAD_MEET_M, ROAD_MEET_MAX_M = 40.0, 10.0  # roads ease to the scene's road height over this; not if this far apart
-UNDER_M = 0.1                              # land kept this far under the scene's ground
 TINT = 0.8                                 # how far the map takes the scene's colour at its edge
 GAP0_M, GAP_PER = 0.05, 0.018              # gap_at: spacing at a camera, growth per metre
 SAND, SAND_MIX = (0.76, 0.70, 0.55), 0.7   # shore sand colour, its max cover
@@ -275,8 +274,9 @@ def build(scene_dir, log=print):
     raw = heights(lat, lon)
     h = seams.meet(ground(en, raw), edge_h, dist, MEET_M)
     h = roads.under_decks(over, en, net.adapt(en, h, road_h))
-    # under the scene's ground, keep the land just beneath it
-    h = np.where(under, np.minimum(h, edge_h - UNDER_M), h)
+    # under the scene's ground the land runs on just beneath it (seams.beneath): all of it, as a
+    # cut along its triangles shows through the scene's ground as zigzag gaps
+    h = seams.beneath(h, edge_h, scene_ground.inside(en))[0]
     # land raised to DA3's ground beside buildings, then cut to each building's foot
     h = buildings.onto_scene(outlines, en, h, owner, scene_ground, under)
     h = buildings.settle(outlines, en, h, owner)
