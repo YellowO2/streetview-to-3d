@@ -8,8 +8,14 @@ from scipy.ndimage import distance_transform_edt
 FILENAME = "ground.npz"
 CELL_M = 0.5              # the fill's ground squares (also fill.one_ground's grid)
 PAD_M = 50.0              # grid margin past the ground: the widest band that asks (terrain.ROAD_MEET_M)
+# The one rule for a map point's size: DA3's points are the smallest in the world; a map point is
+# as big on them, and bigger the further from them. Its spacing always follows its size.
+DA3_M = 0.17              # DA3's points as drawn (the viewer's default look: 0.1 m x 1.4 x 1.2)
+GROW = 0.0154             # a map point's size grows this much per metre from DA3's points
+RATIO = 2.2               # a point's size, of its spacing: what leaves no gaps (the viewer's blocks.RATIO)
 BLEND_M = 3.0             # map points this near DA3's turn into them (toward)
 LOCAL_K = 6               # DA3's local spacing: distance to its LOCAL_K-th nearest point
+PULL_MAX_M = 1.5          # pulled: a map point moves at most this far onto DA3's surface
 GREY_C, GREY_N = 8.0, 200   # satellite tint learnt from ground under this Lab chroma, at least this many squares
 LIGHT_RANGE = (0.7, 1.6)    # lightness contrast scale limits
 BOOST_MAX, VIVID_C = 2.5, 60.0  # max chroma boost; no boost at this Lab chroma
@@ -28,29 +34,43 @@ def tint(cols, near, dist, cut_m, band_m, strength):
     return cols * (1 - w) + np.nan_to_num(near) * w
 
 
-def toward(pts, cols, gap, tree, da3_cols, every=1):
-    """(cols, near, keep) for map points pts approaching DA3's points.
+def size_at(d):
+    """A map point's size (m) d metres from DA3's points."""
+    return DA3_M + GROW * np.maximum(np.asarray(d, float), 0)
 
-    near: 1 on a DA3 point, 0 at BLEND_M or more. Colours mix toward the
-    nearest DA3 point's by near; keep thins points toward DA3's density
-    (all kept when gap is None, e.g. mesh corners). tree: a cKDTree of every
-    every-th DA3 point, da3_cols their colours."""
+
+def spacing_at(d):
+    """A map point's spacing (m) d metres from DA3's points: its size's."""
+    return size_at(d) / RATIO
+
+
+def toward(pts, cols, tree, da3_cols):
+    """(cols, near) for map points approaching DA3's points: near is 1 on a DA3 point and 0 at
+    BLEND_M or more, and colours mix toward the nearest DA3 point's by it. tree: a cKDTree of
+    DA3's points, da3_cols their colours."""
     if tree is None or not len(pts):
-        return cols, np.zeros(len(pts)), np.ones(len(pts), bool)
+        return cols, np.zeros(len(pts))
     d, k = tree.query(pts, distance_upper_bound=BLEND_M, workers=-1)
     near = 1 - ramp(d / BLEND_M)                               # d is inf past BLEND_M
-    k = np.minimum(k, len(da3_cols) - 1)
-    cols = cols + (da3_cols[k] - cols) * near[:, None]
-    # DA3's local spacing, corrected for the tree holding every every-th point
-    keep = np.ones(len(pts), bool)
+    return cols + (da3_cols[np.minimum(k, len(da3_cols) - 1)] - cols) * near[:, None], near
+
+
+def pulled(pts, normal, near, tree):
+    """Map points moved onto DA3's surface where they near it (near: toward's): each along its
+    own normal by its offset from the LOCAL_K nearest DA3 points (their median, at most
+    PULL_MAX_M), in full on DA3 and not at all by BLEND_M, so a surface runs on from DA3's
+    without a step. tree: DA3's points."""
     close = np.flatnonzero(near > 0)
-    if len(close) and gap is not None:
-        far = tree.query(tree.data[k[close]], k=LOCAL_K + 1, workers=-1)[0][:, -1]
-        spacing = far / np.sqrt(LOCAL_K / np.pi) / np.sqrt(every)
-        share = np.minimum(1, (gap[close] / np.maximum(spacing, 1e-6)) ** 2)
-        chance = np.sin(pts[close] @ [12.9898, 78.233, 37.719]) * 43758.5453 % 1
-        keep[close] = chance < 1 - near[close] * (1 - share)
-    return cols, near, keep
+    if tree is None or not len(close):
+        return pts
+    d, k = tree.query(pts[close], k=LOCAL_K, distance_upper_bound=BLEND_M, workers=-1)
+    there = np.isfinite(d)
+    to = tree.data[np.minimum(k, tree.n - 1)] - pts[close][:, None]
+    off = np.where(there, (to * normal[close][:, None]).sum(2), np.nan)
+    off = np.clip(np.nanmedian(off, axis=1), -PULL_MAX_M, PULL_MAX_M)
+    out = pts.copy()
+    out[close] += normal[close] * (off * near[close])[:, None]
+    return out
 
 
 def lab(rgb):

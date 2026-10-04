@@ -41,13 +41,8 @@ TINT_M, MEET_M = 8.0, 10.0                 # seam bands for colour and height (s
 BRIDGE_CLEAR_M = {"road": 4.5, "water": 2.5}     # min deck clearance over each
 ROAD_MEET_M, ROAD_MEET_MAX_M = 40.0, 10.0  # roads ease to the scene's road height over this; not if this far apart
 UNDER_M = 0.1                              # land kept this far under the scene's ground
-LAND_GAP_M = 0.3                           # min land point spacing (the viewer's land.MIN_GAP)
 TINT = 0.8                                 # how far the map takes the scene's colour at its edge
 GAP0_M, GAP_PER = 0.05, 0.018              # gap_at: spacing at a camera, growth per metre
-POINT_M = 0.10                             # point spacing at the scene's edge
-RATE0, RATE, RAMP_M = 0.005, 0.018, 100.0  # world_gap growth rates and the distance it eases between them
-DETAIL_RATE, DETAIL_END_M, DETAIL_BLEND_M = .007, 250.0, 150.0
-BLOCK_RATE = 0.005                         # solid building spacing at most this share of its distance
 SAND, SAND_MIX = (0.76, 0.70, 0.55), 0.7   # shore sand colour, its max cover
 LAND_EVERY = 2                             # land triangles this many times the point spacing
 M_PER_LAT = 111320.0
@@ -89,23 +84,6 @@ def google_colours(lat, lon, spacing):
 def gap_at(cam_d):
     """Map point spacing cam_d metres from the nearest camera: GAP0_M plus GAP_PER per metre."""
     return GAP0_M + GAP_PER * np.asarray(cam_d)
-
-
-def world_gap(d):
-    """Point spacing d metres off: POINT_M plus RATE0 per metre, easing to RATE by RAMP_M (as scene-store.js pointGap)."""
-    e = np.maximum(np.asarray(d, float), 0)
-    near = POINT_M + RATE0 * e + (RATE - RATE0) * e ** 2 / (2 * RAMP_M)
-    far = POINT_M + RATE0 * RAMP_M + (RATE - RATE0) * RAMP_M / 2 + RATE * (e - RAMP_M)
-    return np.where(e < RAMP_M, near, far)
-
-
-def point_gap(edge_d):
-    """Point spacing edge_d metres from the scene's edge: DETAIL_RATE growth, easing into world_gap
-    past DETAIL_END_M. The viewer draws each point this big."""
-    e = np.maximum(np.asarray(edge_d, float), 0)
-    coarse = world_gap(e)
-    blend = ramp((e - DETAIL_END_M) / DETAIL_BLEND_M)
-    return (POINT_M + DETAIL_RATE * e) * (1 - blend) + coarse * blend
 
 
 def sample_points(radius_m, cams, every=1):
@@ -231,10 +209,11 @@ def build(scene_dir, log=print):
     scene_ground = seams.SceneGround.load(scene_dir)
     near = scene_ground.at
     cam_tree = cKDTree(cam_xz)
-    # points spaced from the scene's edge: 1 m squares holding at least 3 of its points
+    # map points sized, so spaced, by their distance from DA3's points (seams.spacing_at): from the
+    # scene's edge, 1 m squares holding at least 3 of its points
     cell, n = np.unique(np.floor(scene[:, [0, 2]]), axis=0, return_counts=True) if len(scene) else (cam_xz, None)
     edge_tree = cKDTree(cell[n >= 3] + 0.5 if n is not None and (n >= 3).any() else cam_xz)
-    gap = lambda xy: point_gap(edge_tree.query(xy, workers=-1)[0])
+    gap = lambda xy: seams.spacing_at(edge_tree.query(xy, workers=-1)[0])
     # roads decide their own height (smoothed ground); the land fits to them
     net = roads.Network(elements, to_xy, lambda xy: cam_tree.query(xy)[0].min() < roads.DETAIL_M)
     road_raw = net.heights(ground, (-ROADS_M - 50, -ROADS_M - 50), (ROADS_M + 50, ROADS_M + 50))
@@ -434,14 +413,9 @@ def build(scene_dir, log=print):
     except (OSError, ValueError) as e:
         log(f"terrain: no pano paint ({e!r})")
     # map points approaching DA3's turn into them (seams.toward)
-    land_cols, land_near, _ = seams.toward(land, land_cols, None, scene_tree, scene_cols, SCENE_EVERY)
-    cols, _, keep = seams.toward(pts, cols, gap(pts[:, [0, 2]]), scene_tree, scene_cols, SCENE_EVERY)
-    pts, cols = pts[keep], cols[keep]
-    # land spacing as world_gap (at least LAND_GAP_M), tightening toward POINT_M near DA3 off the scene's ground
-    land_gap = np.maximum(LAND_GAP_M, world_gap(cam_tree.query(en, workers=-1)[0]))
-    out = dist > 0
-    land_gap[out] += (POINT_M - land_gap[out]) * land_near[out]
-    write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces, gap=land_gap, near=land_near)
+    land_cols, land_near = seams.toward(land, land_cols, scene_tree, scene_cols)
+    cols, _ = seams.toward(pts, cols, scene_tree, scene_cols)
+    write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces, gap=gap(en), near=land_near)
     sc.roads = None
     # tunnel portals
     mouths = roads.portals(elements, to_xy, road_h)
@@ -467,17 +441,13 @@ def build(scene_dir, log=print):
                         cats=life.cats(scene_ground, stretches, cam_xz))
     sc.buildings = None
     if len(bp):
-        bc, b_near, keep = seams.toward(bp, bc, b_gap, scene_tree, scene_cols, SCENE_EVERY)
-        bp, bc, b_gap, b_normal, b_kind, b_near = (a[keep] for a in (bp, bc, b_gap, b_normal, b_kind, b_near))
+        bc, b_near = seams.toward(bp, bc, scene_tree, scene_cols)
         write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc, b_gap, b_normal, b_kind, b_near)
         sc.buildings = BUILDINGS_FILENAME
     sc.blocks = None
     if solid:
-        # one spacing per solid building: its nearest point's, at most BLOCK_RATE of its distance
-        def block_gap(xy):
-            d = edge_tree.query(xy)[0]
-            return np.minimum(point_gap(d), POINT_M + BLOCK_RATE * d).min()
-        one = np.array([block_gap(xy) for xy, *_ in solid])
+        # one spacing per solid building: its nearest point's
+        one = np.array([gap(xy).min() for xy, *_ in solid])
         v, c, f, facade, g = buildings.solid(solid, surface, solid_base, one)
         write_mesh(os.path.join(scene_dir, BLOCKS_FILENAME), v, c, f, facade, g)
         sc.blocks = BLOCKS_FILENAME

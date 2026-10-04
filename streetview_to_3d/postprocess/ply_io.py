@@ -4,20 +4,24 @@ import os
 import numpy as np
 
 
-def read_ply(ply_path):
-    """(pts, cols) from a plain binary .ply; cols is None without colour."""
+def read_vertices(ply_path):
+    """(vertices as a structured array, header text) of a plain binary .ply."""
     with open(ply_path, "rb") as f:
         data = f.read()
     header_end = data.index(b"end_header\n") + len(b"end_header\n")
     header = data[:header_end].decode("ascii")
     n = int(next(l for l in header.splitlines() if l.startswith("element vertex")).split()[-1])
-    has_color = "red" in header
     kinds = {"float": "<f4", "uchar": "u1", "int": "<i4"}
     vertex = header.split("element vertex")[1].split("element")[0]
     fields = [(l.split()[2], kinds[l.split()[1]]) for l in vertex.splitlines() if l.startswith("property")]
-    verts = np.frombuffer(data[header_end:], dtype=np.dtype(fields), count=n)
+    return np.frombuffer(data[header_end:], dtype=np.dtype(fields), count=n), header
+
+
+def read_ply(ply_path):
+    """(pts, cols) from a plain binary .ply; cols is None without colour."""
+    verts, header = read_vertices(ply_path)
     pts = np.stack([verts["x"], verts["y"], verts["z"]], axis=1).astype(np.float64)
-    cols = (np.stack([verts["red"], verts["green"], verts["blue"]], axis=1).astype(np.float64) / 255.0) if has_color else None
+    cols = (np.stack([verts["red"], verts["green"], verts["blue"]], axis=1).astype(np.float64) / 255.0) if "red" in header else None
     return pts, cols
 
 
@@ -29,9 +33,9 @@ def read_node(scene_dir, node, every=1):
     return p, c, p @ T[:3, :3].T + T[:3, 3]
 
 
-def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None, sway=None):
+def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None, sway=None, comments=()):
     """A point .ply with optional per-point gap (spacing, m), normal, kind (buildings.Blocks),
-    near (seams.toward) and sway (0-1, stored as a byte)."""
+    near (seams.toward) and sway (0-1, stored as a byte); comments: header comment lines."""
     n = len(pts)
     fields = [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")]
     fields += [("gap", "<f4")] if gap is not None else []
@@ -41,7 +45,8 @@ def write_ply(path, pts, cols, gap=None, normal=None, kind=None, near=None, sway
     fields += [("sway", "u1")] if sway is not None else []
     types = {"<f4": "float", "u1": "uchar"}
     header = ("ply\nformat binary_little_endian 1.0\n"
-              f"element vertex {n}\n"
+              + "".join(f"comment {c}\n" for c in comments)
+              + f"element vertex {n}\n"
               + "".join(f"property {types[t]} {name}\n" for name, t in fields)
               + "end_header\n").encode("ascii")
     verts = np.zeros(n, dtype=np.dtype(fields))

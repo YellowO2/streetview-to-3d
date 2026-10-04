@@ -19,6 +19,7 @@ const HAZE = 0xc9dbe6,
 const state = new ViewerState(),
   store = new SceneStore();
 const config = JSON.parse(document.getElementById('viewer-config').textContent);
+const query = new URLSearchParams(document.location?.search);
 const editable = config.editable !== false;
 const ui = createUI(
   {
@@ -64,9 +65,10 @@ const ui = createUI(
       navigation.settings(speed, chase);
       setPointSize();
     },
-    buildings: (on) => {
-      showBuildings = on;
-      setBuildings();
+    shown: (buildings, surroundings) => {
+      showBuildings = buildings;
+      showSurroundings = surroundings;
+      setShown();
     },
     export: (parts) => {
       if (!store.group || store.splat || busy) return;
@@ -93,7 +95,8 @@ let busy = false,
   radius = 5,
   pointMultiplier = 1,
   points = 0,
-  showBuildings = true;
+  showBuildings = true,
+  showSurroundings = true;
 function attempt(fn) {
   try {
     fn();
@@ -155,24 +158,23 @@ function configure() {
     store.placement === 'world' ? new THREE.Fog(HAZE, (HAZE_M[0] * far) / HAZE_M[1], far) : null;
   view.styles.configure(store, radius);
   setPointSize();
-  setBuildings();
+  setShown();
 }
-// show or hide the map's buildings (buildings.ply near DA3, blocks.ply far); DA3's own stay
-function setBuildings() {
+// show or hide the surroundings (everything but DA3's own points), and of them the map's
+// buildings (buildings.ply near DA3, blocks.ply far)
+function setShown() {
   store.group?.traverse((o) => {
-    if (o.userData.surroundings === 'buildings' || o.userData.surroundings === BLOCKS)
-      o.visible = showBuildings;
+    const kind = o.userData.surroundings;
+    if (kind)
+      o.visible = showSurroundings && (showBuildings || ![BLOCKS, 'buildings'].includes(kind));
   });
 }
 function setPointSize() {
-  // DA3 points share one size (fixed in metres when placed); map points use their spacing,
-  // never smaller than DA3's so they match where they meet
+  // DA3's points share one size (fixed in metres when placed); map dabs size themselves by
+  // their distance from DA3's points (blocks.js, scene-store.js)
   const own = store.placement === 'world' ? PLACED_POINT_M : radius * 0.002;
   store.group?.traverse((o) => {
-    if (o.userData.pointStyle)
-      o.material.uniforms.pointM.value = own * pointMultiplier; // dabs near DA3
-    else if (o.isPoints)
-      o.material.size = Math.max(o.userData.pointSize ?? 0, own) * pointMultiplier;
+    if (o.isPoints && !o.userData.pointStyle) o.material.size = own * pointMultiplier;
   });
 }
 function frameAll() {
@@ -219,7 +221,8 @@ async function load({ source, resolve, name, splat = false }) {
         if (token === version) ui.progress(message);
       },
       () => token !== version,
-      { splat },
+      // experimental: ?google=<Map Tiles API key> draws the surroundings from Google's 3D Tiles
+      { splat, google: query.get('google') || config.googleKey },
     );
     if (!asset) return;
     if (token !== version) {
@@ -228,6 +231,10 @@ async function load({ source, resolve, name, splat = false }) {
     }
     if (store.group) scene.remove(store.group);
     store.install(asset, name);
+    ui.credit(asset.group.userData.credit);
+    // ?google-save: download the Google points as google.ply, to keep beside scene.json
+    if (query.has('google-save') && asset.group.userData.google)
+      download(new Blob([asset.group.userData.google]), 'google.ply');
     scene.add(store.group);
     state.reset();
     state.regroup(
@@ -374,7 +381,6 @@ ui.settings();
 ui.styles(config.style || 'paint');
 refresh();
 // ?scene=<scene.json url>&name=<title> opens a hosted scene (the gallery's links)
-const query = new URLSearchParams(document.location?.search);
 const sceneUrl = query.get('scene') || config.sceneUrl;
 if (sceneUrl) {
   const base = sceneUrl.slice(0, sceneUrl.lastIndexOf('/') + 1);

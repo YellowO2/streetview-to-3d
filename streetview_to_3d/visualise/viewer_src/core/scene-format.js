@@ -29,6 +29,7 @@ export const ROADS = 'roads'; // triangle ply, roads beyond the terrain points
 export const WATER = 'water'; // json: flat outlines at levels
 export const BLOCKS = 'blocks'; // triangle ply, far buildings
 export const LIFE = 'life'; // json: cars, birds, boats, ducks, cats
+export const GOOGLE = 'google'; // not in scene.json: points sampled from Google's 3D Tiles
 export function relativePath(path) {
   if (
     typeof path !== 'string' ||

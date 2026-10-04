@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
-import { GAPS, JITTER, level } from '@viewer/world/scatter';
+import { GAPS, level } from '@viewer/world/scatter';
 import { worldUniforms, WORLD_VERTEX, WORLD_FRAGMENT, cutPoint } from '@viewer/style/world-points';
 import { SUN, f, v3, hash } from '@viewer/util';
 
 // Water (water.json) as points on a world-fixed grid, Fresnel-mixed between the water colour
 // (turquoise shallows, blue deep) and a Reflector's mirror image, tilted by summed waves.
 // Painted: flat dabs squashed by view angle, reflections streaked vertically, a sun glint.
+const JITTER = 0.3; // a point off its grid place, of its spacing, either way
 const RES = 0.5; // mirror picture resolution, of the screen's
 // tuned by eye
 const KNOBS = {

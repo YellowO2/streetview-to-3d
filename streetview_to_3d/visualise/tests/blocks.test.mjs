@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { marks, blockPoints, buildingPoints } from '@viewer/world/blocks';
+import { marks, blockPoints, buildingPoints, RATIO } from '@viewer/world/blocks';
 
 // a wall length (12) m along, 9 m up, facing south (two triangles, its facade and windows' colour given),
 // and a flat roof 12 x 6 m on it; each spaced 0.5 m
@@ -55,16 +55,15 @@ function building(length = 12, glass = true) {
 
 test('a building is built of points: over its faces, along its edges', () => {
   const s = marks(building());
-  const spacing = 0.5 * 1.2;
-  const faces = s.dab.filter((d) => Math.abs(d - spacing * 1.6) < 1e-6).length,
-    edges = s.dab.filter((d) => Math.abs(d - spacing * 0.9) < 1e-6).length;
-  assert.equal(faces + edges, s.dab.length);
+  const spacing = 0.5;
+  assert.ok(s.dab.every((d) => Math.abs(d - spacing * RATIO) < 1e-6)); // every dab its spacing's size
+  const faces = marks(building(), { edges: false }).dab.length,
+    edges = s.dab.length - faces;
   assert.ok(Math.abs(faces - (12 * 9 + 12 * 6) / spacing ** 2) < 0.1 * faces); // one a grid square
-  assert.ok(edges > 0); // smaller, along its edges
+  assert.ok(edges > 0); // more along its edges
   for (let i = 0; i < s.dab.length; i++) {
     const [x, y, z] = s.centre.slice(3 * i, 3 * i + 3);
     assert.ok(x >= -1e-3 && x <= 12.001 && y >= -1e-3 && y <= 9.001 && z <= 1e-3 && z >= -6.001);
-    if (s.dab[i] < spacing) assert.ok(y > 0.05 || Math.abs(x) < 1e-3 || Math.abs(x - 12) < 1e-3); // not at its foot
   }
 });
 
@@ -75,7 +74,7 @@ test('a window is nothing of its own: the points of its wall on it, in the colou
   for (let i = 0; i < s.dab.length; i++) if (onGlass(i)) windows.push(i);
   assert.ok(windows.length > 12); // several points a window
   for (const i of windows) {
-    assert.equal(s.dab[i], 0.5 * 1.2 * 1.6); // as big as the wall's
+    assert.equal(s.dab[i], 0.5 * RATIO); // as big as the wall's
     const [x, y] = s.centre.slice(3 * i, 3 * i + 2);
     const [qx, qy] = [x / 3 - Math.floor(x / 3), y / 3.2 - Math.floor(y / 3.2)];
     assert.ok(qx >= 0.3 - 1e-6 && qx <= 0.7 + 1e-6 && qy >= 0.3 - 1e-6 && qy <= 0.8 + 1e-6);
@@ -95,7 +94,7 @@ test('drawn as the GPU points, a few bytes each', () => {
   assert(points.userData.pointStyle && points.material.uniforms.styleTime); // moved as DA3's points are
 });
 
-test('a building DA3 reaches: its points as they are, at the edges smaller', () => {
+test("a building DA3 reaches: its points as they are, each its spacing's size", () => {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute([0, 1, 0, 1, 1, 0, 0, 2, 0], 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
@@ -115,5 +114,8 @@ test('a building DA3 reaches: its points as they are, at the edges smaller', () 
     Array.from(at.tint.array),
     [0.8, 0.7, 0.6, 0.8, 0.7, 0.6, 0.8, 0.7, 0.6].map(byte),
   ); // its own colours
-  assert.deepEqual(Array.from(at.dab.array), [0.5 * 1.6, 0.5 * 1.6, 0.25 * 0.9].map(Math.fround)); // an edge's smaller
+  assert.deepEqual(
+    Array.from(at.dab.array),
+    [0.5, 0.5, 0.25].map((gap) => Math.fround(gap * RATIO)),
+  );
 });

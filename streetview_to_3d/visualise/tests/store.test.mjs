@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { SceneStore, parsePoints, loadAsset, terrainBands } from '@viewer/core/scene-store';
+import { SceneStore, parsePoints, loadAsset } from '@viewer/core/scene-store';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const T = [
   [1.2, 0, 0.3, 10],
@@ -135,24 +135,11 @@ test('a placed scene loads its terrain, left out of its bounds', async () => {
     () => false,
   );
   const kinds = asset.group.children.map((o) => o.userData.surroundings || 'node');
-  assert.deepEqual([...new Set(kinds)], ['node', 'terrain']); // the terrain in rings by distance
+  assert.deepEqual([...new Set(kinds)], ['node', 'terrain']);
+  // the terrain's points sized by their distance from DA3's: bigger than DA3's, none the same
+  const terrain = asset.group.children.find((o) => o.userData.surroundings === 'terrain');
+  assert(Array.from(terrain.geometry.getAttribute('dab').array).every((d) => d > 0.17 && d < 1.5));
   const store = new SceneStore();
   store.install(asset, 'Test');
   assert(store.box().getBoundingSphere(new THREE.Sphere()).radius < 20);
-});
-test('terrain splits into rings drawn larger with distance', () => {
-  const at = [10, 70, 1500];
-  const ply = new TextEncoder().encode(
-    `ply\nformat ascii 1.0\nelement vertex ${at.length}\nproperty float x\nproperty float y\nproperty float z\nend_header\n` +
-      at.map((d) => `${d} 5 0`).join('\n') +
-      '\n',
-  ).buffer;
-  const bands = terrainBands(parsePoints(ply));
-  assert.equal(bands.length, 3);
-  assert.deepEqual(
-    bands.map((b) => b.geometry.getAttribute('position').count),
-    [1, 1, 1],
-  );
-  const sizes = bands.map((b) => b.userData.pointSize);
-  assert(sizes[0] < sizes[1] && sizes[1] < sizes[2]);
 });

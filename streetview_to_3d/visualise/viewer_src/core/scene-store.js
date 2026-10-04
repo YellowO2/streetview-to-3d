@@ -10,6 +10,7 @@ import {
   LAND,
   ROADS,
   WATER,
+  GOOGLE,
   BLOCKS,
   LIFE,
 } from '@viewer/core/scene-format';
@@ -20,8 +21,8 @@ import { boatPoints } from '@viewer/life/boats';
 import { duckPoints } from '@viewer/life/ducks';
 import { catPoints } from '@viewer/life/cats';
 import { landPoints } from '@viewer/world/land';
-import { blockPoints, buildingPoints } from '@viewer/world/blocks';
-import { GAPS, level, parseSurface, scatter } from '@viewer/world/scatter';
+import { blockPoints, buildingPoints, RATIO } from '@viewer/world/blocks';
+import { parseSurface } from '@viewer/world/scatter';
 const flip = new THREE.Matrix4().makeScale(1, -1, -1);
 const identity = new THREE.Matrix4();
 function matrixRows(m) {
@@ -76,20 +77,11 @@ function parseBlocks(buffer) {
   blocks.userData.surroundings = BLOCKS;
   return blocks;
 }
-// a triangle surface (roads.ply) scattered with points (world/scatter.js), in spacing bands
-function surfacePoints(buffer, key) {
-  const triangles = parseSurface(buffer, flip, `${key}.ply`);
-  const geometry = scatter(triangles);
-  triangles.dispose();
-  if (!geometry.getAttribute('position').count) {
-    geometry.dispose();
-    return [];
-  }
-  const bands = terrainBands(
-    new THREE.Points(geometry, new THREE.PointsMaterial({ vertexColors: true })),
-  );
-  for (const band of bands) band.userData.surroundings = key;
-  return bands;
+// roads.ply triangles as dabs, as the land's are
+function parseRoads(buffer, gapOf) {
+  const roads = landPoints(parseSurface(buffer, flip, `${ROADS}.ply`), gapOf);
+  roads.userData.surroundings = ROADS;
+  return roads;
 }
 export function parsePoints(buffer, transform) {
   const geometry = loader.parse(buffer);
@@ -111,68 +103,59 @@ export function parsePoints(buffer, transform) {
     throw e;
   }
 }
-// Terrain points get sparser away from the scene (terrain.point_gap), so they are grouped into
-// bands by spacing ("gap", or SPACING for older plys), each drawn just over its spacing (userData.pointSize).
-const TILE_M = 200, // smallest band tile (m)
-  TILE = 40; // band tile size, in spacings
-const nearest = (x, z, places) => Math.min(...places.map(([a, b]) => Math.hypot(x - a, z - b)));
-const POINT_M = 0.1,
-  RATE0 = 0.005,
-  RATE = 0.018,
-  RAMP_M = 100,
-  OVER_M = 0.025; // point size over its spacing (m)
-const pointGap = (e) =>
-  e < RAMP_M
-    ? POINT_M + RATE0 * e + ((RATE - RATE0) * e * e) / (2 * RAMP_M)
-    : POINT_M + RATE0 * RAMP_M + ((RATE - RATE0) * RAMP_M) / 2 + RATE * (e - RAMP_M);
-const gapAt = (x, z, cams) => pointGap(nearest(x, z, cams));
-const SPACING = { terrain: gapAt, buildings: gapAt };
-// each placed node's camera position (x, z) in the viewer frame
-function cameraPlaces(data) {
+// The one rule for a map point's size: DA3's points are the smallest in the world; a map point is
+// as big on them and bigger the further from them, and its spacing follows (RATIO; postprocess
+// seams.size_at, spacing_at).
+const DA3_M = 0.17, // DA3's points as drawn in the default look
+  GROW = 0.0154; // a map point's size grows this much per metre from DA3's points
+const spacingAt = (d) => (DA3_M + GROW * d) / RATIO;
+const REACH_M = 1200; // the scene's distance is known this far from the origin
+
+// (x, z) -> metres from DA3's points: from the 1 m squares holding at least 3 of them (as
+// postprocess terrain's edge), by a two-pass chamfer over the squares within REACH_M
+function sceneDistance(group) {
+  const n = 2 * REACH_M,
+    count = new Uint8Array(n * n);
+  group.traverse((o) => {
+    if (o.userData.nodeIndex == null) return;
+    const p = o.geometry.getAttribute('position');
+    for (let i = 0; i < p.count; i++) {
+      const x = Math.floor(p.getX(i)) + REACH_M,
+        z = Math.floor(p.getZ(i)) + REACH_M;
+      if (x >= 0 && x < n && z >= 0 && z < n && count[z * n + x] < 3) count[z * n + x]++;
+    }
+  });
+  const least = count.includes(3) ? 3 : 1; // a scene of a few points: any square holding one
+  const far = Float32Array.from(count, (c) => (c >= least ? 0 : Infinity));
+  const pass = (from, to, step) => {
+    for (let z = from; z !== to; z += step)
+      for (let x = from; x !== to; x += step) {
+        const i = z * n + x;
+        let d = far[i];
+        if (x - step >= 0 && x - step < n) d = Math.min(d, far[i - step] + 1);
+        if (z - step >= 0 && z - step < n) {
+          d = Math.min(d, far[i - step * n] + 1);
+          if (x - step >= 0 && x - step < n) d = Math.min(d, far[i - step * n - step] + Math.SQRT2);
+          if (x + step >= 0 && x + step < n) d = Math.min(d, far[i - step * n + step] + Math.SQRT2);
+        }
+        far[i] = d;
+      }
+  };
+  pass(0, n, 1);
+  pass(n - 1, -1, -1);
+  const at = (v) => Math.min(Math.max(Math.floor(v) + REACH_M, 0), n - 1);
+  return (x, z) => far[at(z) * n + at(x)];
+}
+// each placed node's camera position in the viewer frame
+function cameraPoints(data) {
   return data.nodes
     .filter((n) => n.transform && n.position)
-    .map((n) => {
-      const v = new THREE.Vector3(...n.position)
+    .map((n) =>
+      new THREE.Vector3(...n.position)
         .applyMatrix4(new THREE.Matrix4().set(...n.transform.flat()))
-        .applyMatrix4(flip);
-      return [v.x, v.z];
-    });
-}
-export function terrainBands(points, spacing = SPACING.terrain, cams = [[0, 0]]) {
-  const geometry = points.geometry;
-  const p = geometry.getAttribute('position'),
-    c = geometry.getAttribute('color'),
-    gaps = geometry.getAttribute('gap'),
-    // PLYLoader adds an empty or all-zero gap when the ply has none
-    own = gaps?.count === p.count && gaps.array.some((v) => v > 0) ? gaps : null;
-  // split each band into tiles so off-screen parts are frustum culled
-  const members = new Map();
-  for (let i = 0; i < p.count; i++) {
-    const g = level(own ? own.getX(i) : spacing(p.getX(i), p.getZ(i), cams));
-    const tile = Math.max(TILE_M, TILE * GAPS[g]);
-    const key = `${g},${Math.floor(p.getX(i) / tile)},${Math.floor(p.getZ(i) / tile)}`;
-    if (!members.has(key)) members.set(key, []);
-    members.get(key).push(i);
-  }
-  const bands = [...members].map(([key, of]) => {
-    const gap = GAPS[Number(key.split(',')[0])];
-    const part = new THREE.BufferGeometry();
-    const pick = (attr) => {
-      const out = new Float32Array(3 * of.length);
-      of.forEach((i, j) => out.set([attr.getX(i), attr.getY(i), attr.getZ(i)], 3 * j));
-      return new THREE.Float32BufferAttribute(out, 3);
-    };
-    part.setAttribute('position', pick(p));
-    if (c) part.setAttribute('color', pick(c));
-    part.computeBoundingBox();
-    part.computeBoundingSphere();
-    const band = new THREE.Points(part, points.material.clone());
-    band.userData.pointSize = gap + OVER_M;
-    return band;
-  });
-  geometry.dispose();
-  points.material.dispose();
-  return bands;
+        .applyMatrix4(flip)
+        .toArray(),
+    );
 }
 // A Gaussian splat (.spz); Spark is imported only when one is opened.
 async function parseSplat(buffer) {
@@ -199,7 +182,15 @@ async function readBuffer(source) {
   return response.arrayBuffer();
 }
 // Loads a scene off-screen; failures and superseded loads never touch the installed scene.
-export async function loadAsset(source, resolve, progress, cancelled, { splat = false } = {}) {
+// google: a Map Tiles API key; the surroundings then come from Google's 3D Tiles
+// (world/google-tiles.js) instead of the map-built land, roads and buildings.
+export async function loadAsset(
+  source,
+  resolve,
+  progress,
+  cancelled,
+  { splat = false, google = null } = {},
+) {
   const group = new THREE.Group();
   let data = null,
     placement = null;
@@ -230,7 +221,11 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
         await new Promise((r) => setTimeout(r, 0));
       }
       // surroundings are in world coordinates: placed scenes only
-      for (const key of placement === 'world' ? SURROUNDINGS : []) {
+      const mapped = placement === 'world' && !google; // the map-built surroundings
+      // a map point's spacing where its ply gives none, by its distance from DA3's points
+      const far = placement === 'world' ? sceneDistance(group) : null;
+      const gapOf = (x, z) => spacingAt(far(x, z));
+      for (const key of mapped ? SURROUNDINGS : []) {
         if (!data[key]) continue;
         progress(`Loading the ${key}…`);
         const buffer = await readBuffer(resolve(relativePath(data[key])));
@@ -238,31 +233,20 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           dispose(group);
           return null;
         }
-        const points = parsePoints(buffer);
-        // buildings with normals are drawn as dabs (older plys: plain points)
-        if (points.geometry.getAttribute('normal')?.count) {
-          const built = buildingPoints(points.geometry);
-          built.userData.surroundings = key;
-          group.add(built);
-          continue;
-        }
-        const spacing = SPACING[key];
-        for (const part of spacing ? terrainBands(points, spacing, cameraPlaces(data)) : [points]) {
-          part.userData.surroundings = key;
-          group.add(part);
-        }
+        const built = buildingPoints(parsePoints(buffer).geometry, { gapAt: gapOf });
+        built.userData.surroundings = key;
+        group.add(built);
       }
-      if (placement === 'world' && data[LAND]) {
+      if (mapped && data[LAND]) {
         progress('Loading the land…');
         const buffer = await readBuffer(resolve(relativePath(data[LAND])));
         if (cancelled()) {
           dispose(group);
           return null;
         }
-        const cams = cameraPlaces(data);
-        group.add(parseLand(buffer, (x, z) => gapAt(x, z, cams)));
+        group.add(parseLand(buffer, gapOf));
       }
-      for (const key of placement === 'world' ? [ROADS, BLOCKS] : []) {
+      for (const key of mapped ? [ROADS, BLOCKS] : []) {
         if (!data[key]) continue;
         progress(`Loading the ${key === BLOCKS ? 'far buildings' : key}…`);
         const buffer = await readBuffer(resolve(relativePath(data[key])));
@@ -271,8 +255,29 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           return null;
         }
         if (key === BLOCKS) group.add(parseBlocks(buffer));
-        else for (const band of surfacePoints(buffer, key)) group.add(band);
+        else group.add(parseRoads(buffer, gapOf));
         await new Promise((r) => setTimeout(r, 0));
+      }
+      if (placement === 'world' && google) {
+        // a google.ply saved beside the scene (?google-save) stands in for asking Google again
+        let buffer = null;
+        try {
+          buffer = await readBuffer(resolve('google.ply'));
+        } catch {
+          const { googleTiles } = await import('@viewer/world/google-tiles');
+          buffer = await googleTiles(google, data.center, cameraPoints(data), gapOf, progress);
+        }
+        if (cancelled()) {
+          dispose(group);
+          return null;
+        }
+        // dabs like the map's buildings, their photo colours left as lit
+        const built = buildingPoints(parsePoints(buffer).geometry, { baked: true });
+        built.userData.surroundings = GOOGLE;
+        group.add(built);
+        const head = new TextDecoder().decode(buffer.slice(0, 400));
+        group.userData.credit = /comment credit (.*)\n/.exec(head)?.[1];
+        group.userData.google = buffer;
       }
       if (placement === 'world' && data[WATER]) {
         progress('Loading the water…');
@@ -281,9 +286,8 @@ export async function loadAsset(source, resolve, progress, cancelled, { splat = 
           dispose(group);
           return null;
         }
-        const cams = cameraPlaces(data);
         for (const water of waterSurfaces(JSON.parse(new TextDecoder().decode(buffer)), (e, n) =>
-          gapAt(e, -n, cams),
+          gapOf(e, -n),
         )) {
           water.userData.surroundings = WATER;
           group.add(water);

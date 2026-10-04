@@ -52,7 +52,9 @@ export function createUI(actions, { editable = true } = {}) {
     actions.settings(point, speed, chase);
   }
   for (const id of ['point-size', 'speed', 'chase']) $(id).oninput = settings;
-  $('show-buildings').onchange = () => actions.buildings?.($('show-buildings').checked);
+  for (const id of ['show-buildings', 'show-surroundings'])
+    $(id).onchange = () =>
+      actions.shown?.($('show-buildings').checked, $('show-surroundings').checked);
   return {
     notify(message) {
       $('notice-text').textContent = message;
@@ -61,6 +63,11 @@ export function createUI(actions, { editable = true } = {}) {
     progress(message) {
       $('status').textContent = message;
       $('status').hidden = false;
+    },
+    // attribution the scene's data requires on screen (Google's tiles)
+    credit(text) {
+      $('credit').textContent = text || '';
+      $('credit').hidden = !text;
     },
     drop(visible) {
       $('dropzone').hidden = !visible;

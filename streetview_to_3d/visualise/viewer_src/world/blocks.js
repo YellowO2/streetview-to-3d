@@ -1,23 +1,21 @@
 import * as THREE from 'three';
 import { haze, HAZED } from '@viewer/style/haze';
-import { FLAT, GAPS, JITTER, level } from '@viewer/world/scatter';
+import { FLAT, GAPS, level } from '@viewer/world/scatter';
 import { tunable } from '@viewer/ui/tune-panel';
 import { styleUniforms } from '@viewer/style/points';
 import { worldUniforms, WORLD_VERTEX, WORLD_FRAGMENT, cutPoint } from '@viewer/style/world-points';
 import { SUN, f, v3, hash } from '@viewer/util';
 
 // Far buildings, land and moving things drawn as lit round dabs; colours come from the data.
-// Near DA3 (`near` 1) a dab turns into a DA3 point: eye-facing, its size and float, unlit.
+// Near DA3 (`near` 1) a dab turns into a DA3 point: eye-facing, floating, unlit; its size stays
+// its spacing's (postprocess seams.toward blends the spacing).
 
 const KNOBS = {
-  size: [1.1, 0.5, 2.5], // dab size, of its built size
   scatter: [0.5, 0, 1], // fixed per-dab offset and size jitter
   light: [0.5, 0, 1], // sunlit vs shaded contrast
   vary: [0.11, 0, 0.4], // per-dab lightness variation
 };
-const SPACE = 1.2, // far-building dab spacing, of the point gap
-  ROUND = 1.6, // dab diameter, of its spacing
-  EDGE_DAB = 0.9, // edge dab, of its spacing
+const JITTER = 0.1, // a dab off its grid place, of its spacing, either way
   LAYER = 0.04, // most a dab lifts off its face, of its spacing (fixed draw order, no flicker)
   SCATTER = 0.35, // most a dab sits off its face, of its spacing
   SCATTER_M = 0.4, // spacing cap for scatter, so big far dabs scatter no more than near ones
@@ -32,7 +30,12 @@ const FLOOR_M = 3.2,
   WINDOW_V = [0.3, 0.8]; // and of a floor
 const SUNLIT = [1.12, 1.02, 0.86],
   SHADED = [0.5, 0.56, 0.78];
-const EDGE = 1; // postprocess/buildings.Blocks kind for an edge point
+
+// A dab's diameter, of its spacing: what leaves no gaps on a grid jittered by JITTER, allowing for
+// the roughest edge (ROUGH) and smallest swell (SWELL). The one ratio of size to spacing
+// (postprocess seams.RATIO).
+export const RATIO =
+  (Math.SQRT2 * (1 + 2 * JITTER)) / (Math.sqrt(1 - ROUGH) * (1 - SWELL * KNOBS.scatter[0]));
 
 const knobs = tunable('Buildings', KNOBS);
 const sun = new THREE.Vector3(...SUN).normalize().toArray();
@@ -41,7 +44,7 @@ const vertexShader = `
   #include <fog_pars_vertex>
   ${WORLD_VERTEX}
   uniform float ${Object.keys(KNOBS).join(', ')}, halfHeight;
-  uniform float pointM, styleTime, styleFloat, styleLook, stylePointScale; // DA3's point look (points.js)
+  uniform float styleTime, styleFloat, styleLook; // DA3's point look (points.js)
   attribute vec3 facing, tint;
   attribute float dab, near; // size (m); 1 = drawn as a DA3 point
   #ifdef OWN_SEED
@@ -62,15 +65,16 @@ const vertexShader = `
     vec3 n = dot(facing, eye) < 0. ? -facing : facing;
     float t = near;
     vec4 r = vec4(h1(seed * 5.3), h1(seed * 6.7), h1(seed * 8.9), h1(seed * 10.1)) * 2. - 1.;
-    float spacing = dab / ${f(ROUND)};
+    float spacing = dab / ${f(RATIO)};
     float loose = scatter * min(1., ${f(SCATTER_M)} / spacing) * (1. - t);
     vec3 off = n * r.x * ${f(SCATTER)} * spacing * loose;
     float phase = h1(seed * 11.3) * 6.2832;
     vec3 drift = vec3(sin(styleTime * .55 + phase) * .45, sin(styleTime * .8 + phase) * .65,
       cos(styleTime * .5 + phase) * .45) * styleLook * .004 * styleFloat * t;
     world = centre + off + drift + n * h1(seed * 7.1) * ${f(LAYER)} * spacing * (1. - t);
-    float d = mix(dab * size * (1. + r.z * ${f(SWELL)} * loose),
-      pointM * stylePointScale * (1. + sin(styleTime * .8 + phase) * .14 * styleFloat), t);
+    // always sized by its spacing; near DA3 it pulses with the float as DA3's points do
+    float d = dab
+      * mix(1. + r.z * ${f(SWELL)} * loose, 1. + sin(styleTime * .8 + phase) * .14 * styleFloat, t);
     float demoIn;
     world += demoed(centre, h1(seed * 13.7), demoIn) - centre;
     if (shotAway(centre)) demoIn = 0.;
@@ -82,7 +86,11 @@ const vertexShader = `
     if (gl_PointSize == 0.) gl_Position = vec4(2., 2., 2., 1.);
     // lit by face toward the sun, varied per dab; near DA3, unlit
     float sunlit = smoothstep(-.05, .25, dot(n, ${v3(sun)}));
-    colour = tint * mix(vec3(1.), mix(${v3(SHADED)}, ${v3(SUNLIT)}, sunlit), light * (1. - t))
+    float lit = light * (1. - t);
+    #ifdef BAKED
+    lit = 0.;
+    #endif
+    colour = tint * mix(vec3(1.), mix(${v3(SHADED)}, ${v3(SUNLIT)}, sunlit), lit)
       * (1. + (h1(seed * 3.3) - .5) * 2. * vary * (1. - t));
   }`;
 
@@ -110,18 +118,13 @@ function within({ uv: [ua, ub, uc], det }, x, y) {
 }
 
 // Dabs over triangles (viewer frame): { centre, facing, tint, dab (size, m), near }.
+// A dab is RATIO of its spacing across, whatever it lies on: slopes are covered by more dabs.
 // edges: add crease strokes; levels: snap each triangle's gap to GAPS so neighbours share a grid
-// (the land); smooth: interpolate corner normals; space, jitter, round: of the spacing.
+// (the land); smooth: interpolate corner normals;
+// colourAt(a, b, c, weights): a dab's colour from its triangle's corners, in place of their colours.
 export function marks(
   geometry,
-  {
-    edges: structure = true,
-    levels = false,
-    smooth = false,
-    space = SPACE,
-    jitter = JITTER,
-    round = ROUND,
-  } = {},
+  { edges: structure = true, levels = false, smooth = false, colourAt = null } = {},
 ) {
   const p = geometry.getAttribute('position'),
     col = geometry.getAttribute('color'),
@@ -160,7 +163,8 @@ export function marks(
     const facingAt = (w) =>
       corners ? new THREE.Vector3(...at(...corners, ...w)).normalize().toArray() : n.toArray();
     const wall = facade && [a, b, c].every((i) => facade.getY(i) > NO_FACADE / 2);
-    // grid axes: facade, ground (east/north) or along-slope/up; dabs stretched to cover slopes
+    // grid axes: facade, ground (east/north) or along-slope/up; the grid as much finer as the
+    // surface slopes across it (stretch), so dabs stay their spacing apart on the surface
     let uv,
       stretch = 1;
     if (wall) {
@@ -174,11 +178,11 @@ export function marks(
       stretch = 1 / h;
     }
     const gap = levels
-      ? GAPS[level(Math.min(gapOf.getX(a), gapOf.getX(b), gapOf.getX(c)) / Math.sqrt(stretch))]
+      ? Math.min(gapOf.getX(a), gapOf.getX(b), gapOf.getX(c))
       : gapOf && gapOf.getX(a) > 0
         ? gapOf.getX(a)
         : 1;
-    const s = gap * space;
+    const s = levels ? GAPS[level(gap / stretch)] : gap / stretch;
     const [ua, ub, uc] = [uv(a), uv(b), uv(c)];
     const det = (ub[0] - ua[0]) * (uc[1] - ua[1]) - (uc[0] - ua[0]) * (ub[1] - ua[1]);
     if (Math.abs(det) < 1e-12) continue;
@@ -186,8 +190,8 @@ export function marks(
     const tint = [C(a), C(b), C(c)],
       glass = glassOf && [a, b, c].map((i) => [glassOf.getX(i), glassOf.getY(i), glassOf.getZ(i)]);
     // only cells whose jittered point can land in the triangle
-    const from = (lo) => Math.ceil(lo / s - 0.5 - jitter - 1e-9),
-      to = (hi) => Math.floor(hi / s - 0.5 + jitter + 1e-9);
+    const from = (lo) => Math.ceil(lo / s - 0.5 - JITTER - 1e-9),
+      to = (hi) => Math.floor(hi / s - 0.5 + JITTER + 1e-9);
     const lo0 = from(Math.min(ua[0], ub[0], uc[0])),
       hi0 = to(Math.max(ua[0], ub[0], uc[0])),
       lo1 = from(Math.min(ua[1], ub[1], uc[1])),
@@ -206,15 +210,15 @@ export function marks(
     };
     for (let i = lo0; i <= hi0; i++)
       for (let j = lo1; j <= hi1; j++) {
-        const x = (i + 0.5 + (hash(i, j, k) - 0.5) * 2 * jitter) * s,
-          y = (j + 0.5 + (hash(j, i, k + 51) - 0.5) * 2 * jitter) * s;
+        const x = (i + 0.5 + (hash(i, j, k) - 0.5) * 2 * JITTER) * s,
+          y = (j + 0.5 + (hash(j, i, k + 51) - 0.5) * 2 * JITTER) * s;
         const w = inside(x, y);
         if (!w) continue;
         add(
           at(A.toArray(), B.toArray(), Cv.toArray(), ...w),
           facingAt(w),
-          at(...(windows && onWindow(x, y) ? glass : tint), ...w),
-          s * round * stretch,
+          colourAt ? colourAt(a, b, c, w) : at(...(windows && onWindow(x, y) ? glass : tint), ...w),
+          s * stretch * RATIO,
           nearOf ? w[0] * nearOf.getX(a) + w[1] * nearOf.getX(b) + w[2] * nearOf.getX(c) : 0,
         );
       }
@@ -226,7 +230,7 @@ export function marks(
       [c, a, b],
     ]) {
       const ends = [key(V(u)), key(V(v))].sort().join('|');
-      const e = edges.get(ends) || { u, v, o, faces: [], s, tint: C(u) };
+      const e = edges.get(ends) || { u, v, o, faces: [], s: s * stretch, tint: C(u) };
       e.faces.push(n.clone());
       edges.set(ends, e);
     }
@@ -237,7 +241,7 @@ export function marks(
     if (faces.length === 1 && Math.abs(U.y - W.y) < 0.05 && V(o).y > U.y + 0.05) continue; // building foot
     const len = U.distanceTo(W);
     if (len < 1e-3) continue;
-    const k = Math.max(1, Math.round(len / (s * EDGE_DAB)));
+    const k = Math.max(1, Math.round(len / s));
     for (let i = 0; i < k; i++)
       add(
         U.clone()
@@ -245,18 +249,10 @@ export function marks(
           .toArray(),
         faces[0].toArray(),
         tint,
-        s * EDGE_DAB,
+        s * RATIO,
       );
   }
   return out;
-}
-
-// Dab diameter (of its spacing) that leaves no gaps on a grid jittered by jitter,
-// allowing for the roughest edge (ROUGH) and smallest swell (SWELL) at default knobs.
-export function covering(jitter) {
-  const furthest = Math.SQRT1_2 * (1 + 2 * jitter),
-    least = Math.sqrt(1 - ROUGH) * (1 - SWELL * KNOBS.scatter[0]);
-  return (2 * furthest) / (least * KNOBS.size[0]);
 }
 
 // blocks.ply triangles (viewer frame) as drawn dabs
@@ -266,32 +262,35 @@ export function blockPoints(geometry) {
   return pointsOf(made);
 }
 
-// buildings.ply points (with normal, kind and near) as drawn dabs
-export function buildingPoints(geometry) {
+// Map points (a ply's, with gap; normal and near if it has them) as drawn dabs. gapAt(x, z):
+// spacing where the ply gives none; other options: see pointsOf.
+export function buildingPoints(geometry, { gapAt = () => 1, ...options } = {}) {
   const p = geometry.getAttribute('position'),
     gapOf = geometry.getAttribute('gap'),
-    kindOf = geometry.getAttribute('kind'),
     nearOf = geometry.getAttribute('near');
   const count = p.count;
   const col = geometry.getAttribute('color');
   const made = {
     centre: p.array.slice(0, 3 * count),
-    facing: geometry.getAttribute('normal').array.slice(0, 3 * count),
+    facing: geometry.getAttribute('normal')?.count
+      ? geometry.getAttribute('normal').array.slice(0, 3 * count)
+      : Float32Array.from({ length: 3 * count }, (_, i) => +(i % 3 === 1)), // none: facing up
     tint: col ? col.array.slice(0, 3 * count) : new Float32Array(3 * count).fill(0.6),
     dab: new Float32Array(count),
     near: nearOf?.count ? nearOf.array.slice(0, count) : null,
   };
   for (let i = 0; i < count; i++) {
-    const s = gapOf && gapOf.getX(i) > 0 ? gapOf.getX(i) : 1;
-    made.dab[i] = s * (kindOf && Math.round(kindOf.getX(i)) === EDGE ? EDGE_DAB : ROUND);
+    made.dab[i] =
+      RATIO * (gapOf && gapOf.getX(i) > 0 ? gapOf.getX(i) : gapAt(p.getX(i), p.getZ(i)));
   }
   geometry.dispose();
-  return pointsOf(made);
+  return pointsOf(made, options);
 }
 
 // Dabs ({ centre, facing, tint, dab, near?, grain? }) as a THREE.Points with packed attributes.
-// fog: apply the scene fog (the land). grain: per-dab seeds for moving things; else seeded by position.
-export function pointsOf(made, { fog = false } = {}) {
+// fog: apply the scene fog (the land). baked: colours already hold their light (photos): no sun or
+// shade added. grain: per-dab seeds for moving things; else seeded by position.
+export function pointsOf(made, { fog = false, baked = false } = {}) {
   const count = made.dab.length;
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(made.centre, 3));
@@ -314,18 +313,17 @@ export function pointsOf(made, { fog = false } = {}) {
   const points = new THREE.Points(
     g,
     new THREE.ShaderMaterial({
-      // pointM and style* are set as for DA3's points (app.js setPointSize, controller.js)
+      // style* are set as for DA3's points (controller.js)
       uniforms: {
         ...knobs,
         haze,
         halfHeight,
-        pointM: { value: 0.1 },
         ...styleUniforms(),
         ...worldUniforms,
         ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
       },
       fog,
-      defines: made.grain ? { OWN_SEED: '' } : {},
+      defines: { ...(made.grain && { OWN_SEED: '' }), ...(baked && { BAKED: '' }) },
       vertexShader,
       fragmentShader,
     }),

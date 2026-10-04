@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
-import { landPoints, MIN_GAP } from '@viewer/world/land';
-import { covering } from '@viewer/world/blocks';
+import { landPoints } from '@viewer/world/land';
+import { RATIO } from '@viewer/world/blocks';
 import { GAPS, level } from '@viewer/world/scatter';
 
 // 100 m square in the viewer's frame (y up), two triangles, wound downwards
@@ -16,15 +16,15 @@ function field() {
   return geometry;
 }
 
-test('the land is points spaced as the world is, never under MIN_GAP, facing up however wound', () => {
-  const land = landPoints(field(), (x) => (x < 50 ? 0.01 : 2));
+test('the land is points spaced as the world is, facing up however wound', () => {
+  const land = landPoints(field(), (x) => (x < 50 ? 0.3 : 2));
   const p = land.geometry.getAttribute('position'),
     dab = land.geometry.getAttribute('dab'),
     facing = land.geometry.getAttribute('facing');
-  const across = (gap) => Math.fround(GAPS[level(gap)] * covering(0.1)); // land.js SPACE 1, JITTER
+  const across = (gap) => Math.fround(GAPS[level(gap)] * RATIO); // a dab, of its spacing
   for (let i = 0; i < p.count; i++) {
-    // a triangle spaced by its closest corner: the west one's all MIN_GAP
-    if (p.getX(i) < 40) assert.equal(dab.getX(i), across(MIN_GAP));
+    // a triangle spaced by its closest corner: the west one's all 0.3
+    if (p.getX(i) < 40) assert.equal(dab.getX(i), across(0.3));
     assert.ok(facing.getY(i) > 0.99); // up: lit as the land faces
   }
 });
@@ -34,7 +34,7 @@ test('the land as points: spaced by one grid, no edges, fogged', () => {
   assert.ok(land.isPoints && land.material.fog);
   const p = land.geometry.getAttribute('position'),
     facing = land.geometry.getAttribute('facing');
-  const s = GAPS[level(1)] * 1; // land.js SPACE
+  const s = GAPS[level(1)];
   assert.ok(Math.abs(p.count - (100 / s) ** 2) < 0.1 * p.count); // the grid's, none along its rim
   for (let i = 0; i < p.count; i++) {
     assert.equal(p.getY(i), 2);
@@ -42,20 +42,20 @@ test('the land as points: spaced by one grid, no edges, fogged', () => {
   }
 });
 
-test('on a slope the grid finer and the dabs bigger, half the stretch each, meeting as on the flat', () => {
+test('on a slope the grid finer by its stretch and the dabs the same size: more of them, no bigger', () => {
   const tilted = field();
   const p = tilted.getAttribute('position');
   for (let i = 0; i < p.count; i++) p.setY(i, p.getZ(i)); // 45 degrees, up toward +z: stretched by sqrt 2
   const flat = landPoints(field(), () => 1).geometry,
     slope = landPoints(tilted, () => 1).geometry;
-  const finer = GAPS[level(1 / 2 ** 0.25)] / GAPS[level(1)]; // the grid, a level finer
+  const finer = GAPS[level(1 / Math.SQRT2)] / GAPS[level(1)]; // the grid, on the map
   assert.ok(finer < 1);
   // as many more as the grid is finer (the same square on the map)
   const more = slope.getAttribute('position').count / flat.getAttribute('position').count;
   assert.ok(Math.abs(more * finer ** 2 - 1) < 0.1);
-  // each dab as big as the grid, stretched over the slope, is apart
+  // each dab its spacing's size on the slope, as on the flat (to the grid's levels)
   const ratio = slope.getAttribute('dab').getX(0) / flat.getAttribute('dab').getX(0);
-  assert.ok(Math.abs(ratio - finer * Math.SQRT2) < 1e-3);
+  assert.ok(Math.abs(ratio - finer * Math.SQRT2) < 1e-3 && ratio > 0.8 && ratio <= 1.25);
 });
 
 test('the land as points leaves nothing between its dabs, even where two spacings meet', () => {
@@ -154,7 +154,7 @@ test("the land spaced as land.ply has it, where it has a gap: closing to DA3's a
       .geometry.getAttribute('dab')
       .getX(0);
   };
-  const as = (gap) => Math.fround(GAPS[level(gap)] * covering(0.1)); // land.js SPACE 1, JITTER
-  assert.equal(across(0.1), as(0.1)); // on DA3's: as close as its points, under MIN_GAP
+  const as = (gap) => Math.fround(GAPS[level(gap)] * RATIO);
+  assert.equal(across(0.1), as(0.1)); // on DA3's: as close as its points
   assert.equal(across(2), as(2));
 });

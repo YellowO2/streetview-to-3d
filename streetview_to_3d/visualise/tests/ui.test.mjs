@@ -153,17 +153,24 @@ test('manager collapses and reopens with accessible focus restoration', () => {
   dom.window.close();
 });
 
-test('Show buildings in the settings tells the viewer to show the map buildings or not', () => {
+test('Show buildings and Show surroundings in the settings tell the viewer what to show', () => {
   const dom = new JSDOM(viewerTemplate());
   globalThis.document = dom.window.document;
   const said = [];
-  createUI({ buildings: (on) => said.push(on) });
-  const box = document.getElementById('show-buildings');
-  assert(box.checked); // shown to begin with
-  box.checked = false;
-  box.dispatchEvent(new dom.window.Event('change'));
-  box.checked = true;
-  box.dispatchEvent(new dom.window.Event('change'));
-  assert.deepEqual(said, [false, true]);
+  createUI({ shown: (buildings, surroundings) => said.push([buildings, surroundings]) });
+  const set = (id, on) => {
+    const box = document.getElementById(id);
+    assert(box.checked !== on); // both shown to begin with
+    box.checked = on;
+    box.dispatchEvent(new dom.window.Event('change'));
+  };
+  set('show-buildings', false);
+  set('show-surroundings', false);
+  set('show-buildings', true);
+  assert.deepEqual(said, [
+    [false, true],
+    [false, false],
+    [true, false],
+  ]);
   dom.window.close();
 });
