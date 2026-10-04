@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 
-export const START_HEIGHT = 1; // Metres above the capture centre, in viewer space.
+export const START_HEIGHT = 1; // above the capture centre, for a scene not placed in metres
+const OVER_GROUND_M = 20, // a placed scene starts this far over the ground, for an overview
+  CAM_H = 2.45, // a pano's camera above its ground (postprocess place.CAM_H)
+  DOWN = 0.35; // ... looking this much down (rise over run)
 
 // Choose the panorama nearest the scene's GPS centre. Its stored camera position
 // must pass through the same placement and Y/Z conversion as the PLY geometry.
@@ -19,8 +22,10 @@ export function panoramaStart(data) {
   const position = new THREE.Vector3(...node.position);
   if (node.transform) position.applyMatrix4(new THREE.Matrix4().set(...node.transform.flat()));
   position.multiply(new THREE.Vector3(1, -1, -1));
-  position.y += START_HEIGHT;
+  position.y += node.transform ? OVER_GROUND_M - CAM_H : START_HEIGHT;
   const heading = Number.isFinite(node.pano?.heading) ? node.pano.heading : 0;
-  const target = position.clone().add(new THREE.Vector3(Math.sin(heading), 0, -Math.cos(heading)));
+  const target = position
+    .clone()
+    .add(new THREE.Vector3(Math.sin(heading), node.transform ? -DOWN : 0, -Math.cos(heading)));
   return { position, target };
 }

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { panoramaStart } from '@viewer/core/start-view';
 
-test('starts one metre above the nearest panorama after point-cloud placement', () => {
+test('a placed scene starts 20 m over the ground at the nearest panorama, looking a little down', () => {
   const result = panoramaStart({
     center: [1, 103],
     nodes: [
@@ -20,8 +20,9 @@ test('starts one metre above the nearest panorama after point-cloud placement', 
       },
     ],
   });
-  assert.deepEqual(result.position.toArray(), [12, -23, -36]);
-  assert.deepEqual(result.target.toArray(), [12, -23, -37]);
+  const near = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 1e-9);
+  assert(near(result.position.toArray(), [12, -24 + 20 - 2.45, -36]));
+  assert(near(result.target.toArray(), [12, -24 + 20 - 2.45 - 0.35, -37]));
 });
 test('missing camera positions allow the viewer bounds fallback', () => {
   assert.equal(panoramaStart(null), null);
