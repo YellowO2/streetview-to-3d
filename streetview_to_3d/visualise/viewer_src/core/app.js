@@ -385,6 +385,8 @@ ui.styles(config.style || 'paint');
 refresh();
 // ?scene=<scene.json url>&name=<title> opens a hosted scene (the gallery's links)
 const sceneUrl = query.get('scene') || config.sceneUrl;
+// a page showing a given scene offers no other; an empty viewer keeps Open scene
+document.getElementById('open-folder').hidden = !!sceneUrl;
 if (sceneUrl) {
   const base = sceneUrl.slice(0, sceneUrl.lastIndexOf('/') + 1);
   load({
