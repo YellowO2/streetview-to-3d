@@ -182,8 +182,9 @@ async function readBuffer(source) {
   return response.arrayBuffer();
 }
 // Loads a scene off-screen; failures and superseded loads never touch the installed scene.
-// google: a Map Tiles API key; the surroundings then come from Google's 3D Tiles
-// (world/google-tiles.js) instead of the map-built land, roads and buildings.
+// The surroundings are Google's 3D Tiles (world/google-tiles.js), not the map-built land, roads
+// and buildings, where the scene names its own (scene.json's google) or a Map Tiles API key is
+// given (google: streamed, unless a google.ply lies beside the scene).
 export async function loadAsset(
   source,
   resolve,
@@ -221,7 +222,8 @@ export async function loadAsset(
         await new Promise((r) => setTimeout(r, 0));
       }
       // surroundings are in world coordinates: placed scenes only
-      const mapped = placement === 'world' && !google; // the map-built surroundings
+      const googled = placement === 'world' && (google || data[GOOGLE]);
+      const mapped = placement === 'world' && !googled; // the map-built surroundings
       // a map point's spacing where its ply gives none, by its distance from DA3's points
       const far = placement === 'world' ? sceneDistance(group) : null;
       const gapOf = (x, z) => spacingAt(far(x, z));
@@ -258,12 +260,14 @@ export async function loadAsset(
         else group.add(parseRoads(buffer, gapOf));
         await new Promise((r) => setTimeout(r, 0));
       }
-      if (placement === 'world' && google) {
-        // a google.ply saved beside the scene (?google-save) stands in for asking Google again
+      if (googled) {
+        progress('Loading the surroundings…');
+        // the scene's own, else one saved beside it (?google-save), else asked of Google
         let buffer = null;
         try {
-          buffer = await readBuffer(resolve('google.ply'));
-        } catch {
+          buffer = await readBuffer(resolve(relativePath(data[GOOGLE] || 'google.ply')));
+        } catch (e) {
+          if (!google) throw e;
           const { googleTiles } = await import('@viewer/world/google-tiles');
           buffer = await googleTiles(google, data.center, cameraPoints(data), gapOf, progress);
         }

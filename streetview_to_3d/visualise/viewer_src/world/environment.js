@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createClouds } from '@viewer/world/clouds';
 
-// A camera-centred sky dome; terrain belongs to the scene.
+// A camera-centred sky dome, earth-coloured under the horizon; terrain belongs to the scene.
 export function createEnvironment(scene) {
   const skyMaterial = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -21,9 +21,10 @@ export function createEnvironment(scene) {
         float h = normalize(direction).y;
         vec3 horizon = mix(mix(vec3(.58,.66,.67), vec3(.78,.94,1.0), anime), vec3(.80,.88,.96), blue);
         vec3 zenith = mix(mix(vec3(.30,.43,.49), vec3(.13,.55,1.0), anime), vec3(.33,.55,.86), blue);
-        vec3 below = mix(mix(vec3(.47,.56,.57), vec3(.65,.84,.91), anime), vec3(.64,.68,.70), blue);
+        // under the horizon: dark earth, so a hole in the ground shows ground, not sky
+        vec3 below = mix(mix(vec3(.26,.29,.24), vec3(.30,.38,.28), anime), vec3(.25,.27,.24), blue);
         vec3 colour = mix(horizon, zenith, smoothstep(0.0, .9, h));
-        colour = mix(colour, below, (1.0 - smoothstep(-.6, 0.0, h)));
+        colour = mix(colour, below, (1.0 - smoothstep(-.12, 0.0, h)));
         gl_FragColor = vec4(colour, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>

@@ -23,7 +23,8 @@ export function pointMotion(object) {
   const material = object.material;
   if (patched.has(material)) return patched.get(material);
   const stableSeed = !!object.geometry.getAttribute('styleSeed');
-  const swaying = !!object.geometry.getAttribute('sway'); // 0-255 per point (fill)
+  // 0-255 per point (fill); a ply without it gets one of NaNs from the loader, which would hide every point
+  const swaying = !!object.geometry.getAttribute('sway')?.array.some((v) => v > 0);
   const uniforms = styleUniforms();
   // points with their own motion (water) are left alone
   if (object.userData.ownMotion) {

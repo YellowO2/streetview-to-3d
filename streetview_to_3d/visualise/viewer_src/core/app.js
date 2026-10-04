@@ -65,10 +65,12 @@ const ui = createUI(
       navigation.settings(speed, chase);
       setPointSize();
     },
-    shown: (buildings, surroundings) => {
+    shown: (buildings, surroundings, street) => {
       showBuildings = buildings;
       showSurroundings = surroundings;
+      showStreet = street;
       setShown();
+      refresh();
     },
     export: (parts) => {
       if (!store.group || store.splat || busy) return;
@@ -96,7 +98,8 @@ let busy = false,
   pointMultiplier = 1,
   points = 0,
   showBuildings = true,
-  showSurroundings = true;
+  showSurroundings = true,
+  showStreet = true;
 function attempt(fn) {
   try {
     fn();
@@ -107,7 +110,7 @@ function attempt(fn) {
   }
 }
 function refresh() {
-  store.nodes.forEach((object, i) => (object.visible = state.visible(i)));
+  store.nodes.forEach((object, i) => (object.visible = showStreet && state.visible(i)));
   highlight.box.copy(store.box(state.selected || [], true));
   highlight.visible = state.mode !== 'fly' && !!state.selected && !highlight.box.isEmpty();
   editor.sync();
@@ -161,7 +164,7 @@ function configure() {
   setShown();
 }
 // show or hide the surroundings (everything but DA3's own points), and of them the map's
-// buildings (buildings.ply near DA3, blocks.ply far)
+// buildings (buildings.ply near DA3, blocks.ply far); DA3's points: refresh (showStreet)
 function setShown() {
   store.group?.traverse((o) => {
     const kind = o.userData.surroundings;

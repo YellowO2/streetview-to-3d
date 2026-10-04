@@ -52,9 +52,8 @@ export function createUI(actions, { editable = true } = {}) {
     actions.settings(point, speed, chase);
   }
   for (const id of ['point-size', 'speed', 'chase']) $(id).oninput = settings;
-  for (const id of ['show-buildings', 'show-surroundings'])
-    $(id).onchange = () =>
-      actions.shown?.($('show-buildings').checked, $('show-surroundings').checked);
+  const shown = ['show-buildings', 'show-surroundings', 'show-street'];
+  for (const id of shown) $(id).onchange = () => actions.shown?.(...shown.map((i) => $(i).checked));
   return {
     notify(message) {
       $('notice-text').textContent = message;

@@ -29,7 +29,7 @@ export const ROADS = 'roads'; // triangle ply, roads beyond the terrain points
 export const WATER = 'water'; // json: flat outlines at levels
 export const BLOCKS = 'blocks'; // triangle ply, far buildings
 export const LIFE = 'life'; // json: cars, birds, boats, ducks, cats
-export const GOOGLE = 'google'; // not in scene.json: points sampled from Google's 3D Tiles
+export const GOOGLE = 'google'; // point ply: Google 3D Tiles dabs standing in for the map-built surroundings
 export function relativePath(path) {
   if (
     typeof path !== 'string' ||
@@ -75,7 +75,7 @@ export function validateScene(data) {
         throw new Error(`Node ${i} has an invalid 4×4 transform.`);
     }
   });
-  for (const key of [...SURROUNDINGS, LAND, ROADS, WATER, BLOCKS])
+  for (const key of [...SURROUNDINGS, LAND, ROADS, WATER, BLOCKS, GOOGLE])
     if (data[key] != null) relativePath(data[key]);
   for (const edge of data.edges) {
     if (

@@ -99,6 +99,9 @@ class Scene:
     blocks: str | None = None
     # what moves round it -- its cars' roads, its birds, its boats' courses (postprocess/world/life.py)
     life: str | None = None
+    # experimental: Google 3D Tiles points standing in for the land, roads and buildings
+    # (postprocess/world/google.py)
+    google: str | None = None
 
     @property
     def origin(self):
@@ -138,4 +141,4 @@ class Scene:
                    adjacency={str(k): v for k, v in d["adjacency"].items()},
                    edges=[Edge(**e) for e in d["edges"]],
                    land=d.get("land"), terrain=d.get("terrain"), roads=d.get("roads"), buildings=d.get("buildings"), water=d.get("water"),
-                   blocks=d.get("blocks"), life=d.get("life"))
+                   blocks=d.get("blocks"), life=d.get("life"), google=d.get("google"))

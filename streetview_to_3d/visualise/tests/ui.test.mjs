@@ -153,11 +153,11 @@ test('manager collapses and reopens with accessible focus restoration', () => {
   dom.window.close();
 });
 
-test('Show buildings and Show surroundings in the settings tell the viewer what to show', () => {
+test('Show buildings, surroundings and street points in the settings tell the viewer what to show', () => {
   const dom = new JSDOM(viewerTemplate());
   globalThis.document = dom.window.document;
   const said = [];
-  createUI({ shown: (buildings, surroundings) => said.push([buildings, surroundings]) });
+  createUI({ shown: (...which) => said.push(which) });
   const set = (id, on) => {
     const box = document.getElementById(id);
     assert(box.checked !== on); // both shown to begin with
@@ -166,11 +166,11 @@ test('Show buildings and Show surroundings in the settings tell the viewer what 
   };
   set('show-buildings', false);
   set('show-surroundings', false);
-  set('show-buildings', true);
+  set('show-street', false);
   assert.deepEqual(said, [
-    [false, true],
-    [false, false],
-    [true, false],
+    [false, true, true],
+    [false, false, true],
+    [false, false, false],
   ]);
   dom.window.close();
 });
