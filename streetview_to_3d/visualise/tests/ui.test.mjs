@@ -158,19 +158,20 @@ test('Show buildings, surroundings and street points in the settings tell the vi
   globalThis.document = dom.window.document;
   const said = [];
   createUI({ shown: (...which) => said.push(which) });
+  assert(!document.getElementById('show-buildings').checked); // the map's buildings: off to begin with
   const set = (id, on) => {
     const box = document.getElementById(id);
-    assert(box.checked !== on); // both shown to begin with
+    assert(box.checked !== on);
     box.checked = on;
     box.dispatchEvent(new dom.window.Event('change'));
   };
-  set('show-buildings', false);
+  set('show-buildings', true);
   set('show-surroundings', false);
   set('show-street', false);
   assert.deepEqual(said, [
-    [false, true, true],
-    [false, false, true],
-    [false, false, false],
+    [true, true, true],
+    [true, false, true],
+    [true, false, false],
   ]);
   dom.window.close();
 });

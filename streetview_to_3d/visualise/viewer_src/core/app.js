@@ -97,7 +97,7 @@ let busy = false,
   radius = 5,
   pointMultiplier = 1,
   points = 0,
-  showBuildings = true,
+  showBuildings = false, // the map's buildings: off until asked for (Settings)
   showSurroundings = true,
   showStreet = true;
 function attempt(fn) {

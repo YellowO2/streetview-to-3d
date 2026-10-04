@@ -4,8 +4,9 @@ const $ = (id) => document.getElementById(id);
 
 // One viewer shell for every host. Editing adds only the Scene Manager.
 export function createUI(actions, { editable = true } = {}) {
-  $('scene-manager').hidden = !editable;
-  $('expand-manager').hidden = true;
+  // the Scene Manager starts folded away; its button opens it
+  $('scene-manager').hidden = true;
+  $('expand-manager').hidden = !editable;
   $('collapse-manager').onclick = () => {
     $('scene-manager').hidden = true;
     $('expand-manager').hidden = false;
