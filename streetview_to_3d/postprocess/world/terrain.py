@@ -35,6 +35,8 @@ ROOF_INSET_M, ROOF_STEP_M = 1.0, 1.0   # satellite roof sampling: inset from the
 RADIUS_M = 1000.0                          # the land's reach (the viewer's haze is total by then)
 OSM_M, ROADS_M = RADIUS_M, 700.0           # OSM reach for buildings/water and for main roads
 BUILDINGS_M = 800.0                        # buildings this near the centre are kept
+BY_PANO_M = 20.0                           # ... those within this of a pano, all of them
+MAJOR_M2, MAJOR_HIGH_M = 1000.0, 25.0      # ... further off only the major: this big on the ground, or this high
 NEAR_M = 50.0                              # roads and bridges are points this near a camera, meshes past
 PAINT_M = 30.0                             # map points this near a camera are coloured from the panos
 TINT_M, MEET_M = 8.0, 10.0                 # seam bands for colour and height (seams.py)
@@ -221,8 +223,13 @@ def build(scene_dir, log=print):
         d, g, _ = near(xy)
         return seams.meet(h, g, d, ROAD_MEET_M, ROAD_MEET_MAX_M)
     # buildings, fitted onto the scene's walls
+    # only those by the panos and the major ones: the rest cost time and points for little
+    import shapely
+    cams = shapely.multipoints(cam_xz)
     outlines = [o for o in buildings.outlines(elements, to_xy)
-                if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M]
+                if np.linalg.norm(o[0], axis=1).min() < BUILDINGS_M
+                and (shapely.Polygon(o[0]).distance(cams) <= BY_PANO_M
+                     or shapely.Polygon(o[0]).area >= MAJOR_M2 or o[1] >= MAJOR_HIGH_M)]
     n_fitted = n_trimmed = 0
     if outlines:
         from streetview_to_3d.postprocess.fill.ground import normals_from_neighbours
@@ -232,7 +239,6 @@ def build(scene_dir, log=print):
     # land corners, plus corners along road edges so no triangle spans one
     en = sample_points(RADIUS_M, cam_xz, LAND_EVERY)
     # bridge decks clear the roads and water they cross
-    import shapely
 
     def crossed(road_h):
         def low(xy):
