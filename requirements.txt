@@ -17,7 +17,6 @@ tqdm
 streetlevel @ git+https://github.com/YellowO2/streetlevel.git
 torchvision
 transformers
-# Unpinned -- bump this comment whenever panoramic-da3's HEAD moves and
-# needs to be picked up, since a text-identical requirements.txt won't
-# trigger HF's build cache to re-fetch it on its own. (bump: 2026-09-29-1)
-panoramic-da3 @ git+https://github.com/YellowO2/panoramic-da3.git
+# Pinned to a commit: panoramic-da3's main line changes its API, and an
+# unpinned install would pick that up on the next rebuild.
+panoramic-da3 @ git+https://github.com/YellowO2/panoramic-da3.git@51e405074c7d2f6d934e219f723c2057faf821d5

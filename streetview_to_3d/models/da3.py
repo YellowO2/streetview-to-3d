@@ -1,6 +1,6 @@
 """DA3, the depth model: which one and where it is (DA3Config), and our decisions about its
 results: thresholds, view settings, what a passing edge test or a solo rating is. The only
-caller of panoramic_da3.run_da3."""
+caller of panoramic_da3.panoramic_da3."""
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -19,7 +19,7 @@ DA3_MODEL_REPO = "depth-anything/DA3NESTED-GIANT-LARGE-1.1"
 
 @dataclass
 class DA3Config:
-    """All panoramic_da3.run_da3 needs from a config: the model's local path."""
+    """Which DA3 to load: the model's local path."""
     da3_model: str = ""
 
 
@@ -60,42 +60,45 @@ def options(hfov=None, masker=None, mask_classes=None, conf_floor=None):
         _options.update(old)
 
 
-def run_da3(target, support, *args, **kwargs):
-    """panoramic_da3.run_da3 with this pipeline's view width, mask and confidence
-    floor. Also used by the HF app."""
-    from panoramic_da3 import run_da3 as run
-    from panoramic_da3.components.SplatProcessor import utils
-    hfov = _options["hfov"] or VIEW_HFOV
-    floor = utils.CONF_ABS_FLOOR
-    utils.CONF_ABS_FLOOR = CONF_FLOOR if _options["conf_floor"] is None else _options["conf_floor"]
-    try:
-        return run(target, support, *args, hfov=hfov, drop_mask=_drop_mask([target, *support], hfov),
-                   **kwargs)
-    finally:
-        utils.CONF_ABS_FLOOR = floor
+def run_da3(paths, cfg, da3, **settings):
+    """panoramic_da3 on the panos at `paths`, with this pipeline's view width, mask and
+    confidence floor: (point_clouds, da3_result), each keyed by the pano's file name.
+    `settings` are panoramic_da3.Settings fields. Also used by the HF app."""
+    from panoramic_da3 import Loader, Settings, panoramic_da3
+    settings = Settings(
+        da3_model=cfg.da3_model,
+        hfov=_options["hfov"] or VIEW_HFOV,
+        conf_floor=CONF_FLOOR if _options["conf_floor"] is None else _options["conf_floor"],
+        drop_mask=_drop_mask(paths),
+        **settings,
+    )
+    return panoramic_da3(Loader(paths), settings, da3=da3)
 
 
-def _drop_mask(panos, hfov):
+def _drop_mask(paths):
     if not MASK_MOVERS:
         return None
     from functools import partial
     from streetview_to_3d.models.segment import drop_in_views
-    return partial(drop_in_views, panos=panos, hfov=hfov, model_id=_options["masker"], classes=_options["mask_classes"])
+    panos = {os.path.basename(path): path for path in paths}
+    return partial(drop_in_views, panos=panos, model_id=_options["masker"], classes=_options["mask_classes"])
 
 
-def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, angle_thresh=1,
+def test_edge(path_a, path_b, cfg, da3, dist_thresh=0.2, angle_thresh=1,
               step_degrees=VIEW_STEP_DEGREES, keep_rate_threshold=KEEP_RATE_THRESHOLD,
               conf_lower_percentile=CONF_LOWER_PERCENTILE):
     """One pairwise DA3 run on two downloaded panos: None if either keeps too few views,
     else (pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views)."""
-    test_dir = os.path.join(views_base, f"t{test_id}")
-    os.makedirs(test_dir, exist_ok=True)
+    from panoramic_da3 import PointCloud
     id_a, id_b = os.path.basename(path_a), os.path.basename(path_b)
-    _, res, pts, cols, per_pano_pts, per_pano_cols = run_da3(
-        path_a, [path_b], cfg, test_dir,
-        da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
-        conf_lower_percentile=conf_lower_percentile,
+    point_clouds, res = run_da3(
+        [path_a, path_b], cfg, da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh,
+        step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile,
     )
+    merged = PointCloud.merge(point_clouds.values())
+    pts, cols = (merged.points, merged.colours) if point_clouds else (None, None)
+    per_pano_pts = {pano: cloud.points for pano, cloud in point_clouds.items()}
+    per_pano_cols = {pano: cloud.colours for pano, cloud in point_clouds.items()}
     ka, ta = res.pano_keep_counts.get(id_a, (0, 1))
     kb, tb = res.pano_keep_counts.get(id_b, (0, 1))
     if (ka / ta) < keep_rate_threshold or (kb / tb) < keep_rate_threshold:
@@ -106,25 +109,24 @@ def test_edge(path_a, path_b, cfg, views_base, da3, test_id=0, dist_thresh=0.2, 
     return pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views
 
 
-def rate_pano(path, cfg, views_base, da3, rate_id=0, dist_thresh=0.2, angle_thresh=1, step_degrees=VIEW_STEP_DEGREES,
+def rate_pano(path, cfg, da3, dist_thresh=0.2, angle_thresh=1, step_degrees=VIEW_STEP_DEGREES,
               conf_lower_percentile=CONF_LOWER_PERCENTILE):
     """DA3 on one pano alone: (score, pose, pts, cols, n_kept, n_total).
 
     score is how many of its views passed DA3's consensus filter (it predicts pairing
     success); pose is (center, rotation), or None if DA3 gave it none.
     """
-    rate_dir = os.path.join(views_base, f"r{rate_id}")
-    os.makedirs(rate_dir, exist_ok=True)
     pano_id = os.path.basename(path)
-    filtered_views, res, _, _, per_pano_pts, per_pano_cols = run_da3(
-        path, [], cfg, rate_dir, da3=da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
+    point_clouds, res = run_da3(
+        [path], cfg, da3, dist_thresh=dist_thresh, angle_thresh=angle_thresh, step_degrees=step_degrees,
         conf_lower_percentile=conf_lower_percentile,
     )
-    score = len(filtered_views)
+    score = len(res.views)
     n_kept, n_total = res.pano_keep_counts.get(pano_id, (score, score))
     if pano_id not in res.pano_poses:
         return score, None, np.zeros((0, 3)), np.zeros((0, 3)), n_kept, n_total
     pose = (res.pano_poses[pano_id]["center"], res.pano_poses[pano_id]["rotation"])
-    pts = per_pano_pts.get(pano_id, np.zeros((0, 3)))
-    cols = per_pano_cols.get(pano_id, np.zeros((0, 3)))
+    cloud = point_clouds.get(pano_id)
+    pts = cloud.points if cloud else np.zeros((0, 3))
+    cols = cloud.colours if cloud else np.zeros((0, 3))
     return score, pose, pts, cols, n_kept, n_total

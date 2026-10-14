@@ -60,8 +60,6 @@ def run_walk_gpu(date_graphs, points, adjacency, start_lat, start_lon, settings=
 def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon, settings):
     """The walk on the downloaded panos, given the window less model load and save headroom.
     Returns [(clouds, metadata), ...], one per piece (reconstruct.pieces)."""
-    import itertools
-    import tempfile
     import time
 
     import torch
@@ -85,17 +83,14 @@ def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon, setting
     # "timing:" lines calibrate the constants above (grep the Space's logs)
     print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
     try:
-        with tempfile.TemporaryDirectory() as views_base, options(
-                hfov=settings.hfov, masker=settings.masker, mask_classes=settings.mask_classes,
-                conf_floor=settings.conf_floor):
+        with options(hfov=settings.hfov, masker=settings.masker, mask_classes=settings.mask_classes,
+                     conf_floor=settings.conf_floor):
             def test_edge(path_a, path_b, test_id):
-                return da3_test_edge(path_a, path_b, cfg, views_base, da3, test_id=test_id,
+                return da3_test_edge(path_a, path_b, cfg, da3,
                                      step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile)
 
-            rate_ids = itertools.count()
-
             def rate_pano(path):
-                return da3_rate_pano(path, cfg, views_base, da3, rate_id=next(rate_ids),
+                return da3_rate_pano(path, cfg, da3,
                                      step_degrees=step_degrees, conf_lower_percentile=conf_lower_percentile)
 
             segments = run_pathfind_reconstruction(
@@ -110,5 +105,6 @@ def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon, setting
 
 def save_pointcloud(points, colors, path):
     """Write a point cloud .ply (CPU only; lazy import so this module loads without panoramic_da3)."""
-    from panoramic_da3 import save_da3_pointcloud
-    return save_da3_pointcloud(points, colors, path)
+    from panoramic_da3 import Saver
+    Saver(points, path, colors=colors)
+    return path

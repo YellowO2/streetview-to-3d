@@ -24,7 +24,7 @@ dependencies = [
     "addict",
     "tqdm",
     "streetlevel @ git+https://github.com/YellowO2/streetlevel.git",
-    "panoramic-da3 @ git+https://github.com/YellowO2/panoramic-da3.git",
+    "panoramic-da3 @ git+https://github.com/YellowO2/panoramic-da3.git@51e405074c7d2f6d934e219f723c2057faf821d5",
 ]
 
 [project.optional-dependencies]

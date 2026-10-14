@@ -16,12 +16,16 @@ GPU_SECONDS = 30
 
 
 def views(pano_path, out_dir):
-    """DA3's own views of a pano: same width, step and file names as a
-    reconstruction's."""
-    from panoramic_da3.components.ViewExtractor.ViewExtractor import extract_views_for_da3
+    """DA3's own views of a pano, as a reconstruction cuts them, written to out_dir
+    for the segmenter: (paths, yaws)."""
+    import cv2
+    from panoramic_da3 import Loader, Settings, ViewExtractor
     from streetview_to_3d.models.da3 import VIEW_HFOV, VIEW_STEP_DEGREES
-    return extract_views_for_da3(pano_path, out_dir, step_degrees=VIEW_STEP_DEGREES,
-                                 prefix="pano_0_", hfov=VIEW_HFOV)
+    cut = ViewExtractor(Loader([pano_path]), Settings(da3_model="", step_degrees=VIEW_STEP_DEGREES, hfov=VIEW_HFOV))
+    paths = [os.path.join(out_dir, f"pano_0_da3_{int(round(v.yaw))}_0.jpg") for v in cut]
+    for path, v in zip(paths, cut):
+        cv2.imwrite(path, v.image)
+    return paths, [v.yaw for v in cut]
 
 
 def _label_task(paths, masker):
@@ -40,20 +44,22 @@ def _encode(path, ids, **arrays):
 
 
 def _depth_task(paths, yaws, pano_id):
-    from panoramic_da3.datatype import View
+    import cv2
+    from panoramic_da3 import View
     from streetview_to_3d.models.da3 import VIEW_HFOV
     from streetview_to_3d.models.segment import label_views
     import math
-    from PIL import Image
-    w, h = Image.open(paths[0]).size
+    images = [cv2.imread(p) for p in paths]
+    h, w = images[0].shape[:2]
     f = w / 2 / math.tan(math.radians(VIEW_HFOV) / 2)
-    vs = [View(yaw=y, pitch=0, path=p, width=w, height=h, focal_px=f, hfov=VIEW_HFOV,
-               vfov=math.degrees(2 * math.atan(h / 2 / f)), pano_id=pano_id) for p, y in zip(paths, yaws)]
-    kept, res = gpu.get_da3().process_views(vs, dist_thresh=0.2, angle_thresh=1)
+    vs = [View(image=im, yaw=y, pitch=0, width=w, height=h, focal_px=f, hfov=VIEW_HFOV,
+               vfov=math.degrees(2 * math.atan(h / 2 / f)), pano_id=pano_id) for im, y in zip(images, yaws)]
+    res = gpu.get_da3().process_views(vs, dist_thresh=0.2, angle_thresh=1)
     labels, ids = label_views(paths)
     pred = res.prediction
+    kept = [i for i, v in enumerate(vs) if any(v is k for k in res.views)]
     return (np.stack(labels), ids, np.array([v.yaw for v in vs]),
-            np.array([vs.index(v) for v in kept]), np.stack(pred.depth).astype(np.float16), np.stack(pred.conf).astype(np.float16))
+            np.array(kept), np.stack(pred.depth).astype(np.float16), np.stack(pred.conf).astype(np.float16))
 
 
 def depth_pano(pano_id: str) -> str:
@@ -62,9 +68,8 @@ def depth_pano(pano_id: str) -> str:
     from streetview_to_3d.models.da3 import VIEW_HFOV
     from streetview_to_3d.common.streetview_fetch import fetch_da3_pano
     path = fetch_da3_pano(pano_id)
-    vs = views(path, tempfile.mkdtemp())
-    labels, ids, yaws, kept, depth, conf = gpu.run(_depth_task, [v.path for v in vs], [v.yaw for v in vs],
-                                                   os.path.basename(path), seconds=90)
+    paths, yaws = views(path, tempfile.mkdtemp())
+    labels, ids, yaws, kept, depth, conf = gpu.run(_depth_task, paths, yaws, os.path.basename(path), seconds=90)
     return _encode(path, ids, labels=labels, yaws=yaws, kept=kept, depth=depth, conf=conf, hfov=VIEW_HFOV)
 
 

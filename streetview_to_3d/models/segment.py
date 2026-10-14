@@ -5,7 +5,6 @@ height. Each pano is segmented once, whole (Cityscapes SegFormer, plus an ADE20K
 each DA3 view cuts its part of that mask, and the class map is kept with the scene for the fill.
 """
 import os
-import re
 
 import cv2
 import numpy as np
@@ -170,7 +169,7 @@ def pano_mask(labels, classes=None):
 
 def in_view(pano, yaw, hfov, w, h):
     """The part of a pano-shaped mask a w x h view at yaw sees (hfov wide,
-    level, as panoramic_da3's extract_views_for_da3 cuts them)."""
+    level, as panoramic_da3's Slicer cuts them)."""
     H, W = pano.shape
     f = w / 2 / np.tan(np.radians(hfov) / 2)
     u, v = np.meshgrid((np.arange(w) - (w - 1) / 2) / f, (np.arange(h) - (h - 1) / 2) / f)
@@ -182,17 +181,13 @@ def in_view(pano, yaw, hfov, w, h):
     return pano[py, px]
 
 
-_VIEW_NAME = re.compile(r"^pano_(\d+)_da3_(-?\d+)_0\.\w+$")
-
-
-def drop_in_views(paths, panos, hfov, model_id=None, classes=None, device=None):
-    """One mask per DA3 view (panoramic_da3's "pano_{i}_da3_{yaw}_0" files,
-    pano i being panos[i]), cut from its pano's mask: each pano is
-    segmented once, whole (pano_labels), and its class map kept."""
+def drop_in_views(views, panos, model_id=None, classes=None, device=None):
+    """One mask per DA3 view (panoramic_da3 Views; panos maps each view's
+    pano_id to its file), cut from its pano's mask: each pano is segmented
+    once, whole (pano_labels), and its class map kept."""
     masks, whole = [], {}
-    for p in paths:
-        i, yaw = map(int, _VIEW_NAME.match(os.path.basename(p)).groups())
-        if i not in whole:
-            whole[i] = pano_mask(pano_labels(panos[i], model_id, device), classes)
-        masks.append(in_view(whole[i], yaw, hfov, *Image.open(p).size))
+    for v in views:
+        if v.pano_id not in whole:
+            whole[v.pano_id] = pano_mask(pano_labels(panos[v.pano_id], model_id, device), classes)
+        masks.append(in_view(whole[v.pano_id], v.yaw, v.hfov, v.width, v.height))
     return masks
