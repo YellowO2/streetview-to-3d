@@ -1,4 +1,6 @@
-"""Upload a finished scene to the public gallery dataset and list it in index.json.
+"""Upload a finished scene to the public gallery.
+
+Upload a finished scene to the public gallery dataset and list it in index.json.
 
     GALLERY_TOKEN=hf_... python -m streetview_to_3d.gallery.publish SCENE_DIR
 """
@@ -13,7 +15,7 @@ from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
 from huggingface_hub.utils import disable_progress_bars
 
-from streetview_to_3d.common import scene as scene_mod
+from streetview_to_3d.common.Scene import FILENAME as SCENE_FILENAME
 
 REPO = "potato-bug/street-view-to-3d-scenes"   # a public dataset; index.html reads the same one
 PAGE = "https://yellowo2.github.io/streetview-to-3d/"   # where index.html and viewer.html are served
@@ -29,9 +31,9 @@ def enabled():
 
 def viewable(run_dir):
     """The files the viewer loads: scene.json and whatever it names."""
-    with open(os.path.join(run_dir, scene_mod.FILENAME)) as f:
+    with open(os.path.join(run_dir, SCENE_FILENAME)) as f:
         data = json.load(f)
-    names = [scene_mod.FILENAME] + [n["ply"] for n in data["nodes"] if n.get("ply")]
+    names = [SCENE_FILENAME] + [n["ply"] for n in data["nodes"] if n.get("ply")]
     names += [v for v in data.values() if isinstance(v, str) and v.endswith((".ply", ".json"))]
     return data, [n for n in names if os.path.isfile(os.path.join(run_dir, n))]
 

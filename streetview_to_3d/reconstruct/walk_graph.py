@@ -1,7 +1,9 @@
-"""The walk: from N date graphs, the most complete corridor in the fewest DA3 pieces.
+"""Walk the date graphs into the fewest DA3 pieces covering the most.
+
+The walk: from N date graphs, the most complete corridor in the fewest DA3 pieces.
 
 No GPU or downloads here: it calls test_edge/rate_pano callbacks, and runs inside the
-caller's one @spaces.GPU call (runner.py) because each next test depends on the last.
+caller's one @spaces.GPU call (walk.py) because each next test depends on the last.
 """
 import os
 import time

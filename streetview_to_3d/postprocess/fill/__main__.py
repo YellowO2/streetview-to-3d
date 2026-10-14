@@ -1,11 +1,12 @@
 """usage: python -m streetview_to_3d.postprocess.fill SCENE_DIR [OUT_DIR]
 
 Fills a placed scene in place, or a copy of it in OUT_DIR."""
-import os
-import shutil
 import sys
 
-from streetview_to_3d.postprocess.fill import run
+from streetview_to_3d.load import load
+from streetview_to_3d.postprocess.fill.main import fill
+from streetview_to_3d.postprocess.photos import photos
+from streetview_to_3d.save import save
 
 
 def main():
@@ -13,12 +14,8 @@ def main():
         sys.exit(__doc__)
     src = sys.argv[1]
     out = sys.argv[2] if len(sys.argv) == 3 else src
-    if out != src:
-        os.makedirs(out, exist_ok=True)
-        for f in os.listdir(src):
-            if f.endswith(".ply") or f == "scene.json":
-                shutil.copy(os.path.join(src, f), os.path.join(out, f))
-    run(out)
+    scene, ground = fill(photos(load(src)))
+    save(scene, ground, None, out)
 
 
 if __name__ == "__main__":

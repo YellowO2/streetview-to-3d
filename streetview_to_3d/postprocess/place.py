@@ -1,5 +1,7 @@
-"""Place every piece of a scene in the world: one rigid fit (and scale) per piece putting each
-camera on its GPS point CAM_H above its elevation, turned to its pano's heading, pitch and roll.
+"""Put every piece of a scene in the world, each camera on its GPS point.
+
+One rigid fit (and scale) per piece putting each camera on its GPS point CAM_H above its
+elevation, turned to its pano's heading, pitch and roll.
 World frame: x east, y down, z north, metres from the scene's centre.
 
     python -m streetview_to_3d.postprocess.place SCENE_DIR
@@ -8,7 +10,6 @@ import sys
 
 import numpy as np
 
-from streetview_to_3d.common import scene as scene_mod
 from streetview_to_3d.models.da3 import DA3_UNITS_TO_METRES
 from streetview_to_3d.common.geo import latlon_to_local_m
 
@@ -19,33 +20,32 @@ MIN_SCALE_SPAN_M = 8.0   # cameras closer than this: GPS noise swamps the scale
 SCALE_RANGE = (0.9, 1.8) # fitted scales outside this are rejected
 
 
-def place(scene_dir, log=print):
-    """Solve every piece and save its transform onto its nodes."""
-    sc = scene_mod.Scene.load(scene_dir)
+def place(sc, log=print):
+    """Solve every piece and set its transform on its nodes; returns the scene."""
     groups = sc.pieces()
-    s0, why = scene_scale(sc, groups)
+    s0, why = _scene_scale(sc, groups)
     log(f"scene scale: {s0:.2f} m per DA3 unit ({why})")
     for gi, members in enumerate(groups):
         nodes = [sc.nodes[m] for m in members]
-        own = piece_scale(nodes, sc.origin)
+        own = _piece_scale(nodes, sc.origin)
         s = own if own is not None and SCALE_RANGE[0] <= own <= SCALE_RANGE[1] else s0
-        T, off_m, off_deg = fit_piece(nodes, s, sc.origin)
+        T, off_m, off_deg = _fit_piece(nodes, s, sc.origin)
         for m in members:
             sc.nodes[m].transform = T.tolist()
         whose = "its own" if s is own else "the scene's"
         log(f"  piece {gi}: {len(nodes)} node(s), scale {s:.2f} ({whose}), "
             f"cameras off their GPS point by up to {off_m:.2f} m, "
             f"off their pano's orientation by up to {off_deg:.1f} deg")
-    sc.save(scene_dir)
+    return sc
 
 
-def fit_piece(nodes, scale, origin):
+def _fit_piece(nodes, scale, origin):
     """(4x4 ply -> world, worst camera offset m, worst orientation offset deg).
 
     Maximises trace(R^T M), M = centred camera pairs plus each camera's
     world <- DA3 rotation, weighted so a SIGMA_DEG turn costs a SIGMA_M shift."""
     P = np.array([np.asarray(n.position, float) * scale for n in nodes])
-    Q = np.array([target(n, origin) for n in nodes])
+    Q = np.array([_target(n, origin) for n in nodes])
     turns = [r for n in nodes if (r := _world_from_da3(n)) is not None]
     pc, qc = P.mean(0), Q.mean(0)
     M = (Q - qc).T @ (P - pc) + (SIGMA_M / np.radians(SIGMA_DEG)) ** 2 / 2 * sum(turns, np.zeros((3, 3)))
@@ -60,13 +60,13 @@ def fit_piece(nodes, scale, origin):
     return T, off_m, off_deg
 
 
-def target(node, origin):
+def _target(node, origin):
     """Where a node's camera really was, in the world frame."""
     e, n = latlon_to_local_m(node.pano.lat, node.pano.lon, *origin)
     return np.array([e, -((node.pano.elevation or 0.0) + CAM_H), n])
 
 
-def photo_from_world(pano):
+def _photo_from_world(pano):
     """Rotation from world directions to the pano's photo frame (x right, y down, z forward):
     heading, then pitch, then roll (roll sign flipped, measured)."""
     h, p, r = pano.heading, pano.pitch or 0.0, -(pano.roll or 0.0)
@@ -80,10 +80,10 @@ def _world_from_da3(node):
     """world <- DA3 rotation according to one camera, or None without a heading."""
     if node.pano.heading is None or node.rotation is None:
         return None
-    return photo_from_world(node.pano).T @ np.asarray(node.rotation, float)
+    return _photo_from_world(node.pano).T @ np.asarray(node.rotation, float)
 
 
-def piece_scale(nodes, origin):
+def _piece_scale(nodes, origin):
     """A piece's metres per DA3 unit fitted to GPS, or None if its cameras span under MIN_SCALE_SPAN_M."""
     if len(nodes) < 2:
         return None
@@ -93,9 +93,9 @@ def piece_scale(nodes, origin):
     return _scale_2d(np.array([[n.position[0], n.position[2]] for n in nodes]), gps)
 
 
-def scene_scale(sc, groups):
-    """(metres per DA3 unit, reason): the median piece_scale, else models.da3.DA3_UNITS_TO_METRES."""
-    fitted = [f for m in groups if (f := piece_scale([sc.nodes[k] for k in m], sc.origin)) is not None]
+def _scene_scale(sc, groups):
+    """(metres per DA3 unit, reason): the median _piece_scale, else models.da3.DA3_UNITS_TO_METRES."""
+    fitted = [f for m in groups if (f := _piece_scale([sc.nodes[k] for k in m], sc.origin)) is not None]
     if not fitted:
         return DA3_UNITS_TO_METRES, "fixed: no piece spans enough to fit one"
     s = float(np.median(fitted))
@@ -116,4 +116,5 @@ def _scale_2d(src, dst):
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         sys.exit(__doc__.splitlines()[-1].strip())
-    place(sys.argv[1])
+    from streetview_to_3d.common.Scene import Scene
+    place(Scene.load(sys.argv[1])).save(sys.argv[1])

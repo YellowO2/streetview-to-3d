@@ -7,8 +7,6 @@ Written to water.json beside scene.json, east/north metres:
      "shore": {"lo": m, "cell": m, "size": n, "metres": [n x n, row by row north-wards]}}
 shore being each cell's distance from dry land, up to SHORE_MAX_M.
 """
-import json
-import os
 
 import numpy as np
 import shapely
@@ -233,9 +231,3 @@ def _bodies(mask, lo):
         return []
     merged = shapely.union_all(boxes).simplify(CELL_M / 2)
     return [p for p in getattr(merged, "geoms", [merged]) if p.area >= MIN_M2]
-
-
-def save(scene_dir, wet):
-    with open(os.path.join(scene_dir, FILENAME), "w") as f:
-        json.dump({"surfaces": wet.surfaces, "shore": wet.shore_grid()}, f, separators=(",", ":"))
-    return FILENAME

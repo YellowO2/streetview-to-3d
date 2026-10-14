@@ -1,21 +1,21 @@
-"""Remove loose sheets: DA3 points whose K-th neighbour is SPARSE times farther than on the
-densest surface nearby. Runs scene-wide after blobs.py, before the fill.
+"""Remove the loose sheets of points hanging off a placed scene's surfaces.
 
-    python -m streetview_to_3d.postprocess.clean.clean SCENE_DIR
+A loose sheet: DA3 points whose K-th neighbour is SPARSE times farther than on the
+densest surface nearby. Runs scene-wide after drop_blobs.py, before the fill.
+
+    python -m streetview_to_3d.postprocess.clean.drop_sheets SCENE_DIR
 """
-import os
 import sys
 
 import numpy as np
 from scipy.spatial import cKDTree
 
-from streetview_to_3d.common import scene as scene_mod
-from streetview_to_3d.postprocess.ply_io import read_node, write_ply
+from streetview_to_3d.common.Cloud import Cloud
 
 K, SPARSE, CELL_M, SHARE = 8, 2.5, 0.5, 0.2
 
 
-def sparse(points):
+def _sparse(points):
     """True on points far sparser than the densest near them."""
     if len(points) <= K:
         return np.zeros(len(points), bool)
@@ -40,28 +40,29 @@ def sparse(points):
     return gap > SPARSE * best[which]
 
 
-def clean(scene_dir, log=print):
-    """Remove the loose sheets from every placed node's .ply, in place."""
-    sc = scene_mod.Scene.load(scene_dir)
-    nodes = [n for n in sc.nodes if n.ply and n.transform]
+def drop_sheets(sc, log=print):
+    """Remove the loose sheets from every placed node's cloud; returns the scene."""
+    nodes = sc.placed()
     if not nodes:
-        return
+        return sc
     raw, world = [], []
     for n in nodes:
-        p, c, w = read_node(scene_dir, n)
-        raw.append((p, c))
-        world.append(w)
-    loose = sparse(np.concatenate(world))
+        raw.append((n.cloud.points, n.cloud.colours))
+        world.append(n.cloud.world(n.transform))
+    loose = _sparse(np.concatenate(world))
     start = 0
     for n, (p, c) in zip(nodes, raw):
         keep = ~loose[start:start + len(p)]
         start += len(p)
         if not keep.all():
-            write_ply(os.path.join(scene_dir, n.ply), p[keep], None if c is None else c[keep])
+            n.cloud = Cloud(p[keep], c[keep])
     log(f"loose sheets: {int(loose.sum())} of {len(loose)} points removed")
+    return sc
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         sys.exit(__doc__.splitlines()[-1].strip())
-    clean(sys.argv[1])
+    from streetview_to_3d.load import load
+    from streetview_to_3d.save import save
+    save(drop_sheets(load(sys.argv[1])), None, None, sys.argv[1])

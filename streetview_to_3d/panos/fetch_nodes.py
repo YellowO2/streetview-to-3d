@@ -1,5 +1,5 @@
 """Gather every Google panorama along a street corridor (no GPU)."""
-from streetview_to_3d.common.scene import DisjointSet
+from streetview_to_3d.common.DisjointSet import DisjointSet
 from streetview_to_3d.common.geo import haversine_m
 from streetview_to_3d.common.streetview_fetch import fetch_panos_by_id, google_node, run_async
 

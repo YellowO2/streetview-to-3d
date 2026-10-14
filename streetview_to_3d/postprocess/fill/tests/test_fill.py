@@ -1,6 +1,7 @@
 import numpy as np
 
-from streetview_to_3d.postprocess.fill.one_ground import grounds, one_ground
+from streetview_to_3d.postprocess.fill.one_ground import _one_ground as one_ground
+from streetview_to_3d.postprocess.fill.walkable_ground import _grounds as grounds
 
 
 def _grid(a, b, step=0.05):

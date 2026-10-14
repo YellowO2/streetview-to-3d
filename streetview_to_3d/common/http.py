@@ -1,3 +1,4 @@
+"""The headers that make a request look like a browser on Google Maps."""
 BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

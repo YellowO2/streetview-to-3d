@@ -1,4 +1,4 @@
-"""Step 2, the GPU: panoramas in, point clouds out. build.py is the entry the UI calls
-(prepare_pathfind, then run_prepared_pathfind); runner.py is its GPU window, walk_graph.py
-grows pieces from DA3 edges that hold, pieces.py shapes them for the scene. No CLI yet.
+"""Step 2, the GPU: panoramas in, point clouds out. main.reconstruct opens the scene
+(open_scene.py), walks the panos in one GPU window (walk.py; walk_graph.py grows pieces from
+DA3 edges that hold, pieces.py shapes them) and puts the pieces into the scene (assemble.py).
 """

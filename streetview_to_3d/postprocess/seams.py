@@ -1,4 +1,6 @@
-"""Where the map meets the scene: tint and meet blend colour and height at the scene ground's
+"""Blend the map into the scene where they meet.
+
+Where the map meets the scene: tint and meet blend colour and height at the scene ground's
 edge, toward turns map points near DA3's into them; SceneGround is the fill's ground (ground.npz)."""
 import os
 

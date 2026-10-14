@@ -1,4 +1,6 @@
-"""The masker (and DA3 depth) on one pano, on the Space's GPU over the API; drawn locally:
+"""Segment one pano, and run DA3 on it, on the Space over its API.
+
+The masker (and DA3 depth) on one pano, on the Space's GPU over the API; drawn locally:
 
     python -m streetview_to_3d.models.mask_api PANO_ID OUT.jpg [--space potato-bug/street-view-to-3d-dev]
 """

@@ -17,10 +17,11 @@ import shapely
 from scipy.ndimage import gaussian_filter1d
 from scipy.spatial import cKDTree
 
-from streetview_to_3d.common import scene as scene_mod
+from streetview_to_3d.common.Scene import Scene
 from streetview_to_3d.postprocess import seams
+from streetview_to_3d.load import load
 from streetview_to_3d.postprocess.ply_io import read_node, read_vertices, write_ply
-from streetview_to_3d.postprocess.sight import SIGHT_DEG, Sight
+from streetview_to_3d.postprocess.Sight import SIGHT_DEG, Sight
 from streetview_to_3d.postprocess.world import terrain
 
 FILENAME = "google.ply"
@@ -36,7 +37,7 @@ BEND_SAME_M = 1.5           # ... taken from the directions where Google's surfa
 WALL_DEG = -10.0            # ... looking no lower than this: walls, not the ground
 BEND_MIN = 5                # ... of a slice with at least this many of them
 BEND_RANGE = 0.85, 1.18     # ... and no more than this
-REACH_M = 25.0              # as far as a pano's DA3 points go (clean.blobs.FAR_M)
+REACH_M = 25.0              # as far as a pano's DA3 points go (clean.drop_blobs.FAR_M)
 
 
 def shift(pts, scene, cams):
@@ -176,8 +177,8 @@ def merge(scene_dir, log=print, align=True):
     cols = np.stack([v["red"], v["green"], v["blue"]], 1) / 255.0
     gap, normal = v["gap"].astype(float), np.stack([v["nx"], v["ny"], v["nz"]], 1)
 
-    sc = scene_mod.Scene.load(scene_dir)
-    scene, scene_cols = terrain.scene_points(sc, scene_dir)
+    sc = Scene.load(scene_dir)
+    scene, scene_cols = terrain.scene_points(load(scene_dir))
     nodes = [nd for nd in sc.nodes if nd.ply and nd.transform]
     cams = np.array([(np.asarray(nd.transform, float) @ [*nd.position, 1])[:3] for nd in nodes])
     move = shift(pts, scene, cams)
@@ -202,7 +203,7 @@ def merge(scene_dir, log=print, align=True):
         clouds = [bent(c, cam, pts[tree.query_ball_point(cam, REACH_M + BEND_SAME_M)]) for c, cam in zip(clouds, cams)]
         for nd, world in zip(nodes, clouds):
             _write_node(scene_dir, nd, world)
-        scene, scene_cols = terrain.scene_points(sc, scene_dir)
+        scene, scene_cols = terrain.scene_points(load(scene_dir))
         log(f"google: DA3's points bent onto Google's shape: {was:.2f} m apart along the panos' sight before, "
             f"{apart(clouds, cams, pts):.2f} m after")
 

@@ -47,11 +47,14 @@ cd streetview_to_3d/visualise && npm install && npm test
 
 ```
 streetview_to_3d/
-  common/       scene, paths, geo, http, streetview_fetch
+  main.py       a prepared corridor → reconstruct → postprocess → save (the "Reconstruct" button)
+  common/       Scene (Node, Pano, Edge, Cloud), paths, geo, http, streetview_fetch
   models/       da3, gpu, segment, mask_api
-  panos/        1. which panoramas (candidates, nodes, dates, graph)
-  reconstruct/  2. GPU (walk_graph, pieces, build, runner)
-  postprocess/  3. pipeline.py → place, clean/, fill/, world/, seams
+  panos/        1. which panoramas: main.py → date_graphs → downloaded (the "Prepare" button);
+                   candidates for the map
+  reconstruct/  2. GPU: main.py → open_scene → walk (walk_graph, pieces) → assemble
+  postprocess/  3. main.py → place, clean/, fill/ (main.py), world/ (terrain), seams;
+                   python -m streetview_to_3d.postprocess --dir <run> re-runs it on a saved run
   visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/
   gallery/      5. sharing: upload to the public gallery, the gallery page
   ui/           Gradio

@@ -1,36 +1,30 @@
-"""The main tab: the map section, then two buttons -- prepare, then reconstruct and place
+"""Lay out the main tab and run its two buttons.
+
+The main tab: the map section, then two buttons -- prepare, then reconstruct and place
 (and, where set up, publish to the gallery)."""
 import os
 import zipfile
 
 import gradio as gr
 
-from streetview_to_3d.common import scene as scene_mod
+from streetview_to_3d.Settings import Settings
+from streetview_to_3d.common.Scene import FILENAME as SCENE_FILENAME
 from streetview_to_3d.ui import viewers
-from streetview_to_3d.common.paths import new_run_dir
 from streetview_to_3d.gallery import publish as gallery
-from streetview_to_3d.postprocess import pipeline, seams
+from streetview_to_3d.main import streetview_to_3d
+from streetview_to_3d.panos.main import panos
+from streetview_to_3d.postprocess import seams
+from streetview_to_3d.postprocess.Settings import Settings as PostprocessSettings
 from streetview_to_3d.postprocess.world import life, water
-from streetview_to_3d.reconstruct import build as street_main
 from streetview_to_3d.models import mask_api
-from streetview_to_3d.reconstruct.runner import (
-    DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, WalkSettings, estimate_gpu_seconds,
+from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
+from streetview_to_3d.reconstruct.estimate_gpu_seconds import (
+    DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, estimate_gpu_seconds,
 )
 from streetview_to_3d.ui.map_selection.tab import build_map_section, corridor_edges, nodes_by_key
 
-
-def _run_dir(prep):
-    """A fresh output directory, opened as a scene of every place this run will try."""
-    path = new_run_dir()
-    # logged so a run can be found after a page refresh (Gradio serves files, not folders)
-    print(f"run dir: {path}  (scene: {viewers.file_url(os.path.join(path, scene_mod.FILENAME))})",
-          flush=True)
-    street_main.open_scene(prep, path)
-    return path
-
 def handle_pathfind_prepare(state):
-    """Button 1: gather and download the selection's candidates (no GPU; see
-    street_main.prepare_pathfind)."""
+    """Button 1: gather and download the selection's candidates (no GPU; see panos.main.panos)."""
     selected = state.get("selected", [])
     selected_edges = state.get("selected_edges", [])
     if len(selected) < 2 or not selected_edges:
@@ -45,7 +39,7 @@ def handle_pathfind_prepare(state):
 
     yield None, "<p>Fetching panoramas… This may take a few minutes.</p>"
     try:
-        prep = street_main.prepare_pathfind(start, goals, corridor_edges(state), (state["lat"], state["lon"]))
+        prep = panos(start, goals, corridor_edges(state), (state["lat"], state["lon"]))
     except Exception as e:
         yield None, "<p>Preparation failed. Try again.</p>"
         raise gr.Error(f"Prepare failed: {e}")
@@ -58,7 +52,7 @@ def _zip(run_dir):
     """The whole scene (scene.json, .ply files, water.json, life.json, ground.npz, labels/) as one
     zip the viewer opens. Stored, not compressed: point data barely shrinks."""
     names = sorted(n for n in os.listdir(run_dir)
-                   if n in (scene_mod.FILENAME, water.FILENAME, seams.FILENAME, life.FILENAME)
+                   if n in (SCENE_FILENAME, water.FILENAME, seams.FILENAME, life.FILENAME)
                    or n.endswith(".ply"))
     archive = os.path.join(run_dir, f"scene_{os.path.basename(run_dir)[:8]}.zip")
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as z:
@@ -77,7 +71,7 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
 
     The rest are hidden per-run overrides for the API (0/blank: defaults): keep_pct of
     each view's pixels, gpu_seconds (else sized from effort), view_hfov, da3_model, masker,
-    comma-separated mask_classes, fill, conf_floor. See reconstruct.runner.WalkSettings.
+    comma-separated mask_classes, fill, conf_floor. See reconstruct.WalkSettings.
     share: also publish the scene to the public gallery (gallery.publish).
     """
     if not prep:
@@ -88,21 +82,20 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
     yield (gr.HTML(visible=False), gr.DownloadButton(visible=False),
            "<p>Reconstructing… This may take a few minutes.</p>")
     try:
-        output_dir = _run_dir(prep)
-        street_main.run_prepared_pathfind(prep, output_dir, WalkSettings(
+        walk = WalkSettings(
             conf_lower_percentile=100 - keep_pct,
             gpu_seconds=gpu_seconds or estimate_gpu_seconds(len(prep["points"]), effort or DEFAULT_EFFORT),
             hfov=view_hfov or None,
             model=(da3_model or "").strip() or None, masker=(masker or "").strip() or None,
             mask_classes=[c.strip() for c in (mask_classes or "").split(",") if c.strip()] or None,
-            conf_floor=conf_floor or None))
-        yield gr.skip(), gr.skip(), "<p>Aligning the scene and filling the gaps…</p>"
-        pipeline.process(output_dir, log=lambda m: print(m, flush=True), fill=bool(fill))
+            conf_floor=conf_floor or None)
+        output_dir = streetview_to_3d(prep, Settings(walk=walk, post=PostprocessSettings(fill=bool(fill))),
+                                      log=lambda m: print(m, flush=True))
     except Exception as e:
         yield gr.HTML(visible=True), gr.skip(), "<p>Reconstruction failed. Try again.</p>"
         raise gr.Error(f"Reconstruct failed: {e}")
 
-    scene_url = viewers.file_url(os.path.join(output_dir, scene_mod.FILENAME))
+    scene_url = viewers.file_url(os.path.join(output_dir, SCENE_FILENAME))
     yield (gr.HTML(viewers.build_viewer(scene_url=scene_url), visible=True),
            gr.DownloadButton(value=_zip(output_dir), visible=True),
            "<p>Scene ready.</p>")

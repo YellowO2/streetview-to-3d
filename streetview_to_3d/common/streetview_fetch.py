@@ -1,4 +1,6 @@
-"""Google Street View: pano metadata and image downloads, cached under PANOS_DIR."""
+"""Fetch Street View pano metadata and images, cached on disk.
+
+Google Street View: pano metadata and image downloads, cached under PANOS_DIR."""
 import asyncio
 import os
 
@@ -8,7 +10,7 @@ from PIL import UnidentifiedImageError
 from streetlevel import streetview
 
 from streetview_to_3d.common.paths import PANOS_DIR
-from streetview_to_3d.common.scene import node_key
+from streetview_to_3d.common.Pano import Pano
 from streetview_to_3d.common.http import BROWSER_HEADERS
 
 # ~6656x3328 px: the default, for callers that need the photo's detail (the HF app's splat tab).
@@ -55,7 +57,7 @@ def format_date(d):
 
 def google_node(pano_id, lat, lon, heading=None, **extra):
     """The node dict the map, the selection and the candidates all use for one Google pano."""
-    return {"key": node_key("google", pano_id), "source": "google", "id": pano_id,
+    return {"key": Pano.key_of("google", pano_id), "source": "google", "id": pano_id,
             "lat": lat, "lon": lon, "heading": heading, **extra}
 
 
@@ -123,7 +125,7 @@ async def download_pano_by_id(pano_id, zoom: int = _DOWNLOAD_ZOOM):
             return None
         img_path = _cache_path(pano.id, zoom)
         if os.path.exists(img_path):
-            os.utime(img_path)  # in use again: keep paths.remove_older_than off it
+            os.utime(img_path)  # in use again: keep paths._remove_older_than off it
         else:
             await download_panorama_image(pano, img_path, zoom=zoom)
         return img_path

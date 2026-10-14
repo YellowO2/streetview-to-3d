@@ -1,4 +1,6 @@
-"""What a pano saw: the nearest of its DA3 points in each direction, and where other points lie
+"""Record what a pano saw in each direction, to test points against.
+
+What a pano saw: the nearest of its DA3 points in each direction, and where other points lie
 against that."""
 import numpy as np
 

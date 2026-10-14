@@ -1,5 +1,7 @@
-"""One up/down shift per piece so the pieces' roads meet: least squares over the median height
-differences where pieces share road squares, each shift at most MAX_M."""
+"""Shift each piece up or down so the pieces' roads meet.
+
+Least squares over the median height differences where pieces share road squares, each shift
+at most MAX_M."""
 import numpy as np
 from scipy.optimize import lsq_linear
 
@@ -19,7 +21,7 @@ def _road(x):
     return uk, np.array([np.median(s) for s in np.split(x[o, 1], start[1:])])
 
 
-def shifts(ground_pts, piece):
+def _shifts(ground_pts, piece):
     """({piece id: shift along y (down), m}, number of links); ground_pts[k] is cloud k's
     walkable ground, piece[k] its piece id."""
     ids = sorted(set(piece))
@@ -49,19 +51,22 @@ def shifts(ground_pts, piece):
     return {p: float(v) for p, v in zip(ids, s)}, len(rows)
 
 
-def level(sc, nodes, clouds, G):
-    """Shift each piece's node transforms and world clouds in place; returns a log line."""
+def level(sc, clouds, G, log=print):
+    """Shift each piece's node transforms and world clouds (one per placed node), in place;
+    returns (the scene, the clouds). G[k]: cloud k's walkable ground."""
+    nodes = sc.placed()
     piece_of = {i: p for p, members in enumerate(sc.pieces()) for i in members}
     index = {id(n): i for i, n in enumerate(sc.nodes)}
     piece = [piece_of.get(index[id(n)], -1 - k) for k, n in enumerate(nodes)]
-    shift, n_links = shifts([x[g] for x, g in zip(clouds, G)], piece)
+    shift, n_links = _shifts([c.points[g] for c, g in zip(clouds, G)], piece)
     for i, n in enumerate(sc.nodes):
         if n.transform and i in piece_of:
             T = np.asarray(n.transform, float)
             T[1, 3] += shift.get(piece_of[i], 0.0)         # y, down; a piece with no points stays
             n.transform = T.tolist()
-    for k, x in enumerate(clouds):
-        x[:, 1] += shift[piece[k]]
+    for k, c in enumerate(clouds):
+        c.points[:, 1] += shift[piece[k]]
     moved = np.abs(list(shift.values()))
-    return (f"fill: {len(shift)} piece(s) levelled over {n_links} overlap(s), moved up to "
+    log(f"fill: {len(shift)} piece(s) levelled over {n_links} overlap(s), moved up to "
             f"{moved.max() * 100:.0f} cm ({int((moved >= MAX_M - 1e-9).sum())} at the {MAX_M * 100:.0f} cm limit)")
+    return sc, clouds

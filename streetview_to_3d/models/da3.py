@@ -1,4 +1,6 @@
-"""DA3, the depth model: which one and where it is (DA3Config), and our decisions about its
+"""Run DA3, the depth model, and judge what it gives back.
+
+DA3, the depth model: which one and where it is (DA3Config), and our decisions about its
 results: thresholds, view settings, what a passing edge test or a solo rating is. The only
 caller of panoramic_da3.panoramic_da3."""
 import os

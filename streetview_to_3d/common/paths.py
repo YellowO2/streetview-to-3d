@@ -1,4 +1,6 @@
-"""Where data lives: STREETVIEW_TO_3D_DATA, else ./data in the working directory.
+"""Say where data lives, and make a fresh folder for each run.
+
+Where data lives: STREETVIEW_TO_3D_DATA, else ./data in the working directory.
 panos/ caches downloaded panoramas; runs/<id>/ holds one run's output."""
 import os
 import shutil
@@ -18,13 +20,13 @@ os.makedirs(RUNS_DIR, exist_ok=True)
 
 def new_run_dir():
     """A fresh, empty folder for one run, after clearing out old data."""
-    remove_older_than(time.time() - KEEP_S)
+    _remove_older_than(time.time() - KEEP_S)
     path = os.path.join(RUNS_DIR, uuid.uuid4().hex)
     os.makedirs(path)
     return path
 
 
-def remove_older_than(cutoff):
+def _remove_older_than(cutoff):
     """Delete every entry one level inside DATA_DIR's folders last modified before `cutoff`."""
     for folder in os.scandir(DATA_DIR):
         if not folder.is_dir():

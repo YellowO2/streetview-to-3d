@@ -1,4 +1,6 @@
-"""Ground detection for a cloud (up-facing, lowest in its square, connected to a camera through
+"""Find a cloud's ground, and blend several clouds' ground into one map.
+
+Ground detection for a cloud (up-facing, lowest in its square, connected to a camera through
 small steps), and GroundMap: one blended height map from several clouds' ground."""
 from collections import deque
 

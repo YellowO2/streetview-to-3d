@@ -1,20 +1,18 @@
 """The land, buildings, roads, water and life around the scene, from free global maps (AWS
 Terrain Tiles, Google and Sentinel-2 imagery, OSM), coloured from the panos near the cameras.
-Writes land.ply, terrain.ply, roads.ply, buildings.ply, blocks.ply, water.json and life.json.
-Sentinel-2 credit: "Sentinel-2 cloudless by EOX".
+Gives land.ply, terrain.ply, roads.ply, buildings.ply, blocks.ply, water.json and life.json
+as a World, for the caller to save. Sentinel-2 credit: "Sentinel-2 cloudless by EOX".
 
     python -m streetview_to_3d.postprocess.world.terrain SCENE_DIR
 """
 import math
-import os
 import sys
 
 import numpy as np
 
-from streetview_to_3d.common import scene as scene_mod
 from streetview_to_3d.postprocess import seams
+from streetview_to_3d.postprocess.World import World
 from streetview_to_3d.postprocess.world import buildings, elevations, life, osm, roads, water
-from streetview_to_3d.postprocess.ply_io import read_node, write_mesh, write_ply
 from streetview_to_3d.postprocess.seams import ramp
 from streetview_to_3d.postprocess.world.tiles import TileMap
 
@@ -136,21 +134,32 @@ def from_panos(at, elevation):
 SCENE_EVERY = 4                            # scene points subsampled to every this many-th
 
 
-def scene_points(sc, scene_dir, every=SCENE_EVERY):
+def scene_points(sc, every=SCENE_EVERY):
     """(points, colours) of every placed node's cloud in the world, every every-th point."""
     pts, cols = [np.zeros((0, 3))], [np.zeros((0, 3))]
-    for nd in sc.nodes:
-        if nd.ply and nd.transform:
-            p, c, world = read_node(scene_dir, nd, every)
-            pts.append(world)
-            cols.append(c if c is not None else np.full((len(p), 3), 0.5))
+    for nd in sc.placed():
+        pts.append(nd.cloud.world(nd.transform, every))
+        cols.append(nd.cloud.colours[::every])
     return np.concatenate(pts), np.concatenate(cols)
 
 
-def build(scene_dir, log=print):
-    """Build the map around the placed (and filled) scene at scene_dir."""
+def terrain(sc, scene_ground=None, cache_dir=None, log=print):
+    """The World around the placed (and filled) scene sc, its file names set on sc, or None
+    without a placed camera. scene_ground: the fill's seams.SceneGround (None: none); cache_dir:
+    where map answers are kept for another run (None: not kept)."""
+    world = _terrain(sc, scene_ground or seams.SceneGround.none(), cache_dir, log)
+    if world is not None:
+        for field, name in (("land", LAND_FILENAME), ("roads", ROADS_FILENAME), ("terrain", FILENAME),
+                            ("water", water.FILENAME), ("life", life.FILENAME),
+                            ("buildings", BUILDINGS_FILENAME), ("blocks", BLOCKS_FILENAME)):
+            setattr(sc, field, name if name in world.meshes or name in world.points or name in world.json
+                    else None)
+    return world
+
+
+def _terrain(sc, scene_ground, scene_dir, log):
+    """terrain, failing loudly; scene_dir: the cache folder."""
     from scipy.spatial import cKDTree
-    sc = scene_mod.Scene.load(scene_dir)
     lat0, lon0 = sc.origin
     m_per_lon = M_PER_LAT * math.cos(math.radians(lat0))
     to_ll = lambda xy: (lat0 + xy[:, 1] / M_PER_LAT, lon0 + xy[:, 0] / m_per_lon)
@@ -159,7 +168,7 @@ def build(scene_dir, log=print):
     cams = [n for n in sc.nodes if n.transform and n.position is not None]
     if not cams:
         log("terrain: no placed cameras")
-        return
+        return None
     cam_xz = np.array([(np.asarray(n.transform)[:3, :3] @ n.position + np.asarray(n.transform)[:3, 3])[[0, 2]]
                        for n in cams])
 
@@ -205,9 +214,8 @@ def build(scene_dir, log=print):
                            OSM_M) if elements else None)
 
     # the scene always wins: the map only around it, faded in at its edge
-    scene, scene_cols = scene_points(sc, scene_dir)
+    scene, scene_cols = scene_points(sc)
     scene_tree = cKDTree(scene) if len(scene) else None
-    scene_ground = seams.SceneGround.load(scene_dir)
     near = scene_ground.at
     cam_tree = cKDTree(cam_xz)
     # map points sized, so spaced, by their distance from DA3's points (seams.spacing_at): from the
@@ -352,7 +360,7 @@ def build(scene_dir, log=print):
         except OSError as e:
             log(f"terrain: no satellite roofs ({e!r})")
         try:
-            panos = panos or _panos(sc, scene_dir)
+            panos = panos or _panos(sc)
             pal = buildings.palette(panos[1])
         except (OSError, ValueError) as e:
             log(f"terrain: no palette from the panos ({e!r})")
@@ -411,7 +419,7 @@ def build(scene_dir, log=print):
     # near the cameras, colour everything from the panos
     n_painted = 0
     try:
-        panos = panos or _panos(sc, scene_dir)
+        panos = panos or _panos(sc)
         cols, n = _paint(panos, pts, cols, scene)
         land_cols, k = _paint(panos, land, land_cols, scene)
         bc, m = _paint(panos, bp, bc, scene, skip=b_roof | b_alone)
@@ -421,43 +429,35 @@ def build(scene_dir, log=print):
     # map points approaching DA3's turn into them (seams.toward)
     land_cols, land_near = seams.toward(land, land_cols, scene_tree, scene_cols)
     cols, _ = seams.toward(pts, cols, scene_tree, scene_cols)
-    write_mesh(os.path.join(scene_dir, LAND_FILENAME), land, land_cols, faces, gap=gap(en), near=land_near)
-    sc.roads = None
+    world = World()
+    world.meshes[LAND_FILENAME] = dict(pts=land, cols=land_cols, faces=faces, gap=gap(en), near=land_near)
     # tunnel portals
     mouths = roads.portals(elements, to_xy, road_h)
     road_mesh = _merged(road_mesh, mouths)
     if road_mesh is not None and len(road_mesh[2]):
-        write_mesh(os.path.join(scene_dir, ROADS_FILENAME), *road_mesh, gap=gap(road_mesh[0][:, [0, 2]]))
-        sc.roads = ROADS_FILENAME
-    sc.land = LAND_FILENAME
-    sc.terrain = None
+        world.meshes[ROADS_FILENAME] = dict(zip(("pts", "cols", "faces"), road_mesh), gap=gap(road_mesh[0][:, [0, 2]]))
     if len(pts):
-        write_ply(os.path.join(scene_dir, FILENAME), pts, cols, gap(pts[:, [0, 2]]))
-        sc.terrain = FILENAME
+        world.points[FILENAME] = dict(pts=pts, cols=cols, gap=gap(pts[:, [0, 2]]))
     surfaces = wet.surfaces
-    sc.water = water.save(scene_dir, wet) if surfaces else None
+    if surfaces:
+        world.json[water.FILENAME] = {"surfaces": wet.surfaces, "shore": wet.shore_grid()}
     try:
         side = life.side(known[0].pano.id) if known else "right"
     except (OSError, ValueError) as e:
         log(f"terrain: no country for the cars' side ({e!r})")
         side = "right"
-    sc.life = life.save(scene_dir, cars=life.cars(stretches, side),
-                        birds=life.birds(surfaces, cam_xz, float(np.mean(ground(cam_xz)))),
-                        boats=life.boats(surfaces, cam_xz), ducks=life.ducks(surfaces, cam_xz, scene_ground),
-                        cats=life.cats(scene_ground, stretches, cam_xz))
-    sc.buildings = None
+    world.json[life.FILENAME] = dict(cars=life.cars(stretches, side),
+                                     birds=life.birds(surfaces, cam_xz, float(np.mean(ground(cam_xz)))),
+                                     boats=life.boats(surfaces, cam_xz), ducks=life.ducks(surfaces, cam_xz, scene_ground),
+                                     cats=life.cats(scene_ground, stretches, cam_xz))
     if len(bp):
         bc, b_near = seams.toward(bp, bc, scene_tree, scene_cols)
-        write_ply(os.path.join(scene_dir, BUILDINGS_FILENAME), bp, bc, b_gap, b_normal, b_kind, b_near)
-        sc.buildings = BUILDINGS_FILENAME
-    sc.blocks = None
+        world.points[BUILDINGS_FILENAME] = dict(pts=bp, cols=bc, gap=b_gap, normal=b_normal, kind=b_kind, near=b_near)
     if solid:
         # one spacing per solid building: its nearest point's
         one = np.array([gap(xy).min() for xy, *_ in solid])
         v, c, f, facade, g = buildings.solid(solid, surface, solid_base, one)
-        write_mesh(os.path.join(scene_dir, BLOCKS_FILENAME), v, c, f, facade, g)
-        sc.blocks = BLOCKS_FILENAME
-    sc.save(scene_dir)
+        world.meshes[BLOCKS_FILENAME] = dict(pts=v, cols=c, faces=f, facade=facade, gap=g)
     fix = np.abs(fixes - shift)
     log(f"terrain: land {len(land)} vertices, {len(faces)} triangles to {RADIUS_M:.0f} m, "
         f"{len(pts)} road points, {len(road_mesh[2]) if road_mesh else 0} road triangles, {len(bp)} building points, {n_painted} of them "
@@ -470,17 +470,18 @@ def build(scene_dir, log=print):
         f"{shift:+.1f} m to Google's datum, the ground near {len(known)} panos and {len(more)} other places "
         f"their elevation (the map off it by up to {fix.max() if len(fix) else 0:.1f} m, "
         f"median {np.median(fix) if len(fix) else 0:.1f})")
+    return world
 
 
-def _panos(sc, scene_dir):
+def _panos(sc):
     """(cameras, photos) of the scene's panos; photos[k] is (image, class map, drop mask) or None."""
-    from streetview_to_3d.postprocess.fill import _photo
-    from streetview_to_3d.postprocess.fill.paint import Camera, blurred
+    from streetview_to_3d.postprocess.fill.Camera import Camera
+    from streetview_to_3d.postprocess.fill.paint import blurred
     from streetview_to_3d.models.segment import pano_mask
-    nodes = [nd for nd in sc.nodes if nd.ply and nd.transform and nd.rotation is not None]
+    nodes = [nd for nd in sc.placed() if nd.rotation is not None]
     photos = []
     for nd in nodes:
-        ph = _photo(nd.pano, scene_dir)
+        ph = nd.photo
         photos.append(ph and (ph[0], ph[1], pano_mask(ph[1]) | blurred(ph[0])))
     return [Camera(nd) for nd in nodes], photos
 
@@ -507,4 +508,10 @@ def _paint(panos, pts, cols, scene, skip=None):
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         sys.exit(__doc__.splitlines()[-1].strip())
-    build(sys.argv[1])
+    from streetview_to_3d.load import load
+    from streetview_to_3d.postprocess.photos import photos
+    from streetview_to_3d.postprocess.seams import SceneGround
+    from streetview_to_3d.save import save
+    scene = photos(load(sys.argv[1]))
+    ground = SceneGround.load(sys.argv[1])
+    save(scene, ground, terrain(scene, ground, sys.argv[1]), sys.argv[1])

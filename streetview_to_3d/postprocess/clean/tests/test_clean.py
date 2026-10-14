@@ -1,6 +1,6 @@
 import numpy as np
 
-from streetview_to_3d.postprocess.clean import clean
+from streetview_to_3d.postprocess.clean.drop_sheets import _sparse
 
 
 def _sheet(z, step, size=4.0, x0=0.0):
@@ -13,7 +13,7 @@ def test_a_loose_sheet_off_a_wall_goes_the_wall_and_a_sparse_surface_stay():
     wall = _sheet(10.0, 0.04)
     loose = _sheet(9.5, 0.25)                                    # hanging half a metre in front of it
     far = _sheet(10.0, 0.25, x0=20.0)                            # a surface as sparse, on its own
-    out = clean.sparse(np.concatenate([wall, loose, far]))
+    out = _sparse(np.concatenate([wall, loose, far]))
     a, b = len(wall), len(wall) + len(loose)
     assert out[:a].mean() < 0.01
     assert out[a:b].mean() > 0.9

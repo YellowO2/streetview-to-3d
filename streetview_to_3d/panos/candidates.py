@@ -1,4 +1,6 @@
-"""Find the real Street View panoramas and links near a location, for the map picker."""
+"""Find the real Street View panos and links near a place, for the map.
+
+Find the real Street View panoramas and links near a location, for the map picker."""
 import asyncio
 import io
 import math
@@ -10,7 +12,7 @@ from scipy.spatial import cKDTree
 from streetlevel import streetview
 from streetlevel.geo import wgs84_to_tile_coord
 
-from streetview_to_3d.common.scene import node_key
+from streetview_to_3d.common.Pano import Pano
 from streetview_to_3d.common.geo import haversine_m as _haversine_m, latlon_to_local_m, local_m_to_latlon
 from streetview_to_3d.common.http import BROWSER_HEADERS
 from streetview_to_3d.common.streetview_fetch import fetch_panos_by_id, google_node, run_async
@@ -221,7 +223,7 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
         if not p:
             continue
         for link in (p.links or []):
-            other_key = node_key("google", link.pano.id)
+            other_key = Pano.key_of("google", link.pano.id)
             if other_key in kept_keys and other_key != key:
                 edges.add(tuple(sorted((key, other_key))))
 
@@ -340,7 +342,7 @@ def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None
             for key, meta in zip(frontier, metas):
                 if not meta:
                     continue
-                known = [n for n in meta["neighbors"] if node_key("google", n["id"]) in by_key]
+                known = [n for n in meta["neighbors"] if Pano.key_of("google", n["id"]) in by_key]
                 new = [n for n in meta["neighbors"] if n not in known]
                 for n in known + ashore([n for n, ok in zip(new, within(new)) if ok]):
                     node = google_node(n["id"], n["lat"], n["lon"])

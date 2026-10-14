@@ -1,4 +1,6 @@
-"""The one way anything gets a GPU (`run`, the only @spaces.GPU function), and the DA3 model.
+"""Attach a GPU to a task, and hold the DA3 model between calls.
+
+The one way anything gets a GPU (`run`, the only @spaces.GPU function), and the DA3 model.
 
 On a Space, DA3 is built at startup so ZeroGPU only moves it per call (built inside a call it
 reloaded every time). `spaces` must be imported before CUDA initialises: the package imports this first.

@@ -1,47 +1,34 @@
-"""One ground under the whole scene: every cloud's walkable ground merged into one height map,
-gaps, holes and each camera's blind disc filled, laid out as a STEP_M grid that replaces the
-clouds' own ground points."""
+"""Lay one ground under the whole scene in place of the clouds' own.
+
+Every cloud's walkable ground merged into one height map, gaps, holes and each camera's blind
+disc filled, laid out as a STEP_M grid that replaces the clouds' own ground points."""
 import numpy as np
 from scipy.ndimage import binary_closing, binary_fill_holes
 
-from streetview_to_3d.postprocess.fill.ground import (CELL_M as GROUND_CELL_M, GroundMap, ground, normals_from_neighbours,
-                                                  square_keys)
+from streetview_to_3d.common.Cloud import Cloud
+from streetview_to_3d.postprocess.fill.ground import GroundMap
 from streetview_to_3d.postprocess.place import CAM_H
 from streetview_to_3d.postprocess.seams import CELL_M
 from streetview_to_3d.models.da3 import VIEW_HFOV
 
 SMOOTH_M, STEP_M = 0.5, 0.08   # height smoothing; ground point spacing
-DA3_SEED_M = 7.0        # the ground spread may start this far out (DA3's blind disc reaches ~4.5 m)
 CLOSE_M = 1.5           # gaps in the ground area this wide are closed
 ON_GROUND_M = 0.12      # a cloud's points this close to the surface are the surface
-LOW_M = 1.0             # only points this near the lowest in their square can be ground
 BLIND_MARGIN_M = 1.0    # the blind disc under a camera, plus this
 WALL_ABOVE_M = 0.3      # points this far above the ground stop a blind disc
-WALKABLE = ("road", "sidewalk", "terrain")      # the masker's classes (models.segment)
 # how far below the horizon DA3's 16:9 views reach
 VIEW_BOTTOM_DEG = np.degrees(np.arctan(np.tan(np.radians(VIEW_HFOV / 2)) * 9 / 16))
 
 
-def grounds(clouds, cams, walkable=None):
-    """Which of each cloud's points (world, y down) are walkable ground; walkable[k] masks cloud k (None: all)."""
-    G = [ground(x, c, normals=_low_normals(x), seed_m=DA3_SEED_M) for x, c in zip(clouds, cams)]
-    return G if walkable is None else [g & w for g, w in zip(G, walkable)]
+def one_ground(clouds, cameras, walkable):
+    """(the world Clouds without their ground points, the one ground's points)."""
+    keep, ground = _one_ground([c.points for c in clouds], np.array([c.centre for c in cameras]).reshape(-1, 3),
+                               walkable)
+    return [Cloud(c.points[k], c.colours[k]) for c, k in zip(clouds, keep)], ground
 
 
-def _low_normals(x):
-    """Normals of the points within LOW_M of the lowest in their ground square; zero
-    (never ground) for the rest, which saves computing most normals."""
-    _, inv = np.unique(square_keys(x[:, [0, 2]], GROUND_CELL_M), return_inverse=True)
-    low = np.full(inv.max() + 1, -np.inf)
-    np.maximum.at(low, inv, x[:, 1])                  # y is down: the largest y is the lowest
-    near = x[:, 1] > low[inv] - LOW_M
-    n = np.zeros_like(x)
-    n[near] = normals_from_neighbours(x[near])
-    return n
-
-
-def one_ground(clouds, cams, G):
-    """(per-cloud keep masks dropping their ground points, the one ground's points); G from grounds()."""
+def _one_ground(clouds, cams, G):
+    """(per-cloud keep masks dropping their ground points, the one ground's points); G from walkable_ground._grounds()."""
     m = GroundMap([x[g] for x, g in zip(clouds, G)], cams, CELL_M, SMOOTH_M)
 
     area = np.zeros(m.dims, bool)

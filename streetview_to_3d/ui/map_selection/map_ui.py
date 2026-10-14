@@ -1,4 +1,6 @@
-"""The Leaflet map HTML for the node picker (no Gradio). It runs in a sandboxed iframe, so a
+"""Draw the Leaflet map the nodes are picked on.
+
+The Leaflet map HTML for the node picker (no Gradio). It runs in a sandboxed iframe, so a
 click posts a window message that tab.py's bridge relays to Python. Only the selection and
 the nodes linked to it are drawn: the only ones worth clicking next.
 """

@@ -1,4 +1,4 @@
-"""The walk's pieces in the shape the scene is saved from; each is placed by its GPS later."""
+"""Shape the walk's pieces as the scene is built from them."""
 
 
 def _links_by_node(path_edges):
@@ -10,23 +10,11 @@ def _links_by_node(path_edges):
     return links
 
 
-def _piece_edges(metadata):
-    """[(a, b, keep_a, keep_b)] rebuilt from the links in `metadata`."""
-    edges, seen = [], set()
-    for a, m in metadata.items():
-        for b, keep_a in (m.get("links") or {}).items():
-            if b not in metadata or (b, a) in seen:
-                continue
-            seen.add((a, b))
-            edges.append((a, b, keep_a, (metadata[b].get("links") or {}).get(a)))
-    return edges
-
-
-def pieces_to_output(pieces):
+def pieces(segments):
     """[(clouds, metadata), ...], one per piece: clouds is {node key: (points, colors)};
     metadata per node is its lat/lon/date, pose in the piece's frame, view counts and links."""
     results = []
-    for clouds, path_edges, date, frame_poses in pieces:
+    for clouds, path_edges, date, frame_poses in segments:
         links = _links_by_node(path_edges)
         metadata = {k: {"lat": lat, "lon": lon, "date": date, "position": pos.tolist(),
                         "rotation": rot.tolist(), "n_views_kept": n_kept,

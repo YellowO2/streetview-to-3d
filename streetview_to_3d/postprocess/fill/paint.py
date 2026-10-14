@@ -1,4 +1,6 @@
-"""Colour for the fill's ground from the panos, mixing every camera that sees a point cleanly:
+"""Colour points from the panos that see them cleanly.
+
+Colour for the fill's ground from the panos, mixing every camera that sees a point cleanly:
 nothing of DA3's in front (depth_buffer), not masked or blurred, under NADIR_DEG, within MAX_M."""
 import numpy as np
 from PIL import Image
@@ -13,26 +15,6 @@ ZB_W = 512
 BLEND_MIN = 0.01    # a camera counting less than this is not sampled at all
 BLUR_DETAIL, BLUR_WIN = 0.5, 15     # under this grey-level change per pixel, over BLUR_WIN px: blur
 BLUR_GROW_DEG, SEAM_DEG = 6, 2
-
-
-class Camera:
-    """A placed node's camera: world points to its photo's (u, v), distance
-    in metres and degrees below the horizon."""
-
-    def __init__(self, node):
-        T = np.asarray(node.transform, float)
-        self.scale = np.cbrt(np.linalg.det(T[:3, :3]))
-        self.R, self.t = T[:3, :3] / self.scale, T[:3, 3]
-        self.position = np.asarray(node.position, float)
-        self.rotation = np.asarray(node.rotation, float)
-        self.centre = T[:3, :3] @ self.position + self.t
-
-    def look(self, x):
-        d = (((x - self.t) @ self.R) / self.scale - self.position) @ self.rotation.T
-        r = np.linalg.norm(d, axis=1)
-        s = np.clip(d[:, 1] / np.maximum(r, 1e-9), -1, 1)
-        below = np.degrees(np.arcsin(s))
-        return np.arctan2(d[:, 0], d[:, 2]) / (2 * np.pi) + .5, below / 180 + .5, r * self.scale, below
 
 
 def blurred(path):

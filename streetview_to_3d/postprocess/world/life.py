@@ -17,8 +17,6 @@ Written to life.json beside scene.json (east/north metres):
               "cats": [{"spots": [[e, n, h], ...]}, ...]}}
 Car road points are STEP_M apart; room is the clearance to the nearest wall.
 """
-import json
-import os
 
 import numpy as np
 
@@ -264,10 +262,3 @@ def cars(stretches, side_):
 
 def _rgb(colours):
     return {k: list(c) for k, c in colours.items()}
-
-
-def save(scene_dir, **parts):
-    """Write life.json from its parts; returns its name."""
-    with open(os.path.join(scene_dir, FILENAME), "w") as f:
-        json.dump(parts, f, separators=(",", ":"))
-    return FILENAME

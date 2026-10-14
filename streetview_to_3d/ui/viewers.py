@@ -1,4 +1,6 @@
-"""The viewer embedded in Gradio, and `iframe()`, the one sandboxed iframe wrapper (also
+"""Embed the viewer, or any page, in a sandboxed iframe.
+
+The viewer embedded in Gradio, and `iframe()`, the one sandboxed iframe wrapper (also
 used by the map picker and the HF app)."""
 import html as html_lib
 

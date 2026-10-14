@@ -1,4 +1,6 @@
-"""Mark cars, people, thin poles/signs and water in a pano, so DA3 never turns them into points.
+"""Mark cars, people, poles and water in a pano, for DA3 to leave out.
+
+Mark cars, people, thin poles/signs and water in a pano, so DA3 never turns them into points.
 
 Movers ghost when panos merge, DA3 smears thin things into streaks and lays water at street
 height. Each pano is segmented once, whole (Cityscapes SegFormer, plus an ADE20K one for water);

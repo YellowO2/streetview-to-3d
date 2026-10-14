@@ -73,9 +73,14 @@ def test_cats_sit_on_the_scenes_ground_off_its_roads_near_its_cameras():
 
 
 def test_saved_as_the_viewer_reads_it(tmp_path):
-    name = life.save(tmp_path, cars=life.cars([(6.0, np.zeros((3, 3)), np.full(3, 3.0))], "left"),
-                     birds=life.birds([], np.zeros((1, 2)), 0.0), boats=life.boats([], np.zeros((1, 2))))
-    data = json.loads((tmp_path / name).read_text())
+    from streetview_to_3d.common.Scene import Scene
+    from streetview_to_3d.postprocess.World import World
+    from streetview_to_3d.save import save
+    world = World(json={life.FILENAME: dict(cars=life.cars([(6.0, np.zeros((3, 3)), np.full(3, 3.0))], "left"),
+                                            birds=life.birds([], np.zeros((1, 2)), 0.0),
+                                            boats=life.boats([], np.zeros((1, 2))))})
+    save(Scene(center=[0.0, 0.0]), None, world, str(tmp_path))
+    data = json.loads((tmp_path / life.FILENAME).read_text())
     assert data["cars"]["side"] == "left" and len(data["cars"]["roads"]) == 1
     assert data["birds"]["flocks"][0]["kind"] == "pigeon" and data["boats"]["courses"] == []
 

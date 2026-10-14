@@ -1,8 +1,10 @@
-"""Which capture dates are worth a graph: coverage ranking and reachability (no GPU)."""
-from streetview_to_3d.common.scene import DisjointSet
+"""Rank capture dates by coverage, and check one reaches a goal.
+
+Which capture dates are worth a graph: coverage ranking and reachability (no GPU)."""
+from streetview_to_3d.common.DisjointSet import DisjointSet
 from streetview_to_3d.common.geo import haversine_m
 
-# How many per-date graphs build_corridor_graphs builds; a date covering little can still patch.
+# How many per-date graphs date_graphs.py builds; a date covering little can still patch.
 DATE_TOP_N = 5
 
 # A dot this close to the start is a start; one this close to a goal reaches it.

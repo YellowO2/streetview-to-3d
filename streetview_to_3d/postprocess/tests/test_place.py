@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from streetview_to_3d.postprocess.place import CAM_H, fit_piece, photo_from_world
+from streetview_to_3d.postprocess.place import CAM_H, _fit_piece as fit_piece, _photo_from_world as photo_from_world
 
 ORIGIN = (1.35, 103.68)
 
