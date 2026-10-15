@@ -10,19 +10,20 @@ import gradio as gr
 
 from streetview_to_3d.Settings import Settings
 from streetview_to_3d.common.Scene import FILENAME as SCENE_FILENAME
-from streetview_to_3d.ui import viewers
 from streetview_to_3d.gallery import publish as gallery
 from streetview_to_3d.main import streetview_to_3d
 from streetview_to_3d.panos.main import panos
-from streetview_to_3d.postprocess import seams
 from streetview_to_3d.postprocess.Settings import Settings as PostprocessSettings
-from streetview_to_3d.postprocess.world import life, water
 from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
 from streetview_to_3d.reconstruct.estimate_gpu_seconds import (
     DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, estimate_gpu_seconds,
 )
-from streetview_to_3d.ui.map_selection.tab import build_map_section, corridor_edges, nodes_by_key
+from streetview_to_3d.ui.file_url import file_url
+from streetview_to_3d.ui.map_selection.corridor_edges import corridor_edges
+from streetview_to_3d.ui.map_selection.map_section import map_section
+from streetview_to_3d.ui.map_selection.nodes_by_key import nodes_by_key
 from streetview_to_3d.ui.pano_api import pano_api
+from streetview_to_3d.ui.viewer import viewer
 
 logger = logging.getLogger(__name__)
 
@@ -53,18 +54,19 @@ def _handle_pathfind_prepare(state):
 
 
 def _zip(run_dir):
-    """The whole scene (scene.json, .ply files, water.json, life.json, ground.npz, labels/) as one
-    zip the viewer opens. Stored, not compressed: point data barely shrinks."""
-    names = sorted(n for n in os.listdir(run_dir)
-                   if n in (SCENE_FILENAME, water.FILENAME, seams.FILENAME, life.FILENAME)
-                   or n.endswith(".ply"))
+    """The whole scene folder as save wrote it (scene.json, .ply files, water.json, life.json,
+    ground.npz, labels/) as one zip the viewer opens. Stored, not compressed: point data
+    barely shrinks."""
+    names = sorted(os.listdir(run_dir))
     archive = os.path.join(run_dir, f"scene_{os.path.basename(run_dir)[:8]}.zip")
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as z:
         for n in names:
-            z.write(os.path.join(run_dir, n), n)
-        labels = os.path.join(run_dir, "labels")
-        for n in sorted(os.listdir(labels)) if os.path.isdir(labels) else []:
-            z.write(os.path.join(labels, n), f"labels/{n}")
+            if os.path.isfile(os.path.join(run_dir, n)):
+                z.write(os.path.join(run_dir, n), n)
+        for folder in names:
+            if os.path.isdir(os.path.join(run_dir, folder)):
+                for n in sorted(os.listdir(os.path.join(run_dir, folder))):
+                    z.write(os.path.join(run_dir, folder, n), f"{folder}/{n}")
     return archive
 
 
@@ -98,8 +100,8 @@ def _handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model=
         yield gr.HTML(visible=True), gr.skip(), "<p>Reconstruction failed. Try again.</p>"
         raise gr.Error(f"Reconstruct failed: {e}")
 
-    scene_url = viewers.file_url(os.path.join(output_dir, SCENE_FILENAME))
-    yield (gr.HTML(viewers.build_viewer(scene_url=scene_url), visible=True),
+    scene_url = file_url(os.path.join(output_dir, SCENE_FILENAME))
+    yield (gr.HTML(viewer(scene_url=scene_url), visible=True),
            gr.DownloadButton(value=_zip(output_dir), visible=True),
            "<p>Scene ready.</p>")
     if share and gallery.enabled():
@@ -110,8 +112,9 @@ def _handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model=
             logger.warning(f"gallery: not published: {e}")
 
 
-def build_main_tab():
-    state, map_view, selection_view = build_map_section()
+def main_tab():
+    """Build and wire the main tab, inside a gr.Blocks."""
+    state, map_view, selection_view = map_section()
 
     with gr.Row(equal_height=True):
         # separate, so the GPU click is a fresh interaction: the ZeroGPU token expires on wall-clock
@@ -142,7 +145,7 @@ def build_main_tab():
     download_btn = gr.DownloadButton("Download scene (.zip)", visible=False,
                                      variant="primary")
     # a working viewer from page load: a downloaded scene can be dropped in
-    reconstruct_view = gr.HTML(viewers.build_viewer())
+    reconstruct_view = gr.HTML(viewer())
 
     pathfind_prepare_btn.click(
         fn=_handle_pathfind_prepare,

@@ -1,6 +1,6 @@
 import numpy as np
 
-from streetview_to_3d.panos.candidates import on_open_water
+from streetview_to_3d.ui.map_selection.expand_area import _on_open_water as on_open_water
 
 
 def test_only_a_pano_with_water_all_round_is_out_on_it():

@@ -2,7 +2,8 @@
 import asyncio
 import logging
 
-from streetview_to_3d.common.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
+from streetview_to_3d.common.run_async import run_async
+from streetview_to_3d.common.streetview_fetch.download_pano_by_id import DA3_ONLY_ZOOM, download_pano_by_id
 from streetview_to_3d.panos.Corridor import Corridor
 
 logger = logging.getLogger(__name__)

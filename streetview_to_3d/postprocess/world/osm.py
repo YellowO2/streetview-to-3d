@@ -43,7 +43,7 @@ def building_kind(tags):
 
 def _cache_path(query):
     """Where the answer to query is kept: one file per query, shared by every run."""
-    from streetview_to_3d.common.paths import DATA_DIR
+    from streetview_to_3d.common.new_run_dir import DATA_DIR
     return os.path.join(DATA_DIR, "map_cache", hashlib.sha1(query.encode()).hexdigest()[:20] + ".json")
 
 

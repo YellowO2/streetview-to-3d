@@ -8,7 +8,7 @@ import numpy as np
 import shapely
 
 from streetview_to_3d.postprocess.world.osm import FAR_BUILDING_M, FULL_M, USER_AGENT
-from streetview_to_3d.postprocess.world.tiles import TileMap
+from streetview_to_3d.common.TileMap import TileMap
 
 TILEJSON = "https://tiles.openfreemap.org/planet"
 ZOOM = 14                 # the finest zoom; holds every building

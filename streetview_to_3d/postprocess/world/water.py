@@ -11,14 +11,11 @@ shore being each cell's distance from dry land, up to SHORE_MAX_M.
 import numpy as np
 import shapely
 
+from streetview_to_3d.common.occurrence_map import WET, occurrence_map
 from streetview_to_3d.postprocess.seams import ramp
-from streetview_to_3d.postprocess.world.tiles import TileMap
 
 FILENAME = "water.json"
 SEA_M = 0.5               # map height at or under this is sea
-OCCURRENCE_URL = "https://storage.googleapis.com/global-surface-water/tiles2021/occurrence/{z}/{x}/{y}.png"
-OCCURRENCE_ZOOM = 13      # the finest the map is served at
-WET = 0.5                 # water at least this share of the time
 CELL_M = 5.0
 MIN_M2 = 400.0            # smaller bodies are left to the land
 UNDER_LAND_M = 20.0       # bodies grown this far under the shore
@@ -32,13 +29,6 @@ BED, BED_M = (0.72, 0.84, 0.90), 2.5  # bed colour (the pale sky it mirrors), fu
 SHORE_CELL_M, SHORE_MAX_M = 10.0, 60
 LOW_PCT = 5                       # a body's level: this percentile of the height map over it
 CAP_M, CLEAR_M = 200.0, 0.5       # at least CLEAR_M under the ground of any pano within CAP_M
-
-
-def occurrence_map():
-    """How often water, 0-1, at any (lat, lon): 1 - red on the tiles; 0 where transparent or missing."""
-    return TileMap(OCCURRENCE_URL, OCCURRENCE_ZOOM,
-                   lambda c: np.where(c[..., 3] > 0, 1 - c[..., 0] / 255, 0.0),
-                   mode="RGBA", missing=0.0)
 
 
 class Water:

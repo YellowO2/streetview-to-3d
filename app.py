@@ -6,15 +6,15 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 for chatty in ("httpx", "httpx2", "numexpr"):   # a line per request Gradio makes, NumExpr's thread count
     logging.getLogger(chatty).setLevel(logging.WARNING)
 
-# the package first: it imports `spaces` before anything touches CUDA (streetview_to_3d/models/gpu.py)
-from streetview_to_3d.common.paths import DATA_DIR
-from streetview_to_3d.ui.tab import build_main_tab
-from streetview_to_3d.ui.map_selection.tab import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
+# the package first: it imports `spaces` before anything touches CUDA (streetview_to_3d/models/on_gpu.py)
+from streetview_to_3d.common.new_run_dir import DATA_DIR
+from streetview_to_3d.ui.main_tab import main_tab
+from streetview_to_3d.ui.map_selection.map_section import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
 
 import gradio as gr
 
 with gr.Blocks(title="Street Builder") as demo:
-    build_main_tab()
+    main_tab()
 
 
 if __name__ == "__main__":

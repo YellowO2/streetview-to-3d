@@ -1,39 +1,10 @@
-"""Rank capture dates by coverage, and check one reaches a goal.
-
-Which capture dates are worth a graph: coverage ranking and reachability (no GPU)."""
+"""Check that a capture date's dots reach from the start to a goal."""
 from streetview_to_3d.common.DisjointSet import DisjointSet
 from streetview_to_3d.common.geo import haversine_m
-
-# How many per-date graphs date_graphs.py builds; a date covering little can still patch.
-DATE_TOP_N = 5
 
 # A dot this close to the start is a start; one this close to a goal reaches it.
 START_ZONE_M = 5.0
 GOAL_TOLERANCE_M = 15.0
-
-
-def date_recency_key(date_str):
-    """Sort key for format_date's "YYYY-MM[-DD]": "unknown date" sorts oldest."""
-    return "" if date_str == "unknown date" else date_str
-
-
-def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
-    """Every date in any bucket, best first: most dots no earlier date covers, then most
-    dots, then newest. New dots first, so an area's walked paths get a date even when
-    its roads were driven many more times. Returns all dates; callers stop once enough pass.
-    """
-    covered_by_date: dict[str, set[int]] = {}
-    for dot_index, bucket in buckets.items():
-        for n in bucket:
-            covered_by_date.setdefault(n["date"], set()).add(dot_index)
-
-    ranked, covered = [], set()
-    left = dict(covered_by_date)
-    while left:
-        date = max(left, key=lambda d: (len(left[d] - covered), len(left[d]), date_recency_key(d)))
-        covered |= left.pop(date)
-        ranked.append(date)
-    return ranked
 
 
 def _components(adjacency, n):

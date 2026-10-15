@@ -1,12 +1,12 @@
 """Draw the Leaflet map the nodes are picked on.
 
 The Leaflet map HTML for the node picker (no Gradio). It runs in a sandboxed iframe, so a
-click posts a window message that tab.py's bridge relays to Python. Only the selection and
+click posts a window message that map_section.py's bridge relays to Python. Only the selection and
 the nodes linked to it are drawn: the only ones worth clicking next.
 """
 import json
 
-from streetview_to_3d.ui.viewers import iframe as _iframe
+from streetview_to_3d.ui.iframe import iframe as _iframe
 
 _SUGGESTED_COLOR = "#ff9800"
 _SELECTED_COLOR = "#00c853"
@@ -19,7 +19,7 @@ AREA_MESSAGE_TYPE = "map_area_drag"     # the area's edges dragged: its new corn
 MESSAGE_TYPES = (_MESSAGE_TYPE, AREA_MESSAGE_TYPE)
 
 
-def build_picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom=17, view=None, radius_m=None,
+def picker_map(lat, lon, nodes, edges, selected_keys, selected_edges, zoom=17, view=None, radius_m=None,
                      spots=None, area=None):
     """The picker map as an iframe.
 
@@ -195,7 +195,7 @@ SELECTED_EDGES.forEach(function(e) {{
   L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {{color: SELECTED_COLOR, weight: 4}}).addTo(m);
 }});
 
-// The spots the walk will use (fetch_nodes.corridor_points): nearby
+// The spots the walk will use (common/corridor_points.py): nearby
 // selected panos merged, one ring each at its seed pano, with the spot
 // links -- including bridges between graphs Google never linked.
 SPOT_LINKS.forEach(function(l) {{

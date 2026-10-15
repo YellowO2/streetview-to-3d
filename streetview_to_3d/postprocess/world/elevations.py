@@ -17,8 +17,8 @@ def around(lats, lons):
     import aiohttp
     from streetlevel import streetview
     from streetview_to_3d.postprocess.world.openfreemap import tile_xy
-    from streetview_to_3d.common.http import BROWSER_HEADERS
-    from streetview_to_3d.common.streetview_fetch import run_async
+    from streetview_to_3d.common.streetview_fetch.browser_session import BROWSER_HEADERS
+    from streetview_to_3d.common.run_async import run_async
     lat0 = float(np.mean(lats))
     dlat, dlon = REACH_M / M_PER_LAT, REACH_M / (M_PER_LAT * math.cos(math.radians(lat0)))
     s, w, n, e = min(lats) - dlat, min(lons) - dlon, max(lats) + dlat, max(lons) + dlon

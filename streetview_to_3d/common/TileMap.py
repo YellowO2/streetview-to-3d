@@ -1,5 +1,6 @@
-"""Web-mercator tile maps (heights, imagery, water) read at any (lat, lon), each tile downloaded
-once into TILES_DIR and kept."""
+"""Read a web-mercator tile map (heights, imagery, water) at any place.
+
+Each tile is downloaded once into TILES_DIR and kept."""
 import io
 import math
 import os
@@ -9,7 +10,7 @@ import urllib.request
 import numpy as np
 from PIL import Image
 
-from streetview_to_3d.common.paths import DATA_DIR
+from streetview_to_3d.common.new_run_dir import DATA_DIR
 
 TILE_THREADS = 8
 TILES_DIR = os.path.join(DATA_DIR, "tiles")     # downloaded tiles, kept forever

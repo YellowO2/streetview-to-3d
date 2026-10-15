@@ -5,7 +5,7 @@ import os
 import numpy as np
 from PIL import Image
 
-from streetview_to_3d.common.streetview_fetch import fetch_da3_pano
+from streetview_to_3d.common.streetview_fetch.fetch_da3_pano import fetch_da3_pano
 from streetview_to_3d.models.pano_labels import pano_labels
 
 

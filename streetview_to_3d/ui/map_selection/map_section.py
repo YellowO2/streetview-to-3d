@@ -12,13 +12,18 @@ import logging
 
 import gradio as gr
 
+from streetview_to_3d.common.corridor_points import corridor_points
 from streetview_to_3d.common.geo import extract_lat_lon
-from streetview_to_3d.panos.fetch_nodes import corridor_points
+from streetview_to_3d.common.run_async import run_async
+from streetview_to_3d.common.streetview_fetch.fetch_pano_by_id import fetch_pano_by_id
+from streetview_to_3d.common.streetview_fetch.google_node import google_node
 from streetview_to_3d.reconstruct.estimate_gpu_seconds import estimate_gpu_seconds
-from streetview_to_3d.reconstruct.estimate_other_seconds import estimate_other_seconds
-from streetview_to_3d.common.streetview_fetch import fetch_pano_by_id, google_node, run_async
-from streetview_to_3d.panos import candidates as candidates_mod
-from streetview_to_3d.ui.map_selection import map_ui
+from streetview_to_3d.ui.map_selection.circle import circle
+from streetview_to_3d.ui.map_selection.corridor_edges import corridor_edges
+from streetview_to_3d.ui.map_selection.estimate_other_seconds import estimate_other_seconds
+from streetview_to_3d.ui.map_selection.expand_area import expand_area
+from streetview_to_3d.ui.map_selection.nearby_nodes import nearby_nodes
+from streetview_to_3d.ui.map_selection.picker_map import AREA_MESSAGE_TYPE, MESSAGE_TYPES, picker_map
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +35,7 @@ BRIDGE_CSS = f"#{BRIDGE_ELEM_ID} {{ position: fixed !important; width: 1px !impo
 BRIDGE_HEAD_SCRIPT = f"""
 <script>
 window.addEventListener('message', function(ev) {{
-  if (!ev.data || {json.dumps(list(map_ui.MESSAGE_TYPES))}.indexOf(ev.data.type) === -1) return;
+  if (!ev.data || {json.dumps(list(MESSAGE_TYPES))}.indexOf(ev.data.type) === -1) return;
   var el = document.querySelector('#{BRIDGE_ELEM_ID} textarea, #{BRIDGE_ELEM_ID} input');
   if (!el) {{
     console.error('[map] bridge element #{BRIDGE_ELEM_ID} not found in DOM');
@@ -49,23 +54,11 @@ def _empty_state():
             "radius_m": None, "preview_center": None, "area": None}
 
 
-def nodes_by_key(state):
-    return {n["key"]: n for n in state["nodes"]}
-
-
-def corridor_edges(state):
-    """The selected edges as ((lat, lon, pano_id), (lat, lon, pano_id))
-    pairs -- what fetch_nodes.corridor_points builds the spots from."""
-    by_key = nodes_by_key(state)
-    node = lambda k: (by_key[k]["lat"], by_key[k]["lon"], by_key[k]["id"])
-    return [(node(a), node(b)) for a, b in state.get("selected_edges", []) if a in by_key and b in by_key]
-
-
 def _summary_markdown(state):
     if not state["selected"]:
         return "Enter a location and select a street via 'Expand Area' Button or manually clicking. Then press button 1, wait for it to run, then button 2."
     # the GPU is spent per spot -- panos within a few metres merge into one
-    # (fetch_nodes.corridor_points) -- not per pano
+    # (common/corridor_points.py) -- not per pano
     n_spots = len(corridor_points(corridor_edges(state))[0])
     gpu, quick = (estimate_gpu_seconds(n_spots, e) / 60 for e in ("Normal", "Quick"))
     other = max(1, round(estimate_other_seconds(n_spots) / 60))
@@ -81,10 +74,10 @@ def _map_html(state, zoom=19):
     if state["lat"] is None:
         preview = state.get("preview_center")
         if preview:
-            return map_ui.build_picker_map(preview[0], preview[1], [], [], [], [], zoom=zoom, radius_m=radius_m)
-        return map_ui.build_picker_map(0, 0, [], [], [], [], zoom=2)
+            return picker_map(preview[0], preview[1], [], [], [], [], zoom=zoom, radius_m=radius_m)
+        return picker_map(0, 0, [], [], [], [], zoom=2)
     points, adjacency, _ = corridor_points(corridor_edges(state))
-    return map_ui.build_picker_map(
+    return picker_map(
         state["lat"], state["lon"], state["nodes"], state["edges"],
         state["selected"], state.get("selected_edges", []),
         zoom=zoom, view=state.get("view"), radius_m=radius_m, spots=(points, adjacency),
@@ -133,7 +126,7 @@ def _handle_load_area(area_input, radius_input, state):
     except ValueError:
         return gr.skip(), gr.skip(), state
 
-    nodes, edges = candidates_mod.nearby_nodes(lat, lon)
+    nodes, edges = nearby_nodes(lat, lon)
     if not nodes:
         raise gr.Error("No Street View coverage found near that location.")
 
@@ -150,7 +143,7 @@ def _handle_load_area(area_input, radius_input, state):
 
 
 def _handle_expand_area(area_input, radius_input, state, progress=gr.Progress(track_tqdm=False)):
-    """Select the whole real Street View graph within a radius (candidates.expand_area),
+    """Select the whole real Street View graph within a radius (expand_area.py),
     ready for "Prepare"."""
     try:
         lat, lon = extract_lat_lon(area_input)
@@ -164,7 +157,7 @@ def _handle_expand_area(area_input, radius_input, state, progress=gr.Progress(tr
         raise gr.Error("Radius must be positive.")
 
     progress(None, desc="Finding nearby panoramas…")
-    nodes, edges = candidates_mod.expand_area(lat, lon, radius_m)
+    nodes, edges = expand_area(lat, lon, radius_m)
     if not nodes:
         raise gr.Error("No Street View coverage found in that area.")
 
@@ -173,7 +166,7 @@ def _handle_expand_area(area_input, radius_input, state, progress=gr.Progress(tr
         "selected": [n["key"] for n in nodes], "selected_edges": list(edges), "view": None,
         "radius_m": None, "preview_center": None,
         # its circle as a shape whose edges drag (_handle_area_drag)
-        "area": candidates_mod.circle(lat, lon, radius_m),
+        "area": circle(lat, lon, radius_m),
     }
     return _map_html(state), _summary_markdown(state), state
 
@@ -186,7 +179,7 @@ def _handle_area_drag(payload, state):
     area = payload.get("area") or []
     if len(area) < 3 or state.get("lat") is None:
         return state
-    nodes, edges = candidates_mod.expand_area(state["lat"], state["lon"], area=area)
+    nodes, edges = expand_area(state["lat"], state["lon"], area=area)
     view = payload.get("view")
     return {**state, "nodes": nodes, "edges": edges, "selected": [n["key"] for n in nodes],
             "selected_edges": list(edges), "area": area, "radius_m": None,
@@ -226,7 +219,7 @@ def _handle_bridge_message(payload_str, state):
     except (TypeError, ValueError):
         return _map_html(state), _summary_markdown(state), state, ""
 
-    if payload.get("type") == map_ui.AREA_MESSAGE_TYPE:
+    if payload.get("type") == AREA_MESSAGE_TYPE:
         state = _handle_area_drag(payload, state)
         return _map_html(state), _summary_markdown(state), state, ""
 
@@ -277,9 +270,9 @@ def _handle_clear(state):
     return _map_html(state), _summary_markdown(state), state
 
 
-def build_map_section():
+def map_section():
     """Build and wire the map section. Returns (state, map_view, selection_view) for
-    ui/tab.py's build_main_tab."""
+    ui/main_tab.py."""
     state = gr.State(_empty_state())
 
     # one row: the location loads as it is pasted, so the only button is Expand

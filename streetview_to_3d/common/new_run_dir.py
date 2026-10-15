@@ -1,4 +1,4 @@
-"""Say where data lives, and make a fresh folder for each run.
+"""Make a fresh folder for each run, in the data folder.
 
 Where data lives: STREETVIEW_TO_3D_DATA, else ./data in the working directory.
 panos/ caches downloaded panoramas; runs/<id>/ holds one run's output."""

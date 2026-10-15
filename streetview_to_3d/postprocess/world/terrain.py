@@ -15,7 +15,7 @@ from streetview_to_3d.postprocess import seams
 from streetview_to_3d.postprocess.World import World
 from streetview_to_3d.postprocess.world import buildings, elevations, life, osm, roads, water
 from streetview_to_3d.postprocess.seams import ramp
-from streetview_to_3d.postprocess.world.tiles import TileMap
+from streetview_to_3d.common.TileMap import TileMap
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def colour_map():
 
 def google_map(zoom):
     """RGB, 0-1, NaN where Google has no tile."""
-    from streetview_to_3d.common.http import BROWSER_HEADERS
+    from streetview_to_3d.common.streetview_fetch.browser_session import BROWSER_HEADERS
     return TileMap(GOOGLE_URL, zoom, lambda c: c / 255, missing=np.nan, headers=BROWSER_HEADERS)
 
 

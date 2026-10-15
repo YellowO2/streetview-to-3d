@@ -1,7 +1,9 @@
-"""Gather every Google panorama along a street corridor (no GPU)."""
+"""Merge the corridor's selected panos into dots, and link the dots.
+
+Used both by the map (to count spots) and by the corridor's pano gathering.
+"""
 from streetview_to_3d.common.DisjointSet import DisjointSet
 from streetview_to_3d.common.geo import haversine_m
-from streetview_to_3d.common.streetview_fetch import fetch_panos_by_id, google_node, run_async
 
 # Selected panos this close collapse into one dot: the same spot captured twice
 # (both directions, a path beside a road). Normal spacing along one path is 8-11 m.
@@ -46,11 +48,11 @@ def corridor_points(edges):
     for (_, _, a), (_, _, b) in edges:
         connect(dot_of[a], dot_of[b])
 
-    bridge_components(points, adjacency, connect)
+    _bridge_components(points, adjacency, connect)
     return points, adjacency, members
 
 
-def bridge_components(points, adjacency, connect, max_gap_m: float = BRIDGE_DIST_M):
+def _bridge_components(points, adjacency, connect, max_gap_m: float = BRIDGE_DIST_M):
     """Join graphs Google never linked where they come within max_gap_m, so the walk can
     try a DA3 pair test there. Kruskal over the closest dot pairs: each two groups get
     their nearest crossing and no more.
@@ -71,36 +73,3 @@ def bridge_components(points, adjacency, connect, max_gap_m: float = BRIDGE_DIST
         if sets.find(i) != sets.find(j):
             sets.union(i, j)
             connect(i, j)
-
-
-def fetch_corridor_nodes(edges):
-    """Every capture date of the selected panos folded into each dot, one candidate per date.
-
-    Returns (buckets, points, adjacency, elevations): buckets is {dot: [node dicts with date,
-    pitch, roll]}, elevations is metres above sea level per dot (saves placement a re-fetch).
-    """
-    points, adjacency, members = corridor_points(edges)
-    ids = [pano_id for m in members for pano_id in m]
-    meta_by_id = dict(zip(ids, run_async(fetch_panos_by_id(ids))))
-
-    buckets = {i: [] for i in range(len(points))}
-    elevations = [None] * len(points)
-    for i, pano_ids in enumerate(members):
-        seen = set()
-        for pano_id in pano_ids:
-            meta = meta_by_id.get(pano_id)
-            if not meta:
-                continue
-            if elevations[i] is None:
-                elevations[i] = meta.get("elevation")
-            for entry in meta["dates"]:
-                if entry["id"] in seen:
-                    continue
-                seen.add(entry["id"])
-                # each date's own pose: older captures are separate drives
-                buckets[i].append(google_node(
-                    entry["id"], entry.get("lat", meta["lat"]), entry.get("lon", meta["lon"]),
-                    entry.get("heading", meta.get("heading")), date=entry["label"],
-                    pitch=entry.get("pitch", meta.get("pitch")), roll=entry.get("roll", meta.get("roll"))))
-
-    return buckets, points, adjacency, elevations
