@@ -39,13 +39,13 @@ def handle_pathfind_prepare(state):
 
     yield None, "<p>Fetching panoramas… This may take a few minutes.</p>"
     try:
-        prep = panos(start, goals, corridor_edges(state), (state["lat"], state["lon"]))
+        corridor = panos(start, goals, corridor_edges(state), (state["lat"], state["lon"]))
     except Exception as e:
         yield None, "<p>Preparation failed. Try again.</p>"
         raise gr.Error(f"Prepare failed: {e}")
 
-    n = sum(len(c) for g in prep["date_graphs"] for c in g["dot_candidates"].values())
-    yield prep, f"<p>{n} panoramas ready. Now click button 2.</p>"
+    n = sum(len(c) for g in corridor.date_graphs for c in g["dot_candidates"].values())
+    yield corridor, f"<p>{n} panoramas ready. Now click button 2.</p>"
 
 
 def _zip(run_dir):
@@ -64,7 +64,7 @@ def _zip(run_dir):
     return archive
 
 
-def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
+def handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
                        mask_classes="", fill=True, conf_floor=0, effort=DEFAULT_EFFORT,
                        share=False):
     """Button 2: reconstruct (GPU), then place and fill (CPU), in one click.
@@ -74,7 +74,7 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
     comma-separated mask_classes, fill, conf_floor. See reconstruct.WalkSettings.
     share: also publish the scene to the public gallery (gallery.publish).
     """
-    if not prep:
+    if not corridor:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
 
     # nothing to look at until the scene exists, and a previous run's
@@ -84,12 +84,12 @@ def handle_reconstruct(prep, keep_pct, gpu_seconds, view_hfov=0, da3_model="", m
     try:
         walk = WalkSettings(
             conf_lower_percentile=100 - keep_pct,
-            gpu_seconds=gpu_seconds or estimate_gpu_seconds(len(prep["points"]), effort or DEFAULT_EFFORT),
+            gpu_seconds=gpu_seconds or estimate_gpu_seconds(len(corridor.points), effort or DEFAULT_EFFORT),
             hfov=view_hfov or None,
             model=(da3_model or "").strip() or None, masker=(masker or "").strip() or None,
             mask_classes=[c.strip() for c in (mask_classes or "").split(",") if c.strip()] or None,
             conf_floor=conf_floor or None)
-        output_dir = streetview_to_3d(prep, Settings(walk=walk, post=PostprocessSettings(fill=bool(fill))),
+        output_dir = streetview_to_3d(corridor, Settings(walk=walk, post=PostprocessSettings(fill=bool(fill))),
                                       log=lambda m: print(m, flush=True))
     except Exception as e:
         yield gr.HTML(visible=True), gr.skip(), "<p>Reconstruction failed. Try again.</p>"

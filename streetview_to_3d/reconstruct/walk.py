@@ -9,13 +9,13 @@ def _gpu_seconds(points, gpu_seconds=None) -> float:
     return float(gpu_seconds) if gpu_seconds else estimate_gpu_seconds(len(points))
 
 
-def walk(prep, settings=WalkSettings()):
-    """The walk over prep's date graphs (panos.main.panos) in one GPU window (see
+def walk(corridor, settings=WalkSettings()):
+    """The walk over the corridor's date graphs (panos.main.panos) in one GPU window (see
     streetview_to_3d.models.gpu): [(clouds, metadata), ...], one per piece (reconstruct.pieces).
     Raises RuntimeError if no piece came out."""
-    start_lat, start_lon = prep["start"]
-    pieces = gpu.run(_run_walk_impl, prep["date_graphs"], prep["points"], prep["adjacency"], start_lat, start_lon,
-                     settings, seconds=_gpu_seconds(prep["points"], settings.gpu_seconds))
+    start_lat, start_lon = corridor.start
+    pieces = gpu.run(_run_walk_impl, corridor.date_graphs, corridor.points, corridor.adjacency, start_lat, start_lon,
+                     settings, seconds=_gpu_seconds(corridor.points, settings.gpu_seconds))
     if not pieces:
         raise RuntimeError("No connected path found from start toward any goal.")
     return pieces

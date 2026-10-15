@@ -13,7 +13,7 @@ from streetview_to_3d.postprocess.place import place
 from streetview_to_3d.postprocess.world.terrain import terrain
 
 
-def postprocess(scene, cfg: Settings = Settings(), folder=None, log=print):
+def postprocess(scene, settings: Settings = Settings(), folder=None, log=print):
     """(scene, ground, world): the scene placed and finished, the fill's seams.SceneGround and
     the World around it (None where not made). folder: the run's, where the world's map
     answers are kept for a later run (None: not kept)."""
@@ -21,10 +21,10 @@ def postprocess(scene, cfg: Settings = Settings(), folder=None, log=print):
     scene = place(scene, log)
     watch.lap("placement")
     ground = world = None
-    if cfg.fill:
+    if settings.fill:
         scene = drop_blobs(scene, log)
         watch.lap("floating bits")
-        if cfg.clean:
+        if settings.clean:
             scene = drop_sheets(scene, log)
             watch.lap("loose sheets")
         try:

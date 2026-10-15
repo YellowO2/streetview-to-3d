@@ -10,10 +10,10 @@ from streetview_to_3d.run_folder import run_folder
 from streetview_to_3d.save import save
 
 
-def streetview_to_3d(prep, cfg: Settings = Settings(), log=print):
+def streetview_to_3d(corridor, settings: Settings = Settings(), log=print):
     """The folder holding the finished scene (scene.json beside its clouds, ground and world)."""
     folder = run_folder(log)
-    scene = reconstruct(prep, cfg.walk)
-    scene, ground, world = postprocess(scene, cfg.post, folder, log)
+    scene = reconstruct(corridor, settings.walk)
+    scene, ground, world = postprocess(scene, settings.post, folder, log)
     folder = save(scene, ground, world, folder)
     return folder

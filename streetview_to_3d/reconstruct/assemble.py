@@ -4,15 +4,15 @@ from streetview_to_3d.common.Pano import Pano
 from streetview_to_3d.reconstruct.thinned import thinned
 
 
-def assemble(sc, pieces, prep):
+def assemble(sc, pieces, corridor):
     """The scene (open_scene) with each piece's nodes filled in: the pano that filled it, DA3's
     pose, its points thinned (thinned.py) and named node_<i>.ply, and the edges by node index.
-    prep: what panos.main.panos prepared; its catalog matches each pano to its dot.
+    corridor: what panos.main.panos prepared; its catalog matches each pano to its dot.
 
     Patches overlap, so two pieces can hold the same place: the bigger keeps it and the
     other's pano there is dropped with its links (keeping both glued two frames together).
     """
-    catalog = prep["catalog"]
+    catalog = corridor.catalog
     node_of_dot = {catalog[n.key]["dot"]: i
                    for i, n in enumerate(sc.nodes) if n.key in catalog}
 

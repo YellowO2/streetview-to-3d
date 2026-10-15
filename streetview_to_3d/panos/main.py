@@ -9,5 +9,5 @@ def panos(start, goals, corridor_edges, center):
     (lat, lon); goals: [(lat, lon)], the other selected nodes; corridor_edges: the
     selection's real Street View links, [((lat, lon, id), (lat, lon, id))]."""
     graphs = date_graphs(corridor_edges, start, goals)
-    prep = downloaded(graphs, start, center)
-    return prep
+    corridor = downloaded(graphs, start, center)
+    return corridor

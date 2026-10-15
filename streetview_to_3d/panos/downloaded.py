@@ -2,6 +2,7 @@
 import asyncio
 
 from streetview_to_3d.common.streetview_fetch import DA3_ONLY_ZOOM, download_pano_by_id, run_async
+from streetview_to_3d.panos.Corridor import Corridor
 
 # Panos downloaded at once: fast enough that the ZeroGPU token (wall-clock) doesn't expire
 # before the GPU call, bounded so Google's rate limiter isn't tripped.
@@ -57,22 +58,14 @@ def _download_date_graphs(date_graphs):
 
 
 def downloaded(graphs, start, center):
-    """What the GPU step takes (reconstruct.main.reconstruct), from date_graphs' graphs:
-    {date_graphs, points, adjacency, elevations, catalog, start, center}, each dot's
-    candidates now (key, path, lat, lon) and what failed to download gone (see
-    _download_date_graphs). start/center: (lat, lon). Raises ValueError if nothing downloaded."""
+    """The Corridor the GPU step takes (reconstruct.main.reconstruct), from date_graphs'
+    graphs: each dot's candidates now (key, path, lat, lon), and what failed to download
+    gone (see _download_date_graphs). start/center: (lat, lon). Raises ValueError if nothing downloaded."""
     n_candidates = sum(len(bucket) for g in graphs["date_graphs"] for bucket in g["dot_candidates"].values())
     print(f"Downloading {n_candidates} candidate(s) across {len(graphs['date_graphs'])} date graph(s): "
           f"{[g['date'] for g in graphs['date_graphs']]}")
     ready_graphs, catalog = _download_date_graphs(graphs["date_graphs"])
     if not ready_graphs:
         raise ValueError("Nothing downloaded successfully -- can't reconstruct.")
-    return {
-        "date_graphs": ready_graphs,
-        "points": graphs["points"],
-        "adjacency": graphs["adjacency"],
-        "elevations": graphs["elevations"],
-        "catalog": catalog,
-        "start": start,
-        "center": center,
-    }
+    return Corridor(ready_graphs, graphs["points"], graphs["adjacency"], graphs["elevations"],
+                    catalog, start, center)

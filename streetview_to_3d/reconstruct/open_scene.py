@@ -4,11 +4,11 @@ from streetview_to_3d.common.Pano import Pano
 from streetview_to_3d.common.Scene import Scene
 
 
-def open_scene(prep):
-    """A Scene with one node per dot that has a candidate (its best-ranked pano), from prep
+def open_scene(corridor):
+    """A Scene with one node per dot that has a candidate (its best-ranked pano), from the corridor
     (panos.main.panos); the reconstruction fills in the rest."""
-    best, elevations = {}, prep.get("elevations") or []
-    for key, c in prep["catalog"].items():
+    best, elevations = {}, corridor.elevations or []
+    for key, c in corridor.catalog.items():
         best.setdefault(c["dot"], (key, c))
 
     order = sorted(best)                       # dot index -> node index
@@ -22,5 +22,5 @@ def open_scene(prep):
             elevation=elevations[dot] if dot < len(elevations) else c.get("elevation"))))
 
     adjacency = {str(index[d]): sorted(index[n] for n in ns if n in index)
-                 for d, ns in prep["adjacency"].items() if d in index}
-    return Scene(center=list(prep["center"]), nodes=nodes, adjacency=adjacency)
+                 for d, ns in corridor.adjacency.items() if d in index}
+    return Scene(center=list(corridor.center), nodes=nodes, adjacency=adjacency)
