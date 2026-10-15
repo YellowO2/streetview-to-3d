@@ -1,4 +1,4 @@
-"""A selected street corridor, its panoramas downloaded and ready to reconstruct."""
+"""A selected street corridor, its panoramas downloaded."""
 from dataclasses import dataclass
 
 
