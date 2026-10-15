@@ -1,6 +1,6 @@
-"""DA3, the depth model, loaded once per repo, with the constants it runs by.
+"""DA3, the depth model, loaded once per repo.
 
-DA3, the depth model: which one, where it is (DA3Config) and our decisions about its
+With the constants it runs by: which one, where it is (DA3Config) and our decisions about its
 results: thresholds and view settings. reconstruct/PanoDepth.py is the only caller of
 panoramic_da3.panoramic_da3.
 """

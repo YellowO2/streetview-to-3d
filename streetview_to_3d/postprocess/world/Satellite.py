@@ -7,8 +7,8 @@ import logging
 
 import numpy as np
 
-from streetview_to_3d.common.TileMap import TileMap
 from streetview_to_3d.postprocess.SceneGround import CELL_M
+from streetview_to_3d.postprocess.world.TileMap import TileMap
 from streetview_to_3d.postprocess.world.tools.seams import unhazed
 
 logger = logging.getLogger(__name__)

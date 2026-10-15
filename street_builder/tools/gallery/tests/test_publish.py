@@ -2,7 +2,7 @@ import json
 
 from huggingface_hub.errors import EntryNotFoundError
 
-from streetview_to_3d.ui.gallery import publish as gallery
+from street_builder.tools.gallery import publish as gallery
 
 
 def _scene(tmp_path, panos):

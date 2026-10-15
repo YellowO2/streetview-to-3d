@@ -4,8 +4,8 @@ import json
 import re
 import unittest
 
-from streetview_to_3d.ui.tools.page import iframe
-from streetview_to_3d.ui.viewer import viewer
+from street_builder.tools.page import iframe
+from street_builder.tools.viewer import viewer
 from streetview_to_3d.visualise.build_viewer import SOURCE, OUTPUT, build_viewer
 
 

@@ -2,7 +2,7 @@
 import asyncio
 import logging
 
-from streetview_to_3d.tools.streetview_fetch.fetch_pano_by_id import fetch_pano_by_id
+from streetview_to_3d.panos.tools.fetch_pano_by_id import fetch_pano_by_id
 
 logger = logging.getLogger(__name__)
 

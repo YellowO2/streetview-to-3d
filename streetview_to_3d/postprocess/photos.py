@@ -5,8 +5,8 @@ import os
 import numpy as np
 from PIL import Image
 
-from streetview_to_3d.tools.streetview_fetch.fetch_da3_pano import fetch_da3_pano
 from streetview_to_3d.models.Segmenter import Segmenter
+from streetview_to_3d.postprocess.tools.fetch_da3_pano import fetch_da3_pano
 
 
 def photos(scene, labeller: Segmenter):

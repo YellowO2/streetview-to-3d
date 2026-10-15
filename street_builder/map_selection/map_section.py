@@ -12,18 +12,18 @@ import logging
 
 import gradio as gr
 
-from streetview_to_3d.tools.corridor_points import corridor_points
-from streetview_to_3d.tools.streetview_fetch.fetch_pano_by_id import fetch_pano_by_id
-from streetview_to_3d.tools.streetview_fetch.google_node import google_node
-from streetview_to_3d.tools.gpu_seconds import estimate_gpu_seconds
+from street_builder.map_selection.tools.circle import circle
+from street_builder.map_selection.tools.estimate_other_seconds import estimate_other_seconds
+from street_builder.map_selection.tools.expand_area import expand_area
+from street_builder.map_selection.tools.nearby_nodes import nearby_nodes
+from street_builder.map_selection.tools.picker_map import AREA_MESSAGE_TYPE, MESSAGE_TYPES, picker_map
+from street_builder.tools.map_state import corridor_edges
+from streetview_to_3d.panos.tools.corridor_points import corridor_points
+from streetview_to_3d.panos.tools.fetch_pano_by_id import fetch_pano_by_id
+from streetview_to_3d.panos.tools.google_node import google_node
+from streetview_to_3d.reconstruct.tools.gpu_seconds import estimate_gpu_seconds
 from streetview_to_3d.tools.geo import extract_lat_lon
 from streetview_to_3d.tools.run_async import run_async
-from streetview_to_3d.ui.map_selection.circle import circle
-from streetview_to_3d.ui.map_selection.estimate_other_seconds import estimate_other_seconds
-from streetview_to_3d.ui.map_selection.expand_area import expand_area
-from streetview_to_3d.ui.map_selection.nearby_nodes import nearby_nodes
-from streetview_to_3d.ui.map_selection.picker_map import AREA_MESSAGE_TYPE, MESSAGE_TYPES, picker_map
-from streetview_to_3d.ui.tools.map_state import corridor_edges
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def _summary_markdown(state):
     if not state["selected"]:
         return "Enter a location and select a street via 'Expand Area' Button or manually clicking. Then press button 1, wait for it to run, then button 2."
     # the GPU is spent per spot -- panos within a few metres merge into one
-    # (tools/corridor_points.py) -- not per pano
+    # (panos/tools/corridor_points.py) -- not per pano
     n_spots = len(corridor_points(corridor_edges(state))[0])
     gpu, quick = (estimate_gpu_seconds(n_spots, e) / 60 for e in ("Normal", "Quick"))
     other = max(1, round(estimate_other_seconds(n_spots) / 60))
@@ -271,8 +271,8 @@ def _handle_clear(state):
 
 
 def map_section():
-    """Build and wire the map section. Returns (state, map_view, selection_view) for
-    ui/main_tab.py."""
+    """Build and wire the map section, inside a gr.Blocks. Returns its gr.State: the
+    loaded nodes and the selection (see _empty_state)."""
     state = gr.State(_empty_state())
 
     # one row: the location loads as it is pasted, so the only button is Expand
@@ -337,4 +337,4 @@ def map_section():
         api_name="handle_clear",
     )
 
-    return state, map_view, selection_view
+    return state

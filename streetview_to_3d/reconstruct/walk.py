@@ -1,4 +1,4 @@
-"""Walk the date graphs into the fewest DA3 pieces covering the most.
+"""Grow the fewest DA3 pieces covering the most of the corridor's dates.
 
 The walk: from N date graphs, the most complete corridor in the fewest DA3 pieces. It runs
 in one GPU window (tools/on_gpu.py), because each next DA3 test depends on the last; the
@@ -14,8 +14,8 @@ import numpy as np
 from streetview_to_3d.models.DepthModel import CONF_LOWER_PERCENTILE, KEEP_RATE_THRESHOLD, VIEW_STEP_DEGREES
 from streetview_to_3d.reconstruct.PanoDepth import PanoDepth
 from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
+from streetview_to_3d.reconstruct.tools.gpu_seconds import MODEL_LOAD_S, SAVE_BUFFER_S, estimate_gpu_seconds
 from streetview_to_3d.tools.geo import haversine_m
-from streetview_to_3d.tools.gpu_seconds import MODEL_LOAD_S, SAVE_BUFFER_S, estimate_gpu_seconds
 from streetview_to_3d.tools.on_gpu import on_gpu
 
 logger = logging.getLogger(__name__)

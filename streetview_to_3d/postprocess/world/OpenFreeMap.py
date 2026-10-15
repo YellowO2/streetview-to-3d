@@ -9,7 +9,7 @@ import urllib.request
 import numpy as np
 import shapely
 
-from streetview_to_3d.common.TileMap import TileMap
+from streetview_to_3d.postprocess.world.TileMap import TileMap
 from streetview_to_3d.postprocess.world.tools.reach import FAR_BUILDING_M, FULL_M, USER_AGENT
 from streetview_to_3d.postprocess.world.tools.tiles import tile_xy
 

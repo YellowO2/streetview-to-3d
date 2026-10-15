@@ -3,7 +3,7 @@ name: pages
 on:
   push:
     branches: [main]
-    paths: [streetview_to_3d/ui/gallery/index.html, streetview_to_3d/visualise/viewer.html, .github/workflows/pages.yml]
+    paths: [street_builder/tools/gallery/index.html, streetview_to_3d/visualise/viewer.html, .github/workflows/pages.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - run: mkdir site && cp streetview_to_3d/ui/gallery/index.html streetview_to_3d/visualise/viewer.html site/
+      - run: mkdir site && cp street_builder/tools/gallery/index.html streetview_to_3d/visualise/viewer.html site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

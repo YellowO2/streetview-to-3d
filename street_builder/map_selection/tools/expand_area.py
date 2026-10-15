@@ -8,14 +8,14 @@ import logging
 import numpy as np
 from streetlevel import streetview
 
+from street_builder.map_selection.tools.google_tile_panos import google_tile_panos
+from street_builder.map_selection.tools.street_view import is_official
 from streetview_to_3d.common.Pano import Pano
-from streetview_to_3d.tools.occurrence_map import WET, occurrence_map
-from streetview_to_3d.tools.streetview_fetch.fetch_panos_by_id import fetch_panos_by_id
-from streetview_to_3d.tools.streetview_fetch.google_node import google_node
+from streetview_to_3d.panos.tools.fetch_panos_by_id import fetch_panos_by_id
+from streetview_to_3d.panos.tools.google_node import google_node
+from streetview_to_3d.postprocess.world.tools.occurrence_map import WET, occurrence_map
 from streetview_to_3d.tools.geo import haversine_m as _haversine_m, local_m_to_latlon, to_metres
 from streetview_to_3d.tools.run_async import run_async
-from streetview_to_3d.ui.map_selection.google_tile_panos import google_tile_panos
-from streetview_to_3d.ui.map_selection.tools.street_view import is_official
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ _OPEN_WATER_M = 30.0
 
 def _on_open_water(often):
     """f(lats, lons) -> whether each is out on the water; often(lat, lon)
-    -> how often water there, 0-1 (tools/occurrence_map.py).
+    -> how often water there, 0-1 (postprocess/world/tools/occurrence_map.py).
     Nowhere, if the map cannot be had."""
 
     def f(lat, lon):

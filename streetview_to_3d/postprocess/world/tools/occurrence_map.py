@@ -5,7 +5,7 @@ map picker's open water both read it.
 """
 import numpy as np
 
-from streetview_to_3d.common.TileMap import TileMap
+from streetview_to_3d.postprocess.world.TileMap import TileMap
 
 OCCURRENCE_URL = "https://storage.googleapis.com/global-surface-water/tiles2021/occurrence/{z}/{x}/{y}.png"
 OCCURRENCE_ZOOM = 13      # the finest the map is served at

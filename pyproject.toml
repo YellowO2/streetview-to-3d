@@ -32,7 +32,7 @@ dev = ["pytest"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["streetview_to_3d*"]
+include = ["streetview_to_3d*", "street_builder*"]
 namespaces = false
 
 [tool.setuptools.package-data]

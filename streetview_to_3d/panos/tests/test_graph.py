@@ -1,4 +1,4 @@
-from streetview_to_3d.tools.corridor_points import corridor_points
+from streetview_to_3d.panos.tools.corridor_points import corridor_points
 from streetview_to_3d.panos.tools.dates import date_connects, rank_dates
 
 M = 1 / 111320  # degrees of latitude per metre

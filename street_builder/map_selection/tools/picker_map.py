@@ -6,7 +6,7 @@ the nodes linked to it are drawn: the only ones worth clicking next.
 """
 import json
 
-from streetview_to_3d.ui.tools.page import iframe as _iframe
+from street_builder.tools.page import iframe as _iframe
 
 _SUGGESTED_COLOR = "#ff9800"
 _SELECTED_COLOR = "#00c853"
@@ -195,7 +195,7 @@ SELECTED_EDGES.forEach(function(e) {{
   L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {{color: SELECTED_COLOR, weight: 4}}).addTo(m);
 }});
 
-// The spots the walk will use (tools/corridor_points.py): nearby
+// The spots the walk will use (panos/tools/corridor_points.py): nearby
 // selected panos merged, one ring each at its seed pano, with the spot
 // links -- including bridges between graphs Google never linked.
 SPOT_LINKS.forEach(function(l) {{

@@ -3,7 +3,7 @@
 The scene's files go to the public gallery dataset, listed in index.json, and its viewer
 link comes back. Nothing is published where TOKEN_ENV is unset (the UI hides its checkbox).
 
-    GALLERY_TOKEN=hf_... python -m streetview_to_3d.ui.gallery.publish SCENE_DIR
+    GALLERY_TOKEN=hf_... python -m street_builder.tools.gallery.publish SCENE_DIR
 """
 import datetime
 import json
@@ -70,6 +70,11 @@ def _already(scenes, panos):
     if best and panos and len(panos & set(best["panos"])) >= SAME * len(panos):
         return best
     return None
+
+
+def sharing():
+    """Whether scenes can be published here: the gallery's write token is set."""
+    return bool(os.environ.get(TOKEN_ENV))
 
 
 def publish(run_dir, repo=REPO, api=None):

@@ -8,13 +8,13 @@ for chatty in ("httpx", "httpx2", "numexpr"):   # a line per request Gradio make
 
 # the package first: it imports `spaces` before anything touches CUDA (streetview_to_3d/tools/on_gpu.py)
 from streetview_to_3d.tools.paths import DATA_DIR
-from streetview_to_3d.ui.main_tab import main_tab
-from streetview_to_3d.ui.map_selection.map_section import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
+from street_builder import BRIDGE_CSS, BRIDGE_HEAD_SCRIPT, pano_api, street_builder
 
 import gradio as gr
 
 with gr.Blocks(title="Street Builder") as demo:
-    main_tab()
+    street_builder()
+    pano_api()   # the masker and DA3 on one pano, API only
 
 
 if __name__ == "__main__":

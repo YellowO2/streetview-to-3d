@@ -1,5 +1,5 @@
 """The ground's height above sea level from AWS Terrain Tiles."""
-from streetview_to_3d.common.TileMap import TileMap
+from streetview_to_3d.postprocess.world.TileMap import TileMap
 
 HEIGHT_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
 HEIGHT_ZOOM = 13          # ~19 m a pixel at the equator

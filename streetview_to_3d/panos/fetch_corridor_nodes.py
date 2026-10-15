@@ -1,7 +1,7 @@
 """Gather every Google panorama along a street corridor (no GPU)."""
-from streetview_to_3d.tools.corridor_points import corridor_points
-from streetview_to_3d.tools.streetview_fetch.fetch_panos_by_id import fetch_panos_by_id
-from streetview_to_3d.tools.streetview_fetch.google_node import google_node
+from streetview_to_3d.panos.tools.corridor_points import corridor_points
+from streetview_to_3d.panos.tools.fetch_panos_by_id import fetch_panos_by_id
+from streetview_to_3d.panos.tools.google_node import google_node
 from streetview_to_3d.tools.run_async import run_async
 
 
