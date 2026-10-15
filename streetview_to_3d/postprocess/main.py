@@ -13,10 +13,9 @@ from streetview_to_3d.postprocess.place import place
 from streetview_to_3d.postprocess.world.terrain import terrain
 
 
-def postprocess(scene, settings: Settings = Settings(), folder=None, log=print):
+def postprocess(scene, settings: Settings = Settings(), log=print):
     """(scene, ground, world): the scene placed and finished, the fill's seams.SceneGround and
-    the World around it (None where not made). folder: the run's, where the world's map
-    answers are kept for a later run (None: not kept)."""
+    the World around it (None where not made)."""
     watch = Stopwatch(log)
     scene = place(scene, log)
     watch.lap("placement")
@@ -34,7 +33,7 @@ def postprocess(scene, settings: Settings = Settings(), folder=None, log=print):
             ground = watch.skipped("fill", failure)
         watch.lap("fill")
         try:                             # after the fill: its panos colour the buildings
-            world = terrain(scene, ground, folder, log)
+            world = terrain(scene, ground, log)
         except Exception as failure:
             world = watch.skipped("terrain", failure)
         watch.lap("terrain")

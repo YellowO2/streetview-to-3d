@@ -143,11 +143,10 @@ def scene_points(sc, every=SCENE_EVERY):
     return np.concatenate(pts), np.concatenate(cols)
 
 
-def terrain(sc, scene_ground=None, cache_dir=None, log=print):
+def terrain(sc, scene_ground=None, log=print):
     """The World around the placed (and filled) scene sc, its file names set on sc, or None
-    without a placed camera. scene_ground: the fill's seams.SceneGround (None: none); cache_dir:
-    where map answers are kept for another run (None: not kept)."""
-    world = _terrain(sc, scene_ground or seams.SceneGround.none(), cache_dir, log)
+    without a placed camera. scene_ground: the fill's seams.SceneGround (None: none)."""
+    world = _terrain(sc, scene_ground or seams.SceneGround.none(), log)
     if world is not None:
         for field, name in (("land", LAND_FILENAME), ("roads", ROADS_FILENAME), ("terrain", FILENAME),
                             ("water", water.FILENAME), ("life", life.FILENAME),
@@ -157,8 +156,8 @@ def terrain(sc, scene_ground=None, cache_dir=None, log=print):
     return world
 
 
-def _terrain(sc, scene_ground, scene_dir, log):
-    """terrain, failing loudly; scene_dir: the cache folder."""
+def _terrain(sc, scene_ground, log):
+    """terrain, failing loudly."""
     from scipy.spatial import cKDTree
     lat0, lon0 = sc.origin
     m_per_lon = M_PER_LAT * math.cos(math.radians(lat0))
@@ -179,7 +178,7 @@ def _terrain(sc, scene_ground, scene_dir, log):
                         for n in known]).reshape(-1, 2)
     own_el = np.array([n.pano.elevation for n in known])
     try:
-        elements = osm.fetch(lat0, lon0, OSM_M, ROADS_M, M_PER_LAT, m_per_lon, scene_dir,
+        elements = osm.fetch(lat0, lon0, OSM_M, ROADS_M, M_PER_LAT, m_per_lon,
                              water_m=OSM_M, cams=to_ll(cam_xz), log=log)
     except (OSError, ValueError) as e:
         log(f"terrain: no OpenStreetMap ({e!r})")
@@ -210,7 +209,7 @@ def _terrain(sc, scene_ground, scene_dir, log):
     jrc = water.jrc(to_ll, heights)
     wet = water.Water(RADIUS_M, to_ll, heights, shift, (anchors, own_el), jrc,
                       osm=(water.outline(elements, to_xy, OSM_M,
-                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1), scene_dir, log=log), jrc),
+                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1), log=log), jrc),
                            OSM_M) if elements else None)
 
     # the scene always wins: the map only around it, faded in at its edge

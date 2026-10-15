@@ -4,6 +4,7 @@ import urllib.error
 
 import pytest
 
+from streetview_to_3d.common import paths
 from streetview_to_3d.postprocess.world import openfreemap, osm
 
 
@@ -62,5 +63,17 @@ def test_without_overpass_the_tiles_stand_in_and_are_not_kept(monkeypatch, tmp_p
     tiles = [{"type": "way", "id": -1, "tags": {"building": "yes"}, "geometry": []}]
     monkeypatch.setattr(osm, "_ask", busy)
     monkeypatch.setattr(openfreemap, "elements", lambda *a, **k: tiles)
-    assert osm.fetch(0, 0, 800, 700, 111320, 111320, str(tmp_path)) == tiles
-    assert not (tmp_path / osm.CACHE).exists()
+    monkeypatch.setattr(paths, "DATA_DIR", str(tmp_path))
+    assert osm.fetch(0, 0, 800, 700, 111320, 111320) == tiles
+    assert not (tmp_path / "map_cache").exists()
+
+
+def test_an_answer_is_kept_for_any_later_run_asking_the_same(monkeypatch, tmp_path):
+    asked = []
+    monkeypatch.setattr(osm, "_ask", lambda query, **kw: asked.append(query) or {"elements": [{"id": 1}]})
+    monkeypatch.setattr(paths, "DATA_DIR", str(tmp_path))
+    first = osm.fetch(0, 0, 800, 700, 111320, 111320)
+    assert osm.fetch(0, 0, 800, 700, 111320, 111320) == first == [{"id": 1}]
+    assert len(asked) == 1
+    osm.fetch(1, 1, 800, 700, 111320, 111320)
+    assert len(asked) == 2 and len(list((tmp_path / "map_cache").iterdir())) == 2

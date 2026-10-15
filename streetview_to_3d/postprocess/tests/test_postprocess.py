@@ -14,15 +14,15 @@ def _stages(monkeypatch, done, fill=None, terrain=None):
     for name in ("place", "drop_blobs", "drop_sheets", "photos"):
         monkeypatch.setattr(main, name, stage(name))
     monkeypatch.setattr(main, "fill", fill or (lambda scene, log: (done.append("fill") or scene, "ground")))
-    monkeypatch.setattr(main, "terrain", terrain or (lambda scene, ground, folder, log: ("world", ground, folder)))
+    monkeypatch.setattr(main, "terrain", terrain or (lambda scene, ground, log: ("world", ground)))
 
 
 def test_stages_run_in_order_and_settings_leave_out_their_part(monkeypatch):
     done = []
     _stages(monkeypatch, done)
-    scene, ground, world = main.postprocess(SimpleNamespace(), Settings(), "run", log=lambda m: None)
+    scene, ground, world = main.postprocess(SimpleNamespace(), Settings(), log=lambda m: None)
     assert done == ["place", "drop_blobs", "drop_sheets", "photos", "fill"]
-    assert ground == "ground" and world == ("world", "ground", "run")
+    assert ground == "ground" and world == ("world", "ground")
     done.clear()
     main.postprocess(SimpleNamespace(), Settings(clean=False), log=lambda m: None)
     assert "drop_sheets" not in done

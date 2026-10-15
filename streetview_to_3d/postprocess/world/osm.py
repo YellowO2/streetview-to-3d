@@ -1,6 +1,7 @@
 """OpenStreetMap around the scene from Overpass (buildings, roads, street objects, water),
 retried across mirrors, OpenFreeMap's tiles standing in on failure, cached beside the scene.
 Credit "(c) OpenStreetMap contributors"."""
+import hashlib
 import json
 import math
 import os
@@ -19,7 +20,6 @@ FULL_M = 250.0          # everything this near the cameras
 FAR_BUILDING_M = 80.0   # past FULL_M, only buildings with at least this perimeter
 FAR_ROADS = "^(motorway|trunk|primary|secondary|tertiary)(_link)?$"   # past FULL_M, only these roads
 USER_AGENT = "streetview-to-3d (https://github.com/YellowO2/streetview-to-3d)"
-CACHE = "osm.json"
 WATER_WAYS = ('["natural"="water"]', '["waterway"="riverbank"]', '["natural"="coastline"]',
               '["landuse"~"^(reservoir|basin)$"]')
 WATER_RELATIONS = ('["natural"="water"]', '["waterway"="riverbank"]')
@@ -38,9 +38,15 @@ def building_kind(tags):
     return tags.get("building", tags.get("building:part", "yes"))
 
 
+def _cache_path(query):
+    """Where the answer to query is kept: one file per query, shared by every run."""
+    from streetview_to_3d.common.paths import DATA_DIR
+    return os.path.join(DATA_DIR, "map_cache", hashlib.sha1(query.encode()).hexdigest()[:20] + ".json")
+
+
 def _cached(path, query, key):
     """The answer kept at path for query, or None."""
-    if path and os.path.exists(path):
+    if os.path.exists(path):
         with open(path) as f:
             kept = json.load(f)
         if isinstance(kept, dict) and kept.get("query") == query:
@@ -49,17 +55,20 @@ def _cached(path, query, key):
 
 
 def _keep(path, query, key, answer):
-    if path:
-        with open(path, "w") as f:
-            json.dump({"query": query, key: answer}, f)
+    """Keep answer at path, written whole or not at all, as runs may read it at once."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    partial = f"{path}.{os.getpid()}.part"
+    with open(partial, "w") as f:
+        json.dump({"query": query, key: answer}, f)
+    os.replace(partial, path)
 
 
-def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None, water_m=0, cams=None,
+def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, water_m=0, cams=None,
           log=print):
     """Overpass elements (with geometry) around the cameras' box (cams: (lats, lons), else the centre).
 
     Everything within FULL_M; big buildings to buildings_m, main roads to
-    roads_m, water outlines to water_m. Cached in scene_dir. If Overpass
+    roads_m, water outlines to water_m. Cached across runs (_cache_path). If Overpass
     fails, OpenFreeMap's tiles (not cached); if both fail, Overpass's error."""
     box = lambda r: (f"{lat0 - r / m_per_lat},{lon0 - r / m_per_lon},"
                      f"{lat0 + r / m_per_lat},{lon0 + r / m_per_lon}")
@@ -81,7 +90,7 @@ def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, scene_dir=None
              f'node["highway"~"^(crossing|traffic_signals|street_lamp)$"]({near});'
              f'node["amenity"~"^(bench|waste_basket)$"]({near});'
              f'{water_ways});out geom;{water_members}')
-    cache = scene_dir and os.path.join(scene_dir, CACHE)
+    cache = _cache_path(query)
     kept = _cached(cache, query, "elements")
     if kept is not None:
         return kept
@@ -145,12 +154,11 @@ def is_water(e):
     return not any(k in tags for k in ("building", "building:part", "highway"))
 
 
-WATER_AT_CACHE = "osm_water_at.json"
 
 
-def water_at(latlon, scene_dir=None, log=print):
+def water_at(latlon, log=print):
     """Whether each (lat, lon) lies in OSM water: OpenFreeMap's areas, else one
-    Overpass request (lakes and rivers, not the sea), cached in scene_dir."""
+    Overpass request (lakes and rivers, not the sea), cached across runs (_cache_path)."""
     if not len(latlon):
         return []
     from streetview_to_3d.postprocess.world import openfreemap
@@ -162,7 +170,7 @@ def water_at(latlon, scene_dir=None, log=print):
     query = "[out:json][timeout:60];" + "".join(
         f'is_in({lat:.7f},{lon:.7f})->.a;({areas});make p i="{i}",ids=set(id());out;'
         for i, (lat, lon) in enumerate(latlon))
-    cache = scene_dir and os.path.join(scene_dir, WATER_AT_CACHE)
+    cache = _cache_path(query)
     kept = _cached(cache, query, "water")
     if kept is not None:
         return kept

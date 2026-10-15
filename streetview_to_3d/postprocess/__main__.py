@@ -19,8 +19,8 @@ def run(run_dir, log=print, merge_ply=None, fill=True, clean=True):
     """postprocess on the scene saved in run_dir, saved back there; merge_ply: also write
     one combined world-frame .ply there, for inspection."""
     run_dir = os.path.expanduser(run_dir)
-    scene, ground, world = postprocess(load(run_dir), Settings(fill=fill, clean=clean), run_dir, log)
-    save(scene, ground, world, run_dir)
+    scene, ground, world = postprocess(load(run_dir), Settings(fill=fill, clean=clean), log)
+    save(scene, ground, world, run_dir, log)
     return merged(scene, os.path.expanduser(merge_ply), log) if merge_ply else None
 
 
