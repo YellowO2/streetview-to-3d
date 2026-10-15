@@ -46,30 +46,31 @@ cd streetview_to_3d/visualise && npm install && npm test
 ## Layout
 
 ```
-streetview_to_3d/   the engine
-  main.py       a prepared corridor → reconstruct → postprocess → save (the "Reconstruct" button);
+streetview_to_3d/   the engine: two machines side by side, one per operation, and what they share
+  panos/        1. prepare (the "Prepare" button), no GPU: main.py → fetch_corridor_nodes →
+                   date_graphs → downloaded; tools/ dates, corridor_points, the pano lookups
+  build/        2. build (the "Reconstruct" button): main.py → reconstruct → postprocess → save;
                    it makes the models and hands them in
-  tools/        helpers the parts use inside themselves: paths (where data lives, new_run_dir),
-                   geo, ply, run_async, pano_mask, on_gpu (the one way to a GPU), DisjointSet,
-                   streetview_fetch/ (lookups and downloads); deeper tools/ folders hold their
-                   own subject's
-  types/        Scene (Node, Pano, Edge, Cloud)
-  models/       DepthModel (DA3), Segmenter (the masker); handed to the steps that run them;
+    models/       DepthModel (DA3), Segmenter (the masker); built at startup on a Space;
                    python -m scripts.draw_mask draws the masker on one pano
-  panos/        1. which panoramas: main.py → fetch_corridor_nodes → date_graphs → downloaded
-                   (the "Prepare" button); tools/ dates, corridor_points, the pano lookups
-  reconstruct/  2. GPU: main.py → open_scene → PanoDepth → walk (one GPU window) → pieces → assemble
-  postprocess/  3. main.py → place, clean/, photos, fill/ (main.py), world/ (main.py); tools/ paint
+    reconstruct/  GPU: main.py → open_scene → PanoDepth → walk (one GPU window) → pieces → assemble
+    tools/        pano_mask (what the masker drops), for reconstruct and postprocess
+    postprocess/  CPU: main.py → place, clean/, photos, fill/ (main.py), world/ (main.py); tools/ paint
                    and ground_maths;
-                   python -m streetview_to_3d.postprocess.main --dir <run> [--google] re-runs it on a saved run
-    world/      the map round the scene: loaders first (OpenStreetMap, HeightMap, elevations_around,
+                   python -m streetview_to_3d.build.postprocess.main --dir <run> [--google] re-runs it on a saved run
+      world/      the map round the scene: loaders first (OpenStreetMap, HeightMap, elevations_around,
                    WaterMap, Satellite, pano_views, driving_side), then Elevation, water_outline,
                    Water, roads/, outlines/, land/, land_colours, buildings/, car_roads, life,
                    world_files, scene_files; with Settings.google, google_points and google/
                    (the Google 3D Tiles merge); tools/ seams, osm_roads, osm_tags, styles, geometry...
+  tools/        helpers the parts use inside themselves: paths (where data lives, new_run_dir),
+                   geo, ply, run_async, on_gpu (the one way to a GPU), DisjointSet,
+                   streetview_fetch/ (lookups and downloads); deeper tools/ folders hold their
+                   own subject's
+  types/        Scene (Node, Pano, Edge, Cloud)
   visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/;
                    python -m scripts.write_viewer rebuilds viewer.html
-main.py   the whole app: the UI, handed the engine's two jobs (panos to prepare, streetview_to_3d to build)
+main.py   the whole app: the UI, handed the engine's two operations (panos to prepare, build to build)
 ui/     the Gradio page; each control checks what it is given, then runs its job
   main.py       the page: map_selection → page_controls → prepare_button → reconstruct_button → pano_api
   prepare_corridor/  button 1's job: the engine's panos on the traced Route
