@@ -70,10 +70,13 @@ streetview_to_3d/   the engine
   visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/;
                    python -m scripts.write_viewer rebuilds viewer.html
 main.py   the whole app: the UI, handed the engine's two jobs (panos to prepare, streetview_to_3d to build)
-ui/     the Gradio page
+ui/     the Gradio page; each control checks what it is given, then runs its job
   main.py       the page: map_selection → page_controls → prepare_button → reconstruct_button → pano_api
-  map_selection/  the map: main.py → map_widgets, then location_box (nearby_nodes), expand_button
-                   and map_clicks (expand_area), radius_box, clear_button; tools/ map_view...
+  prepare_corridor/  button 1's job: the engine's panos on the traced Route
+  build_scene/  button 2's job: RunChoices → Settings → the engine's build → the scene shown
+  map_selection/  the map: main.py → map_widgets, then location_box (load_area), expand_button
+                   (expand_selection), map_clicks (redraw_area for drags), radius_box,
+                   clear_button; tools/ map_view...
   pano_api      the masker and DA3 on one pano, API only
   tools/        page (file_url, iframe), map_state, viewer, gallery/ (sharing: publish uploads
                    to the public gallery, index.html shows it)

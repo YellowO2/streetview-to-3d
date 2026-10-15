@@ -17,7 +17,7 @@ def page_controls():
         effort = gr.Dropdown(list(EFFORT_SECONDS_PER_SPOT), value=DEFAULT_EFFORT, label="Effort",
                              show_label=False, container=False, scale=0, min_width=130)
 
-    # hidden per-run overrides, settable over the API (see reconstruct_button.py)
+    # hidden per-run overrides (see RunChoices.py)
     overrides = [
         gr.Slider(50, 100, value=75, step=5, visible=False),           # keep_pct
         gr.Number(value=0, precision=0, minimum=0, visible=False),     # gpu_seconds

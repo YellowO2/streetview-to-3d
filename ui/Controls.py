@@ -7,8 +7,8 @@ import gradio as gr
 @dataclass
 class Controls:
     """prepare and reconstruct: buttons 1 and 2; effort: how hard to try (the GPU window
-    per spot); overrides: the hidden per-run settings the API may set, in
-    reconstruct_button's order; share: whether to publish to the gallery; status: what
+    per spot); overrides: the hidden per-run settings, in RunChoices'
+    order; share: whether to publish to the gallery; status: what
     the last click says; download: the scene's zip, once there is one; viewer: the scene."""
     prepare: gr.Button
     reconstruct: gr.Button
