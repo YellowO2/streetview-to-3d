@@ -103,8 +103,9 @@ class Segmenter:
 
     def pano_labels(self, path, saved=None):
         """A whole pano's class map (ids as in CLASSES), kept in saved (default beside it,
-        named by the model) for whatever needs it later -- the scene carries a copy
-        (save.py). A saved one is read, not redone: the walk runs DA3 on one pano many times."""
+        named by the model) as this segmenter's own cache: the walk runs DA3 on one pano many
+        times, and a saved one is read, not redone. Nothing else reads it; the scene carries
+        the class maps on (Node.labels)."""
         saved = saved or f"{path}.{(self.model_id or MODEL_ID).split('/')[-1]}+water.labels.png"
         if os.path.exists(saved):
             return np.asarray(Image.open(saved))

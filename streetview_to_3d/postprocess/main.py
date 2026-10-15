@@ -3,7 +3,6 @@
 The fill or the world failing leaves the scene as it was before them: the placed scene is
 still a result, and a map download failing costs only the land around.
 """
-from streetview_to_3d.models.Segmenter import Segmenter
 from streetview_to_3d.postprocess.Settings import Settings
 from streetview_to_3d.postprocess.Stopwatch import Stopwatch
 from streetview_to_3d.postprocess.clean.drop_blobs import drop_blobs
@@ -14,10 +13,10 @@ from streetview_to_3d.postprocess.place import place
 from streetview_to_3d.postprocess.world.main import world as lay_world
 
 
-def postprocess(scene, settings: Settings, labeller: Segmenter):
+def postprocess(scene, settings: Settings):
     """(scene, ground, world): the scene placed and finished, the fill's SceneGround and
-    the World around it (None where not made). labeller: what labels the panos' photos
-    the walk left unlabelled, off the GPU."""
+    the World around it (None where not made); each node's photo carries the class map the
+    walk made."""
     watch = Stopwatch()
     scene = place(scene)
     watch.lap("placement")
@@ -29,7 +28,7 @@ def postprocess(scene, settings: Settings, labeller: Segmenter):
             scene = drop_sheets(scene)
             watch.lap("loose sheets")
         try:
-            scene = photos(scene, labeller)
+            scene = photos(scene)
             scene, ground = fill(scene)
         except Exception as failure:
             watch.skipped("fill", failure)
@@ -72,7 +71,7 @@ if __name__ == "__main__":
     world_settings = WorldSettings(google=os.path.join(run_dir, "google.ply") if args.google else None,
                                    bend=not args.as_is)
     finished, ground, laid = postprocess(load(run_dir), Settings(fill=not args.no_fill, clean=not args.no_clean,
-                                                                 world=world_settings), Segmenter(device="cpu"))
+                                                                 world=world_settings))
     save(finished, ground, laid, run_dir)
     if args.merge:
         # every placed node's points, in the world, in one .ply, for inspection

@@ -22,14 +22,14 @@ def _stages(monkeypatch, done, fill=None, world=None):
 def test_stages_run_in_order_and_settings_leave_out_their_part(monkeypatch):
     done = []
     _stages(monkeypatch, done)
-    scene, ground, world = main.postprocess(SimpleNamespace(), Settings(), None)
+    scene, ground, world = main.postprocess(SimpleNamespace(), Settings())
     assert done == ["place", "drop_blobs", "drop_sheets", "photos", "fill"]
     assert ground == "ground" and world == ("world", "ground")
     done.clear()
-    main.postprocess(SimpleNamespace(), Settings(clean=False), None)
+    main.postprocess(SimpleNamespace(), Settings(clean=False))
     assert "drop_sheets" not in done
     done.clear()
-    assert main.postprocess(SimpleNamespace(), Settings(fill=False), None)[1:] == (None, None)
+    assert main.postprocess(SimpleNamespace(), Settings(fill=False))[1:] == (None, None)
     assert done == ["place"]
 
 
@@ -40,7 +40,7 @@ def test_a_failing_fill_or_world_is_skipped_and_said_so(monkeypatch, caplog):
     def broken(*a):
         raise ValueError("no")
     _stages(monkeypatch, done, fill=broken, world=broken)
-    scene, ground, world = main.postprocess(SimpleNamespace(), Settings(), None)
+    scene, ground, world = main.postprocess(SimpleNamespace(), Settings())
     lines = caplog.messages
     warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert ground is None and world is None
@@ -57,6 +57,6 @@ def test_the_world_gets_its_settings_and_names_its_files_on_the_scene(monkeypatc
         return SimpleNamespace(named=True), "world"
     _stages(monkeypatch, [], world=world)
     google = WorldSettings(google="google.ply", bend=False)
-    scene, ground, laid = main.postprocess(SimpleNamespace(), Settings(world=google), None)
+    scene, ground, laid = main.postprocess(SimpleNamespace(), Settings(world=google))
     assert asked == [google] and scene.named and laid == "world"
     assert Settings().world == WorldSettings() and WorldSettings().google is None

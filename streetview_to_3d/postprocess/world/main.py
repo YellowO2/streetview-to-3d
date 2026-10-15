@@ -72,7 +72,6 @@ if __name__ == "__main__":
     import sys
 
     from streetview_to_3d.load import load
-    from streetview_to_3d.models.Segmenter import Segmenter
     from streetview_to_3d.postprocess.SceneGround import SceneGround
     from streetview_to_3d.postprocess.photos import photos
     from streetview_to_3d.save import save
@@ -85,6 +84,6 @@ if __name__ == "__main__":
     folder = folders[0]
     world_settings = Settings(google=os.path.join(folder, "google.ply") if "--google" in sys.argv else None,
                               bend="--as-is" not in sys.argv)
-    scene, ground = photos(load(folder), Segmenter(device="cpu")), SceneGround.load(folder)
+    scene, ground = photos(load(folder)), SceneGround.load(folder)
     scene, laid = world(scene, ground, world_settings)
     save(scene, ground, laid, folder)

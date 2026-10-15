@@ -6,6 +6,7 @@ import os
 from PIL import Image
 
 from streetview_to_3d.tools.paths import new_run_dir
+from streetview_to_3d.types.Scene import LABELS
 from streetview_to_3d.tools.ply import write_mesh, write_ply
 
 logger = logging.getLogger(__name__)
@@ -42,4 +43,4 @@ def save(scene, ground, world, folder=None):
 
 def _labels_path(scene_dir, pano_id):
     """Where a scene keeps a pano's class map."""
-    return os.path.join(scene_dir, "labels", f"{pano_id}.png")
+    return os.path.join(scene_dir, LABELS, f"{pano_id}.png")

@@ -16,7 +16,6 @@ def streetview_to_3d(corridor, settings: Settings = Settings()):
     depth_model = DepthModel(settings.walk.model)
     masker = Segmenter(settings.walk.masker)
     scene = reconstruct(corridor, settings.walk, depth_model, masker)
-    labeller = Segmenter(device="cpu")
-    scene, ground, world = postprocess(scene, settings.post, labeller)
+    scene, ground, world = postprocess(scene, settings.post)
     folder = save(scene, ground, world)
     return folder

@@ -39,7 +39,6 @@ if __name__ == "__main__":
     import sys
 
     from streetview_to_3d.load import load
-    from streetview_to_3d.models.Segmenter import Segmenter
     from streetview_to_3d.postprocess.photos import photos
     from streetview_to_3d.save import save
 
@@ -48,5 +47,5 @@ if __name__ == "__main__":
         sys.exit("usage: python -m streetview_to_3d.postprocess.fill.main SCENE_DIR [OUT_DIR]")
     source = sys.argv[1]
     target = sys.argv[2] if len(sys.argv) == 3 else source
-    filled, ground = fill(photos(load(source), Segmenter(device="cpu")))
+    filled, ground = fill(photos(load(source)))
     save(filled, ground, None, target)
