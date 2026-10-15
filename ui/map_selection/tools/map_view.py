@@ -6,6 +6,7 @@ it are drawn: the only ones worth clicking next.
 """
 import json
 
+from ui.map_selection.MapPage import MapPage
 from ui.tools.map_state import corridor_edges
 from ui.tools.page import iframe as _iframe
 from streetview_to_3d.panos.tools.corridor_points import corridor_points
@@ -214,6 +215,11 @@ SPOTS.forEach(function(p) {{
 
 # The CPU time around the window (downloads, then postprocess): mostly fixed, a little per spot.
 OTHER_BASE_S, OTHER_SECONDS_PER_SPOT = 90.0, 4.0
+
+
+def map_page(state):
+    """The map, its summary and the state they show."""
+    return MapPage(map_html(state), summary_markdown(state), state)
 
 
 def map_html(state, zoom=19):

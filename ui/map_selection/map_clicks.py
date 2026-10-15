@@ -2,66 +2,63 @@
 
 The map is a sandboxed iframe, so a click is relayed: the iframe posts a message, a listener
 in the page head (map_widgets.BRIDGE_HEAD_SCRIPT) writes it into a hidden textbox, and its
-.change() runs _handle_bridge_message.
+.change() runs two chains: one for clicks on a node, one for drags of the area's edges.
 """
 import json
 from functools import partial, update_wrapper
 
+import gradio as gr
+
+from ui.map_selection.Drag import Drag
 from ui.map_selection.MapWidgets import MapWidgets
-from ui.map_selection.tools.map_view import AREA_MESSAGE_TYPE, map_html, summary_markdown
+from ui.map_selection.tools.map_view import AREA_MESSAGE_TYPE, map_page
 from ui.map_selection.tools.real_links import with_real_links
 
 
-def _handle_area_drag(payload, state, expand):
-    """The expanded area's edges dragged: everything inside the new shape,
-    walked again as expand_area walks -- from what it has already looked
-    up, so pulling an edge in fetches nothing and pushing it out only what
-    is new. The whole of it selected, as after expanding."""
-    area = payload.get("area") or []
-    if len(area) < 3 or state.get("lat") is None:
-        return state
-    nodes, edges = expand(state["lat"], state["lon"], area=area)
-    view = payload.get("view")
-    return {**state, "nodes": nodes, "edges": edges, "selected": [n["key"] for n in nodes],
-            "selected_edges": list(edges), "area": area, "radius_m": None,
-            "view": (view["lat"], view["lon"], view["zoom"]) if view else state.get("view")}
-
-
-def _handle_bridge_message(payload_str, state, *, expand):
-    """A map click or area drag, relayed from the iframe (see BRIDGE_HEAD_SCRIPT)."""
-    if not payload_str or state.get("lat") is None:
-        return map_html(state), summary_markdown(state), state, ""
-
+def _message(payload_str, state):
+    """The relayed message, once an area is loaded; anything else stops here, quietly."""
     try:
-        payload = json.loads(payload_str)
+        payload = json.loads(payload_str) if payload_str and state.get("lat") is not None else None
     except (TypeError, ValueError):
-        return map_html(state), summary_markdown(state), state, ""
+        payload = None
+    if not payload:
+        raise gr.Error("Nothing to do.", visible=False, print_exception=False)
+    return payload
 
-    if payload.get("type") == AREA_MESSAGE_TYPE:
-        state = _handle_area_drag(payload, state, expand)
-        return map_html(state), summary_markdown(state), state, ""
 
-    key = payload.get("key")
-    if not key:
-        return map_html(state), summary_markdown(state), state, ""
+def _clicked(payload_str, state):
+    """The clicked node's key and the map's view, if this message is a click."""
+    payload = _message(payload_str, state)
+    if payload.get("type") == AREA_MESSAGE_TYPE or not payload.get("key"):
+        raise gr.Error("Not a click.", visible=False, print_exception=False)
+    return payload["key"], payload.get("view")
 
+
+def _dragged(payload_str, state):
+    """The Drag, if this message is the area's edges dragged into a shape."""
+    payload = _message(payload_str, state)
+    area = payload.get("area") or []
+    if payload.get("type") != AREA_MESSAGE_TYPE or len(area) < 3:
+        raise gr.Error("Not a drag.", visible=False, print_exception=False)
+    return Drag(area, payload.get("view"), (state["lat"], state["lon"]))
+
+
+def _follow_click(click, state):
+    """A click adds only real links to the selection, never guessed from proximity; every
+    real link to an already selected node is recorded, so branches and loops just work."""
+    key, view = click
     # refresh the clicked node's real links before validating the click
     state = with_real_links(state, key)
-
-    # A click adds only real links to the selection, never guessed from proximity; every
-    # real link to an already selected node is recorded, so branches and loops just work.
     selected = list(state["selected"])
     selected_set = set(selected)
     selected_edges = list(state.get("selected_edges", []))
     confirmed = {frozenset(e) for e in selected_edges}
     edge_set = {frozenset(e) for e in state["edges"]}
 
-    is_new = key not in selected_set
-    if is_new:
-        has_real_link = any(frozenset((s, key)) in edge_set for s in selected_set)
-        if selected_set and not has_real_link:
+    if key not in selected_set:
+        if selected_set and not any(frozenset((s, key)) in edge_set for s in selected_set):
             # not linked to the selection: a stale click after a rebuild
-            return map_html(state), summary_markdown(state), state, ""
+            return map_page(state)
         selected.append(key)
         selected_set.add(key)
 
@@ -74,18 +71,24 @@ def _handle_bridge_message(payload_str, state, *, expand):
             confirmed.add(fe)
 
     # reopen the rebuilt map at the pan/zoom it was clicked at
-    view = payload.get("view")
     new_view = (view["lat"], view["lon"], view["zoom"]) if view else state.get("view")
-
-    state = {**state, "selected": selected, "selected_edges": selected_edges, "view": new_view}
-    return map_html(state), summary_markdown(state), state, ""
+    return map_page({**state, "selected": selected, "selected_edges": selected_edges, "view": new_view})
 
 
-def map_clicks(widgets: MapWidgets, expand):
-    """Wire the map's relayed clicks and drags: expand (expand_area) walks a dragged area."""
+def map_clicks(widgets: MapWidgets, job, expand):
+    """Wire the map's relayed clicks and drags: a click extends the selection; a drag runs
+    job (redraw_area), with expand (expand_area) walking the dragged area."""
+    shown = [widgets.map_view, widgets.selection_view, widgets.state]
+    click = gr.State(None)
     widgets.bridge.change(
-        fn=update_wrapper(partial(_handle_bridge_message, expand=expand), _handle_bridge_message),
-        inputs=[widgets.bridge, widgets.state],
-        outputs=[widgets.map_view, widgets.selection_view, widgets.state, widgets.bridge],
-        api_name="handle_bridge_message",
+        fn=_clicked, inputs=[widgets.bridge, widgets.state], outputs=[click], api_visibility="private",
+    ).success(
+        fn=_follow_click, inputs=[click, widgets.state], outputs=shown, api_name="handle_bridge_message",
+    )
+    drag = gr.State(None)
+    widgets.bridge.change(
+        fn=_dragged, inputs=[widgets.bridge, widgets.state], outputs=[drag], api_visibility="private",
+    ).success(
+        fn=update_wrapper(partial(job, expand=expand), job), inputs=[drag, widgets.state], outputs=shown,
+        api_visibility="private",
     )

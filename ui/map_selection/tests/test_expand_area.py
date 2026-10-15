@@ -3,7 +3,7 @@ import types
 import numpy as np
 
 import ui.map_selection.expand_area as area_walk
-from ui.map_selection.expand_button import _circle as circle
+from ui.map_selection.expand_selection.selection_page import _circle as circle
 
 STEP = 10 / 111320.0   # a pano every 10 m north along one street
 
