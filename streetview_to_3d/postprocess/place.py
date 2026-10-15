@@ -12,7 +12,7 @@ import sys
 import numpy as np
 
 from streetview_to_3d.models.da3 import DA3_UNITS_TO_METRES
-from streetview_to_3d.common.geo import latlon_to_local_m
+from streetview_to_3d.tools.geo import latlon_to_local_m
 
 logger = logging.getLogger(__name__)
 

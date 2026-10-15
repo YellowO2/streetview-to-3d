@@ -48,7 +48,7 @@ def test_lower_neighbours_cut_is_reached_by_the_higher_ones_walls():
 
 
 def test_facades_follow_storeys_and_building_kind_and_export_layout(tmp_path):
-    from streetview_to_3d.postprocess.ply_io import write_mesh, read_ply
+    from streetview_to_3d.tools.ply import read_ply, write_mesh
     house = _box(0, 0)
     house[3].tags = {"building": "house", "building:levels": "3"}
     office = _box(20, 0)
@@ -148,7 +148,7 @@ def test_only_buildings_da3_reaches_take_the_panos_colour():
 
 
 def test_points_know_their_facing_stroke_and_kind_their_windows_glass(tmp_path):
-    from streetview_to_3d.postprocess.ply_io import write_ply
+    from streetview_to_3d.tools.ply import write_ply
     house = _box(0, 0)
     ground = lambda xy: np.zeros(len(xy))
     blocks = buildings.points([(*house, {})], lambda xy: np.full(len(xy), .4), ground,

@@ -2,7 +2,7 @@
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-from streetview_to_3d.postprocess.blend import blend
+from streetview_to_3d.postprocess.tools.ground_maths import blend
 
 
 class GroundMap:

@@ -10,7 +10,7 @@ import urllib.request
 import numpy as np
 from PIL import Image
 
-from streetview_to_3d.common.new_run_dir import DATA_DIR
+from streetview_to_3d.tools.paths import DATA_DIR
 
 TILE_THREADS = 8
 TILES_DIR = os.path.join(DATA_DIR, "tiles")     # downloaded tiles, kept forever

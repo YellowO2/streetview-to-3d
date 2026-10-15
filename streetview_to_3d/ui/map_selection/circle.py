@@ -1,7 +1,7 @@
 """Draw an area round a place as a polygon whose corners can be dragged."""
 import numpy as np
 
-from streetview_to_3d.common.geo import local_m_to_latlon
+from streetview_to_3d.tools.geo import local_m_to_latlon
 
 
 def circle(lat, lon, radius_m, corners=8):

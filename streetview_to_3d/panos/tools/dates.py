@@ -1,10 +1,50 @@
-"""Check that a capture date's dots reach from the start to a goal."""
+"""Rank capture dates, and check what one date covers (no GPU).
+
+rank_dates orders dates by the corridor each newly covers (date_recency_key breaks ties),
+cap_bucket_for_date keeps a dot's closest panos of one date, date_connects checks a date's
+dots reach from the start to a goal.
+"""
 from streetview_to_3d.common.DisjointSet import DisjointSet
-from streetview_to_3d.common.geo import haversine_m
+from streetview_to_3d.tools.geo import haversine_m
+
+# Per dot, per date, how many of the closest panos to keep (and so download and rate):
+# enough for a fallback when the closest is bad; more is the same spot again.
+TOP_PANOS_PER_DOT = 3
 
 # A dot this close to the start is a start; one this close to a goal reaches it.
 START_ZONE_M = 5.0
 GOAL_TOLERANCE_M = 15.0
+
+
+def date_recency_key(date_str):
+    """Sort key for fetch_pano_by_id's "YYYY-MM[-DD]" dates: "unknown date" sorts oldest."""
+    return "" if date_str == "unknown date" else date_str
+
+
+def rank_dates(buckets: dict[int, list[dict]]) -> list[str]:
+    """Every date in any bucket, best first: most dots no earlier date covers, then most
+    dots, then newest. New dots first, so an area's walked paths get a date even when
+    its roads were driven many more times. Returns all dates; callers stop once enough pass.
+    """
+    covered_by_date: dict[str, set[int]] = {}
+    for dot_index, bucket in buckets.items():
+        for n in bucket:
+            covered_by_date.setdefault(n["date"], set()).add(dot_index)
+
+    ranked, covered = [], set()
+    left = dict(covered_by_date)
+    while left:
+        date = max(left, key=lambda d: (len(left[d] - covered), len(left[d]), date_recency_key(d)))
+        covered |= left.pop(date)
+        ranked.append(date)
+    return ranked
+
+
+def cap_bucket_for_date(bucket, date, dot_lat, dot_lon, top_n):
+    """This dot's own panos of ONE date, closest-first, capped to top_n."""
+    same_date = [n for n in bucket if n["date"] == date]
+    same_date.sort(key=lambda n: haversine_m(dot_lat, dot_lon, n["lat"], n["lon"]))
+    return same_date[:top_n]
 
 
 def _components(adjacency, n):

@@ -5,8 +5,8 @@ import os
 
 from PIL import Image
 
-from streetview_to_3d.common.new_run_dir import new_run_dir
-from streetview_to_3d.postprocess.ply_io import write_mesh, write_ply
+from streetview_to_3d.tools.paths import new_run_dir
+from streetview_to_3d.tools.ply import write_mesh, write_ply
 
 logger = logging.getLogger(__name__)
 

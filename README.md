@@ -48,19 +48,23 @@ cd streetview_to_3d/visualise && npm install && npm test
 ```
 streetview_to_3d/
   main.py       a prepared corridor → reconstruct → postprocess → save (the "Reconstruct" button)
-  common/       Scene (Node, Pano, Edge, Cloud), new_run_dir, geo, corridor_points, TileMap,
-                   occurrence_map, run_async, streetview_fetch/ (lookups and downloads)
+  tools/        helpers the parts use inside themselves: paths (where data lives, new_run_dir),
+                   geo, ply, run_async; deeper tools/ folders hold their own subject's
+  common/       Scene (Node, Pano, Edge, Cloud), corridor_points, TileMap, occurrence_map,
+                   streetview_fetch/ (lookups and downloads)
   models/       da3, on_gpu, segment, pano_labels, pano_mask;
                    python -m streetview_to_3d.models draws the masker on one pano
-  panos/        1. which panoramas: main.py → date_graphs → downloaded (the "Prepare" button)
+  panos/        1. which panoramas: main.py → date_graphs → downloaded (the "Prepare" button);
+                   tools/dates ranks the capture dates
   reconstruct/  2. GPU: main.py → open_scene → walk (run_da3, walk_graph, pieces) → assemble
-  postprocess/  3. main.py → place, clean/, fill/ (main.py), world/ (terrain), and the seam
-                   rules (tint, meet, beneath, toward, spacing_at, unhazed);
+  postprocess/  3. main.py → place, clean/, fill/ (main.py), world/ (terrain); tools/ paint
+                   and ground_maths, world/tools/seams (tint, meet, beneath, toward, spacing_at, unhazed);
                    python -m streetview_to_3d.postprocess --dir <run> re-runs it on a saved run
   visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/;
                    python -m streetview_to_3d.visualise rebuilds viewer.html
   gallery/      5. sharing: upload to the public gallery, the gallery page
-  ui/           Gradio: main_tab, map_selection/ (the map and its candidates), viewer, pano_api
+  ui/           Gradio: main_tab, map_selection/ (the map and its candidates), viewer, pano_api;
+                   tools/ page (file_url, iframe) and map_state
 ```
 
 ## Acknowledgments

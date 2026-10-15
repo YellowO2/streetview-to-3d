@@ -2,7 +2,7 @@
 import numpy as np
 
 from streetview_to_3d.models.segment import LABEL_IDS
-from streetview_to_3d.postprocess.pano_at import pano_at
+from streetview_to_3d.postprocess.tools.paint import pano_at
 
 
 class Camera:

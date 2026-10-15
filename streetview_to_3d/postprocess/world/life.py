@@ -72,7 +72,7 @@ def side(pano_id):
     import aiohttp
     from streetlevel import streetview
     from streetview_to_3d.common.streetview_fetch.browser_session import BROWSER_HEADERS
-    from streetview_to_3d.common.run_async import run_async
+    from streetview_to_3d.tools.run_async import run_async
 
     async def country():
         async with aiohttp.ClientSession(headers=BROWSER_HEADERS) as session:

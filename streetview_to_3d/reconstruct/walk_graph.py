@@ -12,7 +12,7 @@ from collections import deque
 
 import numpy as np
 
-from streetview_to_3d.common.geo import haversine_m
+from streetview_to_3d.tools.geo import haversine_m
 
 logger = logging.getLogger(__name__)
 

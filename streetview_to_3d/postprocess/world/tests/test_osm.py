@@ -4,8 +4,8 @@ import urllib.error
 
 import pytest
 
-from streetview_to_3d.common import new_run_dir as paths
 from streetview_to_3d.postprocess.world import openfreemap, osm
+from streetview_to_3d.tools import paths
 
 
 def _server(monkeypatch, answers):

@@ -33,7 +33,7 @@ const SUNLIT = [1.12, 1.02, 0.86],
 
 // A dab's diameter, of its spacing: what leaves no gaps on a grid jittered by JITTER, allowing for
 // the roughest edge (ROUGH) and smallest swell (SWELL). The one ratio of size to spacing
-// (postprocess/spacing_at.py RATIO).
+// (postprocess/world/tools/seams.py RATIO).
 export const RATIO =
   (Math.SQRT2 * (1 + 2 * JITTER)) / (Math.sqrt(1 - ROUGH) * (1 - SWELL * KNOBS.scatter[0]));
 

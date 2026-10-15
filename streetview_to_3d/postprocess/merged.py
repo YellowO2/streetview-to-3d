@@ -3,7 +3,7 @@ import logging
 
 import numpy as np
 
-from streetview_to_3d.postprocess.ply_io import write_ply
+from streetview_to_3d.tools.ply import write_ply
 
 logger = logging.getLogger(__name__)
 

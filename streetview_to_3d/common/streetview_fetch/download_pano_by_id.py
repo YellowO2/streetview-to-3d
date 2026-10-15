@@ -7,8 +7,8 @@ from aiohttp import TCPConnector
 from PIL import UnidentifiedImageError
 from streetlevel import streetview
 
-from streetview_to_3d.common.new_run_dir import PANOS_DIR
 from streetview_to_3d.common.streetview_fetch.browser_session import browser_session
+from streetview_to_3d.tools.paths import PANOS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ async def download_pano_by_id(pano_id, zoom: int = _DOWNLOAD_ZOOM):
             return None
         img_path = _cache_path(pano.id, zoom)
         if os.path.exists(img_path):
-            os.utime(img_path)  # in use again: keep new_run_dir._remove_older_than off it
+            os.utime(img_path)  # in use again: keep tools/paths.new_run_dir's clean-up off it
         else:
             await _download_panorama_image(pano, img_path, zoom=zoom)
         return img_path

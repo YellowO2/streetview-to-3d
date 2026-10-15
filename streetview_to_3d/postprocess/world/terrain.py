@@ -11,17 +11,11 @@ import sys
 
 import numpy as np
 
+from streetview_to_3d.common.TileMap import TileMap
 from streetview_to_3d.postprocess.SceneGround import CELL_M, SceneGround
 from streetview_to_3d.postprocess.World import World
-from streetview_to_3d.postprocess.beneath import beneath
-from streetview_to_3d.postprocess.meet import meet
-from streetview_to_3d.postprocess.ramp import ramp
-from streetview_to_3d.postprocess.spacing_at import spacing_at
-from streetview_to_3d.postprocess.tint import tint
-from streetview_to_3d.postprocess.toward import toward
-from streetview_to_3d.postprocess.unhazed import unhazed as unhazing
 from streetview_to_3d.postprocess.world import buildings, elevations, life, osm, roads, water
-from streetview_to_3d.common.TileMap import TileMap
+from streetview_to_3d.postprocess.world.tools.seams import beneath, meet, ramp, spacing_at, tint, toward, unhazed as unhazing
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +242,7 @@ def _terrain(sc, scene_ground):
                      or shapely.Polygon(o[0]).area >= MAJOR_M2 or o[1] >= MAJOR_HIGH_M)]
     n_fitted = n_trimmed = 0
     if outlines:
-        from streetview_to_3d.postprocess.normals_from_neighbours import normals_from_neighbours
+        from streetview_to_3d.postprocess.tools.ground_maths import normals_from_neighbours
         scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
         outlines, n_fitted, n_trimmed = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
                                                                roads.coverage(roads.lines(elements, to_xy)))
@@ -483,9 +477,9 @@ def _terrain(sc, scene_ground):
 
 def _panos(sc):
     """(cameras, photos) of the scene's panos; photos[k] is (image, class map, drop mask) or None."""
-    from streetview_to_3d.postprocess.Camera import Camera
-    from streetview_to_3d.postprocess.blurred import blurred
     from streetview_to_3d.models.pano_mask import pano_mask
+    from streetview_to_3d.postprocess.Camera import Camera
+    from streetview_to_3d.postprocess.tools.paint import blurred
     nodes = [nd for nd in sc.placed() if nd.rotation is not None]
     photos = []
     for nd in nodes:
@@ -497,7 +491,7 @@ def _panos(sc):
 def _paint(panos, pts, cols, scene, skip=None):
     """(cols, count): pts within PAINT_M of a camera recoloured from the panos as the fill does
     (postprocess/paint.py), except those marked skip (roofs)."""
-    from streetview_to_3d.postprocess.paint import paint
+    from streetview_to_3d.postprocess.tools.paint import paint
     cams, photos = panos
     if not cams or not len(pts):
         return cols, 0

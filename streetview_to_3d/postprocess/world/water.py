@@ -12,7 +12,7 @@ import numpy as np
 import shapely
 
 from streetview_to_3d.common.occurrence_map import WET, occurrence_map
-from streetview_to_3d.postprocess.ramp import ramp
+from streetview_to_3d.postprocess.world.tools.seams import ramp
 
 FILENAME = "water.json"
 SEA_M = 0.5               # map height at or under this is sea

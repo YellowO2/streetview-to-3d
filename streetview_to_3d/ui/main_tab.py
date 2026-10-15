@@ -18,11 +18,10 @@ from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
 from streetview_to_3d.reconstruct.estimate_gpu_seconds import (
     DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, estimate_gpu_seconds,
 )
-from streetview_to_3d.ui.file_url import file_url
-from streetview_to_3d.ui.map_selection.corridor_edges import corridor_edges
 from streetview_to_3d.ui.map_selection.map_section import map_section
-from streetview_to_3d.ui.map_selection.nodes_by_key import nodes_by_key
 from streetview_to_3d.ui.pano_api import pano_api
+from streetview_to_3d.ui.tools.map_state import corridor_edges, nodes_by_key
+from streetview_to_3d.ui.tools.page import file_url
 from streetview_to_3d.ui.viewer import viewer
 
 logger = logging.getLogger(__name__)

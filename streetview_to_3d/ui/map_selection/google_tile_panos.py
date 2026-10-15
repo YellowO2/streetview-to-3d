@@ -14,9 +14,10 @@ from scipy.spatial import cKDTree
 from streetlevel import streetview
 from streetlevel.geo import wgs84_to_tile_coord
 
-from streetview_to_3d.common.geo import latlon_to_local_m
-from streetview_to_3d.common.run_async import run_async
 from streetview_to_3d.common.streetview_fetch.browser_session import browser_session
+from streetview_to_3d.tools.geo import to_metres
+from streetview_to_3d.tools.run_async import run_async
+from streetview_to_3d.ui.map_selection.tools.street_view import is_official
 
 logger = logging.getLogger(__name__)
 
@@ -43,17 +44,6 @@ def _tile_pixel_to_latlon(tx, ty, px, py, size):
     n = 2 ** _TILE_ZOOM
     x, y = (tx + px / size) / n, (ty + py / size) / n
     return math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y)))), x * 360 - 180
-
-
-def _to_metres(lat0, latlons):
-    """(lat, lon) rows -> flat-earth (north, east) metres, for distances only."""
-    a = np.asarray(latlons, float).reshape(-1, 2)
-    east, north = latlon_to_local_m(a[:, 0], a[:, 1], lat0, 0.0)
-    return np.c_[north, east]
-
-
-def _is_official(p):
-    return p is not None and not (p.source or "").startswith("photos:")
 
 
 def _with_link_positions(panos):
@@ -84,7 +74,7 @@ async def _probe_line_gaps(session, sem, tx, ty, known_panos):
 
     lat0 = _tile_pixel_to_latlon(tx, ty, size / 2, size / 2, size)[0]
     line_ll = [_tile_pixel_to_latlon(tx, ty, x + 0.5, y + 0.5, size) for x, y in zip(xs, ys)]
-    line = _to_metres(lat0, line_ll)
+    line = to_metres(lat0, line_ll)
     known = _with_link_positions(known_panos)
     retired = np.zeros(len(line), bool)
     found = {}
@@ -95,7 +85,7 @@ async def _probe_line_gaps(session, sem, tx, ty, known_panos):
 
     for _ in range(_MAX_PROBE_WAVES):
         if known:
-            dist = cKDTree(_to_metres(lat0, known)).query(line)[0]
+            dist = cKDTree(to_metres(lat0, known)).query(line)[0]
         else:
             dist = np.full(len(line), np.inf)
         gaps = np.nonzero((dist > _GAP_M) & ~retired)[0]
@@ -108,7 +98,7 @@ async def _probe_line_gaps(session, sem, tx, ty, known_panos):
         results = await asyncio.gather(*(probe(i) for i in picks), return_exceptions=True)
         for i, p in zip(picks, results):
             retired[i] = True
-            if isinstance(p, Exception) or not _is_official(p):
+            if isinstance(p, Exception) or not is_official(p):
                 retired |= np.hypot(*(line - line[i]).T) < _GAP_M
                 continue
             found[p.id] = p

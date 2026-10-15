@@ -43,7 +43,7 @@ def test_the_bigger_piece_keeps_a_shared_place_and_nodes_hold_their_thinned_poin
 
 def test_thinned_as_panoramic_da3s_saver_thins(tmp_path):
     from panoramic_da3 import Saver
-    from streetview_to_3d.postprocess.ply_io import read_ply, write_ply
+    from streetview_to_3d.tools.ply import read_ply, write_ply
     rng = np.random.default_rng(1)
     pts = np.repeat(rng.uniform(0, 1, (300, 3)), 3, axis=0) + rng.normal(0, 0.004, (900, 3))
     cols = rng.uniform(0, 1, (900, 3))

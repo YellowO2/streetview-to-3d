@@ -3,7 +3,7 @@
 Used both by the map (to count spots) and by the corridor's pano gathering.
 """
 from streetview_to_3d.common.DisjointSet import DisjointSet
-from streetview_to_3d.common.geo import haversine_m
+from streetview_to_3d.tools.geo import haversine_m
 
 # Selected panos this close collapse into one dot: the same spot captured twice
 # (both directions, a path beside a road). Normal spacing along one path is 8-11 m.

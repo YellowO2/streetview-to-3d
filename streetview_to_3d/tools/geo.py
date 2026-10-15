@@ -1,4 +1,4 @@
-"""Shared geo helpers: distances, flat-earth metres, parsing a location."""
+"""Lat/lon maths: distances, flat-earth metres, parsing a location."""
 import math
 import re
 
@@ -38,3 +38,10 @@ def extract_lat_lon(raw: str):
     if m:
         return float(m.group(1)), float(m.group(2))
     raise ValueError("Use a Google Maps URL with /@lat,lon or paste lat,lon directly.")
+
+
+def to_metres(lat0, latlons):
+    """(lat, lon) rows -> flat-earth (north, east) metres, for distances only."""
+    a = np.asarray(latlons, float).reshape(-1, 2)
+    east, north = latlon_to_local_m(a[:, 0], a[:, 1], lat0, 0.0)
+    return np.c_[north, east]

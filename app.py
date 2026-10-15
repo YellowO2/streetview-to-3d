@@ -7,7 +7,7 @@ for chatty in ("httpx", "httpx2", "numexpr"):   # a line per request Gradio make
     logging.getLogger(chatty).setLevel(logging.WARNING)
 
 # the package first: it imports `spaces` before anything touches CUDA (streetview_to_3d/models/on_gpu.py)
-from streetview_to_3d.common.new_run_dir import DATA_DIR
+from streetview_to_3d.tools.paths import DATA_DIR
 from streetview_to_3d.ui.main_tab import main_tab
 from streetview_to_3d.ui.map_selection.map_section import BRIDGE_HEAD_SCRIPT, BRIDGE_CSS
 

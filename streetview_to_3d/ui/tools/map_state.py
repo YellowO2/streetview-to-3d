@@ -1,5 +1,9 @@
-"""List the map selection's links with each end's place and pano."""
-from streetview_to_3d.ui.map_selection.nodes_by_key import nodes_by_key
+"""Read the map's state: its loaded nodes, and the links selected on it."""
+
+
+def nodes_by_key(state):
+    """{key: node dict} of every node the map state has loaded."""
+    return {n["key"]: n for n in state["nodes"]}
 
 
 def corridor_edges(state):

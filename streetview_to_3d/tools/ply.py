@@ -1,4 +1,4 @@
-"""Reading and writing plain point-cloud .ply files."""
+"""Read and write .ply files: point clouds and meshes."""
 import os
 
 import numpy as np

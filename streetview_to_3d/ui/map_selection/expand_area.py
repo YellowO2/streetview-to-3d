@@ -9,12 +9,13 @@ import numpy as np
 from streetlevel import streetview
 
 from streetview_to_3d.common.Pano import Pano
-from streetview_to_3d.common.geo import haversine_m as _haversine_m, latlon_to_local_m, local_m_to_latlon
 from streetview_to_3d.common.occurrence_map import WET, occurrence_map
-from streetview_to_3d.common.run_async import run_async
 from streetview_to_3d.common.streetview_fetch.fetch_panos_by_id import fetch_panos_by_id
 from streetview_to_3d.common.streetview_fetch.google_node import google_node
+from streetview_to_3d.tools.geo import haversine_m as _haversine_m, local_m_to_latlon, to_metres
+from streetview_to_3d.tools.run_async import run_async
 from streetview_to_3d.ui.map_selection.google_tile_panos import google_tile_panos
+from streetview_to_3d.ui.map_selection.tools.street_view import is_official
 
 logger = logging.getLogger(__name__)
 
@@ -45,19 +46,8 @@ def _nearest_to(lat, lon, radius_m):
         except Exception as e:
             logger.warning(f"Google search at the center failed: {e}")
             return None
-        _centre_cache[key] = p if _is_official(p) else None
+        _centre_cache[key] = p if is_official(p) else None
     return _centre_cache[key]
-
-
-def _to_metres(lat0, latlons):
-    """(lat, lon) rows -> flat-earth (north, east) metres, for distances only."""
-    a = np.asarray(latlons, float).reshape(-1, 2)
-    east, north = latlon_to_local_m(a[:, 0], a[:, 1], lat0, 0.0)
-    return np.c_[north, east]
-
-
-def _is_official(p):
-    return p is not None and not (p.source or "").startswith("photos:")
 
 
 # A discovered pano this close to a walked one is the same place, not a new walk.
@@ -95,14 +85,14 @@ def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None
     """
     import shapely
     if area is not None:
-        here = _to_metres(center_lat, [(center_lat, center_lon)])[0]
-        corners = _to_metres(center_lat, area)
+        here = to_metres(center_lat, [(center_lat, center_lon)])[0]
+        corners = to_metres(center_lat, area)
         shape = shapely.Polygon(corners).buffer(0)
         shapely.prepare(shape)
         radius_m = float(np.linalg.norm(corners - here, axis=1).max())
 
         def within(nodes):
-            xy = _to_metres(center_lat, [(n["lat"], n["lon"]) for n in nodes])
+            xy = to_metres(center_lat, [(n["lat"], n["lon"]) for n in nodes])
             return shapely.contains_xy(shape, xy[:, 0], xy[:, 1]) if len(nodes) else np.zeros(0, bool)
     else:
         def within(nodes):

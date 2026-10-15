@@ -914,8 +914,7 @@ def seam(blocks, da3, da3_normals, da3_cols, roofs_near):
     pulled onto the plane (at most PULL_MAX_M) and tinted toward DA3. Roof
     points go by roofs_near, their distance to DA3."""
     from scipy.spatial import cKDTree
-    from streetview_to_3d.postprocess.ramp import ramp
-    from streetview_to_3d.postprocess.spacing_at import COVER
+    from streetview_to_3d.postprocess.world.tools.seams import COVER, ramp
     keep = np.ones(len(blocks.pts), bool)
     roof = blocks.edge == ROOF
     keep[roof] = roofs_near[roof] > COVER * blocks.gap[roof]
@@ -949,11 +948,8 @@ def pano_colours(pts, which, n, cameras, photos, occluders):
     A point is seen by a camera within SEE_M if nothing is more than BEHIND_M
     (+ BEHIND x distance) in front of it (so DA3's own copy of the wall does
     not hide it) and its pixel is labelled building or wall."""
-    from streetview_to_3d.postprocess.depth_buffer import depth_buffer
-    from streetview_to_3d.postprocess.paint import NADIR_DEG
-    from streetview_to_3d.postprocess.pano_at import pano_at
-    from streetview_to_3d.postprocess.pixel import pixel
     from streetview_to_3d.models.segment import LABEL_IDS
+    from streetview_to_3d.postprocess.tools.paint import NADIR_DEG, depth_buffer, pano_at, pixel
     ids = [LABEL_IDS["building"], LABEL_IDS["wall"]]
     pts, which = pts[::SAMPLE], which[::SAMPLE]
     everything = np.concatenate([occluders[::SAMPLE_HIDING], pts])

@@ -7,8 +7,7 @@ from collections import deque
 
 import numpy as np
 
-from streetview_to_3d.postprocess.fill.square_keys import square_keys
-from streetview_to_3d.postprocess.normals_from_neighbours import normals_from_neighbours
+from streetview_to_3d.postprocess.tools.ground_maths import normals_from_neighbours, square_keys
 
 UP_DEG = 20
 CELL_M = 0.5

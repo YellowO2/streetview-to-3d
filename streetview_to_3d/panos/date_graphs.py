@@ -1,8 +1,6 @@
 """Build one graph of the corridor's dots per worthwhile capture date."""
-from streetview_to_3d.panos.cap_bucket_for_date import TOP_PANOS_PER_DOT, cap_bucket_for_date
-from streetview_to_3d.panos.date_connects import date_connects
 from streetview_to_3d.panos.fetch_corridor_nodes import fetch_corridor_nodes
-from streetview_to_3d.panos.rank_dates import rank_dates
+from streetview_to_3d.panos.tools.dates import TOP_PANOS_PER_DOT, cap_bucket_for_date, date_connects, rank_dates
 
 # How many per-date graphs to build; a date covering little can still patch.
 DATE_TOP_N = 5

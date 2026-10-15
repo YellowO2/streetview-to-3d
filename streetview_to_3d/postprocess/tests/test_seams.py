@@ -1,10 +1,7 @@
 import numpy as np
 
 from streetview_to_3d.postprocess.SceneGround import SceneGround
-from streetview_to_3d.postprocess.beneath import OVERLAP_M, UNDER_M, beneath
-from streetview_to_3d.postprocess.spacing_at import DA3_M, GROW, RATIO, _size_at as size_at, spacing_at
-from streetview_to_3d.postprocess.toward import BLEND_M, toward
-from streetview_to_3d.postprocess.unhazed import _lab as lab, unhazed
+from streetview_to_3d.postprocess.world.tools.seams import BLEND_M, DA3_M, GROW, OVERLAP_M, RATIO, UNDER_M, beneath, lab, size_at, spacing_at, toward, unhazed
 
 
 def test_a_map_point_is_as_big_as_da3s_on_them_and_bigger_further_off_its_spacing_following():
