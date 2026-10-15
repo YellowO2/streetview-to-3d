@@ -4,7 +4,7 @@ The viewer embedded in Gradio, and `iframe()`, the one sandboxed iframe wrapper 
 used by the map picker and the HF app)."""
 import html as html_lib
 
-from streetview_to_3d.visualise.build_viewer import build_document
+from streetview_to_3d.visualise.build_viewer import build_viewer as build_document
 
 
 def iframe(srcdoc: str, aspect: str = "16/9", *, pointer_lock: bool = False) -> str:

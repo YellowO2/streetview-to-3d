@@ -5,7 +5,7 @@ radius, clicks extend the selection along real Street View links.
 
 The map is a sandboxed iframe, so a click is relayed: the iframe posts a message, a listener
 in the page head (BRIDGE_HEAD_SCRIPT) writes it into a hidden textbox, and its .change() runs
-handle_bridge_message.
+_handle_bridge_message.
 """
 import json
 import logging
@@ -125,7 +125,7 @@ def _augment_real_links(state, key):
     return {**state, "nodes": nodes, "edges": edges}
 
 
-def handle_load_area(area_input, radius_input, state):
+def _handle_load_area(area_input, radius_input, state):
     """A location pasted (or typed): its area loads, the nearest pano the
     start -- no button. Text not yet a location (half typed) is left alone."""
     try:
@@ -149,7 +149,7 @@ def handle_load_area(area_input, radius_input, state):
     return _map_html(state), _summary_markdown(state), state
 
 
-def handle_expand_area(area_input, radius_input, state, progress=gr.Progress(track_tqdm=False)):
+def _handle_expand_area(area_input, radius_input, state, progress=gr.Progress(track_tqdm=False)):
     """Select the whole real Street View graph within a radius (candidates.expand_area),
     ready for "Prepare"."""
     try:
@@ -172,13 +172,13 @@ def handle_expand_area(area_input, radius_input, state, progress=gr.Progress(tra
         "lat": lat, "lon": lon, "nodes": nodes, "edges": edges,
         "selected": [n["key"] for n in nodes], "selected_edges": list(edges), "view": None,
         "radius_m": None, "preview_center": None,
-        # its circle as a shape whose edges drag (handle_area_drag)
+        # its circle as a shape whose edges drag (_handle_area_drag)
         "area": candidates_mod.circle(lat, lon, radius_m),
     }
     return _map_html(state), _summary_markdown(state), state
 
 
-def handle_area_drag(payload, state):
+def _handle_area_drag(payload, state):
     """The expanded area's edges dragged: everything inside the new shape,
     walked again as expand_area walks -- from what it has already looked
     up, so pulling an edge in fetches nothing and pushing it out only what
@@ -193,7 +193,7 @@ def handle_area_drag(payload, state):
             "view": (view["lat"], view["lon"], view["zoom"]) if view else state.get("view")}
 
 
-def handle_preview_radius(area_input, radius_input, state):
+def _handle_preview_radius(area_input, radius_input, state):
     """Draw the radius circle as it is typed, without expanding; touches only
     radius_m/preview_center, so it is safe on every keystroke."""
     try:
@@ -216,7 +216,7 @@ def _radius(radius_input):
     return radius_m if radius_m > 0 else None
 
 
-def handle_bridge_message(payload_str, state):
+def _handle_bridge_message(payload_str, state):
     """A map click or area drag, relayed from the iframe (see BRIDGE_HEAD_SCRIPT)."""
     if not payload_str or state.get("lat") is None:
         return _map_html(state), _summary_markdown(state), state, ""
@@ -227,7 +227,7 @@ def handle_bridge_message(payload_str, state):
         return _map_html(state), _summary_markdown(state), state, ""
 
     if payload.get("type") == map_ui.AREA_MESSAGE_TYPE:
-        state = handle_area_drag(payload, state)
+        state = _handle_area_drag(payload, state)
         return _map_html(state), _summary_markdown(state), state, ""
 
     key = payload.get("key")
@@ -270,7 +270,7 @@ def handle_bridge_message(payload_str, state):
     return _map_html(state), _summary_markdown(state), state, ""
 
 
-def handle_clear(state):
+def _handle_clear(state):
     # back to just the start node (which comes from the location, not a click)
     start = [state["nodes"][0]["key"]] if state.get("nodes") else []
     state = {**state, "selected": start, "selected_edges": []}
@@ -308,35 +308,40 @@ def build_map_section():
             clear_btn = gr.Button("Clear selection")
 
     area_input.change(
-        fn=handle_load_area,
+        fn=_handle_load_area,
         inputs=[area_input, expand_radius_input, state],
         outputs=[map_view, selection_view, state],
+        api_name="handle_load_area",
     )
 
     expand_btn.click(
-        fn=handle_expand_area,
+        fn=_handle_expand_area,
         inputs=[area_input, expand_radius_input, state],
         outputs=[map_view, selection_view, state],
+        api_name="handle_expand_area",
         show_progress="minimal",
         show_progress_on=[selection_view],
     )
 
     expand_radius_input.change(
-        fn=handle_preview_radius,
+        fn=_handle_preview_radius,
         inputs=[area_input, expand_radius_input, state],
         outputs=[map_view, state],
+        api_name="handle_preview_radius",
     )
 
     bridge.change(
-        fn=handle_bridge_message,
+        fn=_handle_bridge_message,
         inputs=[bridge, state],
         outputs=[map_view, selection_view, state, bridge],
+        api_name="handle_bridge_message",
     )
 
     clear_btn.click(
-        fn=handle_clear,
+        fn=_handle_clear,
         inputs=[state],
         outputs=[map_view, selection_view, state],
+        api_name="handle_clear",
     )
 
     return state, map_view, selection_view

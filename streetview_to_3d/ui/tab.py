@@ -17,17 +17,17 @@ from streetview_to_3d.panos.main import panos
 from streetview_to_3d.postprocess import seams
 from streetview_to_3d.postprocess.Settings import Settings as PostprocessSettings
 from streetview_to_3d.postprocess.world import life, water
-from streetview_to_3d.models import mask_api
 from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
 from streetview_to_3d.reconstruct.estimate_gpu_seconds import (
     DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, estimate_gpu_seconds,
 )
 from streetview_to_3d.ui.map_selection.tab import build_map_section, corridor_edges, nodes_by_key
+from streetview_to_3d.ui.pano_api import pano_api
 
 logger = logging.getLogger(__name__)
 
 
-def handle_pathfind_prepare(state):
+def _handle_pathfind_prepare(state):
     """Button 1: gather and download the selection's candidates (no GPU; see panos.main.panos)."""
     selected = state.get("selected", [])
     selected_edges = state.get("selected_edges", [])
@@ -68,7 +68,7 @@ def _zip(run_dir):
     return archive
 
 
-def handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
+def _handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
                        mask_classes="", fill=True, conf_floor=0, effort=DEFAULT_EFFORT,
                        share=False):
     """Button 2: reconstruct (GPU), then place and fill (CPU), in one click.
@@ -121,7 +121,7 @@ def build_main_tab():
         effort_input = gr.Dropdown(list(EFFORT_SECONDS_PER_SPOT), value=DEFAULT_EFFORT, label="Effort",
                                    show_label=False, container=False, scale=0, min_width=130)
 
-    # hidden per-run overrides, settable over the API (see handle_reconstruct)
+    # hidden per-run overrides, settable over the API (see _handle_reconstruct)
     keep_pct_slider = gr.Slider(50, 100, value=75, step=5, visible=False)
     gpu_seconds_input = gr.Number(value=0, precision=0, minimum=0, visible=False)
     view_hfov_input = gr.Number(value=0, precision=0, minimum=0, visible=False)
@@ -145,21 +145,22 @@ def build_main_tab():
     reconstruct_view = gr.HTML(viewers.build_viewer())
 
     pathfind_prepare_btn.click(
-        fn=handle_pathfind_prepare,
+        fn=_handle_pathfind_prepare,
         inputs=[state],
         outputs=[pathfind_prep_state, pathfind_status],
+        api_name="handle_pathfind_prepare",
         show_progress="hidden",
         show_progress_on=[pathfind_status],
     )
 
-    # The masker alone on one pano, API only (see models.mask_api).
-    gr.api(mask_api.mask_pano, api_name="mask_pano")
-    gr.api(mask_api.depth_pano, api_name="depth_pano")
+    # The masker alone on one pano, API only.
+    pano_api()
 
     pathfind_run_btn.click(
-        fn=handle_reconstruct,
+        fn=_handle_reconstruct,
         inputs=[pathfind_prep_state, keep_pct_slider, gpu_seconds_input, view_hfov_input, da3_model_input, masker_input, mask_classes_input, fill_input, conf_floor_input, effort_input, share_input],
         outputs=[reconstruct_view, download_btn, pathfind_status],
+        api_name="handle_reconstruct",
         show_progress="hidden",
         show_progress_on=[reconstruct_view],
     )

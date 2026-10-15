@@ -5,7 +5,7 @@ import re
 import unittest
 
 from streetview_to_3d.ui.viewers import build_viewer, iframe
-from streetview_to_3d.visualise.build_viewer import SOURCE, OUTPUT, build_document
+from streetview_to_3d.visualise.build_viewer import SOURCE, OUTPUT, build_viewer as build_document
 
 
 class BuildTests(unittest.TestCase):
