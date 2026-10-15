@@ -1,15 +1,14 @@
 """Build one graph of the corridor's dots per worthwhile capture date."""
-from streetview_to_3d.panos.fetch_corridor_nodes import fetch_corridor_nodes
 from streetview_to_3d.panos.tools.dates import TOP_PANOS_PER_DOT, cap_bucket_for_date, date_connects, rank_dates
 
 # How many per-date graphs to build; a date covering little can still patch.
 DATE_TOP_N = 5
 
 
-def date_graphs(corridor_edges, start, goals, top_n_dates=DATE_TOP_N, top_per_dot=TOP_PANOS_PER_DOT):
+def date_graphs(nodes, start, goals, top_n_dates=DATE_TOP_N, top_per_dot=TOP_PANOS_PER_DOT):
     """Up to top_n_dates per-date graphs along the corridor, best first (rank_dates).
 
-    corridor_edges: the selection's real Street View links, [((lat, lon, id), (lat, lon, id))];
+    nodes: the corridor's (buckets, points, adjacency, elevations), from fetch_corridor_nodes;
     start: (lat, lon); goals: [(lat, lon)], the other selected nodes. Each dot keeps that
     date's top_per_dot closest panos; a date counts only if its dots reach from the start
     toward a goal (date_connects), checked after capping. Returns {date_graphs, points,
@@ -18,10 +17,8 @@ def date_graphs(corridor_edges, start, goals, top_n_dates=DATE_TOP_N, top_per_do
     """
     if not goals:
         raise ValueError("Need at least one goal (a second selected node).")
-    if not corridor_edges:
-        raise ValueError("Need at least one confirmed edge tracing the route.")
     start_lat, start_lon = start
-    buckets, points, adjacency, elevations = fetch_corridor_nodes(corridor_edges)
+    buckets, points, adjacency, elevations = nodes
     ranked_dates = rank_dates(buckets)
 
     graphs = []
