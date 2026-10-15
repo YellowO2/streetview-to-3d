@@ -1,7 +1,9 @@
 """Which of each placed cloud's points are ground its pano calls walkable."""
 import numpy as np
 
-from streetview_to_3d.postprocess.fill.ground import CELL_M as GROUND_CELL_M, ground, normals_from_neighbours, square_keys
+from streetview_to_3d.postprocess.fill.ground import CELL_M as GROUND_CELL_M, ground
+from streetview_to_3d.postprocess.fill.square_keys import square_keys
+from streetview_to_3d.postprocess.normals_from_neighbours import normals_from_neighbours
 
 DA3_SEED_M = 7.0        # the ground spread may start this far out (DA3's blind disc reaches ~4.5 m)
 LOW_M = 1.0             # only points this near the lowest in their square can be ground

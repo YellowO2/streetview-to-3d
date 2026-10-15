@@ -5,7 +5,7 @@ import numpy as np
 
 from .geometry import hash01, sample_quads
 from .osm import tag_number
-from streetview_to_3d.postprocess.seams import ramp
+from streetview_to_3d.postprocess.ramp import ramp
 
 LANE_M = 3.2
 WIDTH_M = {"motorway": 14, "trunk": 12, "primary": 10, "secondary": 9, "tertiary": 8,

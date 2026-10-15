@@ -1,6 +1,6 @@
 """Experimental: Google 3D Tiles dabs as the whole world, DA3's points laid onto it. google.ply
 (saved by the viewer's ?google-save) is slid onto DA3's points (shift) and gets the panos' look
-(seams.unhazed, seams.toward). Each pano's DA3 points are then bent onto Google's shape (bent;
+(unhazed, toward). Each pano's DA3 points are then bent onto Google's shape (bent;
 --as-is leaves them), and Google's go only where they stand in front of what a pano saw
 (seen_through) and on the water, the map's own, put at Google's height (on_water): behind
 DA3's points Google stays, backing them. Rewrites google.ply, water.json, scene.json (the scene is Google's: its map-built
@@ -19,7 +19,9 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.spatial import cKDTree
 
 from streetview_to_3d.common.Scene import Scene
-from streetview_to_3d.postprocess import seams
+from streetview_to_3d.postprocess.SceneGround import CELL_M, SceneGround
+from streetview_to_3d.postprocess.toward import toward
+from streetview_to_3d.postprocess.unhazed import unhazed
 from streetview_to_3d.load import load
 from streetview_to_3d.postprocess.ply_io import read_node, read_vertices, write_ply
 from streetview_to_3d.postprocess.Sight import SIGHT_DEG, Sight
@@ -192,11 +194,11 @@ def merge(scene_dir, align=True):
     by_place = cKDTree(xy)
 
     def google_at(q):
-        d, k = by_place.query(q, distance_upper_bound=2 * seams.CELL_M, workers=-1)
+        d, k = by_place.query(q, distance_upper_bound=2 * CELL_M, workers=-1)
         out = np.full((len(q), 3), np.nan)
         out[np.isfinite(d)] = cols[k[np.isfinite(d)]]
         return out
-    cols = seams.unhazed(seams.SceneGround.load(scene_dir), google_at)(cols)
+    cols = unhazed(SceneGround.load(scene_dir), google_at)(cols)
 
     # DA3's points bent onto Google's shape, pano by pano
     clouds = [read_node(scene_dir, nd)[2] for nd in nodes]
@@ -212,7 +214,7 @@ def merge(scene_dir, align=True):
 
     # all of Google's stay, taking DA3's colour and look where they meet it, but what stands in
     # front of DA3's points from their pano, and its water
-    cols, near = seams.toward(pts, cols, cKDTree(scene) if len(scene) else None, scene_cols)
+    cols, near = toward(pts, cols, cKDTree(scene) if len(scene) else None, scene_cols)
     air = seen_through(pts, clouds, cams)
     water = on_water(pts, normal, scene_dir, sc.water)
     keep = ~(air | water)

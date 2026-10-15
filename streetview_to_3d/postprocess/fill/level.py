@@ -7,7 +7,7 @@ import logging
 import numpy as np
 from scipy.optimize import lsq_linear
 
-from streetview_to_3d.postprocess.fill.ground import square_keys
+from streetview_to_3d.postprocess.fill.square_keys import square_keys
 
 logger = logging.getLogger(__name__)
 

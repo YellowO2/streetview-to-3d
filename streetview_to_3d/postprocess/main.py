@@ -14,7 +14,7 @@ from streetview_to_3d.postprocess.world.terrain import terrain
 
 
 def postprocess(scene, settings: Settings = Settings()):
-    """(scene, ground, world): the scene placed and finished, the fill's seams.SceneGround and
+    """(scene, ground, world): the scene placed and finished, the fill's SceneGround and
     the World around it (None where not made)."""
     watch = Stopwatch()
     scene = place(scene)

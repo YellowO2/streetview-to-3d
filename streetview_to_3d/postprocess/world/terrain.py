@@ -11,10 +11,16 @@ import sys
 
 import numpy as np
 
-from streetview_to_3d.postprocess import seams
+from streetview_to_3d.postprocess.SceneGround import CELL_M, SceneGround
 from streetview_to_3d.postprocess.World import World
+from streetview_to_3d.postprocess.beneath import beneath
+from streetview_to_3d.postprocess.meet import meet
+from streetview_to_3d.postprocess.ramp import ramp
+from streetview_to_3d.postprocess.spacing_at import spacing_at
+from streetview_to_3d.postprocess.tint import tint
+from streetview_to_3d.postprocess.toward import toward
+from streetview_to_3d.postprocess.unhazed import unhazed as unhazing
 from streetview_to_3d.postprocess.world import buildings, elevations, life, osm, roads, water
-from streetview_to_3d.postprocess.seams import ramp
 from streetview_to_3d.common.TileMap import TileMap
 
 logger = logging.getLogger(__name__)
@@ -40,7 +46,7 @@ BY_PANO_M = 20.0                           # ... those within this of a pano, al
 MAJOR_M2, MAJOR_HIGH_M = 1000.0, 25.0      # ... further off only the major: this big on the ground, or this high
 NEAR_M = 50.0                              # roads and bridges are points this near a camera, meshes past
 PAINT_M = 30.0                             # map points this near a camera are coloured from the panos
-TINT_M, MEET_M = 8.0, 10.0                 # seam bands for colour and height (seams.py)
+TINT_M, MEET_M = 8.0, 10.0                 # seam bands for colour and height (postprocess/tint.py, meet.py)
 BRIDGE_CLEAR_M = {"road": 4.5, "water": 2.5}     # min deck clearance over each
 ROAD_MEET_M, ROAD_MEET_MAX_M = 40.0, 10.0  # roads ease to the scene's road height over this; not if this far apart
 TINT = 0.8                                 # how far the map takes the scene's colour at its edge
@@ -148,8 +154,8 @@ def scene_points(sc, every=SCENE_EVERY):
 
 def terrain(sc, scene_ground=None):
     """The World around the placed (and filled) scene sc, its file names set on sc, or None
-    without a placed camera. scene_ground: the fill's seams.SceneGround (None: none)."""
-    world = _terrain(sc, scene_ground or seams.SceneGround.none())
+    without a placed camera. scene_ground: the fill's SceneGround (None: none)."""
+    world = _terrain(sc, scene_ground or SceneGround.none())
     if world is not None:
         for field, name in (("land", LAND_FILENAME), ("roads", ROADS_FILENAME), ("terrain", FILENAME),
                             ("water", water.FILENAME), ("life", life.FILENAME),
@@ -220,18 +226,18 @@ def _terrain(sc, scene_ground):
     scene_tree = cKDTree(scene) if len(scene) else None
     near = scene_ground.at
     cam_tree = cKDTree(cam_xz)
-    # map points sized, so spaced, by their distance from DA3's points (seams.spacing_at): from the
+    # map points sized, so spaced, by their distance from DA3's points (spacing_at): from the
     # scene's edge, 1 m squares holding at least 3 of its points
     cell, n = np.unique(np.floor(scene[:, [0, 2]]), axis=0, return_counts=True) if len(scene) else (cam_xz, None)
     edge_tree = cKDTree(cell[n >= 3] + 0.5 if n is not None and (n >= 3).any() else cam_xz)
-    gap = lambda xy: seams.spacing_at(edge_tree.query(xy, workers=-1)[0])
+    gap = lambda xy: spacing_at(edge_tree.query(xy, workers=-1)[0])
     # roads decide their own height (smoothed ground); the land fits to them
     net = roads.Network(elements, to_xy, lambda xy: cam_tree.query(xy)[0].min() < roads.DETAIL_M)
     road_raw = net.heights(ground, (-ROADS_M - 50, -ROADS_M - 50), (ROADS_M + 50, ROADS_M + 50))
 
     def to_scene(xy, h):
         d, g, _ = near(xy)
-        return seams.meet(h, g, d, ROAD_MEET_M, ROAD_MEET_MAX_M)
+        return meet(h, g, d, ROAD_MEET_M, ROAD_MEET_MAX_M)
     # buildings, fitted onto the scene's walls
     # only those by the panos and the major ones: the rest cost time and points for little
     import shapely
@@ -242,7 +248,7 @@ def _terrain(sc, scene_ground):
                      or shapely.Polygon(o[0]).area >= MAJOR_M2 or o[1] >= MAJOR_HIGH_M)]
     n_fitted = n_trimmed = 0
     if outlines:
-        from streetview_to_3d.postprocess.fill.ground import normals_from_neighbours
+        from streetview_to_3d.postprocess.normals_from_neighbours import normals_from_neighbours
         scene_normals = normals_from_neighbours(scene) if len(scene) >= 12 else np.zeros_like(scene)
         outlines, n_fitted, n_trimmed = buildings.fit_to_scene(outlines, scene, scene_normals, ground,
                                                                roads.coverage(roads.lines(elements, to_xy)))
@@ -288,11 +294,11 @@ def _terrain(sc, scene_ground):
     under = dist == 0
     lat, lon = to_ll(en)
     raw = heights(lat, lon)
-    h = seams.meet(ground(en, raw), edge_h, dist, MEET_M)
+    h = meet(ground(en, raw), edge_h, dist, MEET_M)
     h = roads.under_decks(over, en, net.adapt(en, h, road_h))
-    # under the scene's ground the land runs on just beneath it (seams.beneath): all of it, as a
+    # under the scene's ground the land runs on just beneath it (beneath): all of it, as a
     # cut along its triangles shows through the scene's ground as zigzag gaps
-    h = seams.beneath(h, edge_h, scene_ground.inside(en))[0]
+    h = beneath(h, edge_h, scene_ground.inside(en))[0]
     # land raised to DA3's ground beside buildings, then cut to each building's foot
     h = buildings.onto_scene(outlines, en, h, owner, scene_ground, under)
     h = buildings.settle(outlines, en, h, owner)
@@ -315,9 +321,9 @@ def _terrain(sc, scene_ground):
     en, h, dist, edge_c, lat, lon = (a[seen] for a in (en, h, dist, edge_c, lat, lon))
     land = np.stack([en[:, 0], -h, en[:, 1]], 1)
 
-    # unlit land colour; satellite colours corrected to the panos' look (seams.unhazed)
+    # unlit land colour; satellite colours corrected to the panos' look (postprocess/unhazed.py)
     try:
-        unhazed = seams.unhazed(scene_ground, lambda xy: google_colours(*to_ll(xy), np.full(len(xy), seams.CELL_M)))
+        unhazed = unhazing(scene_ground, lambda xy: google_colours(*to_ll(xy), np.full(len(xy), CELL_M)))
     except OSError as e:
         logger.warning(f"terrain: satellite colours as they are ({e!r})")
         unhazed = lambda cols: cols
@@ -337,7 +343,7 @@ def _terrain(sc, scene_ground):
         source = "plain"
     cols = cols + (np.array(SAND) - cols) * (SAND_MIX * wet.sand(en, h))[:, None]
     cols = cols + (np.array(water.BED) - cols) * wet.bed(en, h)[:, None]
-    land_cols = seams.tint(cols, edge_c, dist, 0.0, TINT_M, TINT)
+    land_cols = tint(cols, edge_c, dist, 0.0, TINT_M, TINT)
     pts, cols = np.zeros((0, 3)), np.zeros((0, 3))
 
     # buildings and roads on this ground
@@ -428,9 +434,9 @@ def _terrain(sc, scene_ground):
         n_painted = n + k + m
     except (OSError, ValueError) as e:
         logger.warning(f"terrain: no pano paint ({e!r})")
-    # map points approaching DA3's turn into them (seams.toward)
-    land_cols, land_near = seams.toward(land, land_cols, scene_tree, scene_cols)
-    cols, _ = seams.toward(pts, cols, scene_tree, scene_cols)
+    # map points approaching DA3's turn into them (toward)
+    land_cols, land_near = toward(land, land_cols, scene_tree, scene_cols)
+    cols, _ = toward(pts, cols, scene_tree, scene_cols)
     world = World()
     world.meshes[LAND_FILENAME] = dict(pts=land, cols=land_cols, faces=faces, gap=gap(en), near=land_near)
     # tunnel portals
@@ -453,7 +459,7 @@ def _terrain(sc, scene_ground):
                                      boats=life.boats(surfaces, cam_xz), ducks=life.ducks(surfaces, cam_xz, scene_ground),
                                      cats=life.cats(scene_ground, stretches, cam_xz))
     if len(bp):
-        bc, b_near = seams.toward(bp, bc, scene_tree, scene_cols)
+        bc, b_near = toward(bp, bc, scene_tree, scene_cols)
         world.points[BUILDINGS_FILENAME] = dict(pts=bp, cols=bc, gap=b_gap, normal=b_normal, kind=b_kind, near=b_near)
     if solid:
         # one spacing per solid building: its nearest point's
@@ -477,8 +483,8 @@ def _terrain(sc, scene_ground):
 
 def _panos(sc):
     """(cameras, photos) of the scene's panos; photos[k] is (image, class map, drop mask) or None."""
-    from streetview_to_3d.postprocess.fill.Camera import Camera
-    from streetview_to_3d.postprocess.fill.paint import blurred
+    from streetview_to_3d.postprocess.Camera import Camera
+    from streetview_to_3d.postprocess.blurred import blurred
     from streetview_to_3d.models.pano_mask import pano_mask
     nodes = [nd for nd in sc.placed() if nd.rotation is not None]
     photos = []
@@ -490,8 +496,8 @@ def _panos(sc):
 
 def _paint(panos, pts, cols, scene, skip=None):
     """(cols, count): pts within PAINT_M of a camera recoloured from the panos as the fill does
-    (fill.paint), except those marked skip (roofs)."""
-    from streetview_to_3d.postprocess.fill.paint import paint
+    (postprocess/paint.py), except those marked skip (roofs)."""
+    from streetview_to_3d.postprocess.paint import paint
     cams, photos = panos
     if not cams or not len(pts):
         return cols, 0
@@ -513,7 +519,6 @@ if __name__ == "__main__":
         sys.exit(__doc__.splitlines()[-1].strip())
     from streetview_to_3d.load import load
     from streetview_to_3d.postprocess.photos import photos
-    from streetview_to_3d.postprocess.seams import SceneGround
     from streetview_to_3d.save import save
     scene = photos(load(sys.argv[1]))
     ground = SceneGround.load(sys.argv[1])

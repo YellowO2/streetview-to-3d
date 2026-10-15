@@ -6,7 +6,8 @@ from scipy.spatial import cKDTree
 
 from streetview_to_3d.models.pano_mask import pano_mask
 from streetview_to_3d.postprocess.fill.PaintedGround import PaintedGround
-from streetview_to_3d.postprocess.fill.paint import blurred, paint
+from streetview_to_3d.postprocess.blurred import blurred
+from streetview_to_3d.postprocess.paint import paint
 
 logger = logging.getLogger(__name__)
 

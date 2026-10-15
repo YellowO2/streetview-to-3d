@@ -120,7 +120,7 @@ def roads(elements, to_xy, height, decks, keep, walls=(), ground=None):
 def onto_road(xy, ground):
     """(xy moved, half-width (n,), NaN off road): each point moved sideways onto the middle of the
     scene ground's nearest road run (ROAD_MIN_M wide, within ACROSS_M), easing back over EASE_M."""
-    from streetview_to_3d.postprocess.seams import CELL_M
+    from streetview_to_3d.postprocess.SceneGround import CELL_M
     n = len(xy)
     ahead = np.gradient(xy, axis=0) if n > 1 else np.array([[1.0, 0.0]])
     side = np.c_[-ahead[:, 1], ahead[:, 0]] / np.maximum(np.linalg.norm(ahead, axis=1), 1e-9)[:, None]
@@ -223,7 +223,7 @@ def cats(ground, stretches, cams, seed=0):
     import shapely
     from scipy.ndimage import distance_transform_edt
     from scipy.spatial import cKDTree
-    from streetview_to_3d.postprocess.seams import CELL_M
+    from streetview_to_3d.postprocess.SceneGround import CELL_M
     have = np.isfinite(ground.height)
     if not have.any():
         return {"colours": [_rgb(c) for c in CATS], "cats": []}

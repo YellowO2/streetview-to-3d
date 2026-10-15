@@ -1,5 +1,5 @@
 """The cameras of a scene's placed nodes, where they stand now."""
-from streetview_to_3d.postprocess.fill.Camera import Camera
+from streetview_to_3d.postprocess.Camera import Camera
 
 
 def placed_cameras(scene):

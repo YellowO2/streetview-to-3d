@@ -914,7 +914,8 @@ def seam(blocks, da3, da3_normals, da3_cols, roofs_near):
     pulled onto the plane (at most PULL_MAX_M) and tinted toward DA3. Roof
     points go by roofs_near, their distance to DA3."""
     from scipy.spatial import cKDTree
-    from streetview_to_3d.postprocess.seams import COVER, ramp
+    from streetview_to_3d.postprocess.ramp import ramp
+    from streetview_to_3d.postprocess.spacing_at import COVER
     keep = np.ones(len(blocks.pts), bool)
     roof = blocks.edge == ROOF
     keep[roof] = roofs_near[roof] > COVER * blocks.gap[roof]
@@ -948,7 +949,10 @@ def pano_colours(pts, which, n, cameras, photos, occluders):
     A point is seen by a camera within SEE_M if nothing is more than BEHIND_M
     (+ BEHIND x distance) in front of it (so DA3's own copy of the wall does
     not hide it) and its pixel is labelled building or wall."""
-    from streetview_to_3d.postprocess.fill.paint import NADIR_DEG, _at, depth_buffer, pixel
+    from streetview_to_3d.postprocess.depth_buffer import depth_buffer
+    from streetview_to_3d.postprocess.paint import NADIR_DEG
+    from streetview_to_3d.postprocess.pano_at import pano_at
+    from streetview_to_3d.postprocess.pixel import pixel
     from streetview_to_3d.models.segment import LABEL_IDS
     ids = [LABEL_IDS["building"], LABEL_IDS["wall"]]
     pts, which = pts[::SAMPLE], which[::SAMPLE]
@@ -960,11 +964,11 @@ def pano_colours(pts, which, n, cameras, photos, occluders):
         near = depth_buffer(cam, everything)
         u, v, r, below = cam.look(pts)
         seen = (r < SEE_M) & (below < NADIR_DEG) & (r <= near[pixel(u, v)] + BEHIND_M + BEHIND * r)
-        seen &= np.isin(_at(ph[1], u, v), ids) & ~_at(ph[2], u, v)
+        seen &= np.isin(pano_at(ph[1], u, v), ids) & ~pano_at(ph[2], u, v)
         if seen.any():
             from PIL import Image
             img = np.asarray(Image.open(ph[0]).convert("RGB"))
-            samples.append(_at(img, u[seen], v[seen]) / 255.0)
+            samples.append(pano_at(img, u[seen], v[seen]) / 255.0)
             owners.append(which[seen])
     out = np.full((n, 3), np.nan)
     if not samples:

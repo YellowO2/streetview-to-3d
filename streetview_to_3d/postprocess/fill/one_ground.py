@@ -6,9 +6,9 @@ import numpy as np
 from scipy.ndimage import binary_closing, binary_fill_holes
 
 from streetview_to_3d.common.Cloud import Cloud
-from streetview_to_3d.postprocess.fill.ground import GroundMap
+from streetview_to_3d.postprocess.fill.GroundMap import GroundMap
 from streetview_to_3d.postprocess.place import CAM_H
-from streetview_to_3d.postprocess.seams import CELL_M
+from streetview_to_3d.postprocess.SceneGround import CELL_M
 from streetview_to_3d.models.da3 import VIEW_HFOV
 
 SMOOTH_M, STEP_M = 0.5, 0.08   # height smoothing; ground point spacing

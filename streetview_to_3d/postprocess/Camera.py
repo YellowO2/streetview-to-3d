@@ -2,7 +2,7 @@
 import numpy as np
 
 from streetview_to_3d.models.segment import LABEL_IDS
-from streetview_to_3d.postprocess.fill.paint import _at
+from streetview_to_3d.postprocess.pano_at import pano_at
 
 
 class Camera:
@@ -30,4 +30,4 @@ class Camera:
         if self.photo is None:
             return np.full(len(x), unknown)
         u, v, _, _ = self.look(x)
-        return np.isin(_at(self.photo[1], u, v), [LABEL_IDS[c] for c in classes])
+        return np.isin(pano_at(self.photo[1], u, v), [LABEL_IDS[c] for c in classes])

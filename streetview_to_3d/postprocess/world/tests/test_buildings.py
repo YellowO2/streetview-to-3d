@@ -1,6 +1,6 @@
 import numpy as np
 
-from streetview_to_3d.postprocess import seams
+from streetview_to_3d.postprocess.SceneGround import SceneGround
 from streetview_to_3d.postprocess.world import buildings
 from streetview_to_3d.postprocess.world.roofs import Roof
 
@@ -199,7 +199,7 @@ def test_the_land_round_a_building_made_da3s_ground_before_it_is_stood_on():
     h = np.full(len(xy), 0.0)
     ex, ez = np.meshgrid(np.arange(-2, 12, .2), np.arange(-3, 1, .2))
     da3 = np.c_[ex.ravel(), np.full(ex.size, -0.5), ez.ravel()]           # its ground: 0.5 m up (y down)
-    ground = seams.SceneGround.from_points(da3, np.full((len(da3), 3), .5))
+    ground = SceneGround.from_points(da3, np.full((len(da3), 3), .5))
     under = np.zeros(len(xy), bool)
     out = buildings.onto_scene([house], xy, h, own, ground, under)
     out = buildings.settle([house], xy, out, own)

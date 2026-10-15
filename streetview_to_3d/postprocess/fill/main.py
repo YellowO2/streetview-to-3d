@@ -15,7 +15,7 @@ from streetview_to_3d.postprocess.fill.world_clouds import world_clouds
 
 
 def fill(scene):
-    """(the filled scene, its seams.SceneGround); a scene with nothing placed comes back as it is,
+    """(the filled scene, its SceneGround); a scene with nothing placed comes back as it is,
     with no ground."""
     clouds = world_clouds(scene)
     if not clouds:

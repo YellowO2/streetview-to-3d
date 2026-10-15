@@ -47,7 +47,7 @@ def test_ducks_on_the_nearest_water_in_from_its_shore():
     assert 0 < home["reach"] <= life.DUCK_SHORE_M - 2 + 1e-6
     assert life.ducks([lake], np.array([(-1000.0, 0.0)]))["homes"] == []
     # the scene on a bridge over it: the ducks off its ground, not under it
-    from streetview_to_3d.postprocess.seams import SceneGround
+    from streetview_to_3d.postprocess.SceneGround import SceneGround
     g = np.mgrid[95:140:0.5, -10:10:0.5].reshape(2, -1).T
     bridge = SceneGround.from_points(np.c_[g[:, 0], -np.full(len(g), 8.0), g[:, 1]], np.full((len(g), 3), 0.5))
     (home,) = life.ducks([lake], np.array([(120.0, 0.0)]), bridge)["homes"]
@@ -55,7 +55,7 @@ def test_ducks_on_the_nearest_water_in_from_its_shore():
 
 
 def test_cats_sit_on_the_scenes_ground_off_its_roads_near_its_cameras():
-    from streetview_to_3d.postprocess.seams import SceneGround
+    from streetview_to_3d.postprocess.SceneGround import SceneGround
     # ground 40 m square round the cameras, a car road along its middle (east-west)
     g = np.mgrid[-20:20:0.5, -20:20:0.5].reshape(2, -1).T
     ground = SceneGround.from_points(np.c_[g[:, 0], -np.full(len(g), 3.0), g[:, 1]], np.full((len(g), 3), 0.5))
@@ -86,7 +86,7 @@ def test_saved_as_the_viewer_reads_it(tmp_path):
 
 
 def test_cars_kept_to_the_scenes_own_road_where_osms_line_runs_along_its_pavement():
-    from streetview_to_3d.postprocess.seams import SceneGround
+    from streetview_to_3d.postprocess.SceneGround import SceneGround
     # ground 60 m along, 20 m across; road from 1 to 7 m north of OSM's line (y = 0), pavement either side
     g = np.mgrid[-30:30:0.5, -10:10:0.5].reshape(2, -1).T + 0.25
     road = (g[:, 1] > 1) & (g[:, 1] < 7)
@@ -100,7 +100,7 @@ def test_cars_kept_to_the_scenes_own_road_where_osms_line_runs_along_its_pavemen
 
 
 def test_the_ground_keeps_its_road(tmp_path):
-    from streetview_to_3d.postprocess.seams import SceneGround
+    from streetview_to_3d.postprocess.SceneGround import SceneGround
     pts = np.array([[0.1, 0, 0.1], [0.2, 0, 0.2], [5.1, 0, 0.1]])
     g = SceneGround.from_points(pts, np.full((3, 3), 0.5), np.array([True, False, True]))
     g.save(tmp_path)
