@@ -5,7 +5,7 @@ import { f } from '@viewer/shader-maths';
 // rise: a flat disk spreading from the middle, then rising, middle first.
 // gentle: everything swung part way round the middle and back, slightly lifted and scattered.
 const NEAR_M = 20, // the middle this wide goes first
-  FAR_M = 1000, // all of it by this far (terrain.RADIUS_M)
+  FAR_M = 1000, // all of it by this far (postprocess/world/tools/reach.py RADIUS_M)
   SPREAD_S = 1.5, // rise: disk reaches FAR_M
   RISE_AT = 1, // rise: middle starts rising
   RISE_LAG = 2.5, // rise: edge starts this much later

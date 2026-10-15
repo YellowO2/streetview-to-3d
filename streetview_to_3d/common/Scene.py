@@ -25,21 +25,21 @@ class Scene:
     adjacency: dict[str, list[int]] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
     # the land around the scene, a triangle .ply beside scene.json already
-    # in the world, and its roads and bridges, points (postprocess/world/terrain.py)
+    # in the world, and its roads and bridges, points (postprocess/world/land/, roads/)
     land: str | None = None
     terrain: str | None = None
     # its roads further out, a triangle .ply (the near ones are points in terrain)
     roads: str | None = None
     # the OSM buildings around it, spaced finer than the land (same module)
     buildings: str | None = None
-    # its water, flat outlines each at a level (postprocess/world/water.py)
+    # its water, flat outlines each at a level (postprocess/world/Water.py)
     water: str | None = None
-    # the far buildings, solid: a triangle .ply (postprocess/world/buildings.py's solid)
+    # the far buildings, solid: a triangle .ply (postprocess/world/buildings/solid_blocks.py)
     blocks: str | None = None
-    # what moves round it -- its cars' roads, its birds, its boats' courses (postprocess/world/life.py)
+    # what moves round it -- its cars' roads, its birds, its boats' courses (postprocess/world/life.py, car_roads.py)
     life: str | None = None
     # experimental: Google 3D Tiles points standing in for the land, roads and buildings
-    # (postprocess/world/google.py)
+    # (postprocess/world/google/)
     google: str | None = None
 
     @property

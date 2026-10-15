@@ -14,7 +14,7 @@ const SPLAT_RADIUS = 20; // view radius for a splat, which has no bounds
 const PLACED_POINT_M = 0.1; // DA3 point size in a placed (metric) scene
 // distance haze: the far land and buildings fade into the sky colour
 const HAZE = 0xc9dbe6,
-  HAZE_M = [250, 900]; // clear to, gone by (inside the 1 km land edge, terrain.RADIUS_M)
+  HAZE_M = [250, 900]; // clear to, gone by (inside the 1 km land edge, postprocess/world/tools/reach.py RADIUS_M)
 
 const state = new ViewerState(),
   store = new SceneStore();

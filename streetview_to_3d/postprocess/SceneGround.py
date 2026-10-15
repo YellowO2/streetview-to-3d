@@ -6,7 +6,7 @@ from scipy.ndimage import distance_transform_edt
 
 FILENAME = "ground.npz"
 CELL_M = 0.5              # the fill's ground squares (also fill.one_ground's grid)
-PAD_M = 50.0              # grid margin past the ground: the widest band that asks (terrain.ROAD_MEET_M)
+PAD_M = 50.0              # grid margin past the ground: the widest band that asks (world/roads/RoadHeight.py ROAD_MEET_M)
 
 
 class SceneGround:

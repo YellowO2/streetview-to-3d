@@ -1,6 +1,6 @@
 // Experimental: the surroundings from Google's Photorealistic 3D Tiles instead of the map-built
 // land and buildings. The tiles around the scene are streamed once and laid with dabs as the
-// land is; postprocess/world/google.py merges a saved copy into DA3's points. Export leaves
+// land is; postprocess/world/google/ merges a saved copy into DA3's points. Export leaves
 // them out.
 import * as THREE from 'three';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
@@ -9,7 +9,7 @@ import { RATIO } from '@viewer/world/blocks';
 
 const LIBRARY = 'https://unpkg.com/3d-tiles-renderer@0.5.3/build/',
   DRACO = 'https://unpkg.com/three@0.178.0/examples/jsm/libs/draco/gltf/';
-const RADIUS_M = 1000, // as far as the land reaches (postprocess terrain.RADIUS_M)
+const RADIUS_M = 1000, // as far as the land reaches (postprocess/world/tools/reach.py RADIUS_M)
   CAM_H = 2.45, // a pano's camera above its ground (postprocess place.CAM_H)
   RIG_UP_M = 30, // the loading cameras this far above the scene
   RESOLUTION = 4096, // their screens: with ERROR, a tile's allowed error is about distance / 340

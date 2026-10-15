@@ -11,7 +11,7 @@ dependencies = [
     "numpy",
     "scipy",
     "shapely",
-    "mapbox-vector-tile",  # OpenFreeMap's tiles, when Overpass gives no answer (postprocess/world/openfreemap.py)
+    "mapbox-vector-tile",  # OpenFreeMap's tiles, when Overpass gives no answer (postprocess/world/OpenFreeMap.py)
     "opencv-python",
     "aiohttp",
     "pillow",

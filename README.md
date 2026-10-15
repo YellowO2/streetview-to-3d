@@ -58,9 +58,14 @@ streetview_to_3d/
   panos/        1. which panoramas: main.py → date_graphs → downloaded (the "Prepare" button);
                    tools/dates ranks the capture dates
   reconstruct/  2. GPU: main.py → open_scene → walk (run_da3, walk_graph, pieces) → assemble
-  postprocess/  3. main.py → place, clean/, fill/ (main.py), world/ (terrain); tools/ paint
-                   and ground_maths, world/tools/seams (tint, meet, beneath, toward, spacing_at, unhazed);
-                   python -m streetview_to_3d.postprocess --dir <run> re-runs it on a saved run
+  postprocess/  3. main.py → place, clean/, fill/ (main.py), world/ (main.py); tools/ paint
+                   and ground_maths;
+                   python -m streetview_to_3d.postprocess --dir <run> [--google] re-runs it on a saved run
+    world/      the map round the scene: loaders first (OpenStreetMap, HeightMap, elevations_around,
+                   WaterMap, Satellite, pano_views, driving_side), then Elevation, water_outline,
+                   Water, roads/, outlines/, land/, land_colours, buildings/, car_roads, life,
+                   world_files, scene_files; with Settings.google, google_points and google/
+                   (the Google 3D Tiles merge); tools/ seams, osm_roads, osm_tags, styles, geometry...
   visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/;
                    python -m streetview_to_3d.visualise rebuilds viewer.html
   ui/           Gradio: main_tab, map_selection/ (the map and its candidates), viewer, pano_api;
