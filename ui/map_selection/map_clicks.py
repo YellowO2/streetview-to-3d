@@ -75,9 +75,9 @@ def _follow_click(click, state):
     return map_page({**state, "selected": selected, "selected_edges": selected_edges, "view": new_view})
 
 
-def map_clicks(widgets: MapWidgets, job, expand):
+def map_clicks(widgets: MapWidgets, job, expand_area):
     """Wire the map's relayed clicks and drags: a click extends the selection; a drag runs
-    job (redraw_area), with expand (expand_area) walking the dragged area."""
+    job (redraw_area), with expand_area walking the dragged area."""
     shown = [widgets.map_view, widgets.selection_view, widgets.state]
     click = gr.State(None)
     widgets.bridge.change(
@@ -89,6 +89,6 @@ def map_clicks(widgets: MapWidgets, job, expand):
     widgets.bridge.change(
         fn=_dragged, inputs=[widgets.bridge, widgets.state], outputs=[drag], api_visibility="private",
     ).success(
-        fn=update_wrapper(partial(job, expand=expand), job), inputs=[drag, widgets.state], outputs=shown,
+        fn=update_wrapper(partial(job, expand_area=expand_area), job), inputs=[drag, widgets.state], outputs=shown,
         api_visibility="private",
     )

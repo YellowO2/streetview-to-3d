@@ -23,15 +23,15 @@ def _circle_typed(area_input, radius_input):
     return Circle(lat, lon, radius_m)
 
 
-def expand_button(widgets: MapWidgets, job, expand):
-    """Wire the Expand button: job (expand_selection) selects everything expand (expand_area)
+def expand_button(widgets: MapWidgets, job, expand_area):
+    """Wire the Expand button: job (expand_selection) selects everything expand_area
     walks inside the typed circle."""
     circle = gr.State(None)
     widgets.expand.click(
         fn=_circle_typed, inputs=[widgets.area_input, widgets.radius_input], outputs=[circle],
         api_visibility="private",
     ).success(
-        fn=update_wrapper(partial(job, expand=expand), job),
+        fn=update_wrapper(partial(job, expand_area=expand_area), job),
         inputs=[circle],
         outputs=[widgets.map_view, widgets.selection_view, widgets.state],
         api_name="handle_expand_area",

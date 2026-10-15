@@ -15,14 +15,14 @@ def _where(area_input):
         raise gr.Error("Not a location yet.", visible=False, print_exception=False)
 
 
-def location_box(widgets: MapWidgets, job, find_nodes):
+def location_box(widgets: MapWidgets, job, nearby_nodes):
     """Wire the location box: as a location is typed, job (load_area) loads its area, with
-    find_nodes (nearby_nodes) finding the panos and links round it."""
+    nearby_nodes finding the panos and links round it."""
     place = gr.State(None)
     widgets.area_input.change(
         fn=_where, inputs=[widgets.area_input], outputs=[place], api_visibility="private",
     ).success(
-        fn=update_wrapper(partial(job, find_nodes=find_nodes), job),
+        fn=update_wrapper(partial(job, nearby_nodes=nearby_nodes), job),
         inputs=[place, widgets.radius_input],
         outputs=[widgets.map_view, widgets.selection_view, widgets.state],
         api_name="handle_load_area",
