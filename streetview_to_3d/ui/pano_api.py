@@ -11,7 +11,7 @@ import tempfile
 import gradio as gr
 import numpy as np
 
-from streetview_to_3d.models import gpu
+from streetview_to_3d.models.on_gpu import on_gpu
 
 GPU_SECONDS = 30
 
@@ -30,8 +30,8 @@ def _views(pano_path, out_dir):
 
 
 def _label_task(paths, masker):
-    from streetview_to_3d.models.segment import label_views
-    labels, ids = label_views(paths, model_id=masker or None)
+    from streetview_to_3d.models.segment import segment
+    labels, ids = segment(paths, model_id=masker or None)
     return np.stack(labels), ids
 
 
@@ -47,16 +47,16 @@ def _encode(path, ids, **arrays):
 def _depth_task(paths, yaws, pano_id):
     import cv2
     from panoramic_da3 import View
-    from streetview_to_3d.models.da3 import VIEW_HFOV
-    from streetview_to_3d.models.segment import label_views
+    from streetview_to_3d.models.da3 import VIEW_HFOV, da3
+    from streetview_to_3d.models.segment import segment
     import math
     images = [cv2.imread(p) for p in paths]
     h, w = images[0].shape[:2]
     f = w / 2 / math.tan(math.radians(VIEW_HFOV) / 2)
     vs = [View(image=im, yaw=y, pitch=0, width=w, height=h, focal_px=f, hfov=VIEW_HFOV,
                vfov=math.degrees(2 * math.atan(h / 2 / f)), pano_id=pano_id) for im, y in zip(images, yaws)]
-    res = gpu.get_da3().process_views(vs, dist_thresh=0.2, angle_thresh=1)
-    labels, ids = label_views(paths)
+    res = da3()[1].process_views(vs, dist_thresh=0.2, angle_thresh=1)
+    labels, ids = segment(paths)
     pred = res.prediction
     kept = [i for i, v in enumerate(vs) if any(v is k for k in res.views)]
     return (np.stack(labels), ids, np.array([v.yaw for v in vs]),
@@ -70,7 +70,7 @@ def _depth_pano(pano_id: str) -> str:
     from streetview_to_3d.common.streetview_fetch import fetch_da3_pano
     path = fetch_da3_pano(pano_id)
     paths, yaws = _views(path, tempfile.mkdtemp())
-    labels, ids, yaws, kept, depth, conf = gpu.run(_depth_task, paths, yaws, os.path.basename(path), seconds=90)
+    labels, ids, yaws, kept, depth, conf = on_gpu(_depth_task, paths, yaws, os.path.basename(path), seconds=90)
     return _encode(path, ids, labels=labels, yaws=yaws, kept=kept, depth=depth, conf=conf, hfov=VIEW_HFOV)
 
 
@@ -79,7 +79,7 @@ def _mask_pano(pano_id: str, masker: str = "") -> str:
     names (class names by id), pano (the photo's .jpg bytes)."""
     from streetview_to_3d.common.streetview_fetch import fetch_da3_pano
     path = fetch_da3_pano(pano_id)
-    labels, ids = gpu.run(_label_task, [path], masker, seconds=GPU_SECONDS)
+    labels, ids = on_gpu(_label_task, [path], masker, seconds=GPU_SECONDS)
     return _encode(path, ids, labels=labels[0])
 
 

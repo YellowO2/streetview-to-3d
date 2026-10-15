@@ -6,7 +6,6 @@ import os
 from PIL import Image
 
 from streetview_to_3d.common.paths import new_run_dir
-from streetview_to_3d.models.segment import labels_path
 from streetview_to_3d.postprocess.ply_io import write_mesh, write_ply
 
 logger = logging.getLogger(__name__)
@@ -24,7 +23,7 @@ def save(scene, ground, world, folder=None):
             c = n.cloud
             write_ply(os.path.join(folder, n.ply), c.points, c.colours, sway=c.sway)
         if n.photo is not None:
-            path = labels_path(folder, n.pano.id)
+            path = _labels_path(folder, n.pano.id)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             Image.fromarray(n.photo[1]).save(path)
     if ground is not None:
@@ -39,3 +38,8 @@ def save(scene, ground, world, folder=None):
                 json.dump(data, f, separators=(",", ":"))
     scene.save(folder)
     return folder
+
+
+def _labels_path(scene_dir, pano_id):
+    """Where a scene keeps a pano's class map."""
+    return os.path.join(scene_dir, "labels", f"{pano_id}.png")

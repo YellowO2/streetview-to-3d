@@ -7,7 +7,7 @@ class WalkSettings:
     """Per-run settings for the walk; None keeps each default. Picklable for ZeroGPU.
 
     gpu_seconds: the window (None: estimate_gpu_seconds). model: a DA3 repo (models.da3.DA3_MODEL_REPO).
-    hfov, masker, mask_classes, conf_floor: see models.da3.options.
+    hfov, masker, mask_classes, conf_floor: see reconstruct.run_da3.
     """
     step_degrees: int | None = None
     conf_lower_percentile: float | None = None

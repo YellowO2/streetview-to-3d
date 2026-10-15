@@ -1,6 +1,7 @@
 import numpy as np
 
-from streetview_to_3d.models.segment import in_view, long_poles
+from streetview_to_3d.models.pano_mask import _long_poles as long_poles
+from streetview_to_3d.reconstruct.run_da3 import _in_view as in_view
 
 
 def _canvas():

@@ -479,7 +479,7 @@ def _panos(sc):
     """(cameras, photos) of the scene's panos; photos[k] is (image, class map, drop mask) or None."""
     from streetview_to_3d.postprocess.fill.Camera import Camera
     from streetview_to_3d.postprocess.fill.paint import blurred
-    from streetview_to_3d.models.segment import pano_mask
+    from streetview_to_3d.models.pano_mask import pano_mask
     nodes = [nd for nd in sc.placed() if nd.rotation is not None]
     photos = []
     for nd in nodes:

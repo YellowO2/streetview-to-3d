@@ -2,7 +2,7 @@
 
 # Headroom after the walk for saving the result before the window closes.
 SAVE_BUFFER_S = 10.0
-# DA3 is loaded at startup (streetview_to_3d.models.gpu), so a call only waits for ZeroGPU to move it.
+# DA3 is loaded at startup (streetview_to_3d.models.on_gpu), so a call only waits for ZeroGPU to move it.
 MODEL_LOAD_S = 5.0
 
 # How hard to try, as GPU seconds per spot: more time lets more capture dates patch weak stretches.

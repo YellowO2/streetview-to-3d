@@ -1,6 +1,6 @@
 import numpy as np
 
-from streetview_to_3d.reconstruct.walk_graph import run_pathfind_reconstruction
+from streetview_to_3d.reconstruct.walk_graph import walk_graph
 
 M = 1 / 111320  # degrees of latitude per metre
 
@@ -25,7 +25,7 @@ def test_a_spot_no_link_reached_keeps_its_best_single_across_dates():
         {"date": "A", "dot_candidates": {0: [_cand("A0", 0)], 1: [_cand("A1", 1)]}},
         {"date": "B", "dot_candidates": {1: [_cand("B1", 1)]}},
     ]
-    segments = run_pathfind_reconstruction(
+    segments = walk_graph(
         date_graphs, points, {0: [], 1: []}, 0.0, 0.0,
         test_edge=lambda *a: None, rate_pano=_rate)
     picked = sorted(key for s in segments for key in s[3])

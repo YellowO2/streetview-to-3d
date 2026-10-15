@@ -33,7 +33,7 @@ def _overlay(img, drop, text):
 def main():
     from gradio_client import Client
     from PIL import Image
-    from streetview_to_3d.models import segment
+    from streetview_to_3d.models.pano_mask import pano_mask
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("pano_id")
     ap.add_argument("out")
@@ -44,7 +44,7 @@ def main():
     got = np.load(io.BytesIO(base64.b64decode(Client(a.space, token=token).predict(a.pano_id, a.masker, api_name="/mask_pano"))))
     img = np.asarray(Image.open(io.BytesIO(got["pano"].tobytes())).convert("RGB"))
     ids = {str(n): i for i, n in enumerate(got["names"])}
-    panels = [_overlay(img, segment.masks_from_labels([got["labels"]], ids, long_only=long_only)[0], text)
+    panels = [_overlay(img, pano_mask(got["labels"], long_only=long_only, label_ids=ids), text)
               for long_only, text in [(False, "every pole"), (True, "only long straight poles (what is used)")]]
     gap = np.full((8, img.shape[1], 3), 255, np.uint8)
     Image.fromarray(np.concatenate([panels[0], gap, panels[1]], 0)).save(a.out, quality=92)

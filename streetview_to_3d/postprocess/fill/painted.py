@@ -4,7 +4,7 @@ import logging
 import numpy as np
 from scipy.spatial import cKDTree
 
-from streetview_to_3d.models.segment import pano_mask
+from streetview_to_3d.models.pano_mask import pano_mask
 from streetview_to_3d.postprocess.fill.PaintedGround import PaintedGround
 from streetview_to_3d.postprocess.fill.paint import blurred, paint
 

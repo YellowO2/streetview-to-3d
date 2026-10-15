@@ -6,12 +6,12 @@ import numpy as np
 from PIL import Image
 
 from streetview_to_3d.common.streetview_fetch import fetch_da3_pano
-from streetview_to_3d.models.segment import pano_labels
+from streetview_to_3d.models.pano_labels import pano_labels
 
 
 def photos(scene):
     """The scene with each placed node's photo set: its Google pano's (image path, class map),
-    else None. The class map is the newest the walk made (segment.pano_labels), else made now."""
+    else None. The class map is the newest the walk made (models/pano_labels.py), else made now."""
     for n in scene.placed():
         n.photo = _photo(n.pano)
     return scene

@@ -17,7 +17,7 @@ from streetview_to_3d.common.geo import haversine_m
 logger = logging.getLogger(__name__)
 
 
-def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: list[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray]:
+def _rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: list[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray]:
     """Average rigid transform (R, t) mapping the 'from' frame onto the 'to' frame, from
     shared anchor poses (center, world-to-pano rotation) in both: R = r_to.T @ r_from."""
     from scipy.spatial.transform import Rotation
@@ -102,7 +102,7 @@ def _patch_dots(pieces, n_points, adjacency):
     return patch
 
 
-def run_pathfind_reconstruction(
+def walk_graph(
     date_graphs: list[dict],
     points: list[tuple[float, float]],
     adjacency: dict[int, list[int]],
@@ -127,8 +127,8 @@ def run_pathfind_reconstruction(
     Phase 2 (set_cover): greedy set cover over every piece from every date.
 
     date_graphs: [{"date", "dot_candidates": {dot: [(key, path, lat, lon)]}}], downloaded.
-    test_edge(path_a, path_b, test_id) -> models.da3.test_edge's tuple, or None.
-    rate_pano(path) -> models.da3.rate_pano's tuple.
+    test_edge(path_a, path_b, test_id) -> walk._test_edge's tuple, or None.
+    rate_pano(path) -> walk._rate_pano's tuple.
 
     Returns [(clouds, path_edges, date, frame_poses)], one per chosen piece, each in its
     own DA3 frame. frame_poses: {key: (center, rotation, path, lat, lon, n_views_kept,
@@ -197,7 +197,7 @@ def run_pathfind_reconstruction(
 
         def test_and_confirm(from_dot, from_key, from_path, to_dot, to_key, to_path, to_lat, to_lon):
             """One DA3 pair test. On success to_dot's own piece is dropped and its slice
-            of the joint run joins from_dot's piece (rigid_align); from_dot takes its
+            of the joint run joins from_dot's piece (_rigid_align); from_dot takes its
             slice too while it still holds only its solo cloud, never twice."""
             if out_of_time():
                 return False
@@ -222,7 +222,7 @@ def run_pathfind_reconstruction(
             if to_dot in confirmed:
                 piece_data.pop(confirmed[to_dot]["piece_id"], None)
 
-            local_R, local_t = rigid_align([pose_a], [pf["pose"]])
+            local_R, local_t = _rigid_align([pose_a], [pf["pose"]])
             seg_R = pf["seg_R"] @ local_R
             seg_t = pf["seg_R"] @ local_t + pf["seg_t"]
             pd = piece_data[pid]
