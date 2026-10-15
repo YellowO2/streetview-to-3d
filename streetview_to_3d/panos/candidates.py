@@ -3,6 +3,7 @@
 Find the real Street View panoramas and links near a location, for the map picker."""
 import asyncio
 import io
+import logging
 import math
 
 import aiohttp
@@ -16,6 +17,8 @@ from streetview_to_3d.common.Pano import Pano
 from streetview_to_3d.common.geo import haversine_m as _haversine_m, latlon_to_local_m, local_m_to_latlon
 from streetview_to_3d.common.http import BROWSER_HEADERS
 from streetview_to_3d.common.streetview_fetch import fetch_panos_by_id, google_node, run_async
+
+logger = logging.getLogger(__name__)
 
 # Street View publishes coverage on zoom-17 Slippy Map tiles.
 _TILE_ZOOM = 17
@@ -52,7 +55,7 @@ def _nearest_to(lat, lon, radius_m):
         try:
             p = streetview.find_panorama(lat, lon, radius=radius_m)
         except Exception as e:
-            print(f"Google search at the center failed: {e}")
+            logger.warning(f"Google search at the center failed: {e}")
             return None
         _centre_cache[key] = p if _is_official(p) else None
     return _centre_cache[key]
@@ -154,7 +157,7 @@ async def _discover_tile(session, sem, tx, ty):
     try:
         panos += await _probe_line_gaps(session, sem, tx, ty, panos)
     except Exception as e:  # the listing alone is still a usable answer
-        print(f"Coverage line probe failed on tile {tx},{ty}: {e}")
+        logger.warning(f"Coverage line probe failed on tile {tx},{ty}: {e}")
     return panos
 
 
@@ -204,7 +207,7 @@ def nearby_nodes(lat, lon, radius_m=DEFAULT_RADIUS_M, max_nodes=MAX_NODES):
     try:
         panos = google_tile_panos(lat, lon)
     except Exception as e:
-        print(f"Google coverage lookup failed: {e}")
+        logger.warning(f"Google coverage lookup failed: {e}")
         return [], []
 
     nodes = []
@@ -251,7 +254,7 @@ def on_open_water(often):
                 out &= often(*local_m_to_latlon(_OPEN_WATER_M * np.cos(a), _OPEN_WATER_M * np.sin(a), lat, lon)) >= WET
             return out
         except OSError as e:
-            print(f"Water map lookup failed: {e}")
+            logger.warning(f"Water map lookup failed: {e}")
             return np.zeros(lat.shape, bool)
     return f
 
@@ -282,7 +285,7 @@ def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None
     try:
         discovered = google_tile_panos(center_lat, center_lon, radius_m)
     except Exception as e:
-        print(f"Google coverage lookup failed: {e}")
+        logger.warning(f"Google coverage lookup failed: {e}")
         return [], []
     # also the pano nearest the center: discovery keeps a walked path's panos only every
     # 12-24 m, so a small radius in a park can hold none
@@ -356,6 +359,6 @@ def expand_area(center_lat, center_lon, radius_m=None, max_nodes=2000, area=None
                         next_frontier.append(other_key)
             frontier = next_frontier
 
-    print(f"expand_area: {len(nodes)} node(s) from {walks} walk(s), {len(discovered)} discovered, "
-          f"{len(afloat)} out on the water left out")
+    logger.info(f"expand_area: {len(nodes)} node(s) from {walks} walk(s), {len(discovered)} discovered, "
+                f"{len(afloat)} out on the water left out")
     return nodes, edges

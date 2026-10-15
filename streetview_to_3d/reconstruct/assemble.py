@@ -1,7 +1,11 @@
 """Put the walk's pieces into the scene: each node's pano, pose and points."""
+import logging
+
 from streetview_to_3d.common.Edge import Edge
 from streetview_to_3d.common.Pano import Pano
 from streetview_to_3d.reconstruct.thinned import thinned
+
+logger = logging.getLogger(__name__)
 
 
 def assemble(sc, pieces, corridor):
@@ -26,8 +30,8 @@ def assemble(sc, pieces, corridor):
                 continue
             i = node_of_dot[c["dot"]]
             if i in taken:
-                print(f"save: piece {p_i}'s {key} is at node {i}, already held by a "
-                      f"bigger piece -- dropped with its links", flush=True)
+                logger.warning(f"save: piece {p_i}'s {key} is at node {i}, already held by a "
+                               f"bigger piece -- dropped with its links")
                 continue
             taken.add(i)
             node = sc.nodes[i]

@@ -14,7 +14,7 @@ from streetview_to_3d.postprocess.fill.walkable_ground import walkable_ground
 from streetview_to_3d.postprocess.fill.world_clouds import world_clouds
 
 
-def fill(scene, log=print):
+def fill(scene):
     """(the filled scene, its seams.SceneGround); a scene with nothing placed comes back as it is,
     with no ground."""
     clouds = world_clouds(scene)
@@ -22,10 +22,10 @@ def fill(scene, log=print):
         return scene, None
     cameras = placed_cameras(scene)
     walkable = walkable_ground(clouds, cameras)
-    scene, clouds = level(scene, clouds, walkable, log)
+    scene, clouds = level(scene, clouds, walkable)
     cameras = placed_cameras(scene)
     clouds, surface = one_ground(clouds, cameras, walkable)
-    surface = painted(surface, clouds, cameras, log)
+    surface = painted(surface, clouds, cameras)
     surface = on_road(surface, cameras)
     ground = scene_ground(surface)
     scene = handed_out(scene, clouds, surface, ground, cameras)

@@ -2,6 +2,7 @@
 
 The main tab: the map section, then two buttons -- prepare, then reconstruct and place
 (and, where set up, publish to the gallery)."""
+import logging
 import os
 import zipfile
 
@@ -22,6 +23,9 @@ from streetview_to_3d.reconstruct.estimate_gpu_seconds import (
     DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, estimate_gpu_seconds,
 )
 from streetview_to_3d.ui.map_selection.tab import build_map_section, corridor_edges, nodes_by_key
+
+logger = logging.getLogger(__name__)
+
 
 def handle_pathfind_prepare(state):
     """Button 1: gather and download the selection's candidates (no GPU; see panos.main.panos)."""
@@ -89,8 +93,7 @@ def handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model="
             model=(da3_model or "").strip() or None, masker=(masker or "").strip() or None,
             mask_classes=[c.strip() for c in (mask_classes or "").split(",") if c.strip()] or None,
             conf_floor=conf_floor or None)
-        output_dir = streetview_to_3d(corridor, Settings(walk=walk, post=PostprocessSettings(fill=bool(fill))),
-                                      log=lambda m: print(m, flush=True))
+        output_dir = streetview_to_3d(corridor, Settings(walk=walk, post=PostprocessSettings(fill=bool(fill))))
     except Exception as e:
         yield gr.HTML(visible=True), gr.skip(), "<p>Reconstruction failed. Try again.</p>"
         raise gr.Error(f"Reconstruct failed: {e}")
@@ -101,10 +104,10 @@ def handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model="
            "<p>Scene ready.</p>")
     if share and gallery.enabled():
         try:
-            url = gallery.link(gallery.publish(output_dir, log=lambda m: print(m, flush=True)))
+            url = gallery.link(gallery.publish(output_dir))
             yield gr.skip(), gr.skip(), f'<p>Scene ready. <a href="{url}" target="_blank">Share link</a></p>'
         except Exception as e:
-            print(f"gallery: not published: {e}", flush=True)
+            logger.warning(f"gallery: not published: {e}")
 
 
 def build_main_tab():

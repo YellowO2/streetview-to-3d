@@ -8,6 +8,7 @@ in the page head (BRIDGE_HEAD_SCRIPT) writes it into a hidden textbox, and its .
 handle_bridge_message.
 """
 import json
+import logging
 
 import gradio as gr
 
@@ -18,6 +19,8 @@ from streetview_to_3d.reconstruct.estimate_other_seconds import estimate_other_s
 from streetview_to_3d.common.streetview_fetch import fetch_pano_by_id, google_node, run_async
 from streetview_to_3d.panos import candidates as candidates_mod
 from streetview_to_3d.ui.map_selection import map_ui
+
+logger = logging.getLogger(__name__)
 
 BRIDGE_ELEM_ID = "map_bridge"
 
@@ -98,7 +101,7 @@ def _augment_real_links(state, key):
     try:
         meta = run_async(fetch_pano_by_id(pano_id))
     except Exception as e:
-        print(f"Link fetch failed for {pano_id}: {e}")
+        logger.warning(f"Link fetch failed for {pano_id}: {e}")
         return state
     if not meta:
         return state

@@ -6,6 +6,7 @@ Upload a finished scene to the public gallery dataset and list it in index.json.
 """
 import datetime
 import json
+import logging
 import os
 import sys
 import urllib.parse
@@ -16,6 +17,8 @@ from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
 from huggingface_hub.utils import disable_progress_bars
 
 from streetview_to_3d.common.Scene import FILENAME as SCENE_FILENAME
+
+logger = logging.getLogger(__name__)
 
 REPO = "potato-bug/street-view-to-3d-scenes"   # a public dataset; index.html reads the same one
 PAGE = "https://yellowo2.github.io/streetview-to-3d/"   # where index.html and viewer.html are served
@@ -72,7 +75,7 @@ def already(scenes, panos):
     return None
 
 
-def publish(run_dir, log=print, repo=REPO, api=None):
+def publish(run_dir, repo=REPO, api=None):
     """Upload run_dir's scene as scenes/<id>/ and add it to index.json. Returns its index
     entry, or the entry of the listed scene that already covers these panos."""
     api = api or HfApi(token=os.environ[TOKEN_ENV])
@@ -96,7 +99,7 @@ def publish(run_dir, log=print, repo=REPO, api=None):
             scenes = []
         found = already(scenes, panos)
         if found:
-            log(f"gallery: already there as {found['id']}")
+            logger.info(f"gallery: already there as {found['id']}")
             return found
         index = json.dumps({"scenes": scenes + [entry]}, indent=1).encode()
         operations = [CommitOperationAdd(f"scenes/{entry['id']}/{n}", os.path.join(run_dir, n))
@@ -108,10 +111,11 @@ def publish(run_dir, log=print, repo=REPO, api=None):
             if e.response is not None and e.response.status_code in (409, 412):
                 continue   # another run committed first: read the index again
             raise
-        log(f"gallery: published {entry['id']} ({entry['bytes'] / 1e6:.0f} MB)")
+        logger.info(f"gallery: published {entry['id']} ({entry['bytes'] / 1e6:.0f} MB)")
         return entry
     raise RuntimeError("gallery: the index kept changing; not published")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     publish(sys.argv[1])

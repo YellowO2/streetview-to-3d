@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 
 from streetview_to_3d.postprocess import main
@@ -13,32 +14,35 @@ def _stages(monkeypatch, done, fill=None, terrain=None):
         return run
     for name in ("place", "drop_blobs", "drop_sheets", "photos"):
         monkeypatch.setattr(main, name, stage(name))
-    monkeypatch.setattr(main, "fill", fill or (lambda scene, log: (done.append("fill") or scene, "ground")))
-    monkeypatch.setattr(main, "terrain", terrain or (lambda scene, ground, log: ("world", ground)))
+    monkeypatch.setattr(main, "fill", fill or (lambda scene: (done.append("fill") or scene, "ground")))
+    monkeypatch.setattr(main, "terrain", terrain or (lambda scene, ground: ("world", ground)))
 
 
 def test_stages_run_in_order_and_settings_leave_out_their_part(monkeypatch):
     done = []
     _stages(monkeypatch, done)
-    scene, ground, world = main.postprocess(SimpleNamespace(), Settings(), log=lambda m: None)
+    scene, ground, world = main.postprocess(SimpleNamespace(), Settings())
     assert done == ["place", "drop_blobs", "drop_sheets", "photos", "fill"]
     assert ground == "ground" and world == ("world", "ground")
     done.clear()
-    main.postprocess(SimpleNamespace(), Settings(clean=False), log=lambda m: None)
+    main.postprocess(SimpleNamespace(), Settings(clean=False))
     assert "drop_sheets" not in done
     done.clear()
-    assert main.postprocess(SimpleNamespace(), Settings(fill=False), log=lambda m: None)[1:] == (None, None)
+    assert main.postprocess(SimpleNamespace(), Settings(fill=False))[1:] == (None, None)
     assert done == ["place"]
 
 
-def test_a_failing_fill_or_world_is_skipped_and_said_so(monkeypatch):
-    done, lines = [], []
+def test_a_failing_fill_or_world_is_skipped_and_said_so(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    done = []
 
     def broken(*a):
         raise ValueError("no")
     _stages(monkeypatch, done, fill=broken, terrain=broken)
-    scene, ground, world = main.postprocess(SimpleNamespace(), log=lines.append)
+    scene, ground, world = main.postprocess(SimpleNamespace())
+    lines = caplog.messages
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert ground is None and world is None
-    assert "fill skipped: ValueError('no')" in lines and "terrain skipped: ValueError('no')" in lines
+    assert warned == ["fill skipped: ValueError('no')", "terrain skipped: ValueError('no')"]
     assert [l.split()[1] for l in lines if l.startswith("timing:")] == [
         "placement", "floating", "loose", "fill", "terrain"]

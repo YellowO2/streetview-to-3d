@@ -5,6 +5,7 @@ The walk: from N date graphs, the most complete corridor in the fewest DA3 piece
 No GPU or downloads here: it calls test_edge/rate_pano callbacks, and runs inside the
 caller's one @spaces.GPU call (walk.py) because each next test depends on the last.
 """
+import logging
 import os
 import time
 from collections import deque
@@ -12,6 +13,8 @@ from collections import deque
 import numpy as np
 
 from streetview_to_3d.common.geo import haversine_m
+
+logger = logging.getLogger(__name__)
 
 
 def rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: list[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray]:
@@ -66,8 +69,8 @@ def _sample_dates(date_graphs, n_points, rate, out_of_time=lambda: False):
         median = float(np.median(rates)) if rates else 0.0
         coverage = len(dots) / n_points
         scored.append((median * coverage, median, coverage, g))
-        print(f"pathfind: date {g['date']} sampled {len(rates)} pano(s): median keep "
-              f"{median:.2f}, covers {coverage:.0%} of the corridor")
+        logger.info(f"pathfind: date {g['date']} sampled {len(rates)} pano(s): median keep "
+                    f"{median:.2f}, covers {coverage:.0%} of the corridor")
     scored.sort(key=lambda t: t[0], reverse=True)
     return [g for *_, g in scored]
 
@@ -203,7 +206,7 @@ def run_pathfind_reconstruction(
             t_test = time.monotonic() - t0
             tests_used[0] += 1
             if result is None:
-                print(f"[{date}] {from_key} -> {to_key}: FAIL ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
+                logger.info(f"[{date}] {from_key} -> {to_key}: FAIL ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
                 return False
             pose_a, pose_b, pts, cols, per_pano_pts, per_pano_cols, per_pano_views = result
             to_id = os.path.basename(to_path)
@@ -214,7 +217,7 @@ def run_pathfind_reconstruction(
             pf = confirmed[from_dot]
             pid = pf["piece_id"]
             if to_dot in confirmed and confirmed[to_dot]["piece_id"] == pid:
-                print(f"[{date}] {from_key} -> {to_key}: OK (already same piece, {t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
+                logger.info(f"[{date}] {from_key} -> {to_key}: OK (already same piece, {t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
                 return True
             if to_dot in confirmed:
                 piece_data.pop(confirmed[to_dot]["piece_id"], None)
@@ -238,7 +241,7 @@ def run_pathfind_reconstruction(
                                   "seg_R": seg_R, "seg_t": seg_t, "pose": pose_b, "piece_id": pid,
                                   "n_views_kept": to_kept, "n_views_total": to_total, "solo": False}
 
-            print(f"[{date}] {from_key} -> {to_key}: OK ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
+            logger.info(f"[{date}] {from_key} -> {to_key}: OK ({t_test:.2f}s, {deadline - time.monotonic():.1f}s left)")
             return True
 
         def try_target(from_dot, to_dot, to_candidates):
@@ -335,7 +338,7 @@ def run_pathfind_reconstruction(
     total_tests = 0
     time_budget_s = max_time_budget_s
     deadline = time.monotonic() + time_budget_s
-    print(f"pathfind: time budget {time_budget_s:.0f}s for {len(points)} dot(s)")
+    logger.info(f"pathfind: time budget {time_budget_s:.0f}s for {len(points)} dot(s)")
 
     rated_cache = {}  # pano key -> rate_pano's result, shared by sampling and every date's walk
 
@@ -347,30 +350,30 @@ def run_pathfind_reconstruction(
 
     t_sample = time.monotonic()
     ordered = _sample_dates(date_graphs, len(points), rate_one, lambda: time.monotonic() >= deadline)
-    print(f"timing: date sampling {time.monotonic() - t_sample:.1f}s, {len(rated_cache)} pano(s) rated")
+    logger.info(f"timing: date sampling {time.monotonic() - t_sample:.1f}s, {len(rated_cache)} pano(s) rated")
 
     for date_graph in ordered:
         if time.monotonic() >= deadline:
-            print("pathfind: time budget exhausted -- stopping date exploration")
+            logger.info("pathfind: time budget exhausted -- stopping date exploration")
             break
         patch = _patch_dots(all_pieces, len(points), adjacency)
         if not patch:
-            print("pathfind: every dot is in a good piece -- stopping date exploration")
+            logger.info("pathfind: every dot is in a good piece -- stopping date exploration")
             break
 
         date = date_graph["date"]
         dot_candidates = {d: c for d, c in date_graph["dot_candidates"].items() if d in patch}
         if not dot_candidates:
-            print(f"pathfind: date {date} has no panos where patching is needed -- skipped")
+            logger.info(f"pathfind: date {date} has no panos where patching is needed -- skipped")
             continue
-        print(f"pathfind: date {date} walking {len(dot_candidates)} dot(s) "
-              f"({'whole corridor' if not all_pieces else 'patch: dots ' + _ranges(dot_candidates)})")
+        logger.info(f"pathfind: date {date} walking {len(dot_candidates)} dot(s) "
+                    f"({'whole corridor' if not all_pieces else 'patch: dots ' + _ranges(dot_candidates)})")
         pieces, tests_used = map_date(date, dot_candidates, total_tests, deadline)
         total_tests += tests_used
         for p in pieces:
             all_pieces.append(p + (date,))
-        print(f"pathfind: date {date} mapped into {len(pieces)} piece(s) "
-              f"{sorted(len(p[4]) for p in pieces)[::-1]} dot(s), {total_tests} attempts so far")
+        logger.info(f"pathfind: date {date} mapped into {len(pieces)} piece(s) "
+                    f"{sorted(len(p[4]) for p in pieces)[::-1]} dot(s), {total_tests} attempts so far")
 
     chosen, leftover_uncovered = set_cover(all_pieces, len(points))
 
@@ -378,14 +381,14 @@ def run_pathfind_reconstruction(
     segments = [(clouds, path_edges, date, frame_poses)
                 for clouds, path_edges, covered, frame_poses, dots, date in chosen]
 
-    print(f"pathfind: {total_tests} attempts total, {len(date_graphs)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")
+    logger.info(f"pathfind: {total_tests} attempts total, {len(date_graphs)} date(s) considered, {len(all_pieces)} piece(s) found, {len(segments)} segment(s) chosen, corridor {'fully' if reached_all else 'partially'} covered ({len(leftover_uncovered)}/{len(points)} point(s) never covered)")
 
     # whether the chosen pieces actually mix dates
     dates_used = sorted({s[2] for s in segments})
     if len(dates_used) > 1:
-        print(f"pathfind: set_cover MIXED {len(dates_used)} different dates across the chosen segments: {dates_used}")
+        logger.info(f"pathfind: set_cover MIXED {len(dates_used)} different dates across the chosen segments: {dates_used}")
     elif len(date_graphs) > 1:
-        print(f"pathfind: {len(date_graphs)} date(s) were available but every chosen segment came from a single date "
-              f"({dates_used[0] if dates_used else 'n/a'}) -- cross-date mixing wasn't needed here")
+        logger.info(f"pathfind: {len(date_graphs)} date(s) were available but every chosen segment came from a single date "
+                    f"({dates_used[0] if dates_used else 'n/a'}) -- cross-date mixing wasn't needed here")
 
     return segments

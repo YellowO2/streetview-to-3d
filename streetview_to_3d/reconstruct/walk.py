@@ -1,7 +1,11 @@
 """Run DA3 over the downloaded panos in one ZeroGPU window."""
+import logging
+
 from streetview_to_3d.models import gpu
 from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
 from streetview_to_3d.reconstruct.estimate_gpu_seconds import MODEL_LOAD_S, SAVE_BUFFER_S, estimate_gpu_seconds
+
+logger = logging.getLogger(__name__)
 
 
 def _gpu_seconds(points, gpu_seconds=None) -> float:
@@ -40,12 +44,12 @@ def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon, setting
 
     t0 = time.monotonic()
     total_s = _gpu_seconds(points, settings.gpu_seconds)
-    print(f"GPU window: {total_s:.0f}s for {len(points)} dot(s)", flush=True)
+    logger.info(f"GPU window: {total_s:.0f}s for {len(points)} dot(s)")
 
     cfg = gpu.get_da3_config(settings.model)
     da3 = gpu.get_da3(settings.model)
     # "timing:" lines calibrate the constants above (grep the Space's logs)
-    print(f"timing: model load {time.monotonic() - t0:.1f}s", flush=True)
+    logger.info(f"timing: model load {time.monotonic() - t0:.1f}s")
     try:
         with options(hfov=settings.hfov, masker=settings.masker, mask_classes=settings.mask_classes,
                      conf_floor=settings.conf_floor):
@@ -60,8 +64,8 @@ def _run_walk_impl(date_graphs, points, adjacency, start_lat, start_lon, setting
             segments = run_pathfind_reconstruction(
                 date_graphs, points, adjacency, start_lat, start_lon, test_edge, rate_pano=rate_pano,
                 max_time_budget_s=max(0.0, total_s - MODEL_LOAD_S - SAVE_BUFFER_S))
-            print(f"timing: walk {time.monotonic() - t0:.1f}s for {len(points)} dot(s) "
-                  f"-> {len(segments or [])} piece(s), of {total_s:.0f}s", flush=True)
+            logger.info(f"timing: walk {time.monotonic() - t0:.1f}s for {len(points)} dot(s) "
+                        f"-> {len(segments or [])} piece(s), of {total_s:.0f}s")
             return pieces(segments or [])
     finally:
         torch.cuda.empty_cache()

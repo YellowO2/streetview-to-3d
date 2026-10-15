@@ -1,4 +1,6 @@
 """Colour the one ground from the panos that see it."""
+import logging
+
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -6,8 +8,10 @@ from streetview_to_3d.models.segment import pano_mask
 from streetview_to_3d.postprocess.fill.PaintedGround import PaintedGround
 from streetview_to_3d.postprocess.fill.paint import blurred, paint
 
+logger = logging.getLogger(__name__)
 
-def painted(ground, clouds, cameras, log=print):
+
+def painted(ground, clouds, cameras):
     """The PaintedGround of points ground, coloured from the cameras' panos past DA3's points (clouds);
     points no camera can colour take the nearest painted point's colour, dropping them would
     leave holes. With nothing painted at all, an empty PaintedGround."""
@@ -21,6 +25,6 @@ def painted(ground, clouds, cameras, log=print):
         src = np.flatnonzero(done)[nb]
         col[fallback], who[fallback] = col[src], who[src]
     ok = who >= 0
-    log(f"fill: one ground {int(ok.sum())} of {len(ground)} points, "
-        f"{int(sum(len(c.points) for c in clouds))} DA3 points kept")
+    logger.info(f"fill: one ground {int(ok.sum())} of {len(ground)} points, "
+                f"{int(sum(len(c.points) for c in clouds))} DA3 points kept")
     return PaintedGround(ground[ok], col[ok], who[ok])

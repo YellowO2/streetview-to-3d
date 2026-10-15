@@ -9,9 +9,9 @@ from streetview_to_3d.reconstruct.main import reconstruct
 from streetview_to_3d.save import save
 
 
-def streetview_to_3d(corridor, settings: Settings = Settings(), log=print):
+def streetview_to_3d(corridor, settings: Settings = Settings()):
     """The folder holding the finished scene (scene.json beside its clouds, ground and world)."""
     scene = reconstruct(corridor, settings.walk)
-    scene, ground, world = postprocess(scene, settings.post, log)
-    folder = save(scene, ground, world, log=log)
+    scene, ground, world = postprocess(scene, settings.post)
+    folder = save(scene, ground, world)
     return folder

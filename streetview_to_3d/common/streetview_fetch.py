@@ -2,6 +2,7 @@
 
 Google Street View: pano metadata and image downloads, cached under PANOS_DIR."""
 import asyncio
+import logging
 import os
 
 import aiohttp
@@ -12,6 +13,8 @@ from streetlevel import streetview
 from streetview_to_3d.common.paths import PANOS_DIR
 from streetview_to_3d.common.Pano import Pano
 from streetview_to_3d.common.http import BROWSER_HEADERS
+
+logger = logging.getLogger(__name__)
 
 # ~6656x3328 px: the default, for callers that need the photo's detail (the HF app's splat tab).
 _DOWNLOAD_ZOOM = 4
@@ -33,7 +36,7 @@ async def download_panorama_image(pano, img_path: str, zoom: int = _DOWNLOAD_ZOO
             if attempt == 3:
                 raise RuntimeError(f"Failed to download panorama after retries: {e}")
             wait = 3 ** attempt
-            print(f"Tile fetch failed (attempt {attempt + 1}), retrying in {wait}s: {e}")
+            logger.warning(f"Tile fetch failed (attempt {attempt + 1}), retrying in {wait}s: {e}")
             await asyncio.sleep(wait)
 
 
@@ -106,7 +109,7 @@ async def fetch_panos_by_id(pano_ids, concurrency=16):
             try:
                 return await fetch_pano_by_id(pano_id)
             except Exception as e:
-                print(f"Pano lookup failed for {pano_id}: {e}")
+                logger.warning(f"Pano lookup failed for {pano_id}: {e}")
                 return None
 
     return await asyncio.gather(*(one(i) for i in pano_ids))

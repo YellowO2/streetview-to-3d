@@ -1,4 +1,10 @@
 """Street Builder's Gradio app: Street View panoramas to a 3D scene. Run: python app.py"""
+import logging
+
+# the package's progress lines, message only, on stderr: the Space's logs show them
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+for chatty in ("httpx", "httpx2", "numexpr"):   # a line per request Gradio makes, NumExpr's thread count
+    logging.getLogger(chatty).setLevel(logging.WARNING)
 
 # the package first: it imports `spaces` before anything touches CUDA (streetview_to_3d/models/gpu.py)
 from streetview_to_3d.common.paths import DATA_DIR

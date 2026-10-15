@@ -9,6 +9,7 @@ land, roads and buildings left out) and, bent, the nodes' plys.
     python -m streetview_to_3d.postprocess.world.google SCENE_DIR [--as-is]
 """
 import json
+import logging
 import os
 import sys
 
@@ -23,6 +24,8 @@ from streetview_to_3d.load import load
 from streetview_to_3d.postprocess.ply_io import read_node, read_vertices, write_ply
 from streetview_to_3d.postprocess.Sight import SIGHT_DEG, Sight
 from streetview_to_3d.postprocess.world import terrain
+
+logger = logging.getLogger(__name__)
 
 FILENAME = "google.ply"
 MERGED = "merged"
@@ -167,11 +170,11 @@ def _write_node(scene_dir, node, world):
         f.write(header.encode("ascii") + v.tobytes())
 
 
-def merge(scene_dir, log=print, align=True):
+def merge(scene_dir, align=True):
     path = os.path.join(scene_dir, FILENAME)
     v, header = read_vertices(path)
     if f"comment {MERGED}\n" in header:
-        log("google: already merged")
+        logger.info("google: already merged")
         return
     pts = np.stack([v["x"], v["y"], v["z"]], 1).astype(float)      # world: y down
     cols = np.stack([v["red"], v["green"], v["blue"]], 1) / 255.0
@@ -182,7 +185,7 @@ def merge(scene_dir, log=print, align=True):
     nodes = [nd for nd in sc.nodes if nd.ply and nd.transform]
     cams = np.array([(np.asarray(nd.transform, float) @ [*nd.position, 1])[:3] for nd in nodes])
     move = shift(pts, scene, cams)
-    log(f"google: moved {move.round(2)} m (x east, y down, z north) onto DA3's points")
+    logger.info(f"google: moved {move.round(2)} m (x east, y down, z north) onto DA3's points")
     pts = pts + move
     xy = pts[:, [0, 2]]
 
@@ -204,8 +207,8 @@ def merge(scene_dir, log=print, align=True):
         for nd, world in zip(nodes, clouds):
             _write_node(scene_dir, nd, world)
         scene, scene_cols = terrain.scene_points(load(scene_dir))
-        log(f"google: DA3's points bent onto Google's shape: {was:.2f} m apart along the panos' sight before, "
-            f"{apart(clouds, cams, pts):.2f} m after")
+        logger.info(f"google: DA3's points bent onto Google's shape: {was:.2f} m apart along the panos' sight before, "
+                    f"{apart(clouds, cams, pts):.2f} m after")
 
     # all of Google's stay, taking DA3's colour and look where they meet it, but what stands in
     # front of DA3's points from their pano, and its water
@@ -220,9 +223,10 @@ def merge(scene_dir, log=print, align=True):
     # the scene is Google's now: the viewer draws it for the map's land, roads and buildings
     sc.google, sc.land, sc.terrain, sc.roads, sc.buildings, sc.blocks = FILENAME, None, None, None, None, None
     sc.save(scene_dir)
-    log(f"google: {int(keep.sum()):,} of {len(v):,} points kept ({int(air.sum()):,} in front of what a pano "
-        f"saw, {int((water & ~air).sum()):,} on the water)")
+    logger.info(f"google: {int(keep.sum()):,} of {len(v):,} points kept ({int(air.sum()):,} in front of what a pano "
+                f"saw, {int((water & ~air).sum()):,} on the water)")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     merge(sys.argv[1], align="--as-is" not in sys.argv)

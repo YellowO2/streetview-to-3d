@@ -2,10 +2,14 @@
 
 Least squares over the median height differences where pieces share road squares, each shift
 at most MAX_M."""
+import logging
+
 import numpy as np
 from scipy.optimize import lsq_linear
 
 from streetview_to_3d.postprocess.fill.ground import square_keys
+
+logger = logging.getLogger(__name__)
 
 CELL_M = 0.5
 MIN_SQUARES = 20
@@ -51,7 +55,7 @@ def _shifts(ground_pts, piece):
     return {p: float(v) for p, v in zip(ids, s)}, len(rows)
 
 
-def level(sc, clouds, G, log=print):
+def level(sc, clouds, G):
     """Shift each piece's node transforms and world clouds (one per placed node), in place;
     returns (the scene, the clouds). G[k]: cloud k's walkable ground."""
     nodes = sc.placed()
@@ -67,6 +71,6 @@ def level(sc, clouds, G, log=print):
     for k, c in enumerate(clouds):
         c.points[:, 1] += shift[piece[k]]
     moved = np.abs(list(shift.values()))
-    log(f"fill: {len(shift)} piece(s) levelled over {n_links} overlap(s), moved up to "
-            f"{moved.max() * 100:.0f} cm ({int((moved >= MAX_M - 1e-9).sum())} at the {MAX_M * 100:.0f} cm limit)")
+    logger.info(f"fill: {len(shift)} piece(s) levelled over {n_links} overlap(s), moved up to "
+                    f"{moved.max() * 100:.0f} cm ({int((moved >= MAX_M - 1e-9).sum())} at the {MAX_M * 100:.0f} cm limit)")
     return sc, clouds

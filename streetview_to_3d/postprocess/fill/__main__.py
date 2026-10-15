@@ -1,6 +1,7 @@
 """usage: python -m streetview_to_3d.postprocess.fill SCENE_DIR [OUT_DIR]
 
 Fills a placed scene in place, or a copy of it in OUT_DIR."""
+import logging
 import sys
 
 from streetview_to_3d.load import load
@@ -10,6 +11,7 @@ from streetview_to_3d.save import save
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     if len(sys.argv) not in (2, 3):
         sys.exit(__doc__)
     src = sys.argv[1]

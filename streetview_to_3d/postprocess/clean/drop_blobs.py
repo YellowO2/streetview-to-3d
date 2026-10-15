@@ -5,6 +5,7 @@ them) and small clumps touching nothing else.
 
     python -m streetview_to_3d.postprocess.clean.drop_blobs SCENE_DIR
 """
+import logging
 import sys
 
 import numpy as np
@@ -13,6 +14,8 @@ from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
 from streetview_to_3d.common.Cloud import Cloud
+
+logger = logging.getLogger(__name__)
 
 VOXEL_M, LINK_M, MIN_CELLS = 0.1, 0.25, 300
 FAR_M = 25.0                  # DA3 points this far from their pano are dropped
@@ -46,7 +49,7 @@ def _confirmed(clouds, panos):
     return out
 
 
-def drop_blobs(sc, log=print):
+def drop_blobs(sc):
     """Remove far, unconfirmed and floating points from every placed node's cloud; returns the scene."""
     nodes = sc.placed()
     if not nodes:
@@ -74,12 +77,13 @@ def drop_blobs(sc, log=print):
         gone += int((~near).sum())
         if not keep.all():
             n.cloud = Cloud(p[keep], c[keep])
-    log(f"floating bits: {gone} points past {FAR_M:g} m of their pano or past {SURE_M:g} m and no other "
-        f"pano's ({unsure} of them), then {int(loose.sum())} of {len(loose)} points in floating bits removed")
+    logger.info(f"floating bits: {gone} points past {FAR_M:g} m of their pano or past {SURE_M:g} m and no other "
+                f"pano's ({unsure} of them), then {int(loose.sum())} of {len(loose)} points in floating bits removed")
     return sc
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     if len(sys.argv) != 2:
         sys.exit(__doc__.splitlines()[-1].strip())
     from streetview_to_3d.load import load

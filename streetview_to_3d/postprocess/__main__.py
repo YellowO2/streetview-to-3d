@@ -6,6 +6,7 @@
     python -m streetview_to_3d.postprocess --dir data/runs/<run id> --no-clean
 """
 import argparse
+import logging
 import os
 
 from streetview_to_3d.load import load
@@ -15,16 +16,17 @@ from streetview_to_3d.postprocess.merged import merged
 from streetview_to_3d.save import save
 
 
-def run(run_dir, log=print, merge_ply=None, fill=True, clean=True):
+def run(run_dir, merge_ply=None, fill=True, clean=True):
     """postprocess on the scene saved in run_dir, saved back there; merge_ply: also write
     one combined world-frame .ply there, for inspection."""
     run_dir = os.path.expanduser(run_dir)
-    scene, ground, world = postprocess(load(run_dir), Settings(fill=fill, clean=clean), log)
-    save(scene, ground, world, run_dir, log)
-    return merged(scene, os.path.expanduser(merge_ply), log) if merge_ply else None
+    scene, ground, world = postprocess(load(run_dir), Settings(fill=fill, clean=clean))
+    save(scene, ground, world, run_dir)
+    return merged(scene, os.path.expanduser(merge_ply)) if merge_ply else None
 
 
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dir", required=True, help="a reconstruction run's directory")
     ap.add_argument("--merge", help="also write one combined .ply here")

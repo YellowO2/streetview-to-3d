@@ -6,12 +6,15 @@ World frame: x east, y down, z north, metres from the scene's centre.
 
     python -m streetview_to_3d.postprocess.place SCENE_DIR
 """
+import logging
 import sys
 
 import numpy as np
 
 from streetview_to_3d.models.da3 import DA3_UNITS_TO_METRES
 from streetview_to_3d.common.geo import latlon_to_local_m
+
+logger = logging.getLogger(__name__)
 
 CAM_H = 2.45             # camera height above the ground
 SIGMA_M = 0.5            # how far a GPS point is trusted
@@ -20,11 +23,11 @@ MIN_SCALE_SPAN_M = 8.0   # cameras closer than this: GPS noise swamps the scale
 SCALE_RANGE = (0.9, 1.8) # fitted scales outside this are rejected
 
 
-def place(sc, log=print):
+def place(sc):
     """Solve every piece and set its transform on its nodes; returns the scene."""
     groups = sc.pieces()
     s0, why = _scene_scale(sc, groups)
-    log(f"scene scale: {s0:.2f} m per DA3 unit ({why})")
+    logger.info(f"scene scale: {s0:.2f} m per DA3 unit ({why})")
     for gi, members in enumerate(groups):
         nodes = [sc.nodes[m] for m in members]
         own = _piece_scale(nodes, sc.origin)
@@ -33,9 +36,9 @@ def place(sc, log=print):
         for m in members:
             sc.nodes[m].transform = T.tolist()
         whose = "its own" if s is own else "the scene's"
-        log(f"  piece {gi}: {len(nodes)} node(s), scale {s:.2f} ({whose}), "
-            f"cameras off their GPS point by up to {off_m:.2f} m, "
-            f"off their pano's orientation by up to {off_deg:.1f} deg")
+        logger.info(f"  piece {gi}: {len(nodes)} node(s), scale {s:.2f} ({whose}), "
+                    f"cameras off their GPS point by up to {off_m:.2f} m, "
+                    f"off their pano's orientation by up to {off_deg:.1f} deg")
     return sc
 
 
@@ -114,6 +117,7 @@ def _scale_2d(src, dst):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     if len(sys.argv) != 2:
         sys.exit(__doc__.splitlines()[-1].strip())
     from streetview_to_3d.common.Scene import Scene

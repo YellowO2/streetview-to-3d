@@ -5,6 +5,7 @@ as a World, for the caller to save. Sentinel-2 credit: "Sentinel-2 cloudless by 
 
     python -m streetview_to_3d.postprocess.world.terrain SCENE_DIR
 """
+import logging
 import math
 import sys
 
@@ -15,6 +16,8 @@ from streetview_to_3d.postprocess.World import World
 from streetview_to_3d.postprocess.world import buildings, elevations, life, osm, roads, water
 from streetview_to_3d.postprocess.seams import ramp
 from streetview_to_3d.postprocess.world.tiles import TileMap
+
+logger = logging.getLogger(__name__)
 
 FILENAME = "terrain.ply"
 ROADS_FILENAME = "roads.ply"
@@ -143,10 +146,10 @@ def scene_points(sc, every=SCENE_EVERY):
     return np.concatenate(pts), np.concatenate(cols)
 
 
-def terrain(sc, scene_ground=None, log=print):
+def terrain(sc, scene_ground=None):
     """The World around the placed (and filled) scene sc, its file names set on sc, or None
     without a placed camera. scene_ground: the fill's seams.SceneGround (None: none)."""
-    world = _terrain(sc, scene_ground or seams.SceneGround.none(), log)
+    world = _terrain(sc, scene_ground or seams.SceneGround.none())
     if world is not None:
         for field, name in (("land", LAND_FILENAME), ("roads", ROADS_FILENAME), ("terrain", FILENAME),
                             ("water", water.FILENAME), ("life", life.FILENAME),
@@ -156,7 +159,7 @@ def terrain(sc, scene_ground=None, log=print):
     return world
 
 
-def _terrain(sc, scene_ground, log):
+def _terrain(sc, scene_ground):
     """terrain, failing loudly."""
     from scipy.spatial import cKDTree
     lat0, lon0 = sc.origin
@@ -166,7 +169,7 @@ def _terrain(sc, scene_ground, log):
                                        for p in geometry])
     cams = [n for n in sc.nodes if n.transform and n.position is not None]
     if not cams:
-        log("terrain: no placed cameras")
+        logger.warning("terrain: no placed cameras")
         return None
     cam_xz = np.array([(np.asarray(n.transform)[:3, :3] @ n.position + np.asarray(n.transform)[:3, 3])[[0, 2]]
                        for n in cams])
@@ -179,9 +182,9 @@ def _terrain(sc, scene_ground, log):
     own_el = np.array([n.pano.elevation for n in known])
     try:
         elements = osm.fetch(lat0, lon0, OSM_M, ROADS_M, M_PER_LAT, m_per_lon,
-                             water_m=OSM_M, cams=to_ll(cam_xz), log=log)
+                             water_m=OSM_M, cams=to_ll(cam_xz))
     except (OSError, ValueError) as e:
-        log(f"terrain: no OpenStreetMap ({e!r})")
+        logger.warning(f"terrain: no OpenStreetMap ({e!r})")
         elements = []
 
     # other panos' elevations around (elevations.py), where the scene's own are not
@@ -191,7 +194,7 @@ def _terrain(sc, scene_ground, log):
         level = elevations.on_ground(xy, elements, to_xy)
         more, more_el = elevations.thinned(xy[level], el[level])
     except (OSError, ValueError) as e:
-        log(f"terrain: no other panos' elevation ({e!r})")
+        logger.warning(f"terrain: no other panos' elevation ({e!r})")
         more, more_el = np.zeros((0, 2)), np.zeros(0)
     if len(anchors) and len(more):
         keep = cKDTree(anchors).query(more)[0] > elevations.CELL_M
@@ -209,7 +212,7 @@ def _terrain(sc, scene_ground, log):
     jrc = water.jrc(to_ll, heights)
     wet = water.Water(RADIUS_M, to_ll, heights, shift, (anchors, own_el), jrc,
                       osm=(water.outline(elements, to_xy, OSM_M,
-                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1), log=log), jrc),
+                                         lambda xy: osm.water_at(np.stack(to_ll(xy), 1)), jrc),
                            OSM_M) if elements else None)
 
     # the scene always wins: the map only around it, faded in at its edge
@@ -316,7 +319,7 @@ def _terrain(sc, scene_ground, log):
     try:
         unhazed = seams.unhazed(scene_ground, lambda xy: google_colours(*to_ll(xy), np.full(len(xy), seams.CELL_M)))
     except OSError as e:
-        log(f"terrain: satellite colours as they are ({e!r})")
+        logger.warning(f"terrain: satellite colours as they are ({e!r})")
         unhazed = lambda cols: cols
     colours = colour_map()
     try:
@@ -328,7 +331,7 @@ def _terrain(sc, scene_ground, log):
             source += f", Sentinel-2's for {gone.mean():.0%}"
         cols = unhazed(cols)
     except OSError as e:
-        log(f"terrain: no satellite colour ({e!r}), plain")
+        logger.warning(f"terrain: no satellite colour ({e!r}), plain")
         colours = None
         cols = np.tile(PLAIN, (len(en), 1))
         source = "plain"
@@ -352,17 +355,17 @@ def _terrain(sc, scene_ground, log):
             n_sat = buildings.satellite_roofs(outlines, lambda en: unhazed(roof_at(*to_ll(en))),
                                               ROOF_INSET_M, ROOF_STEP_M, lively=False)
         except OSError as e:
-            log(f"terrain: no Google roofs ({e!r}), Sentinel-2's")
+            logger.warning(f"terrain: no Google roofs ({e!r}), Sentinel-2's")
         try:                                # ... else Sentinel-2's
             n_sat += (buildings.satellite_roofs(outlines, lambda en: unhazed(colours(*to_ll(en)) ** LIFT))
                       if colours else 0)
         except OSError as e:
-            log(f"terrain: no satellite roofs ({e!r})")
+            logger.warning(f"terrain: no satellite roofs ({e!r})")
         try:
             panos = panos or _panos(sc)
             pal = buildings.palette(panos[1])
         except (OSError, ValueError) as e:
-            log(f"terrain: no palette from the panos ({e!r})")
+            logger.warning(f"terrain: no palette from the panos ({e!r})")
             panos, pal = ([], []), (np.array(buildings.PASTEL), np.full(len(buildings.PASTEL), 1 / 8))
         base = buildings.colours(outlines, pal)
         n_buildings = len(outlines)
@@ -424,7 +427,7 @@ def _terrain(sc, scene_ground, log):
         bc, m = _paint(panos, bp, bc, scene, skip=b_roof | b_alone)
         n_painted = n + k + m
     except (OSError, ValueError) as e:
-        log(f"terrain: no pano paint ({e!r})")
+        logger.warning(f"terrain: no pano paint ({e!r})")
     # map points approaching DA3's turn into them (seams.toward)
     land_cols, land_near = seams.toward(land, land_cols, scene_tree, scene_cols)
     cols, _ = seams.toward(pts, cols, scene_tree, scene_cols)
@@ -443,7 +446,7 @@ def _terrain(sc, scene_ground, log):
     try:
         side = life.side(known[0].pano.id) if known else "right"
     except (OSError, ValueError) as e:
-        log(f"terrain: no country for the cars' side ({e!r})")
+        logger.warning(f"terrain: no country for the cars' side ({e!r})")
         side = "right"
     world.json[life.FILENAME] = dict(cars=life.cars(stretches, side),
                                      birds=life.birds(surfaces, cam_xz, float(np.mean(ground(cam_xz)))),
@@ -458,17 +461,17 @@ def _terrain(sc, scene_ground, log):
         v, c, f, facade, g = buildings.solid(solid, surface, solid_base, one)
         world.meshes[BLOCKS_FILENAME] = dict(pts=v, cols=c, faces=f, facade=facade, gap=g)
     fix = np.abs(fixes - shift)
-    log(f"terrain: land {len(land)} vertices, {len(faces)} triangles to {RADIUS_M:.0f} m, "
-        f"{len(pts)} road points, {len(road_mesh[2]) if road_mesh else 0} road triangles, {len(bp)} building points, {n_painted} of them "
-        f"painted from the panos ({len(surfaces)} water surfaces ({wet.source}), {source} colour, "
-        f"{n_buildings} buildings ({len(solid)} solid) -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
-        f"{n_cut} of their points "
-        f"left to DA3's own, {n_seen} coloured by the panos, {n_sat} roofs by the satellite -- {n_roads} roads, {n_bridges} bridges, "
-        f"{len(mouths[2]) // 14} tunnel mouths, {len(stretches)} stretches of road for cars, "
-        f"keeping {side}), map shifted "
-        f"{shift:+.1f} m to Google's datum, the ground near {len(known)} panos and {len(more)} other places "
-        f"their elevation (the map off it by up to {fix.max() if len(fix) else 0:.1f} m, "
-        f"median {np.median(fix) if len(fix) else 0:.1f})")
+    logger.info(f"terrain: land {len(land)} vertices, {len(faces)} triangles to {RADIUS_M:.0f} m, "
+                f"{len(pts)} road points, {len(road_mesh[2]) if road_mesh else 0} road triangles, {len(bp)} building points, {n_painted} of them "
+                f"painted from the panos ({len(surfaces)} water surfaces ({wet.source}), {source} colour, "
+                f"{n_buildings} buildings ({len(solid)} solid) -- {n_fitted} fitted onto DA3's walls, {n_trimmed} trimmed to them, "
+                f"{n_cut} of their points "
+                f"left to DA3's own, {n_seen} coloured by the panos, {n_sat} roofs by the satellite -- {n_roads} roads, {n_bridges} bridges, "
+                f"{len(mouths[2]) // 14} tunnel mouths, {len(stretches)} stretches of road for cars, "
+                f"keeping {side}), map shifted "
+                f"{shift:+.1f} m to Google's datum, the ground near {len(known)} panos and {len(more)} other places "
+                f"their elevation (the map off it by up to {fix.max() if len(fix) else 0:.1f} m, "
+                f"median {np.median(fix) if len(fix) else 0:.1f})")
     return world
 
 
@@ -505,6 +508,7 @@ def _paint(panos, pts, cols, scene, skip=None):
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     if len(sys.argv) != 2:
         sys.exit(__doc__.splitlines()[-1].strip())
     from streetview_to_3d.load import load
@@ -513,4 +517,4 @@ if __name__ == "__main__":
     from streetview_to_3d.save import save
     scene = photos(load(sys.argv[1]))
     ground = SceneGround.load(sys.argv[1])
-    save(scene, ground, terrain(scene, ground, sys.argv[1]), sys.argv[1])
+    save(scene, ground, terrain(scene, ground), sys.argv[1])

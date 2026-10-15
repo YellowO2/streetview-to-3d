@@ -43,7 +43,7 @@ def _index(monkeypatch, tmp_path, scenes):
 def test_uploads_what_the_viewer_loads_and_lists_it(monkeypatch, tmp_path):
     _index(monkeypatch, tmp_path, None)
     api = _Api()
-    entry = gallery.publish(_scene(tmp_path, ["a", "b"]), log=lambda m: None, api=api)
+    entry = gallery.publish(_scene(tmp_path, ["a", "b"]), api=api)
     files = api.commits[0]
     assert sorted(f for f in files if f != "index.json") == [
         f"scenes/{entry['id']}/{n}" for n in ("land.ply", "node_0.ply", "node_1.ply", "scene.json")]
@@ -55,13 +55,12 @@ def test_a_run_already_listed_is_not_uploaded_again(monkeypatch, tmp_path):
     there = {"id": "old", "panos": ["a", "b", "c", "d", "e"]}
     _index(monkeypatch, tmp_path, [there])
     api = _Api()
-    assert gallery.publish(_scene(tmp_path, ["a", "b", "c", "d", "x"]),
-                           log=lambda m: None, api=api) == there
+    assert gallery.publish(_scene(tmp_path, ["a", "b", "c", "d", "x"]), api=api) == there
     assert not api.commits
 
 
 def test_a_run_mostly_new_is_uploaded(monkeypatch, tmp_path):
     _index(monkeypatch, tmp_path, [{"id": "old", "panos": ["a", "b"]}])
     api = _Api()
-    gallery.publish(_scene(tmp_path, ["a", "x", "y"]), log=lambda m: None, api=api)
+    gallery.publish(_scene(tmp_path, ["a", "x", "y"]), api=api)
     assert len(json.loads(api.commits[0]["index.json"])["scenes"]) == 2

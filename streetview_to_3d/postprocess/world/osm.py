@@ -3,12 +3,15 @@ retried across mirrors, OpenFreeMap's tiles standing in on failure, cached besid
 Credit "(c) OpenStreetMap contributors"."""
 import hashlib
 import json
+import logging
 import math
 import os
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 OVERPASS_URLS = ("https://overpass-api.de/api/interpreter",
                  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
@@ -63,8 +66,7 @@ def _keep(path, query, key, answer):
     os.replace(partial, path)
 
 
-def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, water_m=0, cams=None,
-          log=print):
+def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, water_m=0, cams=None):
     """Overpass elements (with geometry) around the cameras' box (cams: (lats, lons), else the centre).
 
     Everything within FULL_M; big buildings to buildings_m, main roads to
@@ -106,10 +108,10 @@ def fetch(lat0, lon0, buildings_m, roads_m, m_per_lat, m_per_lon, water_m=0, cam
         try:
             elements = tiles.result()
         except (OSError, ValueError) as e2:
-            log(f"osm: no OpenFreeMap tiles either ({e2!r})")
+            logger.warning(f"osm: no OpenFreeMap tiles either ({e2!r})")
             raise e
-        log(f"osm: Overpass gave no answer ({e!r}); OpenFreeMap's tiles instead, "
-            f"{sum('building' in x['tags'] for x in elements)} buildings")
+        logger.warning(f"osm: Overpass gave no answer ({e!r}); OpenFreeMap's tiles instead, "
+                       f"{sum('building' in x['tags'] for x in elements)} buildings")
         return elements
     _keep(cache, query, "elements", elements)
     return elements
@@ -156,7 +158,7 @@ def is_water(e):
 
 
 
-def water_at(latlon, log=print):
+def water_at(latlon):
     """Whether each (lat, lon) lies in OSM water: OpenFreeMap's areas, else one
     Overpass request (lakes and rivers, not the sea), cached across runs (_cache_path)."""
     if not len(latlon):
@@ -165,7 +167,7 @@ def water_at(latlon, log=print):
     try:
         return openfreemap.water_at(latlon)
     except (OSError, ValueError) as e:
-        log(f"osm: no OpenFreeMap water ({e!r}), Overpass's")
+        logger.warning(f"osm: no OpenFreeMap water ({e!r}), Overpass's")
     areas = "".join(f'area.a{t};' for t in WATER_WAYS if "coastline" not in t)
     query = "[out:json][timeout:60];" + "".join(
         f'is_in({lat:.7f},{lon:.7f})->.a;({areas});make p i="{i}",ids=set(id());out;'
