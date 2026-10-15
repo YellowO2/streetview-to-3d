@@ -43,7 +43,7 @@ def _shared(folder, choices):
 def reconstruct_button(corridor, controls: Controls, job, build):
     """Wire button 2: the prepared corridor (a gr.State, from prepare_button) and the
     controls' choices go to job (build_scene), which has build (the engine's
-    streetview_to_3d) make the scene; it is shown and offered for download, then shared."""
+    build) make the scene; it is shown and offered for download, then shared."""
     choices = gr.State(None)
     folder = gr.State(None)
     shown = [controls.viewer, controls.download, controls.status]

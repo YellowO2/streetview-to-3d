@@ -1,7 +1,7 @@
 """Draw what the masker drops from one pano, segmented on the Space over its API.
 
 Segment on the Space (ui/pano_api.py's mask_pano), then draw locally with this
-checkout's tools/pano_mask.py: every pole vs long straight poles only.
+checkout's build/tools/pano_mask.py: every pole vs long straight poles only.
 
     python -m scripts.draw_mask PANO_ID OUT.jpg [--space potato-bug/street-view-to-3d-dev]
 """
@@ -33,7 +33,7 @@ def _overlay(img, drop, text):
 def main():
     from gradio_client import Client
     from PIL import Image
-    from streetview_to_3d.tools.pano_mask import pano_mask
+    from streetview_to_3d.build.tools.pano_mask import pano_mask
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("pano_id")
     ap.add_argument("out")

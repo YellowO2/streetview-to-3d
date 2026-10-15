@@ -7,7 +7,7 @@ from streetview_to_3d.types.Node import Node
 from streetview_to_3d.types.Pano import Pano
 from streetview_to_3d.types.Scene import Scene
 from streetview_to_3d.load import load
-from streetview_to_3d.save import save
+from streetview_to_3d.build.save import save
 
 
 def test_a_scene_saved_and_loaded_keeps_its_nodes_points_and_leaves_memory_out_of_scene_json(tmp_path):

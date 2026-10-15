@@ -21,7 +21,7 @@ def _views(pano_path, out_dir):
     for the segmenter: (paths, yaws)."""
     import cv2
     from panoramic_da3 import Loader, Settings, ViewExtractor
-    from streetview_to_3d.models.DepthModel import VIEW_HFOV, VIEW_STEP_DEGREES
+    from streetview_to_3d.build.models.DepthModel import VIEW_HFOV, VIEW_STEP_DEGREES
     cut = ViewExtractor(Loader([pano_path]), Settings(da3_model="", step_degrees=VIEW_STEP_DEGREES, hfov=VIEW_HFOV))
     paths = [os.path.join(out_dir, f"pano_0_da3_{int(round(v.yaw))}_0.jpg") for v in cut]
     for path, v in zip(paths, cut):
@@ -30,7 +30,7 @@ def _views(pano_path, out_dir):
 
 
 def _label_task(paths, masker):
-    from streetview_to_3d.models.Segmenter import Segmenter
+    from streetview_to_3d.build.models.Segmenter import Segmenter
     labels, ids = Segmenter(masker or None).segment(paths)
     return np.stack(labels), ids
 
@@ -47,8 +47,8 @@ def _encode(path, ids, **arrays):
 def _depth_task(paths, yaws, pano_id):
     import cv2
     from panoramic_da3 import View
-    from streetview_to_3d.models.DepthModel import VIEW_HFOV, DepthModel
-    from streetview_to_3d.models.Segmenter import Segmenter
+    from streetview_to_3d.build.models.DepthModel import VIEW_HFOV, DepthModel
+    from streetview_to_3d.build.models.Segmenter import Segmenter
     import math
     images = [cv2.imread(p) for p in paths]
     h, w = images[0].shape[:2]
@@ -66,8 +66,8 @@ def _depth_task(paths, yaws, pano_id):
 def _depth_pano(pano_id: str) -> str:
     """Base64 .npz of one Google pano's DA3 views run alone: as mask_pano,
     plus depth and conf (DA3's own, per kept view), kept (which views)."""
-    from streetview_to_3d.models.DepthModel import VIEW_HFOV
-    from streetview_to_3d.postprocess.tools.fetch_da3_pano import fetch_da3_pano
+    from streetview_to_3d.build.models.DepthModel import VIEW_HFOV
+    from streetview_to_3d.build.postprocess.tools.fetch_da3_pano import fetch_da3_pano
     path = fetch_da3_pano(pano_id)
     paths, yaws = _views(path, tempfile.mkdtemp())
     labels, ids, yaws, kept, depth, conf = on_gpu(_depth_task, paths, yaws, os.path.basename(path), seconds=90)
@@ -77,7 +77,7 @@ def _depth_pano(pano_id: str) -> str:
 def _mask_pano(pano_id: str, masker: str = "") -> str:
     """Base64 .npz of one Google pano, segmented: labels (h x w class ids),
     names (class names by id), pano (the photo's .jpg bytes)."""
-    from streetview_to_3d.postprocess.tools.fetch_da3_pano import fetch_da3_pano
+    from streetview_to_3d.build.postprocess.tools.fetch_da3_pano import fetch_da3_pano
     path = fetch_da3_pano(pano_id)
     labels, ids = on_gpu(_label_task, [path], masker, seconds=GPU_SECONDS)
     return _encode(path, ids, labels=labels[0])

@@ -7,9 +7,9 @@ import logging
 import sys
 
 from streetview_to_3d.load import load
-from streetview_to_3d.postprocess.clean.drop_blobs import drop_blobs
-from streetview_to_3d.postprocess.clean.drop_sheets import drop_sheets
-from streetview_to_3d.save import save
+from streetview_to_3d.build.postprocess.clean.drop_blobs import drop_blobs
+from streetview_to_3d.build.postprocess.clean.drop_sheets import drop_sheets
+from streetview_to_3d.build.save import save
 
 CLEANERS = {"blobs": drop_blobs, "sheets": drop_sheets}
 

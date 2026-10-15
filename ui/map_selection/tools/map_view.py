@@ -10,7 +10,7 @@ from ui.map_selection.MapPage import MapPage
 from ui.tools.map_state import corridor_edges
 from ui.tools.page import iframe as _iframe
 from streetview_to_3d.panos.tools.corridor_points import corridor_points
-from streetview_to_3d.reconstruct.tools.gpu_seconds import estimate_gpu_seconds
+from streetview_to_3d.build.reconstruct.tools.gpu_seconds import estimate_gpu_seconds
 
 _SUGGESTED_COLOR = "#ff9800"
 _SELECTED_COLOR = "#00c853"

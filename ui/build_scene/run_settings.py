@@ -1,8 +1,8 @@
 """Turn the choices for a build into the engine's Settings."""
-from streetview_to_3d.Settings import Settings
-from streetview_to_3d.postprocess.Settings import Settings as PostprocessSettings
-from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
-from streetview_to_3d.reconstruct.tools.gpu_seconds import DEFAULT_EFFORT, estimate_gpu_seconds
+from streetview_to_3d.build.Settings import Settings
+from streetview_to_3d.build.postprocess.Settings import Settings as PostprocessSettings
+from streetview_to_3d.build.reconstruct.WalkSettings import WalkSettings
+from streetview_to_3d.build.reconstruct.tools.gpu_seconds import DEFAULT_EFFORT, estimate_gpu_seconds
 
 
 def run_settings(corridor, choices):
