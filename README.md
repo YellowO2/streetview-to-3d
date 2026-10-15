@@ -6,7 +6,7 @@ colorTo: indigo
 sdk: gradio
 sdk_version: 6.15.2
 python_version: '3.12'
-app_file: app.py
+app_file: main.py
 pinned: false
 license: mit
 short_description: Reconstructs a street corridor into a 3D point cloud
@@ -30,7 +30,7 @@ python3.12 -m venv .venv && source .venv/bin/activate
 # torch + torchvision for your CUDA version (see `nvidia-smi`), e.g. CUDA 12.4:
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 pip install -r requirements.txt
-python app.py
+python main.py
 
 #viewer
 cd streetview_to_3d/visualise && python3 -m http.server 8000
