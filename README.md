@@ -49,7 +49,8 @@ cd streetview_to_3d/visualise && npm install && npm test
 streetview_to_3d/
   main.py       a prepared corridor → reconstruct → postprocess → save (the "Reconstruct" button)
   tools/        helpers the parts use inside themselves: paths (where data lives, new_run_dir),
-                   geo, ply, run_async; deeper tools/ folders hold their own subject's
+                   geo, ply, run_async, gpu_seconds (the GPU window a walk needs);
+                   deeper tools/ folders hold their own subject's
   common/       Scene (Node, Pano, Edge, Cloud), corridor_points, TileMap, occurrence_map,
                    streetview_fetch/ (lookups and downloads)
   models/       da3, on_gpu, segment, pano_labels, pano_mask;
@@ -62,8 +63,8 @@ streetview_to_3d/
                    python -m streetview_to_3d.postprocess --dir <run> re-runs it on a saved run
   visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/;
                    python -m streetview_to_3d.visualise rebuilds viewer.html
-  gallery/      5. sharing: upload to the public gallery, the gallery page
   ui/           Gradio: main_tab, map_selection/ (the map and its candidates), viewer, pano_api;
+                   gallery/ (sharing: publish uploads to the public gallery, index.html shows it);
                    tools/ page (file_url, iframe) and map_state
 ```
 

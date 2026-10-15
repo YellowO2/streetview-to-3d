@@ -2,7 +2,7 @@ import json
 
 from huggingface_hub.errors import EntryNotFoundError
 
-from streetview_to_3d.gallery import publish as gallery
+from streetview_to_3d.ui.gallery import publish as gallery
 
 
 def _scene(tmp_path, panos):
@@ -37,14 +37,16 @@ def _index(monkeypatch, tmp_path, scenes):
         path.write_text(json.dumps({"scenes": scenes}))
         return str(path)
     monkeypatch.setattr(gallery, "hf_hub_download", download)
-    monkeypatch.setattr(gallery, "place_name", lambda lat, lon: "Somewhere")
+    monkeypatch.setattr(gallery, "_place_name", lambda lat, lon: "Somewhere")
 
 
 def test_uploads_what_the_viewer_loads_and_lists_it(monkeypatch, tmp_path):
     _index(monkeypatch, tmp_path, None)
     api = _Api()
-    entry = gallery.publish(_scene(tmp_path, ["a", "b"]), api=api)
+    url = gallery.publish(_scene(tmp_path, ["a", "b"]), api=api)
     files = api.commits[0]
+    entry = json.loads(files["index.json"])["scenes"][-1]
+    assert url.startswith(gallery.PAGE + "viewer.html?") and f"scenes%2F{entry['id']}%2Fscene.json" in url
     assert sorted(f for f in files if f != "index.json") == [
         f"scenes/{entry['id']}/{n}" for n in ("land.ply", "node_0.ply", "node_1.ply", "scene.json")]
     listed = json.loads(files["index.json"])["scenes"]
@@ -52,10 +54,10 @@ def test_uploads_what_the_viewer_loads_and_lists_it(monkeypatch, tmp_path):
 
 
 def test_a_run_already_listed_is_not_uploaded_again(monkeypatch, tmp_path):
-    there = {"id": "old", "panos": ["a", "b", "c", "d", "e"]}
+    there = {"id": "old", "place": "Elsewhere", "panos": ["a", "b", "c", "d", "e"]}
     _index(monkeypatch, tmp_path, [there])
     api = _Api()
-    assert gallery.publish(_scene(tmp_path, ["a", "b", "c", "d", "x"]), api=api) == there
+    assert gallery.publish(_scene(tmp_path, ["a", "b", "c", "d", "x"]), api=api) == gallery._link(there)
     assert not api.commits
 
 

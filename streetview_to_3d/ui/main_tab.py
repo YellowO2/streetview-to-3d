@@ -10,14 +10,12 @@ import gradio as gr
 
 from streetview_to_3d.Settings import Settings
 from streetview_to_3d.common.Scene import FILENAME as SCENE_FILENAME
-from streetview_to_3d.gallery import publish as gallery
 from streetview_to_3d.main import streetview_to_3d
 from streetview_to_3d.panos.main import panos
 from streetview_to_3d.postprocess.Settings import Settings as PostprocessSettings
 from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
-from streetview_to_3d.reconstruct.estimate_gpu_seconds import (
-    DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, estimate_gpu_seconds,
-)
+from streetview_to_3d.tools.gpu_seconds import DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT, estimate_gpu_seconds
+from streetview_to_3d.ui.gallery.publish import TOKEN_ENV as GALLERY_TOKEN_ENV, publish
 from streetview_to_3d.ui.map_selection.map_section import map_section
 from streetview_to_3d.ui.pano_api import pano_api
 from streetview_to_3d.ui.tools.map_state import corridor_edges, nodes_by_key
@@ -52,6 +50,11 @@ def _handle_pathfind_prepare(state):
     yield corridor, f"<p>{n} panoramas ready. Now click button 2.</p>"
 
 
+def _sharing():
+    """Whether scenes can be published to the gallery here: its write token is set."""
+    return bool(os.environ.get(GALLERY_TOKEN_ENV))
+
+
 def _zip(run_dir):
     """The whole scene folder as save wrote it (scene.json, .ply files, water.json, life.json,
     ground.npz, labels/) as one zip the viewer opens. Stored, not compressed: point data
@@ -77,7 +80,7 @@ def _handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model=
     The rest are hidden per-run overrides for the API (0/blank: defaults): keep_pct of
     each view's pixels, gpu_seconds (else sized from effort), view_hfov, da3_model, masker,
     comma-separated mask_classes, fill, conf_floor. See reconstruct.WalkSettings.
-    share: also publish the scene to the public gallery (gallery.publish).
+    share: also publish the scene to the public gallery (ui/gallery/publish.py).
     """
     if not corridor:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -103,9 +106,9 @@ def _handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model=
     yield (gr.HTML(viewer(scene_url=scene_url), visible=True),
            gr.DownloadButton(value=_zip(output_dir), visible=True),
            "<p>Scene ready.</p>")
-    if share and gallery.enabled():
+    if share and _sharing():
         try:
-            url = gallery.link(gallery.publish(output_dir))
+            url = publish(output_dir)
             yield gr.skip(), gr.skip(), f'<p>Scene ready. <a href="{url}" target="_blank">Share link</a></p>'
         except Exception as e:
             logger.warning(f"gallery: not published: {e}")
@@ -133,8 +136,8 @@ def main_tab():
     fill_input = gr.Checkbox(value=True, visible=False)
     conf_floor_input = gr.Number(value=0, minimum=0, visible=False)
 
-    # shown where the gallery is set up (gallery.publish.TOKEN_ENV)
-    share_input = gr.Checkbox(value=True, visible=gallery.enabled(),
+    # shown where the gallery is set up
+    share_input = gr.Checkbox(value=True, visible=_sharing(),
                               label="Add the scene to the public gallery (anyone can view it)")
 
     pathfind_status = gr.HTML()

@@ -1,8 +1,9 @@
 """Upload a finished scene to the public gallery.
 
-Upload a finished scene to the public gallery dataset and list it in index.json.
+The scene's files go to the public gallery dataset, listed in index.json, and its viewer
+link comes back. Nothing is published where TOKEN_ENV is unset (the UI hides its checkbox).
 
-    GALLERY_TOKEN=hf_... python -m streetview_to_3d.gallery.publish SCENE_DIR
+    GALLERY_TOKEN=hf_... python -m streetview_to_3d.ui.gallery.publish SCENE_DIR
 """
 import datetime
 import json
@@ -28,11 +29,7 @@ SAME = 0.8          # a run with this share of its panos in one listed scene is 
 RETRIES = 3         # index.json is rewritten per upload; retry when another run got in first
 
 
-def enabled():
-    return bool(os.environ.get(TOKEN_ENV))
-
-
-def viewable(run_dir):
+def _viewable(run_dir):
     """The files the viewer loads: scene.json and whatever it names."""
     with open(os.path.join(run_dir, SCENE_FILENAME)) as f:
         data = json.load(f)
@@ -41,7 +38,7 @@ def viewable(run_dir):
     return data, [n for n in names if os.path.isfile(os.path.join(run_dir, n))]
 
 
-def place_name(lat, lon):
+def _place_name(lat, lon):
     """A name like "Himi, Toyama Prefecture, Japan" from OpenStreetMap's Nominatim; the
     coordinates if it gives nothing."""
     url = "https://nominatim.openstreetmap.org/reverse?" + urllib.parse.urlencode(
@@ -60,13 +57,13 @@ def place_name(lat, lon):
     return f"{lat:.4f}, {lon:.4f}"
 
 
-def link(entry, repo=REPO):
+def _link(entry, repo=REPO):
     """The viewer's URL for a listed scene."""
     scene = f"https://huggingface.co/datasets/{repo}/resolve/main/scenes/{entry['id']}/scene.json"
     return PAGE + "viewer.html?" + urllib.parse.urlencode({"scene": scene, "name": entry["place"]})
 
 
-def already(scenes, panos):
+def _already(scenes, panos):
     """The listed scene holding most of these panos, if it holds SAME of them."""
     panos = set(panos)
     best = max(scenes, key=lambda s: len(panos & set(s["panos"])), default=None)
@@ -76,16 +73,16 @@ def already(scenes, panos):
 
 
 def publish(run_dir, repo=REPO, api=None):
-    """Upload run_dir's scene as scenes/<id>/ and add it to index.json. Returns its index
-    entry, or the entry of the listed scene that already covers these panos."""
+    """Upload run_dir's scene as scenes/<id>/ and add it to index.json. Returns its viewer
+    link, or the link of the listed scene that already covers these panos."""
     api = api or HfApi(token=os.environ[TOKEN_ENV])
     disable_progress_bars()   # one bar per file floods the Space's log
-    data, names = viewable(run_dir)
+    data, names = _viewable(run_dir)
     panos = [n["pano"]["id"] for n in data["nodes"] if n.get("ply")]
     lat, lon = data["center"]
     entry = {
         "id": os.path.basename(os.path.normpath(run_dir)),
-        "place": place_name(lat, lon), "lat": lat, "lon": lon,
+        "place": _place_name(lat, lon), "lat": lat, "lon": lon,
         "date": datetime.date.today().isoformat(), "panos": panos,
         "bytes": sum(os.path.getsize(os.path.join(run_dir, n)) for n in names),
     }
@@ -97,10 +94,10 @@ def publish(run_dir, repo=REPO, api=None):
                 scenes = json.load(f)["scenes"]
         except EntryNotFoundError:
             scenes = []
-        found = already(scenes, panos)
+        found = _already(scenes, panos)
         if found:
             logger.info(f"gallery: already there as {found['id']}")
-            return found
+            return _link(found, repo)
         index = json.dumps({"scenes": scenes + [entry]}, indent=1).encode()
         operations = [CommitOperationAdd(f"scenes/{entry['id']}/{n}", os.path.join(run_dir, n))
                       for n in names] + [CommitOperationAdd(INDEX, index)]
@@ -112,10 +109,10 @@ def publish(run_dir, repo=REPO, api=None):
                 continue   # another run committed first: read the index again
             raise
         logger.info(f"gallery: published {entry['id']} ({entry['bytes'] / 1e6:.0f} MB)")
-        return entry
+        return _link(entry, repo)
     raise RuntimeError("gallery: the index kept changing; not published")
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    publish(sys.argv[1])
+    print(publish(sys.argv[1]))

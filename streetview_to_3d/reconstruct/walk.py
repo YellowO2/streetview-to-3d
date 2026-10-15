@@ -6,7 +6,7 @@ import numpy as np
 
 from streetview_to_3d.models.on_gpu import on_gpu
 from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
-from streetview_to_3d.reconstruct.estimate_gpu_seconds import MODEL_LOAD_S, SAVE_BUFFER_S, estimate_gpu_seconds
+from streetview_to_3d.tools.gpu_seconds import MODEL_LOAD_S, SAVE_BUFFER_S, estimate_gpu_seconds
 
 logger = logging.getLogger(__name__)
 

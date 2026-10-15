@@ -1,4 +1,4 @@
-"""Size the GPU window a walk over some dots needs."""
+"""The GPU window a walk over some dots needs, for the walk and the UI."""
 
 # Headroom after the walk for saving the result before the window closes.
 SAVE_BUFFER_S = 10.0

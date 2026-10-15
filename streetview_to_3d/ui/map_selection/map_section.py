@@ -15,7 +15,7 @@ import gradio as gr
 from streetview_to_3d.common.corridor_points import corridor_points
 from streetview_to_3d.common.streetview_fetch.fetch_pano_by_id import fetch_pano_by_id
 from streetview_to_3d.common.streetview_fetch.google_node import google_node
-from streetview_to_3d.reconstruct.estimate_gpu_seconds import estimate_gpu_seconds
+from streetview_to_3d.tools.gpu_seconds import estimate_gpu_seconds
 from streetview_to_3d.tools.geo import extract_lat_lon
 from streetview_to_3d.tools.run_async import run_async
 from streetview_to_3d.ui.map_selection.circle import circle
