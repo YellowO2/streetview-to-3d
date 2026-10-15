@@ -5,4 +5,4 @@ License: Apache-2.0, included as LICENSE.
 
 `config.py` and `grammar.py` are unmodified upstream files. The local
 `__init__.py` deliberately omits Blender integration. Our coordinate, colour,
-OSM-profile and point-sampling adapter is `postprocess/facade_geometry.py`.
+OSM-profile and point-sampling adapter is `postprocess/world/buildings/tools/facades.py`.

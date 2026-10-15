@@ -1,2 +1,2 @@
-"""The map: loading an area (tools/nearby_nodes.py), selecting one (tools/expand_area.py),
-clicking nodes, and turning that into a route (map_section.py)."""
+"""The map: loading an area (nearby_nodes.py), selecting one (expand_area.py), clicking
+nodes, and turning that into a route (main.py)."""

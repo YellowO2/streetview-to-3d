@@ -77,7 +77,7 @@ def test_church_tower_mosque_dome_and_minaret():
 
 
 def test_east_asian_facades_have_no_european_ornament():
-    from streetview_to_3d.postprocess.world.buildings.tools.facade_geometry import profile_for
+    from streetview_to_3d.postprocess.world.buildings.tools.facades import profile_for
     house = {"building": "house", "style:region": "japan"}
     assert profile_for(house, 7, 80).bay == 1.8 and not profile_for(house, 7, 80).pilasters
     old = {"building": "yes", "start_date": "1890", "style:region": "japan"}

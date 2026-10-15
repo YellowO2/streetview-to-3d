@@ -1,12 +1,15 @@
-"""Draw the Leaflet map the nodes are picked on.
+"""Draw a map state: the map the nodes are picked on, and its summary.
 
-The Leaflet map HTML for the node picker (no Gradio). It runs in a sandboxed iframe, so a
-click posts a window message that map_section.py's bridge relays to Python. Only the selection and
-the nodes linked to it are drawn: the only ones worth clicking next.
+The map HTML (no Gradio) runs in a sandboxed iframe, so a click posts a window message
+that map_widgets.py's bridge relays to Python. Only the selection and the nodes linked to
+it are drawn: the only ones worth clicking next.
 """
 import json
 
+from ui.tools.map_state import corridor_edges
 from ui.tools.page import iframe as _iframe
+from streetview_to_3d.panos.tools.corridor_points import corridor_points
+from streetview_to_3d.reconstruct.tools.gpu_seconds import estimate_gpu_seconds
 
 _SUGGESTED_COLOR = "#ff9800"
 _SELECTED_COLOR = "#00c853"
@@ -71,7 +74,7 @@ font:12px sans-serif;padding:3px 8px;border-radius:6px;box-shadow:0 1px 3px rgba
 <div id="map"></div>
 <script>
 // NODES/EDGES here are already filtered down to the selected chain plus
-// its current end's direct neighbors -- see picker_map in picker_map.py.
+// its current end's direct neighbors -- see picker_map above.
 var NODES = {nodes_json};
 var EDGES = {edges_json};
 var SELECTED = {selected_json};
@@ -207,3 +210,45 @@ SPOTS.forEach(function(p) {{
 </script>
 </body></html>"""
     return _iframe(doc)
+
+
+# The CPU time around the window (downloads, then postprocess): mostly fixed, a little per spot.
+OTHER_BASE_S, OTHER_SECONDS_PER_SPOT = 90.0, 4.0
+
+
+def map_html(state, zoom=19):
+    """The picker map for a map state (see map_widgets._empty_state)."""
+    radius_m = state.get("radius_m")
+    if state["lat"] is None:
+        preview = state.get("preview_center")
+        if preview:
+            return picker_map(preview[0], preview[1], [], [], [], [], zoom=zoom, radius_m=radius_m)
+        return picker_map(0, 0, [], [], [], [], zoom=2)
+    points, adjacency, _ = corridor_points(corridor_edges(state))
+    return picker_map(
+        state["lat"], state["lon"], state["nodes"], state["edges"],
+        state["selected"], state.get("selected_edges", []),
+        zoom=zoom, view=state.get("view"), radius_m=radius_m, spots=(points, adjacency),
+        area=state.get("area"),
+    )
+
+
+def summary_markdown(state):
+    """What the selection costs to build, as markdown under the map."""
+    if not state["selected"]:
+        return "Enter a location and select a street via 'Expand Area' Button or manually clicking. Then press button 1, wait for it to run, then button 2."
+    # the GPU is spent per spot -- panos within a few metres merge into one
+    # (panos/tools/corridor_points.py) -- not per pano
+    n_spots = len(corridor_points(corridor_edges(state))[0])
+    gpu, quick = (estimate_gpu_seconds(n_spots, e) / 60 for e in ("Normal", "Quick"))
+    other = max(1, round(_estimate_other_seconds(n_spots) / 60))
+    return (f"**{n_spots} spots selected**  \n"
+            f"This takes ~{gpu:.1f} min of GPU. HF offers 5 min/day for a free account. "
+            f"You may switch to Quick ({quick:.1f} min) to save usage.  \n"
+            f"It will also take around ~{other} mins for postprocessing (aligning, fetching more map, etc), "
+            f"which will not cost GPU.")
+
+
+def _estimate_other_seconds(n_dots: int) -> float:
+    """Roughly how long a run over n_dots takes off the GPU (no quota, only waiting)."""
+    return OTHER_BASE_S + n_dots * OTHER_SECONDS_PER_SPOT

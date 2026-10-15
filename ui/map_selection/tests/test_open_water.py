@@ -1,6 +1,6 @@
 import numpy as np
 
-from ui.map_selection.tools.expand_area import _on_open_water as on_open_water
+from ui.map_selection.expand_area import _on_open_water as on_open_water
 
 
 def test_only_a_pano_with_water_all_round_is_out_on_it():

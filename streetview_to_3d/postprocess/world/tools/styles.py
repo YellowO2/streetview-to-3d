@@ -36,7 +36,7 @@ SMALL_M2, SMALL_LEVELS = 150.0, 3     # a small building: under this area, at mo
 HOUSE_M = 7.0                         # guessed height of a small building
 FLAT_KINDS = {"industrial", "warehouse", "retail", "commercial", "office", "supermarket", "garage",
               "garages", "carport", "parking", "service", "roof", "construction", "greenhouse"}
-# facade_geometry.Profile fields by (region, kind):
+# facades.Profile fields by (region, kind):
 # bay, window width, window share of a floor, frame depth, balconies, ledge depth, pilasters
 FACADES = {
     ("east_asia", "house"): (1.8, 1.6, .5, .12, False, .25, False),     # a ken apart, wide low windows

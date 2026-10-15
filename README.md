@@ -71,8 +71,9 @@ streetview_to_3d/   the engine
                    python -m streetview_to_3d.visualise rebuilds viewer.html
 main.py   the whole app: the UI, handed the engine's two jobs (panos to prepare, streetview_to_3d to build)
 ui/     the Gradio page
-  main.py       the page: map_section → page_controls → prepare_button → reconstruct_button
-  map_selection/  the map and its candidates (map_section; tools/ nearby_nodes, expand_area...)
+  main.py       the page: map_selection → page_controls → prepare_button → reconstruct_button → pano_api
+  map_selection/  the map: main.py → map_widgets, then location_box (nearby_nodes), expand_button
+                   and map_clicks (expand_area), radius_box, clear_button; tools/ map_view...
   pano_api      the masker and DA3 on one pano, API only
   tools/        page (file_url, iframe), map_state, viewer, gallery/ (sharing: publish uploads
                    to the public gallery, index.html shows it)

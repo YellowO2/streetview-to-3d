@@ -3,7 +3,7 @@ import numpy as np
 
 from streetview_to_3d.postprocess.world.Roof import Roof
 from streetview_to_3d.postprocess.world.buildings.Blocks import EDGE, INNER, ROOF, SURFACE, Blocks
-from streetview_to_3d.postprocess.world.buildings.tools.facade_geometry import enabled, facade_quads
+from streetview_to_3d.postprocess.world.buildings.tools.facades import enabled, facade_quads
 from streetview_to_3d.postprocess.world.tools.geometry import inset, sample_quads
 from streetview_to_3d.postprocess.world.tools.osm_tags import building_kind
 

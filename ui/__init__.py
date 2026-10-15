@@ -7,7 +7,7 @@ Each button calls what it is handed: the engine's jobs, wired in the project's m
 """
 import streetview_to_3d  # noqa: F401  first: it imports `spaces` before anything touches CUDA
 from ui.main import ui
-from ui.map_selection.map_section import BRIDGE_CSS, BRIDGE_HEAD_SCRIPT
+from ui.map_selection.map_widgets import BRIDGE_CSS, BRIDGE_HEAD_SCRIPT
 from ui.pano_api import pano_api
 
 __all__ = ["ui", "pano_api", "BRIDGE_CSS", "BRIDGE_HEAD_SCRIPT"]

@@ -90,7 +90,7 @@ def test_details_respect_height_and_skip_reconstructed_walls():
 
 
 def test_physical_apartments_change_silhouette_and_have_no_painted_window_grid():
-    from streetview_to_3d.postprocess.world.buildings.tools.facade_geometry import profile_for
+    from streetview_to_3d.postprocess.world.buildings.tools.facades import profile_for
     house = _box(0, 0)
     house[3].tags = {"building": "apartments", "building:levels": "3"}
     ground = lambda xy: np.zeros(len(xy))
@@ -111,7 +111,7 @@ def test_physical_apartments_change_silhouette_and_have_no_painted_window_grid()
 
 
 def test_shared_walls_and_airborne_parts_do_not_get_ground_entrances():
-    from streetview_to_3d.postprocess.world.buildings.tools.facade_geometry import facade_quads
+    from streetview_to_3d.postprocess.world.buildings.tools.facades import facade_quads
     house = _box(0, 0)
     xy, h, _, form = house
     form.tags = {"building": "apartments", "building:levels": "3"}
@@ -125,7 +125,7 @@ def test_shared_walls_and_airborne_parts_do_not_get_ground_entrances():
 
 
 def test_parts_inherit_landmark_type_and_adjacent_walls_are_detected():
-    from streetview_to_3d.postprocess.world.buildings.tools.facade_geometry import enabled
+    from streetview_to_3d.postprocess.world.buildings.tools.facades import enabled
     def element(i, x0, size, tags):
         xy = _box(x0, 0, size)[0]
         return {"type": "way", "id": i, "tags": tags,
