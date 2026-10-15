@@ -16,11 +16,11 @@ from streetview_to_3d.postprocess.world.google.merged_world import merged_world
 from streetview_to_3d.postprocess.world.google.pano_centres import pano_centres
 
 
-def google(scene, site, world, points: GooglePoints, settings: Settings):
+def google(scene, site, world, google_tiles: GooglePoints, settings: Settings):
     """(scene, world) merged into Google's points; site: Site, world: the World laid round it."""
     centres = pano_centres(scene)
-    points = aligned(points, site, centres)
-    scene, clouds = bent(scene, centres, points, settings)
-    world = merged_world(points, scene, clouds, centres, world)
+    google_tiles = aligned(google_tiles, site, centres)
+    scene, clouds = bent(scene, centres, google_tiles, settings)
+    world = merged_world(google_tiles, scene, clouds, centres, world)
     scene = google_scene(scene)
     return scene, world

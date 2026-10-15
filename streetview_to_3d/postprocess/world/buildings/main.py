@@ -16,16 +16,16 @@ from streetview_to_3d.postprocess.world.buildings.solid_blocks import solid_bloc
 from streetview_to_3d.postprocess.world.buildings.windows import windows
 
 
-def buildings(outlines: Outlines, land, site, satellite, views):
-    """Buildings on outlines, standing on land (Land) round site (Site); coloured from satellite
-    (Satellite) and the panos (views: PanoViews)."""
-    outlines = roof_colours(outlines, site, satellite)
-    colours = building_colours(outlines, views)
-    blocks = building_points(outlines, colours, land, site)
-    blocks, colours = pano_colours(blocks, outlines, colours, site, views)
-    solid = solid_blocks(outlines, colours, blocks, land, site)
+def buildings(footprints: Outlines, landform, site, satellite, views):
+    """Buildings on footprints (Outlines), standing on landform (Land) round site (Site);
+    coloured from satellite (Satellite) and the panos (views: PanoViews)."""
+    footprints = roof_colours(footprints, site, satellite)
+    colours = building_colours(footprints, views)
+    blocks = building_points(footprints, colours, landform, site)
+    blocks, colours = pano_colours(blocks, footprints, colours, site, views)
+    solid = solid_blocks(footprints, colours, blocks, landform, site)
     blocks = seam(blocks, site)
-    blocks = windows(blocks, outlines, land)
+    blocks = windows(blocks, footprints, landform)
     blocks = painted_blocks(blocks, site, views)
-    stood = Buildings(outlines, blocks, solid)
+    stood = Buildings(footprints, blocks, solid)
     return stood
