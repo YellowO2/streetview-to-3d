@@ -1,5 +1,8 @@
-"""The world around the scene from free maps: land, buildings, roads, water and life
-(terrain.build is the entry; common/TileMap.py reads the tile maps, osm.py and openfreemap.py the map data).
+"""The world round the scene from free maps: land, roads, buildings, water and life.
 
-    python -m streetview_to_3d.postprocess.world.terrain SCENE_DIR
+main.py wires it; its loaders (OpenStreetMap, HeightMap, elevations_around, WaterMap, Satellite,
+pano_views, driving_side, google_points) download or read what it needs first, each keeping its
+own cache; common/TileMap.py reads the tile maps.
+
+    python -m streetview_to_3d.postprocess.world SCENE_DIR [--google [--as-is]]
 """

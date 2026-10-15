@@ -1,6 +1,6 @@
 import mapbox_vector_tile
 
-from streetview_to_3d.postprocess.world import openfreemap
+from streetview_to_3d.postprocess.world import OpenFreeMap as openfreemap
 
 EXT = 4096
 
@@ -24,9 +24,9 @@ def test_tiles_read_as_overpass_ways():
                                       "(500 3200, 800 3200, 800 3500, 500 3500, 500 3200))")]})
     right = _tile({"building": [({"render_height": 5, "render_min_height": 0}, "POLYGON ((-96 100, 100 100, 100 200, -96 200, -96 100))")]})
     x, y = 2 ** 13, 2 ** 13            # at the equator, where a tile is ~2.4 km
-    decoded = {(x, y): openfreemap.decode(left, x, y), (x + 1, y): openfreemap.decode(right, x + 1, y)}
+    decoded = {(x, y): openfreemap._decode(left, x, y), (x + 1, y): openfreemap._decode(right, x + 1, y)}
     lat0, lon0 = openfreemap._ll([[x + 0.5, y + 0.5]])[0].values()
-    el = openfreemap.elements(lat0, lon0, 5000, 5000, 111320, 111320, water_m=5000, full_m=5000, decoded=decoded)
+    el = openfreemap.OpenFreeMap().elements(lat0, lon0, 5000, 5000, 111320, 111320, water_m=5000, full_m=5000, decoded=decoded)
     houses = [e for e in el if "building" in e["tags"]]
     assert len(houses) == 2                                   # the cut house whole again
     assert sorted(e["tags"].get("height", "") for e in houses) == ["", "12"]   # 5: OpenMapTiles' guess, dropped
@@ -36,7 +36,7 @@ def test_tiles_read_as_overpass_ways():
     assert sum(1 for e in el if e["tags"] == {}) == 1           # the island, untagged as a member way
     # a point in the lake, one on the island
     pt = lambda tx, ty: list(openfreemap._ll([[x + tx / EXT, y + ty / EXT]])[0].values())
-    assert openfreemap.water_at([pt(1500, 3800), pt(650, 3350)], decoded) == [True, False]
+    assert openfreemap.OpenFreeMap().water_at([pt(1500, 3800), pt(650, 3350)], decoded) == [True, False]
 
 
 def test_far_off_only_the_big_buildings_and_main_roads():
@@ -45,7 +45,7 @@ def test_far_off_only_the_big_buildings_and_main_roads():
                                   ({"class": "primary"}, "LINESTRING (10 30, 40 30)")]})
     x, y = 2 ** 13, 2 ** 13
     lat0, lon0 = openfreemap._ll([[x + 0.5, y + 0.5]])[0].values()   # ~1.2 km from the tile's corner
-    el = openfreemap.elements(lat0, lon0, 5000, 5000, 111320, 111320, decoded={(x, y): openfreemap.decode(t, x, y)})
+    el = openfreemap.OpenFreeMap().elements(lat0, lon0, 5000, 5000, 111320, 111320, decoded={(x, y): openfreemap._decode(t, x, y)})
     assert [e["tags"] for e in el] == [{"highway": "primary"}]
 
 
@@ -54,6 +54,6 @@ def test_full_detail_near_the_cameras_not_the_centre():
     x, y = 2 ** 13, 2 ** 13
     lat0, lon0 = openfreemap._ll([[x + 0.5, y + 0.5]])[0].values()
     cam = openfreemap._ll([[x + 30 / EXT, y + 30 / EXT]])[0]           # a camera by the street
-    el = openfreemap.elements(lat0, lon0, 5000, 5000, 111320, 111320, decoded={(x, y): openfreemap.decode(t, x, y)},
+    el = openfreemap.OpenFreeMap().elements(lat0, lon0, 5000, 5000, 111320, 111320, decoded={(x, y): openfreemap._decode(t, x, y)},
                               cams=([cam["lat"]], [cam["lon"]]))
     assert [e["tags"] for e in el] == [{"highway": "residential"}]

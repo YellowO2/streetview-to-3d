@@ -2,7 +2,8 @@ import json
 
 import numpy as np
 
-from streetview_to_3d.postprocess.world import life
+from streetview_to_3d.postprocess.world import car_roads, life
+from streetview_to_3d.postprocess.world.tools.file_names import LIFE
 
 
 def _way(xy, **tags):
@@ -18,7 +19,7 @@ def test_a_road_keeps_its_room_to_the_walls_and_is_cut_where_no_car_fits():
     road = _way([(0, 0), (200, 0)])
     walls = [np.array([(50, 3), (70, 3), (70, 10), (50, 10)]),
              np.array([(140, -5), (150, -5), (150, 5), (140, 5)])]
-    out = life.roads([road], to_xy, lambda xy: np.zeros(len(xy)), [], lambda xy: np.ones(len(xy), bool), walls)
+    out = car_roads._roads([road], to_xy, lambda xy: np.zeros(len(xy)), [], lambda xy: np.ones(len(xy), bool), walls)
     assert len(out) == 2                                    # cut at the house on it
     (w, pts, room), _ = out
     assert w == 6 and pts[-1, 0] < 140
@@ -30,27 +31,27 @@ def test_gulls_and_swallows_by_the_water_pigeons_and_swallows_inland_and_a_boat_
     lake = {"level": 2.0, "outer": [(100, -100), (400, -100), (400, 100), (100, 100)], "holes": []}
     cams = np.array([(0.0, 0.0), (10.0, 0.0)])
     kinds = lambda b: [f["kind"] for f in b["flocks"]]
-    assert kinds(life.birds([lake], cams, 5.0)) == ["gull", "swallow"]
-    assert kinds(life.birds([lake], cams + 1000, 5.0)) == ["pigeon", "swallow"]
-    assert life.birds([], cams, 5.0)["centre"] == [5.0, 0.0, 5.0]
-    (course,) = life.boats([lake], cams)["courses"]
+    assert kinds(life._birds([lake], cams, 5.0)) == ["gull", "swallow"]
+    assert kinds(life._birds([lake], cams + 1000, 5.0)) == ["pigeon", "swallow"]
+    assert life._birds([], cams, 5.0)["centre"] == [5.0, 0.0, 5.0]
+    (course,) = life._boats([lake], cams)["courses"]
     p = np.array(course["points"])
     assert course["level"] == 2.0 and p[:, 0].min() >= 100 + life.SHORE_M - 0.5
     assert np.hypot(*(p - (5, 0)).T).max() <= life.BOATS_M - life.SHORE_M + 1
-    assert life.boats([lake], cams + 2000)["courses"] == []
+    assert life._boats([lake], cams + 2000)["courses"] == []
 
 
 def test_ducks_on_the_nearest_water_in_from_its_shore():
     lake = {"level": 2.0, "outer": [(100, -100), (400, -100), (400, 100), (100, 100)], "holes": []}
-    (home,) = life.ducks([lake], np.array([(0.0, 0.0)]))["homes"]
+    (home,) = life._ducks([lake], np.array([(0.0, 0.0)]))["homes"]
     assert home["level"] == 2.0 and abs(home["at"][0] - (100 + life.DUCK_SHORE_M)) < 0.5
     assert 0 < home["reach"] <= life.DUCK_SHORE_M - 2 + 1e-6
-    assert life.ducks([lake], np.array([(-1000.0, 0.0)]))["homes"] == []
+    assert life._ducks([lake], np.array([(-1000.0, 0.0)]))["homes"] == []
     # the scene on a bridge over it: the ducks off its ground, not under it
     from streetview_to_3d.postprocess.SceneGround import SceneGround
     g = np.mgrid[95:140:0.5, -10:10:0.5].reshape(2, -1).T
     bridge = SceneGround.from_points(np.c_[g[:, 0], -np.full(len(g), 8.0), g[:, 1]], np.full((len(g), 3), 0.5))
-    (home,) = life.ducks([lake], np.array([(120.0, 0.0)]), bridge)["homes"]
+    (home,) = life._ducks([lake], np.array([(120.0, 0.0)]), bridge)["homes"]
     assert bridge.at(np.array([home["at"]]))[0][0] >= life.DUCK_CLEAR_M - 0.01 and home["reach"] > 0
 
 
@@ -61,7 +62,7 @@ def test_cats_sit_on_the_scenes_ground_off_its_roads_near_its_cameras():
     ground = SceneGround.from_points(np.c_[g[:, 0], -np.full(len(g), 3.0), g[:, 1]], np.full((len(g), 3), 0.5))
     road = [(6.0, np.c_[np.linspace(-20, 20, 11), np.zeros(11), np.zeros(11)], np.full(11, 3.0))]
     cams = np.array([(0.0, 0.0), (5.0, 0.0)])
-    out = life.cats(ground, road, cams)["cats"]
+    out = life._cats(ground, road, cams)["cats"]
     assert len(out) == 2
     for cat in out:
         p = np.array(cat["spots"])
@@ -69,18 +70,18 @@ def test_cats_sit_on_the_scenes_ground_off_its_roads_near_its_cameras():
         assert (np.abs(p[:, 1]) > 3 + life.CAT_ROAD_M - 0.3).all()            # off the road
         assert (np.hypot(*(p[:, :2] - p[0, :2]).T) <= life.CAT_SPOT_M).all()
     assert np.hypot(*(np.array(out[0]["spots"][0][:2]) - out[1]["spots"][0][:2])) >= life.CATS_APART_M
-    assert life.cats(SceneGround.none(), road, cams)["cats"] == []
+    assert life._cats(SceneGround.none(), road, cams)["cats"] == []
 
 
 def test_saved_as_the_viewer_reads_it(tmp_path):
     from streetview_to_3d.common.Scene import Scene
     from streetview_to_3d.postprocess.World import World
     from streetview_to_3d.save import save
-    world = World(json={life.FILENAME: dict(cars=life.cars([(6.0, np.zeros((3, 3)), np.full(3, 3.0))], "left"),
-                                            birds=life.birds([], np.zeros((1, 2)), 0.0),
-                                            boats=life.boats([], np.zeros((1, 2))))})
+    world = World(json={LIFE: dict(cars=life._cars([(6.0, np.zeros((3, 3)), np.full(3, 3.0))], "left"),
+                                            birds=life._birds([], np.zeros((1, 2)), 0.0),
+                                            boats=life._boats([], np.zeros((1, 2))))})
     save(Scene(center=[0.0, 0.0]), None, world, str(tmp_path))
-    data = json.loads((tmp_path / life.FILENAME).read_text())
+    data = json.loads((tmp_path / LIFE).read_text())
     assert data["cars"]["side"] == "left" and len(data["cars"]["roads"]) == 1
     assert data["birds"]["flocks"][0]["kind"] == "pigeon" and data["boats"]["courses"] == []
 
@@ -91,8 +92,8 @@ def test_cars_kept_to_the_scenes_own_road_where_osms_line_runs_along_its_pavemen
     g = np.mgrid[-30:30:0.5, -10:10:0.5].reshape(2, -1).T + 0.25
     road = (g[:, 1] > 1) & (g[:, 1] < 7)
     ground = SceneGround.from_points(np.c_[g[:, 0], np.zeros(len(g)), g[:, 1]], np.full((len(g), 3), 0.5), road)
-    xy = np.c_[np.arange(-60.0, 61, life.STEP_M), np.zeros(31)]
-    moved, half = life.onto_road(xy, ground)
+    xy = np.c_[np.arange(-60.0, 61, car_roads.STEP_M), np.zeros(31)]
+    moved, half = car_roads._onto_road(xy, ground)
     on = np.abs(xy[:, 0]) < 25
     assert np.allclose(moved[on, 1], 4, atol=0.3) and np.allclose(half[on], 3, atol=0.3)   # its middle, 3 m each side
     assert np.allclose(moved[np.abs(xy[:, 0]) > 55, 1], 0, atol=0.3)                     # eased back past it

@@ -1,7 +1,11 @@
 import numpy as np
 from shapely.geometry import Polygon
 
-from streetview_to_3d.postprocess.world import buildings, styles
+from streetview_to_3d.postprocess.world.buildings import roof_colours, solid_blocks
+from streetview_to_3d.postprocess.world.buildings.tools import facades
+from streetview_to_3d.postprocess.world.land import stood_buildings
+from streetview_to_3d.postprocess.world.outlines import osm_outlines
+from streetview_to_3d.postprocess.world.tools import styles
 
 
 def _element(i, lat, lon, size_m, tags):
@@ -13,7 +17,7 @@ def _element(i, lat, lon, size_m, tags):
 
 def _outlines(lat, lon, *buildings_):
     to_xy = lambda g: np.array([[(p["lon"] - lon) * 111_000, (p["lat"] - lat) * 111_000] for p in g])
-    return buildings.outlines([_element(i, lat, lon + i * 0.001, s, t) for i, (s, t) in enumerate(buildings_)],
+    return osm_outlines._outlines([_element(i, lat, lon + i * 0.001, s, t) for i, (s, t) in enumerate(buildings_)],
                               to_xy)
 
 
@@ -44,7 +48,7 @@ def test_a_japanese_castle_is_a_stone_base_and_tiers_each_smaller():
     # standing on the base's foot, wherever their own corners are
     xy = np.concatenate([o[0] for o in out])
     owner = np.concatenate([np.full(len(o[0]), i) for i, o in enumerate(out)])
-    buildings.settle(out, xy, xy[:, 0] * 0.05, owner)
+    stood_buildings._settle(out, xy, xy[:, 0] * 0.05, owner)
     assert all(t[3].foot_m == base[3].foot_m for t in tiers)
 
 
@@ -73,7 +77,7 @@ def test_church_tower_mosque_dome_and_minaret():
 
 
 def test_east_asian_facades_have_no_european_ornament():
-    from streetview_to_3d.postprocess.world.facade_geometry import profile_for
+    from streetview_to_3d.postprocess.world.buildings.tools.facade_geometry import profile_for
     house = {"building": "house", "style:region": "japan"}
     assert profile_for(house, 7, 80).bay == 1.8 and not profile_for(house, 7, 80).pilasters
     old = {"building": "yes", "start_date": "1890", "style:region": "japan"}
@@ -84,25 +88,25 @@ def test_east_asian_facades_have_no_european_ornament():
 def test_a_sharp_satellite_roof_keeps_its_colour_a_coarse_one_is_livened():
     out = _outlines(36.24, 137.97, (20, {"building": "yes"}), (20, {"building": "yes"}))
     grey = lambda en: np.tile([0.4, 0.42, 0.45], (len(en), 1))
-    assert buildings.satellite_roofs(out[:1], grey, 1.0, 1.0, lively=False) == 1
+    assert roof_colours._satellite_roofs(out[:1], grey, 1.0, 1.0, lively=False) == 1
     assert np.allclose(out[0][3].roof_colour, [0.4, 0.42, 0.45])
-    buildings.satellite_roofs(out[1:], grey)
+    roof_colours._satellite_roofs(out[1:], grey)
     assert out[1][3].roof_colour.mean() > 0.43                          # Sentinel-2's: lifted
 
 
 def test_a_shed_has_no_windows_a_church_and_a_castles_tiers_few():
     shed, house = _outlines(36.24, 137.97, (6, {"building": "shed"}), (8, {"building": "house"}))
     church = _outlines(48.85, 2.35, (20, {"building": "church"}))[0]
-    assert buildings.facade_layout(shed[3], shed[1]) is None
-    v, c, f, facade = buildings.solid([shed], lambda xy: np.zeros(len(xy)), np.full((1, 3), .8))
-    assert (facade[:, 1] == buildings.NO_FACADE).all()
-    bay, floor = buildings.facade_layout(church[3], church[1])
+    assert facades.facade_layout(shed[3], shed[1]) is None
+    v, c, f, facade = solid_blocks._solid([shed], lambda xy: np.zeros(len(xy)), np.full((1, 3), .8))
+    assert (facade[:, 1] == solid_blocks.NO_FACADE).all()
+    bay, floor = facades.facade_layout(church[3], church[1])
     rows = (church[1] - church[3].roof.height) / floor
     assert bay == styles.FEW_BAY_M and floor <= styles.FEW_ROW_M and np.isclose(rows, round(rows))   # tall rows
-    assert buildings.facade_layout(house[3], house[1])[0] < styles.FEW_BAY_M
+    assert facades.facade_layout(house[3], house[1])[0] < styles.FEW_BAY_M
     castle = _outlines(36.2387, 137.9694, (20, {"building": "yes", "historic": "castle", "castle_type": "shiro"}))
-    assert buildings.facade_layout(castle[0][3], castle[0][1]) is None                 # the stone base
+    assert facades.facade_layout(castle[0][3], castle[0][1]) is None                 # the stone base
     top = castle[-1]
-    bay, floor = buildings.facade_layout(top[3], top[1])
+    bay, floor = facades.facade_layout(top[3], top[1])
     eaves = top[1] - top[3].roof.height
     assert eaves - floor >= top[3].base_m - 1.0                                          # its row on its own walls

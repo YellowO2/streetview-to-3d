@@ -1,8 +1,9 @@
-"""Blend the map into the scene where the two meet.
+"""How the map meets the scene: blends, map point sizes and colour fixes.
 
-Where the map meets the scene: tint and meet blend colour and height at the scene ground's
-edge, beneath keeps map ground under the scene's own, toward turns map points near DA3's into
-them, spacing_at sizes map points, unhazed corrects satellite colours, ramp eases between.
+tint and meet blend colour and height at the scene ground's edge, beneath keeps map ground
+under the scene's own, toward turns map points near DA3's into them, spacing_at sizes map
+points by their distance from DA3's and gap_at by their distance from a camera, unhazed
+corrects satellite colours, ramp eases between.
 """
 import numpy as np
 
@@ -21,6 +22,7 @@ COVER = 0.75              # a map point with a DA3 point within COVER x its spac
 UNDER_M = 0.1             # map ground kept this far under the scene's own
 OVERLAP_M = 1.0           # ... for this far in from its edge; deeper in it is dropped
 BLEND_M = 3.0             # map points this near DA3's turn into them (toward)
+GAP0_M, GAP_PER = 0.05, 0.018   # gap_at: spacing at a camera, growth per metre
 # Satellite colours made to look like the panos' (unhazed):
 GREY_C, GREY_N = 8.0, 200   # satellite tint learnt from ground under this Lab chroma, at least this many squares
 LIGHT_RANGE = (0.7, 1.6)    # lightness contrast scale limits
@@ -56,6 +58,11 @@ def size_at(d):
 def spacing_at(d):
     """A map point's spacing (m) d metres from DA3's points: its size's."""
     return size_at(d) / RATIO
+
+
+def gap_at(cam_d):
+    """Map point spacing cam_d metres from the nearest camera: GAP0_M plus GAP_PER per metre."""
+    return GAP0_M + GAP_PER * np.asarray(cam_d)
 
 
 def toward(pts, cols, tree, da3_cols):

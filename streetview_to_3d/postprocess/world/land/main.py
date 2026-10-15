@@ -1,0 +1,23 @@
+"""The land round the scene: a mesh on the map's ground, met to the scene.
+
+Its corners spaced by their distance from the cameras and along every road, bridge and wall;
+its height the map's, met to the scene's ground at its edge and run on just beneath it, fitted
+to the roads, raised and cut so the buildings stand on it, carved into shores.
+"""
+from streetview_to_3d.postprocess.world.Outlines import Outlines
+from streetview_to_3d.postprocess.world.land.land_corners import land_corners
+from streetview_to_3d.postprocess.world.land.land_mesh import land_mesh
+from streetview_to_3d.postprocess.world.land.map_heights import map_heights
+from streetview_to_3d.postprocess.world.land.shore import shore
+from streetview_to_3d.postprocess.world.land.stood_buildings import stood_buildings
+
+
+def land(site, elevation, roads, water, outlines: Outlines):
+    """Land round site (Site) on elevation (Elevation), roads (Roads) and water (Water); the
+    outlines' Forms stood on it."""
+    corners = land_corners(site, roads, outlines)
+    shaped = map_heights(corners, site, elevation, roads)
+    shaped = stood_buildings(shaped, outlines, site)
+    shaped = shore(shaped, water, roads)
+    mesh = land_mesh(shaped, elevation)
+    return mesh

@@ -10,7 +10,7 @@ from streetview_to_3d.postprocess.clean.drop_sheets import drop_sheets
 from streetview_to_3d.postprocess.fill.main import fill
 from streetview_to_3d.postprocess.photos import photos
 from streetview_to_3d.postprocess.place import place
-from streetview_to_3d.postprocess.world.terrain import terrain
+from streetview_to_3d.postprocess.world.main import world as lay_world
 
 
 def postprocess(scene, settings: Settings = Settings()):
@@ -33,7 +33,7 @@ def postprocess(scene, settings: Settings = Settings()):
             ground = watch.skipped("fill", failure)
         watch.lap("fill")
         try:                             # after the fill: its panos colour the buildings
-            world = terrain(scene, ground)
+            scene, world = lay_world(scene, ground, settings.world)
         except Exception as failure:
             world = watch.skipped("terrain", failure)
         watch.lap("terrain")

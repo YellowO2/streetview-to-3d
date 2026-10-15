@@ -1,7 +1,7 @@
 import numpy as np
 import shapely
 
-from streetview_to_3d.postprocess.world import water
+from streetview_to_3d.postprocess.world import water_outline
 
 
 def test_a_busy_overpass_leaves_the_shore_to_the_jrc_map():
@@ -11,5 +11,5 @@ def test_a_busy_overpass_leaves_the_shore_to_the_jrc_map():
 
     def busy(xy):
         raise TimeoutError("Overpass busy")
-    out = water.outline([shore], to_xy, 100, busy, lambda xy: np.asarray(xy)[:, 0] > 0)
+    out = water_outline._outline([shore], to_xy, 100, busy, lambda xy: np.asarray(xy)[:, 0] > 0)
     assert out.contains(shapely.Point(50, 0)) and not out.contains(shapely.Point(-50, 0))
