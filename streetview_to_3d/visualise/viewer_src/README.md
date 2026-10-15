@@ -1,6 +1,6 @@
 # Viewer source
 
-build_viewer.py (python -m streetview_to_3d.visualise) embeds every `.js` here as `@viewer/<path>` (e.g. `@viewer/world/blocks`) into
+build_viewer.py (python -m scripts.write_viewer) embeds every `.js` here as `@viewer/<path>` (e.g. `@viewer/world/blocks`) into
 viewer.html, inside template.html with styles.css and ui/scene-manager.html.
 Styles: Soft paint (default), Dither, Characters and Photoreal (`original`, no passes); they never
 change point positions or scene.json.

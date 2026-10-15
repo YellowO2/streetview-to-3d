@@ -30,3 +30,23 @@ def fill(scene):
     ground = scene_ground(surface)
     scene = handed_out(scene, clouds, surface, ground, cameras)
     return scene, ground
+
+
+if __name__ == "__main__":
+    # Fill a placed scene in place, or a copy of it in OUT_DIR:
+    #   python -m streetview_to_3d.postprocess.fill.main SCENE_DIR [OUT_DIR]
+    import logging
+    import sys
+
+    from streetview_to_3d.load import load
+    from streetview_to_3d.models.Segmenter import Segmenter
+    from streetview_to_3d.postprocess.photos import photos
+    from streetview_to_3d.save import save
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if len(sys.argv) not in (2, 3):
+        sys.exit("usage: python -m streetview_to_3d.postprocess.fill.main SCENE_DIR [OUT_DIR]")
+    source = sys.argv[1]
+    target = sys.argv[2] if len(sys.argv) == 3 else source
+    filled, ground = fill(photos(load(source), Segmenter(device="cpu")))
+    save(filled, ground, None, target)

@@ -1,7 +1,7 @@
 """Serve the masker and DA3 on one pano over the Space's API.
 
 Two API-only endpoints, mask_pano and depth_pano, each run on the Space's GPU; the
-masker's drawing over the API is `python -m streetview_to_3d.models`.
+masker's drawing over the API is `python -m scripts.draw_mask`.
 """
 import base64
 import io

@@ -4,5 +4,5 @@ main.py wires it; its loaders (OpenStreetMap, HeightMap, elevations_around, Wate
 pano_views, driving_side, google_points) download or read what it needs first, each keeping its
 own cache; postprocess/world/TileMap.py reads the tile maps.
 
-    python -m streetview_to_3d.postprocess.world SCENE_DIR [--google [--as-is]]
+    python -m streetview_to_3d.postprocess.world.main SCENE_DIR [--google [--as-is]]
 """

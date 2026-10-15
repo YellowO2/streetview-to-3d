@@ -1,7 +1,7 @@
 """Write the packaged viewer to viewer.html, or check that it is current.
 
-    python -m streetview_to_3d.visualise
-    python -m streetview_to_3d.visualise --check
+    python -m scripts.write_viewer
+    python -m scripts.write_viewer --check
 """
 import argparse
 
@@ -15,7 +15,7 @@ def main():
     document = build_viewer()
     if args.check:
         if not OUTPUT.exists() or OUTPUT.read_text(encoding="utf-8") != document:
-            raise SystemExit("viewer.html is stale. Run python -m streetview_to_3d.visualise")
+            raise SystemExit("viewer.html is stale. Run python -m scripts.write_viewer")
         print("viewer.html matches its modular source")
     else:
         OUTPUT.write_text(document, encoding="utf-8")

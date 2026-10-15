@@ -3,7 +3,7 @@
 Segment on the Space (ui/pano_api.py's mask_pano), then draw locally with this
 checkout's tools/pano_mask.py: every pole vs long straight poles only.
 
-    python -m streetview_to_3d.models PANO_ID OUT.jpg [--space potato-bug/street-view-to-3d-dev]
+    python -m scripts.draw_mask PANO_ID OUT.jpg [--space potato-bug/street-view-to-3d-dev]
 """
 import argparse
 import base64

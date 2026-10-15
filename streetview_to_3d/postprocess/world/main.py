@@ -60,3 +60,31 @@ def world(scene, ground, settings: Settings = Settings()):
         google_tiles = google_points(settings.google)
         scene, world = google(scene, site, world, google_tiles, settings)
     return scene, world
+
+
+if __name__ == "__main__":
+    # Lay the world round a saved scene again, and save it there; --google merges the scene
+    # into the google.ply saved beside it (the viewer's ?google-save), --as-is leaves DA3's
+    # points unbent:
+    #   python -m streetview_to_3d.postprocess.world.main SCENE_DIR [--google [--as-is]]
+    import logging
+    import os
+    import sys
+
+    from streetview_to_3d.load import load
+    from streetview_to_3d.models.Segmenter import Segmenter
+    from streetview_to_3d.postprocess.SceneGround import SceneGround
+    from streetview_to_3d.postprocess.photos import photos
+    from streetview_to_3d.save import save
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    folders = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if len(folders) != 1:
+        sys.exit("    python -m streetview_to_3d.postprocess.world.main SCENE_DIR\n"
+                 "    python -m streetview_to_3d.postprocess.world.main SCENE_DIR --google [--as-is]")
+    folder = folders[0]
+    world_settings = Settings(google=os.path.join(folder, "google.ply") if "--google" in sys.argv else None,
+                              bend="--as-is" not in sys.argv)
+    scene, ground = photos(load(folder), Segmenter(device="cpu")), SceneGround.load(folder)
+    scene, laid = world(scene, ground, world_settings)
+    save(scene, ground, laid, folder)

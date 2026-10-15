@@ -1,7 +1,7 @@
 """Remove floating bits or loose sheets from a saved scene, in place.
 
-    python -m streetview_to_3d.postprocess.clean blobs SCENE_DIR
-    python -m streetview_to_3d.postprocess.clean sheets SCENE_DIR
+    python -m scripts.clean blobs SCENE_DIR
+    python -m scripts.clean sheets SCENE_DIR
 """
 import logging
 import sys

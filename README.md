@@ -55,20 +55,20 @@ streetview_to_3d/   the engine
                    own subject's
   types/        Scene (Node, Pano, Edge, Cloud)
   models/       DepthModel (DA3), Segmenter (the masker); handed to the steps that run them;
-                   python -m streetview_to_3d.models draws the masker on one pano
+                   python -m scripts.draw_mask draws the masker on one pano
   panos/        1. which panoramas: main.py → fetch_corridor_nodes → date_graphs → downloaded
                    (the "Prepare" button); tools/ dates, corridor_points, the pano lookups
   reconstruct/  2. GPU: main.py → open_scene → PanoDepth → walk (one GPU window) → pieces → assemble
   postprocess/  3. main.py → place, clean/, photos, fill/ (main.py), world/ (main.py); tools/ paint
                    and ground_maths;
-                   python -m streetview_to_3d.postprocess --dir <run> [--google] re-runs it on a saved run
+                   python -m streetview_to_3d.postprocess.main --dir <run> [--google] re-runs it on a saved run
     world/      the map round the scene: loaders first (OpenStreetMap, HeightMap, elevations_around,
                    WaterMap, Satellite, pano_views, driving_side), then Elevation, water_outline,
                    Water, roads/, outlines/, land/, land_colours, buildings/, car_roads, life,
                    world_files, scene_files; with Settings.google, google_points and google/
                    (the Google 3D Tiles merge); tools/ seams, osm_roads, osm_tags, styles, geometry...
   visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/;
-                   python -m streetview_to_3d.visualise rebuilds viewer.html
+                   python -m scripts.write_viewer rebuilds viewer.html
 main.py   the whole app: the UI, handed the engine's two jobs (panos to prepare, streetview_to_3d to build)
 ui/     the Gradio page
   main.py       the page: map_selection → page_controls → prepare_button → reconstruct_button → pano_api
@@ -77,6 +77,8 @@ ui/     the Gradio page
   pano_api      the masker and DA3 on one pano, API only
   tools/        page (file_url, iframe), map_state, viewer, gallery/ (sharing: publish uploads
                    to the public gallery, index.html shows it)
+scripts/  for developers: write_viewer (rebuild viewer.html), draw_mask (the masker on one pano),
+                   clean (drop blobs or sheets from a saved scene); run as python -m scripts.<name>
 ```
 
 ## Acknowledgments
