@@ -15,9 +15,10 @@ logger = logging.getLogger(__name__)
 VOXEL_M = 0.03
 
 
-def assemble(sc, pieces, corridor):
+def assemble(sc, pieces, corridor, labels):
     """The scene (open_scene) with each piece's nodes filled in: the pano that filled it, DA3's
-    pose, its points thinned (_thinned) and named node_<i>.ply, and the edges by node index.
+    pose, its points thinned (_thinned) and named node_<i>.ply, its pano's class map (labels:
+    {node key: class map}, as the walk made them), and the edges by node index.
     corridor: what panos.main.panos prepared; its catalog matches each pano to its dot.
 
     Patches overlap, so two pieces can hold the same place: the bigger keeps it and the
@@ -49,6 +50,7 @@ def assemble(sc, pieces, corridor):
                 views_kept=m.get("n_views_kept"), views_total=m.get("n_views_total"))
             node.position = list(m["position"])
             node.rotation = m.get("rotation")
+            node.labels = labels.get(key)
             # no points: the camera still places the piece, but an empty .ply breaks the viewer
             pts, cols = clouds[key]
             if len(pts):

@@ -16,6 +16,8 @@ from streetview_to_3d.types.Pano import Pano
 
 
 FILENAME = "scene.json"
+# beside it, each placed node's class map as <pano id>.png (save.py, load.py)
+LABELS = "labels"
 
 
 @dataclass
@@ -61,9 +63,9 @@ class Scene:
     def save(self, directory):
         os.makedirs(directory, exist_ok=True)
         path = os.path.join(directory, FILENAME)
-        d = asdict(replace(self, nodes=[replace(n, cloud=None, photo=None) for n in self.nodes]))
+        d = asdict(replace(self, nodes=[replace(n, cloud=None, labels=None, photo=None) for n in self.nodes]))
         for n in d["nodes"]:
-            del n["cloud"], n["photo"]      # saved beside it
+            del n["cloud"], n["labels"], n["photo"]      # saved beside it
         with open(path, "w") as f:
             json.dump(d, f)
         return path

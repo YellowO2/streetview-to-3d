@@ -34,8 +34,11 @@ def test_the_bigger_piece_keeps_a_shared_place_and_nodes_hold_their_thinned_poin
     corridor = _corridor()
     big = _segment(["google:a", "google:b"], 50)
     small = _segment(["google:b2"], 50)
-    sc = assemble(open_scene(corridor), pieces([small, big]), corridor)
+    labels = {"google:a": np.full((2, 4), 1), "google:b": np.full((2, 4), 2), "google:b2": np.full((2, 4), 3)}
+    sc = assemble(open_scene(corridor), pieces([small, big]), corridor, labels)
     assert [n.pano.id for n in sc.nodes] == ["a", "b", "c"]           # b2 lost dot 1 to the bigger piece's b
+    # each node carries the class map the walk made of the pano that filled it
+    assert [None if n.labels is None else int(n.labels[0, 0]) for n in sc.nodes] == [1, 2, None]
     assert [(e.a, e.b) for e in sc.edges] == [(0, 1)]
     assert [n.ply for n in sc.nodes] == ["node_0.ply", "node_1.ply", None]   # c: no piece reached it
     assert all(len(n.cloud.points) == len(n.cloud.colours) <= 50 for n in sc.nodes[:2])

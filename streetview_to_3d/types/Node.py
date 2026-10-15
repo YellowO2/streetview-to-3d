@@ -13,9 +13,11 @@ class Node:
     position: list[float] | None = None
     rotation: list[list[float]] | None = None
     transform: list[list[float]] | None = None
-    # in memory only, never in scene.json: its points (saved as `ply`), and its pano's
-    # photo as (image path, class map), once loaded (saved as labels/<pano id>.png)
+    # in memory only, never in scene.json: its points (saved as `ply`), its pano's class
+    # map as the walk's masker made it, and its pano's photo as (image path, class map),
+    # once loaded (the class map saved as labels/<pano id>.png)
     cloud: Cloud | None = field(default=None, repr=False, compare=False)
+    labels: object = field(default=None, repr=False, compare=False)
     photo: tuple | None = field(default=None, repr=False, compare=False)
 
     @property

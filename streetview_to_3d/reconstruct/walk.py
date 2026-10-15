@@ -38,14 +38,16 @@ def _rigid_align(shared_from: list[tuple[np.ndarray, np.ndarray]], shared_to: li
 
 def walk(corridor, depth: PanoDepth, settings: WalkSettings = WalkSettings()):
     """The walk over the corridor's date graphs (panos.main.panos), DA3 run by depth, in one
-    GPU window (see tools/on_gpu.py): [(clouds, path_edges, date, frame_poses)], one per
-    chosen piece (see _walk_graph). Raises RuntimeError if no piece came out."""
+    GPU window (see tools/on_gpu.py): (segments, labels). segments is [(clouds, path_edges,
+    date, frame_poses)], one per chosen piece (see _walk_graph); labels is {node key: class
+    map} of the panos in them, as depth's masker labelled them. Raises RuntimeError if no
+    piece came out."""
     start_lat, start_lon = corridor.start
-    segments = on_gpu(_walk_on_gpu, corridor.date_graphs, corridor.points, corridor.adjacency, start_lat, start_lon,
-                      depth, settings, seconds=_gpu_seconds(corridor.points, settings.gpu_seconds))
+    segments, labels = on_gpu(_walk_on_gpu, corridor.date_graphs, corridor.points, corridor.adjacency, start_lat,
+                              start_lon, depth, settings, seconds=_gpu_seconds(corridor.points, settings.gpu_seconds))
     if not segments:
         raise RuntimeError("No connected path found from start toward any goal.")
-    return segments
+    return segments, labels
 
 
 def _gpu_seconds(points, gpu_seconds=None) -> float:
@@ -54,7 +56,9 @@ def _gpu_seconds(points, gpu_seconds=None) -> float:
 
 
 def _walk_on_gpu(date_graphs, points, adjacency, start_lat, start_lon, depth, settings):
-    """The walk on the downloaded panos, given the window less model load and save headroom."""
+    """The walk on the downloaded panos, given the window less model load and save headroom:
+    (segments, labels), the class maps handed back with the pieces they belong to, since a
+    GPU call returns only what it returns."""
     import torch
 
     conf_lower_percentile = (CONF_LOWER_PERCENTILE if settings.conf_lower_percentile is None
@@ -82,9 +86,16 @@ def _walk_on_gpu(date_graphs, points, adjacency, start_lat, start_lon, depth, se
             max_time_budget_s=max(0.0, total_s - MODEL_LOAD_S - SAVE_BUFFER_S))
         logger.info(f"timing: walk {time.monotonic() - t0:.1f}s for {len(points)} dot(s) "
                     f"-> {len(segments or [])} piece(s), of {total_s:.0f}s")
-        return segments or []
+        return segments or [], _labels_of(segments or [], depth.labels)
     finally:
         torch.cuda.empty_cache()
+
+
+def _labels_of(segments, labels):
+    """{node key: class map} for the panos in segments that were labelled, keyed as the scene is."""
+    return {key: labels[os.path.basename(path)]
+            for _, _, _, frame_poses in segments
+            for key, (_, _, path, *_) in frame_poses.items() if os.path.basename(path) in labels}
 
 
 def _test_edge(run, path_a, path_b):

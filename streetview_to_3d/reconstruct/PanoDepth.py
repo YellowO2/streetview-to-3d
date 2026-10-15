@@ -1,7 +1,8 @@
 """Run DA3 on some panos with this pipeline's view width, floor and mask.
 
 The only caller of panoramic_da3.panoramic_da3. Each pano is segmented once, whole
-(Segmenter.pano_labels), and each DA3 view cuts its part of that mask.
+(Segmenter.pano_labels), and each DA3 view cuts its part of that mask; the class maps made
+are kept in `labels`, for the scene to carry on.
 """
 import os
 from functools import partial
@@ -17,10 +18,12 @@ from streetview_to_3d.tools.pano_mask import pano_mask
 class PanoDepth:
     """DA3 (depth_model) on panos, masked by what masker labels, with a run's settings:
     hfov, conf_floor and mask_classes (None: ours). Also used by the HF app. Only the
-    models' names and the settings are pickled, so it travels into a GPU call for free."""
+    models' names and the settings are pickled, so it travels into a GPU call for free.
+    labels: {pano file name: class map} of every pano it has masked."""
 
     def __init__(self, depth_model: DepthModel, masker: Segmenter, settings: WalkSettings = WalkSettings()):
         self.depth_model, self.masker, self.settings = depth_model, masker, settings
+        self.labels = {}
 
     def __call__(self, paths, **settings):
         """panoramic_da3 on the panos at `paths`, with this pipeline's view width, mask and
@@ -42,7 +45,8 @@ class PanoDepth:
         if not MASK_MOVERS:
             return None
         panos = {os.path.basename(path): path for path in paths}
-        return partial(_drop_in_views, panos=panos, masker=self.masker, classes=self.settings.mask_classes)
+        return partial(_drop_in_views, panos=panos, masker=self.masker, classes=self.settings.mask_classes,
+                       labels=self.labels)
 
 
 def _in_view(pano, yaw, hfov, w, h):
@@ -59,13 +63,16 @@ def _in_view(pano, yaw, hfov, w, h):
     return pano[py, px]
 
 
-def _drop_in_views(views, panos, masker, classes=None):
+def _drop_in_views(views, panos, masker, classes=None, labels=None):
     """One mask per DA3 view (panoramic_da3 Views; panos maps each view's
     pano_id to its file), cut from its pano's mask: each pano is segmented
-    once, whole (masker.pano_labels), and its class map kept."""
+    once, whole (masker.pano_labels), and its class map kept in labels."""
     masks, whole = [], {}
     for v in views:
         if v.pano_id not in whole:
-            whole[v.pano_id] = pano_mask(masker.pano_labels(panos[v.pano_id]), classes)
+            class_map = masker.pano_labels(panos[v.pano_id])
+            if labels is not None:
+                labels[v.pano_id] = class_map
+            whole[v.pano_id] = pano_mask(class_map, classes)
         masks.append(_in_view(whole[v.pano_id], v.yaw, v.hfov, v.width, v.height))
     return masks
