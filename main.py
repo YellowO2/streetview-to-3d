@@ -2,14 +2,14 @@
 
 Run: python main.py
 """
-from streetview_to_3d.build import build  # first: it imports `spaces` before anything touches CUDA
-from streetview_to_3d.panos import panos
+from streetview_to_3d.build_scene import build_scene  # first: it imports `spaces` before anything touches CUDA
+from streetview_to_3d.gather_panoramas import gather_panoramas
 from ui.main import ui
 
 
 def street_builder():
     """The whole app's page, inside a gr.Blocks: the UI, handed the engine's two jobs."""
-    ui(prepare=panos, build=build)
+    ui(prepare=gather_panoramas, build=build_scene)
 
 
 if __name__ == "__main__":

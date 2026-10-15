@@ -3,7 +3,7 @@ import logging
 
 from ui.map_selection.tools.google_tile_panos import google_tile_panos
 from streetview_to_3d.types.Pano import Pano
-from streetview_to_3d.panos.tools.google_node import google_node
+from streetview_to_3d.gather_panoramas.tools.google_node import google_node
 from streetview_to_3d.tools.geo import haversine_m as _haversine_m
 
 logger = logging.getLogger(__name__)

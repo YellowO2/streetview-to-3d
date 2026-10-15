@@ -30,10 +30,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest"]
 
-[tool.pytest.ini_options]
-# The engine's build machine lives in a folder named build, which pytest skips by default.
-norecursedirs = [".*", "*.egg", "dist", "node_modules", "venv", "__pycache__", "data", "experiments", "images"]
-
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["streetview_to_3d*", "ui*"]
@@ -42,4 +38,4 @@ namespaces = false
 [tool.setuptools.package-data]
 "streetview_to_3d.visualise" = ["viewer.html", "viewer_src/**/*"]
 
-"streetview_to_3d.build.postprocess.world._vendor.osm_building_grammar" = ["LICENSE", "PROVENANCE.md"]
+"streetview_to_3d.build_scene.postprocess.world._vendor.osm_building_grammar" = ["LICENSE", "PROVENANCE.md"]

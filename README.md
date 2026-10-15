@@ -47,9 +47,9 @@ cd streetview_to_3d/visualise && npm install && npm test
 
 ```
 streetview_to_3d/   the engine: two machines side by side, one per operation, and what they share
-  panos/        1. prepare (the "Prepare" button), no GPU: main.py → fetch_corridor_nodes →
+  gather_panoramas/  1. prepare (the "Prepare" button), no GPU: main.py → fetch_corridor_nodes →
                    date_graphs → downloaded; tools/ dates, corridor_points, the pano lookups
-  build/        2. build (the "Reconstruct" button): main.py → reconstruct → postprocess → save;
+  build_scene/  2. build (the "Reconstruct" button): main.py → reconstruct → postprocess → save;
                    it makes the models and hands them in
     models/       DepthModel (DA3), Segmenter (the masker); built at startup on a Space;
                    python -m scripts.draw_mask draws the masker on one pano
@@ -57,7 +57,7 @@ streetview_to_3d/   the engine: two machines side by side, one per operation, an
     tools/        pano_mask (what the masker drops), for reconstruct and postprocess
     postprocess/  CPU: main.py → place, clean/, photos, fill/ (main.py), world/ (main.py); tools/ paint
                    and ground_maths;
-                   python -m streetview_to_3d.build.postprocess.main --dir <run> [--google] re-runs it on a saved run
+                   python -m streetview_to_3d.build_scene.postprocess.main --dir <run> [--google] re-runs it on a saved run
       world/      the map round the scene: loaders first (OpenStreetMap, HeightMap, elevations_around,
                    WaterMap, Satellite, pano_views, driving_side), then Elevation, water_outline,
                    Water, roads/, outlines/, land/, land_colours, buildings/, car_roads, life,
@@ -70,11 +70,11 @@ streetview_to_3d/   the engine: two machines side by side, one per operation, an
   types/        Scene (Node, Pano, Edge, Cloud)
   visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/;
                    python -m scripts.write_viewer rebuilds viewer.html
-main.py   the whole app: the UI, handed the engine's two operations (panos to prepare, build to build)
+main.py   the whole app: the UI, handed the engine's two operations (gather_panoramas to prepare, build_scene to build)
 ui/     the Gradio page; each control checks what it is given, then runs its job
   main.py       the page: map_selection → page_controls → prepare_button → reconstruct_button → pano_api
-  prepare_corridor/  button 1's job: the engine's panos on the traced Route
-  build_scene/  button 2's job: RunChoices → Settings → the engine's build → the scene shown
+  on_prepare/   button 1's job: the engine's gather_panoramas on the traced Route
+  on_reconstruct/  button 2's job: RunChoices → Settings → the engine's build_scene → the scene shown
   map_selection/  the map: main.py → map_widgets, then location_box (load_area), expand_button
                    (expand_selection), map_clicks (redraw_area for drags), radius_box,
                    clear_button; tools/ map_view...

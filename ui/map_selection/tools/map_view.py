@@ -9,8 +9,8 @@ import json
 from ui.map_selection.MapPage import MapPage
 from ui.tools.map_state import corridor_edges
 from ui.tools.page import iframe as _iframe
-from streetview_to_3d.panos.tools.corridor_points import corridor_points
-from streetview_to_3d.build.reconstruct.tools.gpu_seconds import estimate_gpu_seconds
+from streetview_to_3d.gather_panoramas.tools.corridor_points import corridor_points
+from streetview_to_3d.build_scene.reconstruct.tools.gpu_seconds import estimate_gpu_seconds
 
 _SUGGESTED_COLOR = "#ff9800"
 _SELECTED_COLOR = "#00c853"
@@ -199,7 +199,7 @@ SELECTED_EDGES.forEach(function(e) {{
   L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {{color: SELECTED_COLOR, weight: 4}}).addTo(m);
 }});
 
-// The spots the walk will use (panos/tools/corridor_points.py): nearby
+// The spots the walk will use (gather_panoramas/tools/corridor_points.py): nearby
 // selected panos merged, one ring each at its seed pano, with the spot
 // links -- including bridges between graphs Google never linked.
 SPOT_LINKS.forEach(function(l) {{
@@ -244,7 +244,7 @@ def summary_markdown(state):
     if not state["selected"]:
         return "Enter a location and select a street via 'Expand Area' Button or manually clicking. Then press button 1, wait for it to run, then button 2."
     # the GPU is spent per spot -- panos within a few metres merge into one
-    # (panos/tools/corridor_points.py) -- not per pano
+    # (gather_panoramas/tools/corridor_points.py) -- not per pano
     n_spots = len(corridor_points(corridor_edges(state))[0])
     gpu, quick = (estimate_gpu_seconds(n_spots, e) / 60 for e in ("Normal", "Quick"))
     other = max(1, round(_estimate_other_seconds(n_spots) / 60))

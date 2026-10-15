@@ -11,9 +11,9 @@ from streetlevel import streetview
 from ui.map_selection.tools.google_tile_panos import google_tile_panos
 from ui.map_selection.tools.street_view import is_official
 from streetview_to_3d.types.Pano import Pano
-from streetview_to_3d.panos.tools.fetch_panos_by_id import fetch_panos_by_id
-from streetview_to_3d.panos.tools.google_node import google_node
-from streetview_to_3d.build.postprocess.world.tools.occurrence_map import WET, occurrence_map
+from streetview_to_3d.gather_panoramas.tools.fetch_panos_by_id import fetch_panos_by_id
+from streetview_to_3d.gather_panoramas.tools.google_node import google_node
+from streetview_to_3d.build_scene.postprocess.world.tools.occurrence_map import WET, occurrence_map
 from streetview_to_3d.tools.geo import haversine_m as _haversine_m, local_m_to_latlon, to_metres
 from streetview_to_3d.tools.run_async import run_async
 

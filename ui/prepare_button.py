@@ -28,8 +28,8 @@ def _failed():
 
 
 def prepare_button(map_state, controls: Controls, job, prepare):
-    """Wire button 1: the route on the map (map_state) goes to job (prepare_corridor), which
-    has prepare (the engine's panos) gather it; returns the gr.State holding the prepared
+    """Wire button 1: the route on the map (map_state) goes to job (on_prepare), which
+    has prepare (the engine's gather_panoramas) gather it; returns the gr.State holding the prepared
     Corridor, for button 2."""
     route = gr.State(None)
     corridor = gr.State(None)

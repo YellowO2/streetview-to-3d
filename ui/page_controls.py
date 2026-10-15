@@ -4,7 +4,7 @@ import gradio as gr
 from ui.Controls import Controls
 from ui.tools.gallery.publish import sharing
 from ui.tools.viewer import viewer
-from streetview_to_3d.build.reconstruct.tools.gpu_seconds import DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT
+from streetview_to_3d.build_scene.reconstruct.tools.gpu_seconds import DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT
 
 
 def page_controls():

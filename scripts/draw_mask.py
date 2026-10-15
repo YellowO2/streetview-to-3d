@@ -33,7 +33,7 @@ def _overlay(img, drop, text):
 def main():
     from gradio_client import Client
     from PIL import Image
-    from streetview_to_3d.build.tools.pano_mask import pano_mask
+    from streetview_to_3d.build_scene.tools.pano_mask import pano_mask
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("pano_id")
     ap.add_argument("out")

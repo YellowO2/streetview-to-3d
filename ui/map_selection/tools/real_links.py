@@ -1,8 +1,8 @@
 """Add a clicked pano's own Street View links to a map state."""
 import logging
 
-from streetview_to_3d.panos.tools.fetch_pano_by_id import fetch_pano_by_id
-from streetview_to_3d.panos.tools.google_node import google_node
+from streetview_to_3d.gather_panoramas.tools.fetch_pano_by_id import fetch_pano_by_id
+from streetview_to_3d.gather_panoramas.tools.google_node import google_node
 from streetview_to_3d.tools.run_async import run_async
 
 logger = logging.getLogger(__name__)
