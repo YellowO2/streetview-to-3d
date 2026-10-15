@@ -104,8 +104,8 @@ export function parsePoints(buffer, transform) {
   }
 }
 // The one rule for a map point's size: DA3's points are the smallest in the world; a map point is
-// as big on them and bigger the further from them, and its spacing follows (RATIO; postprocess
-// seams.size_at, spacing_at).
+// as big on them and bigger the further from them, and its spacing follows (RATIO;
+// postprocess/spacing_at.py).
 const DA3_M = 0.17, // DA3's points as drawn in the default look
   GROW = 0.0154; // a map point's size grows this much per metre from DA3's points
 const spacingAt = (d) => (DA3_M + GROW * d) / RATIO;

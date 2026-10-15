@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SUN, f, v3 } from '@viewer/util';
+import { SUN, f, v3 } from '@viewer/shader-maths';
 
 // Paint-style clouds as soft point dabs on a noise-shaped density field (no raymarching).
 // The field tiles every FIELD_M around the camera; dabs near the moving surface show, drift

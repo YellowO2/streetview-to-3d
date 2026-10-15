@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createStyles } from '@viewer/style/controller';
-import { SUN } from '@viewer/util';
+import { SUN } from '@viewer/shader-maths';
 
 export function createViewport(host) {
   const scene = new THREE.Scene();

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { GAPS, level } from '@viewer/world/scatter';
 import { worldUniforms, WORLD_VERTEX, WORLD_FRAGMENT, cutPoint } from '@viewer/style/world-points';
-import { SUN, f, v3, hash } from '@viewer/util';
+import { SUN, f, v3, hash } from '@viewer/shader-maths';
 
 // Water (water.json) as points on a world-fixed grid, Fresnel-mixed between the water colour
 // (turquoise shallows, blue deep) and a Reflector's mirror image, tilted by summed waves.

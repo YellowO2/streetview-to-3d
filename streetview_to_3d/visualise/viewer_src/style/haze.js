@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { tunable } from '@viewer/ui/tune-panel';
-import { v3 } from '@viewer/util';
+import { v3 } from '@viewer/shader-maths';
 
 // Aerial haze for the far dabs (blocks.js, bird-paint.js): low-sky colour, half strength by HAZE_M.
 const HAZE_M = 800;

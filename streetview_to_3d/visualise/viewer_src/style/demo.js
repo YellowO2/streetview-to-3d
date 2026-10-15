@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { f } from '@viewer/util';
+import { f } from '@viewer/shader-maths';
 
 // Demos that move every world point by one rule from where it stands, ending back in place.
 // rise: a flat disk spreading from the middle, then rising, middle first.

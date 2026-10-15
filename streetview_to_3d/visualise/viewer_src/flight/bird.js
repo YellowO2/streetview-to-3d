@@ -2,7 +2,7 @@ import { createBirdPlume } from '@viewer/flight/bird-plume';
 import { birdPaint, birdDabs, DAB } from '@viewer/flight/bird-paint';
 import { FLIGHT } from '@viewer/flight/flight-motion';
 import * as THREE from 'three';
-import { fibonacciSphere } from '@viewer/util';
+import { fibonacciSphere } from '@viewer/shader-maths';
 
 // Fly mode's faint white bird of dabs (bird-paint.js) with articulated wings and a
 // lagging tail; its wingtips lay the trail (bird-plume.js).

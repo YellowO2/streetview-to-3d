@@ -4,11 +4,11 @@ import { FLAT, GAPS, level } from '@viewer/world/scatter';
 import { tunable } from '@viewer/ui/tune-panel';
 import { styleUniforms } from '@viewer/style/points';
 import { worldUniforms, WORLD_VERTEX, WORLD_FRAGMENT, cutPoint } from '@viewer/style/world-points';
-import { SUN, f, v3, hash } from '@viewer/util';
+import { SUN, f, v3, hash } from '@viewer/shader-maths';
 
 // Far buildings, land and moving things drawn as lit round dabs; colours come from the data.
 // Near DA3 (`near` 1) a dab turns into a DA3 point: eye-facing, floating, unlit; its size stays
-// its spacing's (postprocess seams.toward blends the spacing).
+// its spacing's (postprocess/toward.py blends the spacing).
 
 const KNOBS = {
   scatter: [0.5, 0, 1], // fixed per-dab offset and size jitter
@@ -33,7 +33,7 @@ const SUNLIT = [1.12, 1.02, 0.86],
 
 // A dab's diameter, of its spacing: what leaves no gaps on a grid jittered by JITTER, allowing for
 // the roughest edge (ROUGH) and smallest swell (SWELL). The one ratio of size to spacing
-// (postprocess seams.RATIO).
+// (postprocess/spacing_at.py RATIO).
 export const RATIO =
   (Math.SQRT2 * (1 + 2 * JITTER)) / (Math.sqrt(1 - ROUGH) * (1 - SWELL * KNOBS.scatter[0]));
 

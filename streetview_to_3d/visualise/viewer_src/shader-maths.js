@@ -1,4 +1,4 @@
-// Small helpers shared by the viewer's shaders and point builders.
+// Maths shared by the viewer's shaders and point builders: the sun, GLSL numbers, hashes.
 
 export const SUN = [3, 5, 4]; // direction toward the sun, viewer frame
 

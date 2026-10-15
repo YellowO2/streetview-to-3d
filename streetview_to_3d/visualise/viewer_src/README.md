@@ -1,6 +1,6 @@
 # Viewer source
 
-build_viewer.py embeds every `.js` here as `@viewer/<path>` (e.g. `@viewer/world/blocks`) into
+build_viewer.py (python -m streetview_to_3d.visualise) embeds every `.js` here as `@viewer/<path>` (e.g. `@viewer/world/blocks`) into
 viewer.html, inside template.html with styles.css and ui/scene-manager.html.
 Styles: Soft paint (default), Dither, Characters and Photoreal (`original`, no passes); they never
 change point positions or scene.json.
@@ -19,4 +19,4 @@ change point positions or scene.json.
   ducks.js, cats.js.
 - ui/: shell.js (toolbar, panels), style-controls.js, scene-manager.js/.html (edit mode),
   tune-panel.js (`?tune` sliders).
-- util.js: shared GLSL and maths helpers.
+- shader-maths.js: maths shared by shaders and point builders (sun, GLSL numbers, hash, sphere).

@@ -48,16 +48,19 @@ cd streetview_to_3d/visualise && npm install && npm test
 ```
 streetview_to_3d/
   main.py       a prepared corridor → reconstruct → postprocess → save (the "Reconstruct" button)
-  common/       Scene (Node, Pano, Edge, Cloud), paths, geo, http, streetview_fetch
-  models/       da3, gpu, segment, mask_api
-  panos/        1. which panoramas: main.py → date_graphs → downloaded (the "Prepare" button);
-                   candidates for the map
-  reconstruct/  2. GPU: main.py → open_scene → walk (walk_graph, pieces) → assemble
-  postprocess/  3. main.py → place, clean/, fill/ (main.py), world/ (terrain), seams;
+  common/       Scene (Node, Pano, Edge, Cloud), new_run_dir, geo, corridor_points, TileMap,
+                   occurrence_map, run_async, streetview_fetch/ (lookups and downloads)
+  models/       da3, on_gpu, segment, pano_labels, pano_mask;
+                   python -m streetview_to_3d.models draws the masker on one pano
+  panos/        1. which panoramas: main.py → date_graphs → downloaded (the "Prepare" button)
+  reconstruct/  2. GPU: main.py → open_scene → walk (run_da3, walk_graph, pieces) → assemble
+  postprocess/  3. main.py → place, clean/, fill/ (main.py), world/ (terrain), and the seam
+                   rules (tint, meet, beneath, toward, spacing_at, unhazed);
                    python -m streetview_to_3d.postprocess --dir <run> re-runs it on a saved run
-  visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/
+  visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/;
+                   python -m streetview_to_3d.visualise rebuilds viewer.html
   gallery/      5. sharing: upload to the public gallery, the gallery page
-  ui/           Gradio
+  ui/           Gradio: main_tab, map_selection/ (the map and its candidates), viewer, pano_api
 ```
 
 ## Acknowledgments

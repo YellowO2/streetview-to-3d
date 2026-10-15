@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { carve } from '@viewer/flight/shot';
-import { DISC, fibonacciSphere } from '@viewer/util';
+import { DISC, fibonacciSphere } from '@viewer/shader-maths';
 
 // Shoot mode's gun: a point model at the eye's lower right firing glowing balls that carve
 // holes (shot.js). Holding the button longer fires a bigger ball, up to BIG.

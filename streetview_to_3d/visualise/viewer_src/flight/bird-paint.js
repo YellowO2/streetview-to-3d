@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { haze, HAZED } from '@viewer/style/haze';
-import { DISC, f, v3 } from '@viewer/util';
+import { DISC, f, v3 } from '@viewer/shader-maths';
 
 // Paint for the bird (bird.js) and its trail (bird-plume.js): faint white soft dabs, hazed far off.
 // Trail dabs carry the time they were laid (born) and fade and drift as they age.

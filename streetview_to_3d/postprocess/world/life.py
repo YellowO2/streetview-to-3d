@@ -84,7 +84,7 @@ def side(pano_id):
 def roads(elements, to_xy, height, decks, keep, walls=(), ground=None):
     """[(width m, (n, 3) east/north/height every STEP_M, room (n,) m)] of the car roads and decks.
 
-    At height(xy), moved onto the scene's road where ground (seams.SceneGround)
+    At height(xy), moved onto the scene's road where ground (postprocess/SceneGround.py)
     has one, kept where keep(xy) and CLEAR_M from walls; room: clearance to
     the nearest wall, at most half the width."""
     import shapely

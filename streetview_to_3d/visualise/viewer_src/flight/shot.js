@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { f } from '@viewer/util';
+import { f } from '@viewer/shader-maths';
 
 // Holes shot in the world (gun.js): a 3D grid around the scene's foot, sampled smoothly so holes are round.
 // A shot uploads only the layers (one per CELL_M south) it touched.

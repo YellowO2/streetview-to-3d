@@ -141,7 +141,7 @@ def corners(outlines, spacing):
 def onto_scene(outlines, xy, h, owner, own, under):
     """Land heights h raised to DA3's ground round buildings with DA3 ground beside two or more corners.
 
-    Corners within BESIDE_M of own (seams.SceneGround) take its height; the
+    Corners within BESIDE_M of own (postprocess/SceneGround.py) take its height; the
     land round them rises to the median, falling off at CUT_SLOPE past PAD_M.
     Never where under (DA3's own ground) is true."""
     import shapely

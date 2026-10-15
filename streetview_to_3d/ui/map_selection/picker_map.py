@@ -71,7 +71,7 @@ font:12px sans-serif;padding:3px 8px;border-radius:6px;box-shadow:0 1px 3px rgba
 <div id="map"></div>
 <script>
 // NODES/EDGES here are already filtered down to the selected chain plus
-// its current end's direct neighbors -- see build_picker_map in map_ui.py.
+// its current end's direct neighbors -- see picker_map in picker_map.py.
 var NODES = {nodes_json};
 var EDGES = {edges_json};
 var SELECTED = {selected_json};
