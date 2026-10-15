@@ -19,4 +19,4 @@ torchvision
 transformers
 # Pinned to a commit: panoramic-da3's main line changes its API, and an
 # unpinned install would pick that up on the next rebuild.
-panoramic-da3 @ git+https://github.com/YellowO2/panoramic-da3.git@51e405074c7d2f6d934e219f723c2057faf821d5
+panoramic-da3 @ git+https://github.com/YellowO2/panoramic-da3.git@14e11436922a7e9f1c82a9b3fd9b7ae9949e9bcf
