@@ -4,7 +4,7 @@ from streetview_to_3d.panos.Corridor import Corridor
 from streetview_to_3d.reconstruct.assemble import assemble
 from streetview_to_3d.reconstruct.open_scene import open_scene
 from streetview_to_3d.reconstruct.pieces import pieces
-from streetview_to_3d.reconstruct.thinned import thinned
+from streetview_to_3d.reconstruct.assemble import _thinned as thinned
 
 
 def _corridor():

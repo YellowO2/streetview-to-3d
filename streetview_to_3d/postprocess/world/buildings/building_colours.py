@@ -31,7 +31,7 @@ def _palette(photos):
     or PASTEL if they have under PALETTE_MIN. photos: (image, class map, mask) or None."""
     from PIL import Image
     from scipy.cluster.vq import kmeans2
-    from streetview_to_3d.models.segment import LABEL_IDS
+    from streetview_to_3d.models.Segmenter import LABEL_IDS
     ids = [LABEL_IDS["building"], LABEL_IDS["wall"]]
     samples = []
     for ph in photos:

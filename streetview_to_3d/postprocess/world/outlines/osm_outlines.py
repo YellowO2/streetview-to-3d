@@ -2,7 +2,7 @@
 import numpy as np
 from scipy.spatial import cKDTree
 
-from streetview_to_3d.postprocess.world.Form import Form
+from streetview_to_3d.postprocess.world.Form import MIN_HEIGHT_M, Form
 from streetview_to_3d.postprocess.world.Roof import Roof
 from streetview_to_3d.postprocess.world.tools import styles
 from streetview_to_3d.postprocess.world.tools.geometry import turning
@@ -11,7 +11,6 @@ from streetview_to_3d.postprocess.world.tools.osm_tags import LEVEL_M, building_
 DEFAULT_M = {"house": 7, "detached": 7, "semidetached_house": 7, "terrace": 7, "bungalow": 5,
              "roof": 4, "shed": 3, "garage": 3, "garages": 3, "carport": 3, "hut": 3, "kiosk": 3}
 DEFAULT_OTHER_M = 12.0
-MIN_HEIGHT_M = 2.5
 NAMED = {"white": (0.95, 0.95, 0.93), "grey": (0.6, 0.6, 0.6), "gray": (0.6, 0.6, 0.6),
          "black": (0.2, 0.2, 0.2), "red": (0.75, 0.3, 0.25), "brown": (0.55, 0.38, 0.26),
          "beige": (0.88, 0.8, 0.65), "yellow": (0.93, 0.83, 0.45), "orange": (0.9, 0.6, 0.3),

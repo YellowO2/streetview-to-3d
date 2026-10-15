@@ -39,7 +39,7 @@ def on_gpu(task, *args, seconds, **kwargs):
 if ON_SPACES:
     # depth_anything_3 imports pycolmap (unused), whose CUDA init segfaults outside a GPU call
     sys.modules.setdefault("pycolmap", types.ModuleType("pycolmap"))
-    from streetview_to_3d.models.da3 import da3
-    from streetview_to_3d.models.segment import segment
-    da3()
-    segment([])  # the maskers, built at startup like DA3
+    from streetview_to_3d.models.DepthModel import DepthModel
+    from streetview_to_3d.models.Segmenter import Segmenter
+    DepthModel().loaded()
+    Segmenter().segment([])  # the maskers, built at startup like DA3

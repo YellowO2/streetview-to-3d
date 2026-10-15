@@ -1,8 +1,10 @@
 """Where a placed node's camera looks, and what its pano calls each point."""
 import numpy as np
 
-from streetview_to_3d.models.segment import LABEL_IDS
+from streetview_to_3d.models.Segmenter import LABEL_IDS
 from streetview_to_3d.postprocess.tools.paint import pano_at
+
+CAM_H = 2.45             # a camera's height above the ground
 
 
 class Camera:

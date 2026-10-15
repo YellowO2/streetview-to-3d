@@ -14,7 +14,7 @@ from scipy.spatial import cKDTree
 from streetlevel import streetview
 from streetlevel.geo import wgs84_to_tile_coord
 
-from streetview_to_3d.common.streetview_fetch.browser_session import browser_session
+from streetview_to_3d.tools.streetview_fetch.browser_session import browser_session
 from streetview_to_3d.tools.geo import to_metres
 from streetview_to_3d.tools.run_async import run_async
 from streetview_to_3d.ui.map_selection.tools.street_view import is_official

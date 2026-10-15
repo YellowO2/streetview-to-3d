@@ -1,5 +1,5 @@
 """Where the JRC water map, or the sea by height, says water is."""
-from streetview_to_3d.common.occurrence_map import WET, occurrence_map
+from streetview_to_3d.tools.occurrence_map import WET, occurrence_map
 
 SEA_M = 0.5               # map height at or under this is sea
 

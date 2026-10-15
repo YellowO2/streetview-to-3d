@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+LAND_EVERY = 2                             # land triangles this many times the point spacing
+
 
 @dataclass
 class Land:

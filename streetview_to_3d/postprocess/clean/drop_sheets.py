@@ -2,11 +2,8 @@
 
 A loose sheet: DA3 points whose K-th neighbour is SPARSE times farther than on the
 densest surface nearby. Runs scene-wide after drop_blobs.py, before the fill.
-
-    python -m streetview_to_3d.postprocess.clean.drop_sheets SCENE_DIR
 """
 import logging
-import sys
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -62,11 +59,3 @@ def drop_sheets(sc):
     logger.info(f"loose sheets: {int(loose.sum())} of {len(loose)} points removed")
     return sc
 
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    if len(sys.argv) != 2:
-        sys.exit(__doc__.splitlines()[-1].strip())
-    from streetview_to_3d.load import load
-    from streetview_to_3d.save import save
-    save(drop_sheets(load(sys.argv[1])), None, None, sys.argv[1])

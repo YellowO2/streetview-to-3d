@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 def pano_views(scene):
     """PanoViews of the scene's placed panos, each photo with its drop mask (the rig's blur and
     what pano_mask drops); none if their photos cannot be read."""
-    from streetview_to_3d.models.pano_mask import pano_mask
+    from streetview_to_3d.tools.pano_mask import pano_mask
     from streetview_to_3d.postprocess.Camera import Camera
     from streetview_to_3d.postprocess.tools.paint import blurred
     try:

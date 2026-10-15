@@ -17,6 +17,7 @@ def main():
     if len(folders) != 1:
         sys.exit(__doc__.split("\n\n")[1])
     from streetview_to_3d.load import load
+    from streetview_to_3d.models.Segmenter import Segmenter
     from streetview_to_3d.postprocess.SceneGround import SceneGround
     from streetview_to_3d.postprocess.photos import photos
     from streetview_to_3d.postprocess.world.Settings import Settings
@@ -25,7 +26,7 @@ def main():
     folder = folders[0]
     settings = Settings(google=os.path.join(folder, "google.ply") if "--google" in sys.argv else None,
                         bend="--as-is" not in sys.argv)
-    scene, ground = photos(load(folder)), SceneGround.load(folder)
+    scene, ground = photos(load(folder), Segmenter(device="cpu")), SceneGround.load(folder)
     scene, laid = world(scene, ground, settings)
     save(scene, ground, laid, folder)
 

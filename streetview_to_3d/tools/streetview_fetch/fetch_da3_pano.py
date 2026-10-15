@@ -1,5 +1,5 @@
 """Download a pano at the resolution DA3 uses, and wait for it."""
-from streetview_to_3d.common.streetview_fetch.download_pano_by_id import DA3_ONLY_ZOOM, download_pano_by_id
+from streetview_to_3d.tools.streetview_fetch.download_pano_by_id import DA3_ONLY_ZOOM, download_pano_by_id
 from streetview_to_3d.tools.run_async import run_async
 
 

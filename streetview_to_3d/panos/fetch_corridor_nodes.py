@@ -1,7 +1,7 @@
 """Gather every Google panorama along a street corridor (no GPU)."""
-from streetview_to_3d.common.corridor_points import corridor_points
-from streetview_to_3d.common.streetview_fetch.fetch_panos_by_id import fetch_panos_by_id
-from streetview_to_3d.common.streetview_fetch.google_node import google_node
+from streetview_to_3d.tools.corridor_points import corridor_points
+from streetview_to_3d.tools.streetview_fetch.fetch_panos_by_id import fetch_panos_by_id
+from streetview_to_3d.tools.streetview_fetch.google_node import google_node
 from streetview_to_3d.tools.run_async import run_async
 
 
@@ -10,7 +10,10 @@ def fetch_corridor_nodes(edges):
 
     Returns (buckets, points, adjacency, elevations): buckets is {dot: [node dicts with date,
     pitch, roll]}, elevations is metres above sea level per dot (saves placement a re-fetch).
+    Raises ValueError without an edge.
     """
+    if not edges:
+        raise ValueError("Need at least one confirmed edge tracing the route.")
     points, adjacency, members = corridor_points(edges)
     ids = [pano_id for m in members for pano_id in m]
     meta_by_id = dict(zip(ids, run_async(fetch_panos_by_id(ids))))

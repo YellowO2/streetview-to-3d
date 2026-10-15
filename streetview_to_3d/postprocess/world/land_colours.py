@@ -3,8 +3,8 @@ from dataclasses import replace
 
 import numpy as np
 
+from streetview_to_3d.postprocess.world.Land import LAND_EVERY
 from streetview_to_3d.postprocess.world.Water import BED
-from streetview_to_3d.postprocess.world.land.land_corners import LAND_EVERY
 from streetview_to_3d.postprocess.world.tools.pano_paint import pano_paint
 from streetview_to_3d.postprocess.world.tools.seams import gap_at, tint, toward
 

@@ -1,16 +1,23 @@
 """Put the walk's pieces into the scene: each node's pano, pose and points."""
 import logging
 
+import numpy as np
+
+from streetview_to_3d.common.Cloud import Cloud
 from streetview_to_3d.common.Edge import Edge
 from streetview_to_3d.common.Pano import Pano
-from streetview_to_3d.reconstruct.thinned import thinned
 
 logger = logging.getLogger(__name__)
+
+# The cube a node's points are thinned to one averaged point per: catches the near-duplicate
+# points of overlapping views and panos (panoramic_da3's Saver thinned the same way when the
+# clouds went through a .ply).
+VOXEL_M = 0.03
 
 
 def assemble(sc, pieces, corridor):
     """The scene (open_scene) with each piece's nodes filled in: the pano that filled it, DA3's
-    pose, its points thinned (thinned.py) and named node_<i>.ply, and the edges by node index.
+    pose, its points thinned (_thinned) and named node_<i>.ply, and the edges by node index.
     corridor: what panos.main.panos prepared; its catalog matches each pano to its dot.
 
     Patches overlap, so two pieces can hold the same place: the bigger keeps it and the
@@ -46,7 +53,7 @@ def assemble(sc, pieces, corridor):
             pts, cols = clouds[key]
             if len(pts):
                 node.ply = f"node_{i}.ply"
-                node.cloud = thinned(pts, cols)
+                node.cloud = _thinned(pts, cols)
             placed[key] = i
 
         for a, b, keep_a, keep_b in _piece_edges(metadata):
@@ -68,3 +75,20 @@ def _piece_edges(metadata):
     return edges
 
 
+def _thinned(points, colours, voxel_m=VOXEL_M):
+    """A Cloud of one point per occupied voxel_m cube, each the mean of its points and colours."""
+    points, colours = np.asarray(points), np.asarray(colours)
+    if not len(points):
+        return Cloud(points, colours)
+    cells = np.floor(points / voxel_m).astype(np.int64)
+    _, inverse, counts = np.unique(cells, axis=0, return_inverse=True, return_counts=True)
+    inverse = np.asarray(inverse).reshape(-1)
+    counts = counts.astype(np.float64)
+
+    def mean(values):
+        out = np.empty((len(counts), values.shape[1]), dtype=np.float64)
+        for c in range(values.shape[1]):
+            out[:, c] = np.bincount(inverse, weights=values[:, c], minlength=len(counts))
+        return out / counts[:, None]
+
+    return Cloud(mean(points).astype(points.dtype), mean(colours).astype(colours.dtype))

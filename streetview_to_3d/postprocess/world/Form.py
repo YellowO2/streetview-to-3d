@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 
 from streetview_to_3d.postprocess.world.Roof import Roof
 
+MIN_HEIGHT_M = 2.5          # the least a building stands above its base
+
 
 @dataclass
 class Form:

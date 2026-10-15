@@ -1,11 +1,10 @@
 """Where the land's triangles have their corners."""
 import numpy as np
 
+from streetview_to_3d.postprocess.world.Land import LAND_EVERY
 from streetview_to_3d.postprocess.world.land.LandPoints import LandPoints
 from streetview_to_3d.postprocess.world.tools.reach import RADIUS_M
 from streetview_to_3d.postprocess.world.tools.seams import GAP0_M, GAP_PER, gap_at
-
-LAND_EVERY = 2                             # land triangles this many times the point spacing
 
 
 def land_corners(site, roads, outlines):

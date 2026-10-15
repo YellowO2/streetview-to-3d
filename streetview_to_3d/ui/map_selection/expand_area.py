@@ -9,9 +9,9 @@ import numpy as np
 from streetlevel import streetview
 
 from streetview_to_3d.common.Pano import Pano
-from streetview_to_3d.common.occurrence_map import WET, occurrence_map
-from streetview_to_3d.common.streetview_fetch.fetch_panos_by_id import fetch_panos_by_id
-from streetview_to_3d.common.streetview_fetch.google_node import google_node
+from streetview_to_3d.tools.occurrence_map import WET, occurrence_map
+from streetview_to_3d.tools.streetview_fetch.fetch_panos_by_id import fetch_panos_by_id
+from streetview_to_3d.tools.streetview_fetch.google_node import google_node
 from streetview_to_3d.tools.geo import haversine_m as _haversine_m, local_m_to_latlon, to_metres
 from streetview_to_3d.tools.run_async import run_async
 from streetview_to_3d.ui.map_selection.google_tile_panos import google_tile_panos
@@ -59,7 +59,7 @@ _OPEN_WATER_M = 30.0
 
 def _on_open_water(often):
     """f(lats, lons) -> whether each is out on the water; often(lat, lon)
-    -> how often water there, 0-1 (common/occurrence_map.py).
+    -> how often water there, 0-1 (tools/occurrence_map.py).
     Nowhere, if the map cannot be had."""
 
     def f(lat, lon):

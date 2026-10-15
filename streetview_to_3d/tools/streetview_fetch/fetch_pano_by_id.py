@@ -1,7 +1,7 @@
 """Fetch one Street View pano's metadata: position, dates and links."""
 from streetlevel import streetview
 
-from streetview_to_3d.common.streetview_fetch.browser_session import browser_session
+from streetview_to_3d.tools.streetview_fetch.browser_session import browser_session
 
 
 def _format_date(d):

@@ -32,7 +32,7 @@ def _seen(pts, which, n, cameras, photos, occluders):
     A point is seen by a camera within SEE_M if nothing is more than BEHIND_M
     (+ BEHIND x distance) in front of it (so DA3's own copy of the wall does
     not hide it) and its pixel is labelled building or wall."""
-    from streetview_to_3d.models.segment import LABEL_IDS
+    from streetview_to_3d.models.Segmenter import LABEL_IDS
     from streetview_to_3d.postprocess.tools.paint import NADIR_DEG, depth_buffer, pano_at, pixel
     ids = [LABEL_IDS["building"], LABEL_IDS["wall"]]
     pts, which = pts[::SAMPLE], which[::SAMPLE]

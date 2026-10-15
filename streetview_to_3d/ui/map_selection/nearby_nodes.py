@@ -2,7 +2,7 @@
 import logging
 
 from streetview_to_3d.common.Pano import Pano
-from streetview_to_3d.common.streetview_fetch.google_node import google_node
+from streetview_to_3d.tools.streetview_fetch.google_node import google_node
 from streetview_to_3d.tools.geo import haversine_m as _haversine_m
 from streetview_to_3d.ui.map_selection.google_tile_panos import google_tile_panos
 

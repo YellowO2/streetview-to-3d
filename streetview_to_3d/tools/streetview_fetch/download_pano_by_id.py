@@ -7,7 +7,7 @@ from aiohttp import TCPConnector
 from PIL import UnidentifiedImageError
 from streetlevel import streetview
 
-from streetview_to_3d.common.streetview_fetch.browser_session import browser_session
+from streetview_to_3d.tools.streetview_fetch.browser_session import browser_session
 from streetview_to_3d.tools.paths import PANOS_DIR
 
 logger = logging.getLogger(__name__)

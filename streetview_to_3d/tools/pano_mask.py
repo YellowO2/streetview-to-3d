@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from scipy.ndimage import binary_dilation
 
-from streetview_to_3d.models.segment import LABEL_IDS
+from streetview_to_3d.models.Segmenter import LABEL_IDS
 
 MOVERS = ("person", "rider", "car", "truck", "bus", "motorcycle", "bicycle")   # not train: it is part of the place
 THIN = ("pole", "traffic light", "traffic sign")

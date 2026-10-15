@@ -5,6 +5,7 @@ import logging
 import sys
 
 from streetview_to_3d.load import load
+from streetview_to_3d.models.Segmenter import Segmenter
 from streetview_to_3d.postprocess.fill.main import fill
 from streetview_to_3d.postprocess.photos import photos
 from streetview_to_3d.save import save
@@ -16,7 +17,7 @@ def main():
         sys.exit(__doc__)
     src = sys.argv[1]
     out = sys.argv[2] if len(sys.argv) == 3 else src
-    scene, ground = fill(photos(load(src)))
+    scene, ground = fill(photos(load(src), Segmenter(device="cpu")))
     save(scene, ground, None, out)
 
 

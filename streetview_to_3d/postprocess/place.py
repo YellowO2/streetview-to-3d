@@ -11,12 +11,12 @@ import sys
 
 import numpy as np
 
-from streetview_to_3d.models.da3 import DA3_UNITS_TO_METRES
+from streetview_to_3d.models.DepthModel import DA3_UNITS_TO_METRES
+from streetview_to_3d.postprocess.Camera import CAM_H
 from streetview_to_3d.tools.geo import latlon_to_local_m
 
 logger = logging.getLogger(__name__)
 
-CAM_H = 2.45             # camera height above the ground
 SIGMA_M = 0.5            # how far a GPS point is trusted
 SIGMA_DEG = 2.0          # how far a pano's heading/pitch/roll is trusted
 MIN_SCALE_SPAN_M = 8.0   # cameras closer than this: GPS noise swamps the scale
@@ -97,7 +97,7 @@ def _piece_scale(nodes, origin):
 
 
 def _scene_scale(sc, groups):
-    """(metres per DA3 unit, reason): the median _piece_scale, else models.da3.DA3_UNITS_TO_METRES."""
+    """(metres per DA3 unit, reason): the median _piece_scale, else models.DepthModel.DA3_UNITS_TO_METRES."""
     fitted = [f for m in groups if (f := _piece_scale([sc.nodes[k] for k in m], sc.origin)) is not None]
     if not fitted:
         return DA3_UNITS_TO_METRES, "fixed: no piece spans enough to fit one"

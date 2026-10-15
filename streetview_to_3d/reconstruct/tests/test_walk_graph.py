@@ -1,6 +1,6 @@
 import numpy as np
 
-from streetview_to_3d.reconstruct.walk_graph import walk_graph
+from streetview_to_3d.reconstruct.walk import _walk_graph as walk_graph
 
 M = 1 / 111320  # degrees of latitude per metre
 

@@ -2,8 +2,8 @@
 import numpy as np
 from scipy.spatial import cKDTree
 
+from streetview_to_3d.postprocess.world.Form import MIN_HEIGHT_M
 from streetview_to_3d.postprocess.world.Outlines import Outlines
-from streetview_to_3d.postprocess.world.outlines.osm_outlines import MIN_HEIGHT_M
 from streetview_to_3d.postprocess.world.tools.osm_roads import coverage, lines
 from streetview_to_3d.postprocess.world.tools.walls import SAME_DEG, near_box, on_plane
 

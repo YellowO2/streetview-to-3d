@@ -2,11 +2,8 @@
 
 Points too far from their pano (past FAR_M, or past SURE_M unless another pano confirms
 them) and small clumps touching nothing else.
-
-    python -m streetview_to_3d.postprocess.clean.drop_blobs SCENE_DIR
 """
 import logging
-import sys
 
 import numpy as np
 from scipy.sparse import coo_matrix
@@ -81,11 +78,3 @@ def drop_blobs(sc):
                 f"pano's ({unsure} of them), then {int(loose.sum())} of {len(loose)} points in floating bits removed")
     return sc
 
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    if len(sys.argv) != 2:
-        sys.exit(__doc__.splitlines()[-1].strip())
-    from streetview_to_3d.load import load
-    from streetview_to_3d.save import save
-    save(drop_blobs(load(sys.argv[1])), None, None, sys.argv[1])

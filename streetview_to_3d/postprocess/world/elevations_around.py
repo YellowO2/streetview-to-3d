@@ -29,7 +29,7 @@ def _around(lats, lons):
     """(lat, lon, elevation) arrays of the panos within REACH_M of the box round (lats, lons)."""
     import aiohttp
     from streetlevel import streetview
-    from streetview_to_3d.common.streetview_fetch.browser_session import BROWSER_HEADERS
+    from streetview_to_3d.tools.streetview_fetch.browser_session import BROWSER_HEADERS
     from streetview_to_3d.postprocess.world.tools.tiles import tile_xy
     from streetview_to_3d.tools.run_async import run_async
     lat0 = float(np.mean(lats))

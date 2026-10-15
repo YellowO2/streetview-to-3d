@@ -6,6 +6,8 @@ Movers ghost when panos merge, DA3 smears thin things into streaks and lays wate
 height. Each pano is segmented once, whole (Cityscapes SegFormer, plus an ADE20K one for water);
 each DA3 view cuts its part of that mask, and the class map is kept with the scene for the fill.
 """
+import os
+
 import numpy as np
 from PIL import Image
 
@@ -52,7 +54,7 @@ def _segmenter(model_id=None, device=None):
     """(processor, model, {class name: id}) for a Cityscapes SegFormer
     (default MODEL_ID) on device (default: the GPU if there is one), the
     water one (WATER_MODEL_ID) loaded beside it: the default is built at
-    startup on a Space (see streetview_to_3d.models.on_gpu), anything else on first
+    startup on a Space (see streetview_to_3d.tools.on_gpu), anything else on first
     use. Outside a GPU call on a Space, ask for "cpu"."""
     model_id, device = model_id or MODEL_ID, device or _device()
     processor, model, label_ids = _load(model_id, device)
@@ -74,19 +76,39 @@ def _segment(images, processor, model):
     return [lab.cpu().numpy() for lab in labels]
 
 
-def segment(paths, model_id=None, device=None):
-    """(one class-id map per image path -- Cityscapes', water marked over
-    it -- and {class name: id}, as LABEL_IDS). model_id, device: see
-    _segmenter; no paths only builds the models."""
-    device = device or _device()
-    processor, model, _ = _segmenter(model_id, device)
-    w_processor, w_model, w_ids = _load(WATER_MODEL_ID, device)
-    water = [w_ids[n] for n in WATER_CLASSES]
-    out = []
-    for start in range(0, len(paths), BATCH):
-        images = [Image.open(p).convert("RGB") for p in paths[start:start + BATCH]]
-        for lab, wet in zip(_segment(images, processor, model), _segment(images, w_processor, w_model)):
-            lab = lab.astype(np.uint8)
-            lab[np.isin(wet, water)] = LABEL_IDS["water"]
-            out.append(lab)
-    return out, LABEL_IDS
+class Segmenter:
+    """A Cityscapes SegFormer (model_id, default MODEL_ID) and the water one, on device
+    (default: the GPU if there is one, when it runs). Outside a GPU call on a Space, ask for
+    "cpu". The models are built once per device and shared (see _segmenter); only model_id
+    and device are pickled, so it travels into a GPU call for free."""
+
+    def __init__(self, model_id=None, device=None):
+        self.model_id, self.device = model_id, device
+
+    def segment(self, paths):
+        """(one class-id map per image path -- Cityscapes', water marked over it -- and
+        {class name: id}, as LABEL_IDS); no paths only builds the models."""
+        device = self.device or _device()
+        processor, model, _ = _segmenter(self.model_id, device)
+        w_processor, w_model, w_ids = _load(WATER_MODEL_ID, device)
+        water = [w_ids[n] for n in WATER_CLASSES]
+        out = []
+        for start in range(0, len(paths), BATCH):
+            images = [Image.open(p).convert("RGB") for p in paths[start:start + BATCH]]
+            for lab, wet in zip(_segment(images, processor, model), _segment(images, w_processor, w_model)):
+                lab = lab.astype(np.uint8)
+                lab[np.isin(wet, water)] = LABEL_IDS["water"]
+                out.append(lab)
+        return out, LABEL_IDS
+
+    def pano_labels(self, path, saved=None):
+        """A whole pano's class map (ids as in CLASSES), kept in saved (default beside it,
+        named by the model) for whatever needs it later -- the scene carries a copy
+        (save.py). A saved one is read, not redone: the walk runs DA3 on one pano many times."""
+        saved = saved or f"{path}.{(self.model_id or MODEL_ID).split('/')[-1]}+water.labels.png"
+        if os.path.exists(saved):
+            return np.asarray(Image.open(saved))
+        labels = self.segment([path])[0][0]
+        os.makedirs(os.path.dirname(saved) or ".", exist_ok=True)
+        Image.fromarray(labels).save(saved)
+        return labels

@@ -195,7 +195,7 @@ SELECTED_EDGES.forEach(function(e) {{
   L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {{color: SELECTED_COLOR, weight: 4}}).addTo(m);
 }});
 
-// The spots the walk will use (common/corridor_points.py): nearby
+// The spots the walk will use (tools/corridor_points.py): nearby
 // selected panos merged, one ring each at its seed pano, with the spot
 // links -- including bridges between graphs Google never linked.
 SPOT_LINKS.forEach(function(l) {{

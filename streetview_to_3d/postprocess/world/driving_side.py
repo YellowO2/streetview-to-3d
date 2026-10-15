@@ -25,7 +25,7 @@ def _side(pano_id):
     """"left" or "right": the side cars keep to where pano_id was taken."""
     import aiohttp
     from streetlevel import streetview
-    from streetview_to_3d.common.streetview_fetch.browser_session import BROWSER_HEADERS
+    from streetview_to_3d.tools.streetview_fetch.browser_session import BROWSER_HEADERS
     from streetview_to_3d.tools.run_async import run_async
 
     async def country():

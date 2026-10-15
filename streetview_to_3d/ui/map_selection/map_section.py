@@ -12,9 +12,9 @@ import logging
 
 import gradio as gr
 
-from streetview_to_3d.common.corridor_points import corridor_points
-from streetview_to_3d.common.streetview_fetch.fetch_pano_by_id import fetch_pano_by_id
-from streetview_to_3d.common.streetview_fetch.google_node import google_node
+from streetview_to_3d.tools.corridor_points import corridor_points
+from streetview_to_3d.tools.streetview_fetch.fetch_pano_by_id import fetch_pano_by_id
+from streetview_to_3d.tools.streetview_fetch.google_node import google_node
 from streetview_to_3d.tools.gpu_seconds import estimate_gpu_seconds
 from streetview_to_3d.tools.geo import extract_lat_lon
 from streetview_to_3d.tools.run_async import run_async
@@ -58,7 +58,7 @@ def _summary_markdown(state):
     if not state["selected"]:
         return "Enter a location and select a street via 'Expand Area' Button or manually clicking. Then press button 1, wait for it to run, then button 2."
     # the GPU is spent per spot -- panos within a few metres merge into one
-    # (common/corridor_points.py) -- not per pano
+    # (tools/corridor_points.py) -- not per pano
     n_spots = len(corridor_points(corridor_edges(state))[0])
     gpu, quick = (estimate_gpu_seconds(n_spots, e) / 60 for e in ("Normal", "Quick"))
     other = max(1, round(estimate_other_seconds(n_spots) / 60))

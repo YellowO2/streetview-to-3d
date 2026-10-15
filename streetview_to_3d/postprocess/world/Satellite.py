@@ -41,7 +41,7 @@ class Satellite:
     @staticmethod
     def google_map(zoom):
         """Google's imagery at zoom: RGB, 0-1, NaN where Google has no tile."""
-        from streetview_to_3d.common.streetview_fetch.browser_session import BROWSER_HEADERS
+        from streetview_to_3d.tools.streetview_fetch.browser_session import BROWSER_HEADERS
         return TileMap(GOOGLE_URL, zoom, lambda c: c / 255, missing=np.nan, headers=BROWSER_HEADERS)
 
     def google(self, lat, lon, spacing):

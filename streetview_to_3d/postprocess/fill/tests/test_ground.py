@@ -1,6 +1,6 @@
 import numpy as np
 
-from streetview_to_3d.postprocess.fill.ground import ground
+from streetview_to_3d.postprocess.fill.walkable_ground import _ground as ground
 
 
 def _patch(x0, x1, z0, z1, y, step=0.1, slope=0.0):

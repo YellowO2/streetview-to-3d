@@ -16,5 +16,5 @@ class Stopwatch:
         self.start = time.monotonic()
 
     def skipped(self, stage, failure):
-        """Warns why; returns None, the skipped stage's result."""
+        """Warns why; the skipped stage leaves no result."""
         logger.warning(f"{stage} skipped: {failure!r}")

@@ -1,7 +1,7 @@
-"""Load DA3, the depth model, once per repo, with the constants it runs by.
+"""DA3, the depth model, loaded once per repo, with the constants it runs by.
 
 DA3, the depth model: which one, where it is (DA3Config) and our decisions about its
-results: thresholds and view settings. reconstruct/run_da3.py is the only caller of
+results: thresholds and view settings. reconstruct/PanoDepth.py is the only caller of
 panoramic_da3.panoramic_da3.
 """
 from huggingface_hub import snapshot_download
@@ -30,18 +30,24 @@ VIEW_HFOV = 90.0
 # The lowest DA3 confidence a pixel needs to become a point, on top of CONF_LOWER_PERCENTILE.
 CONF_FLOOR = 1.05
 
-# Leave cars, people and poles out of every point cloud (see models.segment).
+# Leave cars, people and poles out of every point cloud (see models.Segmenter).
 MASK_MOVERS = True
 
 _loaded = {}
 
 
-def da3(repo=None):
-    """(DA3Config, DA3Model) for a repo (default DA3_MODEL_REPO), each built once: the
-    default at startup on a Space (models/on_gpu.py), anything else on first use."""
-    repo = repo or DA3_MODEL_REPO
-    if repo not in _loaded:
-        from panoramic_da3 import DA3Model
-        config = DA3Config(da3_model=snapshot_download(repo_id=repo))
-        _loaded[repo] = config, DA3Model(config.da3_model)
-    return _loaded[repo]
+class DepthModel:
+    """One DA3 repo's model (default DA3_MODEL_REPO), built once and shared: the default at
+    startup on a Space (tools/on_gpu.py), anything else on first use. Only the repo is
+    pickled, so it travels into a GPU call for free."""
+
+    def __init__(self, repo=None):
+        self.repo = repo or DA3_MODEL_REPO
+
+    def loaded(self):
+        """(DA3Config, panoramic_da3's DA3Model)."""
+        if self.repo not in _loaded:
+            from panoramic_da3 import DA3Model
+            config = DA3Config(da3_model=snapshot_download(repo_id=self.repo))
+            _loaded[self.repo] = config, DA3Model(config.da3_model)
+        return _loaded[self.repo]

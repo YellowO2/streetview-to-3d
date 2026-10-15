@@ -10,12 +10,17 @@ import argparse
 import logging
 import os
 
+import numpy as np
+
 from streetview_to_3d.load import load
+from streetview_to_3d.models.Segmenter import Segmenter
 from streetview_to_3d.postprocess.Settings import Settings
 from streetview_to_3d.postprocess.main import postprocess
-from streetview_to_3d.postprocess.merged import merged
 from streetview_to_3d.postprocess.world.Settings import Settings as WorldSettings
 from streetview_to_3d.save import save
+from streetview_to_3d.tools.ply import write_ply
+
+logger = logging.getLogger(__name__)
 
 
 def run(run_dir, merge_ply=None, fill=True, clean=True, google=False, bend=True):
@@ -24,10 +29,25 @@ def run(run_dir, merge_ply=None, fill=True, clean=True, google=False, bend=True)
     google.ply beside it (the viewer's ?google-save), bending DA3's points onto it if bend."""
     run_dir = os.path.expanduser(run_dir)
     world_settings = WorldSettings(google=os.path.join(run_dir, "google.ply") if google else None, bend=bend)
-    scene, ground, world = postprocess(load(run_dir), Settings(fill=fill, clean=clean, world=world_settings))
+    scene, ground, world = postprocess(load(run_dir), Settings(fill=fill, clean=clean, world=world_settings),
+                                       Segmenter(device="cpu"))
     save(scene, ground, world, run_dir)
-    return merged(scene, os.path.expanduser(merge_ply)) if merge_ply else None
+    return _merged(scene, os.path.expanduser(merge_ply)) if merge_ply else None
 
+
+def _merged(scene, out):
+    """Write every placed node's points, in the world, to the .ply out; returns out."""
+    ready = scene.placed()
+    if not ready:
+        raise ValueError("no node has been placed yet -- run the postprocess first")
+    skipped = sum(1 for n in scene.nodes if n.ply and not n.transform)
+    if skipped:
+        logger.warning(f"{skipped} node(s) have points but no transform, skipped")
+    pts = np.concatenate([n.cloud.world(n.transform) for n in ready])
+    cols = np.concatenate([n.cloud.colours for n in ready])
+    write_ply(out, pts, cols)
+    logger.info(f"wrote {len(pts):,} points from {len(ready)} node(s) to {out}")
+    return out
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
