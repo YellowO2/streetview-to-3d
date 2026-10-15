@@ -10,7 +10,7 @@ from streetlevel import streetview
 
 from ui.map_selection.tools.google_tile_panos import google_tile_panos
 from ui.map_selection.tools.street_view import is_official
-from streetview_to_3d.common.Pano import Pano
+from streetview_to_3d.types.Pano import Pano
 from streetview_to_3d.panos.tools.fetch_panos_by_id import fetch_panos_by_id
 from streetview_to_3d.panos.tools.google_node import google_node
 from streetview_to_3d.postprocess.world.tools.occurrence_map import WET, occurrence_map

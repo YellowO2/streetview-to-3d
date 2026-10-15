@@ -9,10 +9,10 @@ import json
 import os
 from dataclasses import asdict, dataclass, field, replace
 
-from streetview_to_3d.common.DisjointSet import DisjointSet
-from streetview_to_3d.common.Edge import Edge
-from streetview_to_3d.common.Node import Node
-from streetview_to_3d.common.Pano import Pano
+from streetview_to_3d.tools.DisjointSet import DisjointSet
+from streetview_to_3d.types.Edge import Edge
+from streetview_to_3d.types.Node import Node
+from streetview_to_3d.types.Pano import Pano
 
 
 FILENAME = "scene.json"

@@ -3,8 +3,8 @@ import os
 
 import numpy as np
 
-from streetview_to_3d.common.Cloud import Cloud
-from streetview_to_3d.common.Scene import Scene
+from streetview_to_3d.types.Cloud import Cloud
+from streetview_to_3d.types.Scene import Scene
 from streetview_to_3d.tools.ply import read_ply
 
 

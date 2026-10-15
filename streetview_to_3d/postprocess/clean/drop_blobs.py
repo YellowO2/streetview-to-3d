@@ -10,7 +10,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
-from streetview_to_3d.common.Cloud import Cloud
+from streetview_to_3d.types.Cloud import Cloud
 
 logger = logging.getLogger(__name__)
 

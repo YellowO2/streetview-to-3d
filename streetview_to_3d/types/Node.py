@@ -1,8 +1,8 @@
 """One place, its photograph, and whatever DA3 made of it."""
 from dataclasses import dataclass, field
 
-from streetview_to_3d.common.Cloud import Cloud
-from streetview_to_3d.common.Pano import Pano
+from streetview_to_3d.types.Cloud import Cloud
+from streetview_to_3d.types.Pano import Pano
 
 
 @dataclass

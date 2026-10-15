@@ -120,5 +120,5 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     if len(sys.argv) != 2:
         sys.exit(__doc__.splitlines()[-1].strip())
-    from streetview_to_3d.common.Scene import Scene
+    from streetview_to_3d.types.Scene import Scene
     place(Scene.load(sys.argv[1])).save(sys.argv[1])

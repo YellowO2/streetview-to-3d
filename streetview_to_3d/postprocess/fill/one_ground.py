@@ -5,7 +5,7 @@ disc filled, laid out as a STEP_M grid that replaces the clouds' own ground poin
 import numpy as np
 from scipy.ndimage import binary_closing, binary_fill_holes
 
-from streetview_to_3d.common.Cloud import Cloud
+from streetview_to_3d.types.Cloud import Cloud
 from streetview_to_3d.postprocess.fill.GroundMap import GroundMap
 from streetview_to_3d.postprocess.Camera import CAM_H
 from streetview_to_3d.postprocess.SceneGround import CELL_M

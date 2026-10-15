@@ -17,7 +17,7 @@ from huggingface_hub import CommitOperationAdd, HfApi, hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
 from huggingface_hub.utils import disable_progress_bars
 
-from streetview_to_3d.common.Scene import FILENAME as SCENE_FILENAME
+from streetview_to_3d.types.Scene import FILENAME as SCENE_FILENAME
 
 logger = logging.getLogger(__name__)
 

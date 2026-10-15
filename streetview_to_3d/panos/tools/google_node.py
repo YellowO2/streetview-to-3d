@@ -1,5 +1,5 @@
 """Describe one Google pano as the node dict the map and candidates use."""
-from streetview_to_3d.common.Pano import Pano
+from streetview_to_3d.types.Pano import Pano
 
 
 def google_node(pano_id, lat, lon, heading=None, **extra):

@@ -1,5 +1,5 @@
 """Each placed node's points moved into the world."""
-from streetview_to_3d.common.Cloud import Cloud
+from streetview_to_3d.types.Cloud import Cloud
 
 
 def world_clouds(scene):

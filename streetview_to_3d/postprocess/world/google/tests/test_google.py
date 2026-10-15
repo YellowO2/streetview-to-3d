@@ -2,10 +2,10 @@ import copy
 
 import numpy as np
 
-from streetview_to_3d.common.Cloud import Cloud
-from streetview_to_3d.common.Node import Node
-from streetview_to_3d.common.Pano import Pano
-from streetview_to_3d.common.Scene import Scene
+from streetview_to_3d.types.Cloud import Cloud
+from streetview_to_3d.types.Node import Node
+from streetview_to_3d.types.Pano import Pano
+from streetview_to_3d.types.Scene import Scene
 from streetview_to_3d.postprocess.World import World
 from streetview_to_3d.postprocess.world.Settings import Settings
 from streetview_to_3d.postprocess.world.Site import Site

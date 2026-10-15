@@ -50,10 +50,10 @@ streetview_to_3d/   the engine
   main.py       a prepared corridor → reconstruct → postprocess → save (the "Reconstruct" button);
                    it makes the models and hands them in
   tools/        helpers the parts use inside themselves: paths (where data lives, new_run_dir),
-                   geo, ply, run_async, pano_mask, on_gpu (the one way to a GPU),
+                   geo, ply, run_async, pano_mask, on_gpu (the one way to a GPU), DisjointSet,
                    streetview_fetch/ (lookups and downloads); deeper tools/ folders hold their
                    own subject's
-  common/       Scene (Node, Pano, Edge, Cloud), DisjointSet
+  types/        Scene (Node, Pano, Edge, Cloud)
   models/       DepthModel (DA3), Segmenter (the masker); handed to the steps that run them;
                    python -m streetview_to_3d.models draws the masker on one pano
   panos/        1. which panoramas: main.py → fetch_corridor_nodes → date_graphs → downloaded

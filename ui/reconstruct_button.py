@@ -11,7 +11,7 @@ from ui.tools.gallery.publish import publish, sharing
 from ui.tools.page import file_url
 from ui.tools.viewer import viewer
 from streetview_to_3d.Settings import Settings
-from streetview_to_3d.common.Scene import FILENAME as SCENE_FILENAME
+from streetview_to_3d.types.Scene import FILENAME as SCENE_FILENAME
 from streetview_to_3d.postprocess.Settings import Settings as PostprocessSettings
 from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
 from streetview_to_3d.reconstruct.tools.gpu_seconds import DEFAULT_EFFORT, estimate_gpu_seconds

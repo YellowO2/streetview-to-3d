@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from streetview_to_3d.common.Node import Node
-from streetview_to_3d.common.Pano import Pano
-from streetview_to_3d.common.Scene import Scene
+from streetview_to_3d.types.Node import Node
+from streetview_to_3d.types.Pano import Pano
+from streetview_to_3d.types.Scene import Scene
 from streetview_to_3d.postprocess.World import World
 from streetview_to_3d.postprocess.world import OpenStreetMap as osm
 from streetview_to_3d.postprocess.world import driving_side as side

@@ -3,9 +3,9 @@ import logging
 
 import numpy as np
 
-from streetview_to_3d.common.Cloud import Cloud
-from streetview_to_3d.common.Edge import Edge
-from streetview_to_3d.common.Pano import Pano
+from streetview_to_3d.types.Cloud import Cloud
+from streetview_to_3d.types.Edge import Edge
+from streetview_to_3d.types.Pano import Pano
 
 logger = logging.getLogger(__name__)
 

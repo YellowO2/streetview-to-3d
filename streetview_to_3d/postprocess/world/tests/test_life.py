@@ -74,7 +74,7 @@ def test_cats_sit_on_the_scenes_ground_off_its_roads_near_its_cameras():
 
 
 def test_saved_as_the_viewer_reads_it(tmp_path):
-    from streetview_to_3d.common.Scene import Scene
+    from streetview_to_3d.types.Scene import Scene
     from streetview_to_3d.postprocess.World import World
     from streetview_to_3d.save import save
     world = World(json={LIFE: dict(cars=life._cars([(6.0, np.zeros((3, 3)), np.full(3, 3.0))], "left"),

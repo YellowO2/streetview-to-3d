@@ -4,7 +4,7 @@ rank_dates orders dates by the corridor each newly covers (date_recency_key brea
 cap_bucket_for_date keeps a dot's closest panos of one date, date_connects checks a date's
 dots reach from the start to a goal.
 """
-from streetview_to_3d.common.DisjointSet import DisjointSet
+from streetview_to_3d.tools.DisjointSet import DisjointSet
 from streetview_to_3d.tools.geo import haversine_m
 
 # Per dot, per date, how many of the closest panos to keep (and so download and rate):

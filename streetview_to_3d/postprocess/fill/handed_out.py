@@ -1,7 +1,7 @@
 """Give each node its share of the one ground, and its trees their sway."""
 import numpy as np
 
-from streetview_to_3d.common.Cloud import Cloud
+from streetview_to_3d.types.Cloud import Cloud
 
 SWAY_M = 6.0      # vegetation sways fully at this height over the ground
 
