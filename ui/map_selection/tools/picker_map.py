@@ -6,7 +6,7 @@ the nodes linked to it are drawn: the only ones worth clicking next.
 """
 import json
 
-from street_builder.tools.page import iframe as _iframe
+from ui.tools.page import iframe as _iframe
 
 _SUGGESTED_COLOR = "#ff9800"
 _SELECTED_COLOR = "#00c853"

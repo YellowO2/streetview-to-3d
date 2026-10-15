@@ -8,7 +8,8 @@ for chatty in ("httpx", "httpx2", "numexpr"):   # a line per request Gradio make
 
 # the package first: it imports `spaces` before anything touches CUDA (streetview_to_3d/tools/on_gpu.py)
 from streetview_to_3d.tools.paths import DATA_DIR
-from street_builder import BRIDGE_CSS, BRIDGE_HEAD_SCRIPT, pano_api, street_builder
+from main import street_builder
+from ui import BRIDGE_CSS, BRIDGE_HEAD_SCRIPT, pano_api
 
 import gradio as gr
 

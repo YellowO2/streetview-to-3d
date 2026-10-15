@@ -1,9 +1,9 @@
 """Lay out the controls under the map: the two buttons and what they show."""
 import gradio as gr
 
-from street_builder.Controls import Controls
-from street_builder.tools.gallery.publish import sharing
-from street_builder.tools.viewer import viewer
+from ui.Controls import Controls
+from ui.tools.gallery.publish import sharing
+from ui.tools.viewer import viewer
 from streetview_to_3d.reconstruct.tools.gpu_seconds import DEFAULT_EFFORT, EFFORT_SECONDS_PER_SPOT
 
 

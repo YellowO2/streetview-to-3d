@@ -12,12 +12,12 @@ import logging
 
 import gradio as gr
 
-from street_builder.map_selection.tools.circle import circle
-from street_builder.map_selection.tools.estimate_other_seconds import estimate_other_seconds
-from street_builder.map_selection.tools.expand_area import expand_area
-from street_builder.map_selection.tools.nearby_nodes import nearby_nodes
-from street_builder.map_selection.tools.picker_map import AREA_MESSAGE_TYPE, MESSAGE_TYPES, picker_map
-from street_builder.tools.map_state import corridor_edges
+from ui.map_selection.tools.circle import circle
+from ui.map_selection.tools.estimate_other_seconds import estimate_other_seconds
+from ui.map_selection.tools.expand_area import expand_area
+from ui.map_selection.tools.nearby_nodes import nearby_nodes
+from ui.map_selection.tools.picker_map import AREA_MESSAGE_TYPE, MESSAGE_TYPES, picker_map
+from ui.tools.map_state import corridor_edges
 from streetview_to_3d.panos.tools.corridor_points import corridor_points
 from streetview_to_3d.panos.tools.fetch_pano_by_id import fetch_pano_by_id
 from streetview_to_3d.panos.tools.google_node import google_node

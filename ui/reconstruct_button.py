@@ -2,16 +2,16 @@
 import logging
 import os
 import zipfile
+from functools import partial, update_wrapper
 
 import gradio as gr
 
-from street_builder.Controls import Controls
-from street_builder.tools.gallery.publish import publish, sharing
-from street_builder.tools.page import file_url
-from street_builder.tools.viewer import viewer
+from ui.Controls import Controls
+from ui.tools.gallery.publish import publish, sharing
+from ui.tools.page import file_url
+from ui.tools.viewer import viewer
 from streetview_to_3d.Settings import Settings
 from streetview_to_3d.common.Scene import FILENAME as SCENE_FILENAME
-from streetview_to_3d.main import streetview_to_3d
 from streetview_to_3d.postprocess.Settings import Settings as PostprocessSettings
 from streetview_to_3d.reconstruct.WalkSettings import WalkSettings
 from streetview_to_3d.reconstruct.tools.gpu_seconds import DEFAULT_EFFORT, estimate_gpu_seconds
@@ -38,13 +38,14 @@ def _zip(run_dir):
 
 def _handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model="", masker="",
                        mask_classes="", fill=True, conf_floor=0, effort=DEFAULT_EFFORT,
-                       share=False):
-    """Button 2: reconstruct (GPU), then place and fill (CPU), in one click.
+                       share=False, *, build):
+    """Button 2: build (the engine's streetview_to_3d): reconstruct (GPU), then place and
+    fill (CPU), in one click.
 
     The rest are hidden per-run overrides for the API (0/blank: defaults): keep_pct of
     each view's pixels, gpu_seconds (else sized from effort), view_hfov, da3_model, masker,
     comma-separated mask_classes, fill, conf_floor. See reconstruct.WalkSettings.
-    share: also publish the scene to the public gallery (street_builder/tools/gallery/publish.py).
+    share: also publish the scene to the public gallery (ui/tools/gallery/publish.py).
     """
     if not corridor:
         raise gr.Error("Nothing prepared yet -- press \"Prepare\" first.")
@@ -61,7 +62,7 @@ def _handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model=
             model=(da3_model or "").strip() or None, masker=(masker or "").strip() or None,
             mask_classes=[c.strip() for c in (mask_classes or "").split(",") if c.strip()] or None,
             conf_floor=conf_floor or None)
-        output_dir = streetview_to_3d(corridor, Settings(walk=walk, post=PostprocessSettings(fill=bool(fill))))
+        output_dir = build(corridor, Settings(walk=walk, post=PostprocessSettings(fill=bool(fill))))
     except Exception as e:
         yield gr.HTML(visible=True), gr.skip(), "<p>Reconstruction failed. Try again.</p>"
         raise gr.Error(f"Reconstruct failed: {e}")
@@ -78,11 +79,12 @@ def _handle_reconstruct(corridor, keep_pct, gpu_seconds, view_hfov=0, da3_model=
             logger.warning(f"gallery: not published: {e}")
 
 
-def reconstruct_button(corridor, controls: Controls):
-    """Wire button 2 to the prepared corridor (a gr.State, from prepare_button) and the
-    controls' settings; it shows the scene and its download in the controls."""
+def reconstruct_button(corridor, controls: Controls, build):
+    """Wire button 2 to the prepared corridor (a gr.State, from prepare_button), the
+    controls' settings and build, which turns a corridor into a scene folder; it shows the
+    scene and its download in the controls."""
     controls.reconstruct.click(
-        fn=_handle_reconstruct,
+        fn=update_wrapper(partial(_handle_reconstruct, build=build), _handle_reconstruct),
         inputs=[corridor, *controls.overrides, controls.effort, controls.share],
         outputs=[controls.viewer, controls.download, controls.status],
         api_name="handle_reconstruct",

@@ -1,6 +1,6 @@
 """Draw what the masker drops from one pano, segmented on the Space over its API.
 
-Segment on the Space (street_builder/pano_api.py's mask_pano), then draw locally with this
+Segment on the Space (ui/pano_api.py's mask_pano), then draw locally with this
 checkout's tools/pano_mask.py: every pole vs long straight poles only.
 
     python -m streetview_to_3d.models PANO_ID OUT.jpg [--space potato-bug/street-view-to-3d-dev]

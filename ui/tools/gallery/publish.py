@@ -3,7 +3,7 @@
 The scene's files go to the public gallery dataset, listed in index.json, and its viewer
 link comes back. Nothing is published where TOKEN_ENV is unset (the UI hides its checkbox).
 
-    GALLERY_TOKEN=hf_... python -m street_builder.tools.gallery.publish SCENE_DIR
+    GALLERY_TOKEN=hf_... python -m ui.tools.gallery.publish SCENE_DIR
 """
 import datetime
 import json

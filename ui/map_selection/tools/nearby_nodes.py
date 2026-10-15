@@ -1,7 +1,7 @@
 """Find the Street View panos and links near a place, for the map to show."""
 import logging
 
-from street_builder.map_selection.tools.google_tile_panos import google_tile_panos
+from ui.map_selection.tools.google_tile_panos import google_tile_panos
 from streetview_to_3d.common.Pano import Pano
 from streetview_to_3d.panos.tools.google_node import google_node
 from streetview_to_3d.tools.geo import haversine_m as _haversine_m

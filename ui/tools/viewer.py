@@ -1,5 +1,5 @@
 """Embed the point-cloud viewer in the page, opening a scene or a splat."""
-from street_builder.tools.page import iframe
+from ui.tools.page import iframe
 from streetview_to_3d.visualise.build_viewer import build_viewer
 
 

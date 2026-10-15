@@ -69,7 +69,8 @@ streetview_to_3d/   the engine
                    (the Google 3D Tiles merge); tools/ seams, osm_roads, osm_tags, styles, geometry...
   visualise/    4. viewer; viewer_src/ core/ flight/ style/ world/ life/ ui/;
                    python -m streetview_to_3d.visualise rebuilds viewer.html
-street_builder/     the Gradio app, using the engine as a library
+main.py   the whole app: the UI, handed the engine's two jobs (panos to prepare, streetview_to_3d to build)
+ui/     the Gradio page
   main.py       the page: map_section → page_controls → prepare_button → reconstruct_button
   map_selection/  the map and its candidates (map_section; tools/ nearby_nodes, expand_area...)
   pano_api      the masker and DA3 on one pano, API only

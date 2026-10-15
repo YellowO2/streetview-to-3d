@@ -1,13 +1,15 @@
 """Run button 1: gather and download the selected route's panoramas."""
+from functools import partial, update_wrapper
+
 import gradio as gr
 
-from street_builder.Controls import Controls
-from street_builder.tools.map_state import corridor_edges, nodes_by_key
-from streetview_to_3d.panos.main import panos
+from ui.Controls import Controls
+from ui.tools.map_state import corridor_edges, nodes_by_key
 
 
-def _handle_pathfind_prepare(state):
-    """Button 1: gather and download the selection's candidates (no GPU; see panos.main.panos)."""
+def _handle_pathfind_prepare(state, *, prepare):
+    """Button 1: gather and download the selection's candidates (no GPU), with prepare
+    (the engine's streetview_to_3d.panos.main.panos)."""
     selected = state.get("selected", [])
     selected_edges = state.get("selected_edges", [])
     if len(selected) < 2 or not selected_edges:
@@ -22,7 +24,7 @@ def _handle_pathfind_prepare(state):
 
     yield None, "<p>Fetching panoramas… This may take a few minutes.</p>"
     try:
-        corridor = panos(start, goals, corridor_edges(state), (state["lat"], state["lon"]))
+        corridor = prepare(start, goals, corridor_edges(state), (state["lat"], state["lon"]))
     except Exception as e:
         yield None, "<p>Preparation failed. Try again.</p>"
         raise gr.Error(f"Prepare failed: {e}")
@@ -31,12 +33,12 @@ def _handle_pathfind_prepare(state):
     yield corridor, f"<p>{n} panoramas ready. Now click button 2.</p>"
 
 
-def prepare_button(map_state, controls: Controls):
-    """Wire button 1 to the map's state (map_state: gr.State); returns the gr.State holding
-    the prepared Corridor, for button 2."""
+def prepare_button(map_state, controls: Controls, prepare):
+    """Wire button 1 to the map's state (map_state: gr.State) and to prepare, which turns a
+    route into a Corridor; returns the gr.State holding the prepared Corridor, for button 2."""
     corridor = gr.State(None)
     controls.prepare.click(
-        fn=_handle_pathfind_prepare,
+        fn=update_wrapper(partial(_handle_pathfind_prepare, prepare=prepare), _handle_pathfind_prepare),
         inputs=[map_state],
         outputs=[corridor, controls.status],
         api_name="handle_pathfind_prepare",

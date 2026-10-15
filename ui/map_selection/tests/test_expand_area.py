@@ -2,8 +2,8 @@ import types
 
 import numpy as np
 
-import street_builder.map_selection.tools.expand_area as area_walk
-from street_builder.map_selection.tools.circle import circle
+import ui.map_selection.tools.expand_area as area_walk
+from ui.map_selection.tools.circle import circle
 
 STEP = 10 / 111320.0   # a pano every 10 m north along one street
 
