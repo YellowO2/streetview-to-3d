@@ -14,6 +14,8 @@ short_description: Reconstructs a street corridor into a 3D point cloud
 
 # Street View to 3D
 
+View generated samples in the [gallery](https://yellowo2.github.io/streetview-to-3d/).
+
 Reconstructs a stretch of street as 3D point cloud from Google Street View panoramas. Try it on the [Hugging Face Space](https://huggingface.co/spaces/potato-bug/street-view-to-3d).
 
 https://github.com/user-attachments/assets/db1c7f82-ee53-4376-a78a-ec393c426604
